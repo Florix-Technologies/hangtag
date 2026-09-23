@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="Tap-to-sell billing and stock tracking for clothing pop-ups.">
+<meta name="description" content="Tap-to-sell billing and stock tracking for clothing pop-ups with Supabase PostgreSQL cloud sync.">
 <meta name="theme-color" content="#FFFFFF">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -11,8 +11,10 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
 <style>
-/* same base the Claude artifact frame provides */
+/* base styles */
 :root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 body{margin:0}
 img{max-width:100%}
@@ -34,7 +36,7 @@ img{max-width:100%}
   --b-upi:#1C5CAB; --b-cash:#0D7652; --b-card:#B4481D;
   --warn:#FAB219; --warn-ink:#8A5A00; --warn-soft:#FFF6DF; --warn-track:#FCE7B4;
   --crit:#D03B3B; --crit-soft:#FDEDED; --crit-track:#F6D5D5;
-  --good:#0CA30C; --good-ink:#006300;
+  --good:#0CA30C; --good-ink:#006300; --good-soft:#ECF8EC;
   --grid:#EEF0F4; --axis:#C6CAD4;
   --h1:#CDE2FB; --h2:#9EC5F4; --h3:#6DA7EC; --h4:#3987E5; --h5:#256ABF; --h6:#184F95;
   --shadow-sm:0 1px 2px rgba(16,19,31,.06);
@@ -45,7 +47,7 @@ img{max-width:100%}
 *{box-sizing:border-box}
 html,body{background:var(--bg)}
 body{color:var(--ink);font-family:var(--font);font-size:15px;line-height:1.45;-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent}
-button,input,select{font:inherit;color:inherit}
+button,input,select,textarea{font:inherit;color:inherit}
 button{cursor:pointer;background:none;border:0;padding:0;text-align:inherit}
 button:disabled{cursor:default}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -69,9 +71,11 @@ kbd{font-family:inherit;font-size:11.5px;font-weight:700;border:1px solid var(--
 .nav button svg{width:18px;height:18px;flex:none}
 .nav button:hover{color:var(--ink)}
 .nav button[aria-selected="true"]{background:var(--bg);color:var(--ink);box-shadow:0 0 0 1px var(--line),var(--shadow-sm)}
-.sync{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;color:var(--ink-2);padding:6px 11px;border-radius:999px;border:1px solid var(--line);background:var(--bg);white-space:nowrap}
+.sync{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;color:var(--ink-2);padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:var(--bg);white-space:nowrap;cursor:pointer;transition:border-color .15s,background .15s}
+.sync:hover{border-color:var(--ink-3);background:var(--wash)}
 .sync i{width:8px;height:8px;border-radius:50%;background:var(--ink-3)}
-.sync.ok i{background:var(--good)} .sync.wait i{background:var(--warn)} .sync.off i{background:var(--crit)}
+.sync.ok i{background:var(--good)} .sync.wait i{background:var(--warn);animation:pulse 1.2s infinite} .sync.off i{background:var(--crit)}
+@keyframes pulse{0%{opacity:1}50%{opacity:.3}100%{opacity:1}}
 @media (min-width:1000px){
   .appbar-in{padding:12px 28px}
   .brand{margin-right:18px}
@@ -107,10 +111,13 @@ kbd{font-family:inherit;font-size:11.5px;font-weight:700;border:1px solid var(--
 .btn:hover:not(:disabled){border-color:var(--ink-3)}
 .btn.primary{background:var(--ink);border-color:var(--ink);color:#fff}
 .btn.primary:hover:not(:disabled){background:#23283B}
+.btn.accent{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.accent:hover:not(:disabled){background:#174EA6}
 .btn:disabled{opacity:.4}
 .btn.sm{padding:7px 12px;font-size:13.5px;border-radius:9px}
 .btn.xs{padding:5px 10px;font-size:12.5px;border-radius:8px}
 .btn.danger{color:var(--crit);border-color:#F0CACA}
+.btn.danger:hover:not(:disabled){background:var(--crit-soft)}
 .link{color:var(--accent);font-weight:600;font-size:13.5px;padding:4px 2px}
 .link.danger{color:var(--crit)}
 .link.xs{font-size:12.5px}
@@ -417,8 +424,8 @@ kbd{font-family:inherit;font-size:11.5px;font-weight:700;border:1px solid var(--
 .f{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600;color:var(--ink-2);min-width:0}
 .f.grow{flex:1;min-width:120px}
 .f.pr{width:96px}
-.f input{padding:9px 10px;border:1px solid var(--line-2);border-radius:9px;background:var(--bg);font-size:14.5px;font-weight:500;color:var(--ink);width:100%}
-.f input:focus{border-color:var(--ink);outline:none;box-shadow:0 0 0 3px rgba(16,19,31,.08)}
+.f input,.f textarea,.f select{padding:9px 10px;border:1px solid var(--line-2);border-radius:9px;background:var(--bg);font-size:14.5px;font-weight:500;color:var(--ink);width:100%}
+.f input:focus,.f textarea:focus,.f select:focus{border-color:var(--ink);outline:none;box-shadow:0 0 0 3px rgba(16,19,31,.08)}
 .hintx{font-weight:500;color:var(--ink-3)}
 .stockgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:8px}
 .stockgrid label{display:flex;flex-direction:column;align-items:center;gap:5px}
@@ -433,9 +440,24 @@ kbd{font-family:inherit;font-size:11.5px;font-weight:700;border:1px solid var(--
 .datacard{margin-top:16px}
 .datacard .note{margin:4px 0 0;max-width:72ch;line-height:1.5}
 .datacard label{cursor:pointer}
-.savebar{position:sticky;bottom:calc(12px + env(safe-area-inset-bottom,0px));margin-top:16px;display:flex;gap:8px;justify-content:flex-end;align-items:center;flex-wrap:wrap;background:rgba(255,255,255,.97);border:1px solid var(--line);border-radius:14px;padding:10px 12px;box-shadow:var(--shadow)}
+.savebar{position:sticky;bottom:calc(12px + env(safe-area-inset-bottom,0px));margin-top:16px;display:flex;gap:8px;justify-content:flex-end;align-items:center;flex-wrap:wrap;background:rgba(255,255,255,.97);border:1px solid var(--line);border-radius:14px;padding:10px 12px;box-shadow:var(--shadow);z-index:20}
 .savebar .sbx{margin-right:auto;font-size:13.5px;color:var(--ink-2)}
 .unsaved{color:var(--warn-ink)}
+
+/* ---------- database modal & badges ---------- */
+.db-modal{max-width:640px;padding:24px}
+.db-status-badge{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:999px;font-weight:600;font-size:13px;border:1px solid var(--line)}
+.db-status-badge.connected{background:var(--good-soft);border-color:#C8E6C9;color:var(--good-ink)}
+.db-status-badge.syncing{background:var(--warn-soft);border-color:#FCE7B4;color:var(--warn-ink)}
+.db-status-badge.local{background:var(--wash);border-color:var(--line-2);color:var(--ink-2)}
+.db-status-badge i{width:9px;height:9px;border-radius:50%;background:currentColor}
+.codebox{position:relative;background:#181B24;color:#E6E8EE;border-radius:12px;padding:14px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12.5px;line-height:1.5;max-height:180px;overflow:auto;white-space:pre}
+.codebox-copy{position:absolute;top:8px;right:8px;background:rgba(255,255,255,.15);color:#fff;border-radius:6px;padding:4px 8px;font-size:11.5px;font-weight:600}
+.codebox-copy:hover{background:rgba(255,255,255,.3)}
+.db-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:14px}
+.db-alert{padding:10px 14px;border-radius:10px;font-size:13.5px;margin:12px 0}
+.db-alert.info{background:var(--accent-soft);border:1px solid #D5E5FA;color:var(--accent)}
+.db-alert.warn{background:var(--warn-soft);border:1px solid var(--warn-track);color:var(--warn-ink)}
 
 @keyframes up{from{transform:translateY(14px);opacity:.5}to{transform:none;opacity:1}}
 .toast{animation-name:toastup}
@@ -459,7 +481,7 @@ kbd{font-family:inherit;font-size:11.5px;font-weight:700;border:1px solid var(--
       <button role="tab" data-tab="report" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M5 20v-8M10 20V5M15 20v-5M20 20V9"/></svg><span>Reports</span></button>
       <button role="tab" data-tab="products" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 4 3.5 6.6l1.8 4.1 2.2-.9V20h9V9.8l2.2.9 1.8-4.1-5-2.6c-.5 1.3-1.9 2.2-3.5 2.2S9 5.3 8.5 4z"/></svg><span>Products</span></button>
     </nav>
-    <span id="sync" class="sync" role="status"><i></i><span>Connecting…</span></span>
+    <button id="sync" class="sync" role="button" data-act="opendb" aria-label="Database & Sync Settings" title="Click to view database connection & cloud sync settings"><i></i><span>Connecting…</span></button>
   </div>
 </header>
 
@@ -501,7 +523,7 @@ kbd{font-family:inherit;font-size:11.5px;font-weight:700;border:1px solid var(--
   </section>
 
   <section id="v-products" hidden>
-    <div class="viewhead"><div><h2 class="vt">Products</h2><p>Set these up before the sale. A photo helps staff spot the right item fast — take one with your phone camera or pick one from your gallery.</p></div></div>
+    <div class="viewhead"><div><h2 class="vt">Products & Inventory</h2><p>Set these up before the sale. A photo helps staff spot the right item fast — take one with your phone camera or pick one from your gallery.</p></div></div>
     <div id="prodBody"></div>
     <div id="saveBar" class="savebar" hidden></div>
   </section>
@@ -509,6 +531,7 @@ kbd{font-family:inherit;font-size:11.5px;font-weight:700;border:1px solid var(--
 
 <div id="billBar" class="billbar"></div>
 <div id="sheetHost"></div>
+<div id="modalHost"></div>
 <div id="toastHost"></div>
 <div id="tip" class="tip" hidden></div>
 
@@ -536,7 +559,10 @@ const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const f2=v=>Math.round(v*10)/10;
 const pcsOf=s=>s.items.reduce((a,i)=>a+i.q,0);
 const PAYN={cash:"Cash",upi:"UPI",card:"Card"};
-const LS={get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch(e){return false}}};
+const LS={
+  get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch(e){return d}},
+  set(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch(e){return false}}
+};
 const COLORS=["#1B1E24","#ECEAE3","#1F4E8C","#7A1F2B","#2F5D46","#C9A227","#8E8A83","#D96C8A","#5B3A8C","#C2622D","#6FA8C9","#A3B18A"];
 const okColor=c=>/^#[0-9a-f]{6}$/i.test(String(c||""))?c:"#8E8A83";
 function isLight(hex){const h=okColor(hex).slice(1);const r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b=parseInt(h.slice(4,6),16);return (r*299+g*587+b*114)/1000>150}
@@ -551,12 +577,13 @@ const ICON={
   ok:'<svg class="ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="#0CA30C"/><path d="m7.6 12.4 3 3 5.8-6.4" stroke="#fff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   cam:'<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.4"/></svg>',
   bag:'<svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 8h13l-1.1 12.1a1 1 0 0 1-1 .9H7.6a1 1 0 0 1-1-.9z"/><path d="M9 10V7a3 3 0 0 1 6 0v3"/></svg>',
-  cash:'<svg class="ic" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#0D7652" stroke-width="1.8" aria-hidden="true"><rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/></svg>'
+  cash:'<svg class="ic" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#0D7652" stroke-width="1.8" aria-hidden="true"><rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/></svg>',
+  db:'<svg class="ic" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>'
 };
 
 /* ================= state ================= */
 let dev=LS.get("rc_dev",null); if(!dev){dev=Math.random().toString(36).slice(2,8);LS.set("rc_dev",dev)}
-let db=null, dlns=null, mode="connecting", syncFail=false;
+let mode="standalone", syncFail=false;
 let catalog=LS.get("rc_catalog",null);
 let imgs=LS.get("rc_imgs",{}); if(!imgs||typeof imgs!=="object")imgs={};
 let remoteDays={};
@@ -573,10 +600,41 @@ let lastSale=null;
 const showTable={time:false,size:false};
 let showAllBills=false;
 let warnedFull=false;
-const persistLocal=()=>{const ok=LS.set("rc_local",localDays);LS.set("rc_dirty",[...dirty]);if(!ok&&!warnedFull){warnedFull=true;setTimeout(()=>toast("This browser's storage is full. Download a backup from Products now."),50)}};
+
+/* Supabase Cloud Database Integration State */
+let sbUrl = LS.get("hangtag_sb_url", "") || (window.HANGTAG_CONFIG && window.HANGTAG_CONFIG.SUPABASE_URL) || "";
+let sbKey = LS.get("hangtag_sb_key", "") || (window.HANGTAG_CONFIG && window.HANGTAG_CONFIG.SUPABASE_ANON_KEY) || "";
+let sbClient = null;
+let sbRealtimeChannel = null;
+let sbStatus = "disconnected"; // 'connected' | 'connecting' | 'error' | 'disconnected'
+let sbOfflineQueue = LS.get("hangtag_sb_queue", []); if(!Array.isArray(sbOfflineQueue)) sbOfflineQueue=[];
+
+const persistLocal=()=>{
+  const ok=LS.set("rc_local",localDays);
+  LS.set("rc_dirty",[...dirty]);
+  if(!ok&&!warnedFull){warnedFull=true;setTimeout(()=>toast("Browser storage is full. Download a backup from Products now."),50)}
+};
 const savePend=()=>LS.set("rc_pend",pend);
 const saveCart=()=>{LS.set("rc_cart",cart);LS.set("rc_disc",disc)};
 const savePrefs=()=>LS.set("rc_prefs",prefs);
+const saveSbQueue=()=>LS.set("hangtag_sb_queue",sbOfflineQueue);
+/* supabase-js returns {error} instead of throwing — turn it into a throw so callers can queue a retry */
+const sbOk=r=>{if(r&&r.error)throw r.error;return r};
+/* One row per bill line; line_no makes re-uploads overwrite instead of duplicating */
+const saleItemRows=s=>(s.items||[]).map((i,k)=>({sale_id:s.id,line_no:k,product_id:i.p,product_name:i.n,size:i.s,quantity:i.q,unit_price:i.price}));
+const upsertSaleItems=rows=>rows.length?sbClient.from('hangtag_sale_items').upsert(rows,{onConflict:'sale_id,line_no'}).then(sbOk):Promise.resolve();
+/* Supabase returns at most 1000 rows per request, so page through the whole table */
+async function sbFetchAll(table,orders){
+  const out=[],N=1000;
+  for(let from=0;;from+=N){
+    let q=sbClient.from(table).select('*');
+    orders.forEach(o=>{q=q.order(o,{ascending:true})});
+    const {data}=sbOk(await q.range(from,from+N-1));
+    out.push(...(data||[]));
+    if(!data||data.length<N)break;
+  }
+  return out;
+}
 
 /* ================= derived ================= */
 let _d=null;
@@ -585,7 +643,13 @@ function D(){
   if(_d)return _d;
   const docs=Object.values(Object.assign({},remoteDays,localDays));
   const voids=new Set();docs.forEach(d=>(d.voids||[]).forEach(v=>voids.add(v)));
-  const seen=new Set(),sales=[];docs.forEach(d=>(d.sales||[]).forEach(s=>{if(s&&Array.isArray(s.items)&&!seen.has(s.id)){seen.add(s.id);sales.push(Object.assign({},s,{void:voids.has(s.id)}))}}));
+  const seen=new Set(),sales=[];
+  docs.forEach(d=>(d.sales||[]).forEach(s=>{
+    if(s&&Array.isArray(s.items)&&!seen.has(s.id)){
+      seen.add(s.id);
+      sales.push(Object.assign({},s,{void:voids.has(s.id)}));
+    }
+  }));
   sales.sort((a,b)=>a.t-b.t);
   const sold={};sales.forEach(s=>{if(s.void)return;s.items.forEach(i=>{const k=i.p+"|"+i.s;sold[k]=(sold[k]||0)+i.q})});
   _d={sales,sold};return _d;
@@ -610,7 +674,7 @@ function thumb(p,cls,src){
   return `<span class="ph ${cls}" style="background:${c};color:${isLight(c)?"#10131F":"#FFFFFF"}"><span class="ini">${esc(initials(p&&p.name))}</span></span>`;
 }
 
-/* ================= sync ================= */
+/* ================= local document helper ================= */
 function myOpenDocId(){
   const d=dayKey(Date.now());let n=0;
   while(localDays[`${d}_${dev}_${n}`]&&(localDays[`${d}_${dev}_${n}`].sales||[]).length>=700)n++;
@@ -619,47 +683,394 @@ function myOpenDocId(){
   if(!localDays[id].voids)localDays[id].voids=[];
   return id;
 }
-let flushP=null, again=false, retryT=null;
-async function flushMeta(){
-  for(const id of Object.keys(pend.img)){
-    const src=pend.img[id];
-    try{if(src)await db.doc("images/"+id).set({src,t:Date.now()});else await db.doc("images/"+id).delete();delete pend.img[id];savePend()}
-    catch(e){return false}
+
+/* ================= Supabase Database Engine ================= */
+async function initSupabase(forceConnect = false){
+  if(!sbUrl || !sbKey || !window.supabase){
+    sbStatus = "disconnected";
+    mode = "standalone";
+    renderSync();
+    return false;
   }
-  if(pend.cat&&catalog){try{await db.doc("catalog/main").set(catalog);pend.cat=false;savePend()}catch(e){return false}}
-  return true;
-}
-async function flushOnce(){
-  let ok=await flushMeta();
-  if(ok)for(const id of [...dirty]){
-    if(!localDays[id]){dirty.delete(id);continue}
-    try{await db.doc("days/"+id).set(localDays[id]);dirty.delete(id);persistLocal()}
-    catch(e){ok=false;if(e&&e.code==="quota_exceeded")toast("Cloud storage is full — bills are kept on this device.");break}
+  sbStatus = "connecting";
+  renderSync();
+  try{
+    sbClient = window.supabase.createClient(sbUrl, sbKey, { auth: { persistSession: false } });
+    // Quick ping to check connection & schema
+    const { error } = await sbClient.from('hangtag_products').select('id', { head: true, count: 'exact' });
+    if(error){
+      console.warn("Supabase ping error:", error);
+      sbStatus = "error";
+      mode = "standalone";
+      renderSync();
+      return false;
+    }
+    sbStatus = "connected";
+    mode = "online";
+    renderSync();
+    
+    // Subscribe to realtime database changes
+    setupSupabaseRealtime();
+    
+    // Pull latest cloud database data
+    await pullFromSupabase(false);
+    
+    // Process any offline sales in queue
+    await flushSbQueue();
+    
+    return true;
+  }catch(e){
+    console.error("Failed to connect to Supabase:", e);
+    sbStatus = "error";
+    mode = "standalone";
+    renderSync();
+    return false;
   }
-  return ok;
 }
-function flush(){
-  if(!db)return Promise.resolve(false);
-  if(flushP){again=true;return flushP}
-  flushP=(async()=>{
-    let ok=true;
-    try{do{again=false;ok=await flushOnce()}while(again&&ok)}catch(e){ok=false}
-    syncFail=!ok;
-    if(!ok){clearTimeout(retryT);retryT=setTimeout(flush,8000)}
-    renderSync();return ok;
-  })().finally(()=>{flushP=null});
-  return flushP;
+
+function setupSupabaseRealtime(){
+  if(!sbClient) return;
+  try{
+    if(sbRealtimeChannel){
+      sbClient.removeChannel(sbRealtimeChannel);
+    }
+    sbRealtimeChannel = sbClient.channel('hangtag-realtime-sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'hangtag_sales' }, onRemoteSaleEvent)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'hangtag_sale_items' }, p=>{ if(p.new) mergeRemoteItems(p.new.sale_id,[p.new]); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'hangtag_products' }, onRemoteCatalogEvent)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'hangtag_sizes' }, onRemoteCatalogEvent)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'hangtag_images' }, onRemoteImageEvent)
+      .subscribe((status)=>{
+        if(status === "SUBSCRIBED"){
+          sbStatus = "connected";
+          renderSync();
+        }
+      });
+  }catch(e){
+    console.warn("Realtime subscription notice:", e);
+  }
 }
-function pendingCount(){return dirty.size+(pend.cat?1:0)+Object.keys(pend.img).length}
+
+async function onRemoteSaleEvent(payload){
+  if(payload.eventType === "INSERT"){
+    const s = payload.new;
+    if(s && s.id){
+      // Check if we already have this sale
+      const have = D().sales.some(x=>x.id===s.id);
+      if(!have){
+        const saleObj = {
+          id: s.id,
+          t: Number(s.timestamp),
+          items: [],
+          sub: s.subtotal,
+          disc: s.discount,
+          total: s.total,
+          pay: s.payment_method,
+          dev: s.device_id,
+          void: s.is_void
+        };
+        const d = dayKey(saleObj.t);
+        const devId = saleObj.dev || "sb";
+        const dayId = `${d}_${devId}_0`;
+        if(!remoteDays[dayId]) remoteDays[dayId] = { date: d, dev: devId, chunk: 0, sales: [], voids: [] };
+        remoteDays[dayId].sales.push(saleObj);
+        if(s.is_void && !remoteDays[dayId].voids.includes(s.id)) remoteDays[dayId].voids.push(s.id);
+        renderAll();
+        // Lines may already be in the database, or still arriving via the sale_items listener
+        try{
+          const { data: items } = sbOk(await sbClient.from('hangtag_sale_items').select('*').eq('sale_id', s.id).order('line_no'));
+          mergeRemoteItems(s.id, items||[]);
+        }catch(e){ console.warn("Could not fetch bill lines:", e); }
+      }
+    }
+  } else if(payload.eventType === "UPDATE"){
+    const s = payload.new;
+    if(s && s.id){
+      let changed = false;
+      Object.keys(remoteDays).forEach(k=>{
+        const doc = remoteDays[k];
+        const ex = doc.sales.find(x=>x.id===s.id);
+        if(ex){
+          ex.void = s.is_void;
+          if(s.is_void && !doc.voids.includes(s.id)) doc.voids.push(s.id);
+          else if(!s.is_void){
+            const vi = doc.voids.indexOf(s.id);
+            if(vi > -1) doc.voids.splice(vi, 1);
+          }
+          changed = true;
+        }
+      });
+      if(changed) renderAll();
+    }
+  }
+}
+
+function mergeRemoteItems(saleId, rows){
+  let sale=null;
+  Object.values(remoteDays).some(doc=>(sale=(doc.sales||[]).find(x=>x.id===saleId)));
+  if(!sale || !rows.length) return;
+  let changed=false;
+  rows.forEach(r=>{
+    if(sale.items.some(i=>i.ln===r.line_no)) return;
+    sale.items.push({p:r.product_id, n:r.product_name, s:r.size, q:r.quantity, price:r.unit_price, ln:r.line_no});
+    changed=true;
+  });
+  if(changed){ sale.items.sort((a,b)=>a.ln-b.ln); renderAll(); }
+}
+
+async function onRemoteCatalogEvent(){
+  await pullCatalogFromSupabase();
+  renderAll();
+  if(prefs.tab==="products") renderProducts();
+}
+
+async function onRemoteImageEvent(payload){
+  if(payload.eventType === "DELETE"){
+    if(payload.old && payload.old.product_id){
+      delete imgs[payload.old.product_id];
+      LS.set("rc_imgs", imgs);
+      renderAll();
+    }
+  } else if(payload.new && payload.new.product_id){
+    imgs[payload.new.product_id] = payload.new.image_data;
+    LS.set("rc_imgs", imgs);
+    renderAll();
+  }
+}
+
+async function pullCatalogFromSupabase(){
+  if(!sbClient) return;
+  try{
+    const { data: prods, error: pErr } = await sbClient.from('hangtag_products').select('*').order('sort_order', { ascending: true });
+    if(pErr || !prods) return;
+    if(!prods.length && (!catalog || !catalog.products || !catalog.products.length)) return;
+    
+    const sizes = await sbFetchAll('hangtag_sizes', ['product_id','size']);
+    const { data: images } = await sbClient.from('hangtag_images').select('*');
+    
+    if(prods.length > 0){
+      const pMap = {};
+      prods.forEach(p => { pMap[p.id] = { id: p.id, name: p.name, price: p.price, color: p.color, sizes: [] }; });
+      (sizes||[]).forEach(z => {
+        if(pMap[z.product_id]) pMap[z.product_id].sizes.push({ s: z.size, stock: z.stock });
+      });
+      catalog = { example: false, products: Object.values(pMap) };
+      LS.set("rc_catalog", catalog);
+    }
+    
+    if(images && images.length){
+      const imgMap = {};
+      images.forEach(im => { imgMap[im.product_id] = im.image_data; });
+      imgs = imgMap;
+      LS.set("rc_imgs", imgs);
+    }
+  }catch(e){
+    console.error("Error pulling catalog:", e);
+  }
+}
+
+async function pullFromSupabase(showToast = true){
+  if(!sbClient || sbStatus !== "connected") return;
+  try{
+    await pullCatalogFromSupabase();
+    
+    // Pull Sales
+    const sales = await sbFetchAll('hangtag_sales', ['timestamp','id']);
+    if(sales){
+      const items = await sbFetchAll('hangtag_sale_items', ['sale_id','line_no']);
+      const itemsBySale = {};
+      (items||[]).forEach(it => {
+        if(!itemsBySale[it.sale_id]) itemsBySale[it.sale_id] = [];
+        itemsBySale[it.sale_id].push(it);
+      });
+      
+      const newRemoteDays = {};
+      sales.forEach(s => {
+        const d = dayKey(s.timestamp);
+        const devId = s.device_id || "cloud";
+        const dayId = `${d}_${devId}_0`;
+        if(!newRemoteDays[dayId]) newRemoteDays[dayId] = { date: d, dev: devId, chunk: 0, sales: [], voids: [] };
+        
+        const lineItems = (itemsBySale[s.id] || []).map(i => ({
+          p: i.product_id,
+          n: i.product_name,
+          s: i.size,
+          q: i.quantity,
+          price: i.unit_price,
+          ln: i.line_no
+        }));
+        
+        const saleObj = {
+          id: s.id,
+          t: Number(s.timestamp),
+          items: lineItems,
+          sub: s.subtotal,
+          disc: s.discount,
+          total: s.total,
+          pay: s.payment_method,
+          dev: s.device_id,
+          void: s.is_void
+        };
+        newRemoteDays[dayId].sales.push(saleObj);
+        if(s.is_void) newRemoteDays[dayId].voids.push(s.id);
+      });
+      remoteDays = newRemoteDays;
+    }
+    
+    renderAll();
+    if(prefs.tab==="products") renderProducts();
+    if(showToast) toast("Database sync complete — products & sales up to date.");
+  }catch(e){
+    console.error("Pull from Supabase failed:", e);
+    if(showToast) toast("Could not pull from database: " + (e.message || e));
+  }
+}
+
+async function pushLocalToSupabase(){
+  if(!sbClient || sbStatus !== "connected"){
+    toast("Please connect to your Supabase database first.");
+    return false;
+  }
+  try{
+    toast("Uploading catalog and sales to Supabase…");
+    // 1. Upload Products
+    const prods = products();
+    if(prods.length){
+      const prodRows = prods.map((p, idx) => ({
+        id: p.id,
+        name: p.name,
+        price: +p.price || 0,
+        color: okColor(p.color),
+        sort_order: idx,
+        updated_at: new Date().toISOString()
+      }));
+      const { error: pErr } = await sbClient.from('hangtag_products').upsert(prodRows);
+      if(pErr) throw pErr;
+      
+      // 2. Upload Sizes
+      const sizeRows = [];
+      prods.forEach(p => {
+        p.sizes.forEach(z => {
+          sizeRows.push({
+            product_id: p.id,
+            size: z.s,
+            stock: +z.stock || 0,
+            updated_at: new Date().toISOString()
+          });
+        });
+      });
+      if(sizeRows.length){
+        const { error: sErr } = await sbClient.from('hangtag_sizes').upsert(sizeRows, { onConflict: 'product_id,size' });
+        if(sErr) throw sErr;
+      }
+    }
+    
+    // 3. Upload Images
+    const imgKeys = Object.keys(imgs);
+    if(imgKeys.length){
+      const imgRows = imgKeys.map(k => ({
+        product_id: k,
+        image_data: imgs[k],
+        updated_at: new Date().toISOString()
+      }));
+      const { error: iErr } = await sbClient.from('hangtag_images').upsert(imgRows);
+      if(iErr) console.warn("Image upload notice:", iErr);
+    }
+    
+    // 4. Upload Sales & Line items
+    const allSales = D().sales;
+    if(allSales.length){
+      const saleRows = allSales.map(s => ({
+        id: s.id,
+        timestamp: s.t,
+        subtotal: s.sub,
+        discount: s.disc || 0,
+        total: s.total,
+        payment_method: s.pay,
+        device_id: s.dev || dev,
+        is_void: !!s.void
+      }));
+      const { error: salErr } = await sbClient.from('hangtag_sales').upsert(saleRows);
+      if(salErr) throw salErr;
+      
+      const itemRows = [];
+      allSales.forEach(s => itemRows.push(...saleItemRows(s)));
+      await upsertSaleItems(itemRows);
+    }
+    
+    toast(`Successfully uploaded ${prods.length} products and ${allSales.length} sales to Supabase!`);
+    await pullFromSupabase(false);
+    return true;
+  }catch(e){
+    console.error("Push to Supabase failed:", e);
+    toast("Push failed: " + (e.message || JSON.stringify(e)));
+    return false;
+  }
+}
+
+async function flushSbQueue(){
+  if(!sbClient || sbStatus !== "connected" || !sbOfflineQueue.length) return;
+  const queue = [...sbOfflineQueue];
+  const remaining = [];
+  
+  for(const item of queue){
+    try{
+      if(item.type === "sale"){
+        const s = item.sale;
+        sbOk(await sbClient.from('hangtag_sales').upsert({
+          id: s.id,
+          timestamp: s.t,
+          subtotal: s.sub,
+          discount: s.disc || 0,
+          total: s.total,
+          payment_method: s.pay,
+          device_id: s.dev,
+          is_void: false
+        }));
+        await upsertSaleItems(saleItemRows(s));
+      } else if(item.type === "void"){
+        sbOk(await sbClient.from('hangtag_sales').update({ is_void: item.isVoid }).eq('id', item.id));
+      }
+    }catch(err){
+      console.warn("Queue sync item failed:", err);
+      remaining.push(item);
+    }
+  }
+  sbOfflineQueue = remaining;
+  saveSbQueue();
+  renderSync();
+}
+
 function renderSync(){
-  const el=$("#sync"),tx=el.querySelector("span");let cls="sync",txt="Connecting…",tip="";
-  if(mode==="standalone"){cls+=" ok";txt="Saved on this device";tip="Hangtag keeps your products and bills in this browser. Download a backup from Products after each sale day."}
-  else if(mode==="local"){cls+=" off";txt="On this device";tip="Cloud storage isn't available here, so bills are saved in this browser only."}
-  else if(mode==="online"){
-    if(pendingCount()){cls+=" wait";txt=syncFail?"Offline":"Syncing…";tip="Everything is safe on this device and uploads when the connection is back."}
-    else{cls+=" ok";txt="Synced";tip="Phone and laptop are up to date."}
+  const el=$("#sync"),tx=el.querySelector("span");
+  let cls="sync",txt="Connecting…",tip="";
+  
+  if(sbStatus === "connected"){
+    if(sbOfflineQueue.length){
+      cls+=" wait";
+      txt=`Queue (${sbOfflineQueue.length})`;
+      tip=`${sbOfflineQueue.length} bills queued locally — uploading when online.`;
+    } else {
+      cls+=" ok";
+      txt="Cloud Synced";
+      tip="Connected to Supabase PostgreSQL cloud database. Multi-device live sync active.";
+    }
+  } else if(sbStatus === "connecting"){
+    cls+=" wait";
+    txt="Connecting…";
+    tip="Connecting to Supabase PostgreSQL cloud database…";
+  } else if(sbStatus === "error"){
+    cls+=" off";
+    txt="Cloud Error";
+    tip="Could not connect to Supabase. Check credentials or SQL schema.";
+  } else {
+    cls+=" off";
+    txt="Local Storage";
+    tip="Running locally in browser storage. Click to connect Supabase PostgreSQL database.";
   }
-  el.className=cls;tx.textContent=txt;el.title=tip;
+  el.className=cls;
+  tx.textContent=txt;
+  el.title=tip;
 }
 
 /* ================= sell ================= */
@@ -675,12 +1086,15 @@ function tileHTML(p,i){
 function renderGrid(){
   const g=$("#grid"),ps=products(),ban=$("#sellBanner");
   g.className="grid"+(prefs.density==="list"?" list":"");
-  if(!ps.length){g.innerHTML="";ban.innerHTML=`<div class="empty"><b>No products yet</b><p>Add the products you'll sell, with their sizes and how many pieces you have — or start with examples and rename them.</p><div class="row c"><button class="btn primary" data-act="examples">Start with 10 examples</button><button class="btn" data-act="gosetup">Add my own</button></div></div>`;return}
+  if(!ps.length){
+    g.innerHTML="";
+    ban.innerHTML=`<div class="empty"><b>No products yet</b><p>Add products you'll sell, with their sizes and quantities — or start with 10 examples.</p><div class="row c"><button class="btn primary" data-act="examples">Start with 10 examples</button><button class="btn" data-act="gosetup">Add my own</button><button class="btn accent" data-act="opendb">Connect Supabase Database</button></div></div>`;
+    return;
+  }
   ban.innerHTML=catalog&&catalog.example?`<div class="banner"><span><b>These are example products.</b> Rename them, add photos and set your real stock before the sale.</span><button class="btn sm" data-act="gosetup">Edit products</button></div>`:"";
   patchList(g,ps.map(tileHTML));
   justAdded=null;
 }
-/* replace only the tiles that changed, so photos don't flicker on every tap */
 const tpl=document.createElement("template");
 function patchList(box,arr){
   const kids=Array.from(box.children);
@@ -744,30 +1158,109 @@ function addToCart(pid,size,q){
   justAdded=pid;saveCart();closeSheets();renderAll();
   if(left<q)toast(`Stock shows only ${Math.max(left,0)} × ${p.name} (${size}) left — added anyway.`);
 }
+
 let lastCheckout=0;
-function checkout(pay){
-  if(!cart.length||Date.now()-lastCheckout<600)return;lastCheckout=Date.now();
+async function checkout(pay){
+  if(!cart.length||Date.now()-lastCheckout<600)return;
+  lastCheckout=Date.now();
   const sub=cartSub(),d=Math.min(disc,sub),no=billNo();
   const sale={id:uid(),t:Date.now(),items:cart.map(c=>({p:c.p,n:c.name,s:c.s,q:c.q,price:c.price})),sub,disc:d,total:sub-d,pay,dev};
-  const id=myOpenDocId();localDays[id].sales.push(sale);dirty.add(id);persistLocal();
-  cart=[];disc=0;saveCart();lastSale=sale;closeSheets();renderAll();flush();
+  
+  // Instant local save
+  const id=myOpenDocId();
+  localDays[id].sales.push(sale);
+  dirty.add(id);
+  persistLocal();
+  cart=[];
+  disc=0;
+  saveCart();
+  lastSale=sale;
+  closeSheets();
+  renderAll();
+  
   toast(`Bill #${no} saved · ${inr(sale.total)} · ${PAYN[pay]}`,()=>voidSale(sale.id));
+  
+  // Push to Supabase Cloud Database
+  if(sbClient && sbStatus === "connected"){
+    try{
+      sbOk(await sbClient.from('hangtag_sales').insert({
+        id: sale.id,
+        timestamp: sale.t,
+        subtotal: sale.sub,
+        discount: sale.disc,
+        total: sale.total,
+        payment_method: sale.pay,
+        device_id: dev,
+        is_void: false
+      }));
+      await upsertSaleItems(saleItemRows(sale));
+    }catch(err){
+      console.warn("Supabase sale upload failed, queueing offline:", err);
+      sbOfflineQueue.push({ type: "sale", sale });
+      saveSbQueue();
+      renderSync();
+    }
+  } else {
+    sbOfflineQueue.push({ type: "sale", sale });
+    saveSbQueue();
+    renderSync();
+  }
 }
-function voidSale(sid){
+
+async function voidSale(sid){
   const id=myOpenDocId(),v=localDays[id].voids;
   if(!v.includes(sid))v.push(sid);
-  dirty.add(id);persistLocal();renderAll();flush();toast("Bill cancelled — its stock is back on the shelf.");
+  dirty.add(id);
+  persistLocal();
+  renderAll();
+  toast("Bill cancelled — its stock is back on the shelf.");
+  
+  if(sbClient && sbStatus === "connected"){
+    try{
+      sbOk(await sbClient.from('hangtag_sales').update({ is_void: true }).eq('id', sid));
+    }catch(e){
+      sbOfflineQueue.push({ type: "void", id: sid, isVoid: true });
+      saveSbQueue();
+      renderSync();
+    }
+  } else {
+    sbOfflineQueue.push({ type: "void", id: sid, isVoid: true });
+    saveSbQueue();
+    renderSync();
+  }
 }
-function unvoid(sid){
+
+async function unvoid(sid){
   let changed=false;
-  Object.keys(localDays).forEach(id=>{const v=localDays[id].voids||[];const i=v.indexOf(sid);if(i>-1){v.splice(i,1);dirty.add(id);changed=true}});
-  if(!changed){toast("That bill was cancelled on another device — restore it there.");return}
-  persistLocal();renderAll();flush();toast("Bill restored.");
+  Object.keys(localDays).forEach(id=>{
+    const v=localDays[id].voids||[];
+    const i=v.indexOf(sid);
+    if(i>-1){v.splice(i,1);dirty.add(id);changed=true}
+  });
+  Object.keys(remoteDays).forEach(id=>{
+    const v=remoteDays[id].voids||[];
+    const i=v.indexOf(sid);
+    if(i>-1){v.splice(i,1);changed=true}
+  });
+  
+  persistLocal();
+  renderAll();
+  toast("Bill restored.");
+  
+  if(sbClient && sbStatus === "connected"){
+    try{
+      sbOk(await sbClient.from('hangtag_sales').update({ is_void: false }).eq('id', sid));
+    }catch(e){
+      sbOfflineQueue.push({ type: "void", id: sid, isVoid: false });
+      saveSbQueue();
+      renderSync();
+    }
+  }
 }
 
 /* ================= stock ================= */
 function kpi(l,v,sub,st){return `<div class="kpi ${st||""}"><div class="lab">${st==="warn"?ICON.warn:st==="crit"?ICON.out:""}${esc(l)}</div><div class="val">${esc(v)}</div>${sub?`<div class="kps">${sub}</div>`:""}</div>`}
-function emptyProductsHTML(){return `<div class="empty"><b>No products yet</b><p>Add your products first — then stock and sales show up here.</p><button class="btn primary" data-act="gosetup">Add products</button></div>`}
+function emptyProductsHTML(){return `<div class="empty"><b>No products yet</b><p>Add your products first — then stock and sales show up here.</p><div class="row c"><button class="btn primary" data-act="gosetup">Add products</button><button class="btn accent" data-act="opendb">Connect Database</button></div></div>`}
 function renderStock(){
   const host=$("#stockBody"),ps=products();
   if(!ps.length){host.innerHTML=emptyProductsHTML();return}
@@ -801,7 +1294,6 @@ function periodRange(){
     case "30d":from=addDays(today,-29);to=today;label=dayLab(from)+" – "+dayLab(to);prev={from:addDays(from,-30),to:addDays(to,-30)};vs="vs previous 30 days";break;
     case "all":{const s=D().sales;from=s.length?dayKey(s[0].t):today;to=today;if(from>to)from=to;label="Since "+dayLab(from);break}
     case "day":if(prefs.day&&/^\d{4}-\d{2}-\d{2}$/.test(prefs.day)){from=to=prefs.day;label=dayLong(from);prev={from:addDays(from,-1),to:addDays(from,-1)};vs="vs day before";break}
-    /* falls through */
     default:from=to=today;label="Today · "+dayLong(today);prev={from:addDays(today,-1),to:addDays(today,-1)};vs="vs yesterday";
   }
   return {from,to,label,prev,vs};
@@ -931,25 +1423,22 @@ async function exportCsv(){
   const csv=rows.map(r=>r.map(v=>{v=String(v);return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v}).join(",")).join("\n");
   await saveFile(`sales-${R.from}${R.to!==R.from?"-to-"+R.to:""}.csv`,"﻿"+csv,"text/csv");
 }
-/* downloads: Claude's download capability inside Claude, a normal file download everywhere else */
 async function saveFile(name,data,type){
-  if(dlns){try{await dlns.save({filename:name,data});return true}catch(e){if(!e||e.code!=="declined")toast("Couldn't download the file.");return false}}
-  if(window.claude){toast("Downloads aren't available in this view.");return false}
   try{const u=URL.createObjectURL(new Blob([data],{type}));const a=document.createElement("a");a.href=u;a.download=name;a.rel="noopener";document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),5000);return true}
   catch(e){toast("Couldn't download the file.");return false}
 }
 
 /* ================= backup + restore ================= */
 async function downloadBackup(){
-  const data={app:"hangtag",version:1,exportedAt:new Date().toISOString(),catalog,images:imgs,days:Object.assign({},remoteDays,localDays)};
+  const data={app:"hangtag",version:2,exportedAt:new Date().toISOString(),catalog,images:imgs,days:Object.assign({},remoteDays,localDays)};
   if(await saveFile(`hangtag-backup-${dayKey(Date.now())}.json`,JSON.stringify(data),"application/json"))toast("Backup downloaded.");
 }
 async function restoreBackup(file){
   let data=null;try{data=JSON.parse(await file.text())}catch(e){}
   if(!data||data.app!=="hangtag"||!data.days||typeof data.days!=="object"){toast("That file isn't a Hangtag backup.");return}
-  if(data.catalog&&Array.isArray(data.catalog.products)){catalog=data.catalog;pend.cat=true;LS.set("rc_catalog",catalog)}
-  if(data.images&&typeof data.images==="object")Object.keys(data.images).forEach(id=>{const src=data.images[id];if(typeof src==="string"&&src.indexOf("data:image/")===0&&/^[A-Za-z0-9_-]+$/.test(id)){imgs[id]=src;pend.img[id]=src}});
-  LS.set("rc_imgs",imgs);savePend();
+  if(data.catalog&&Array.isArray(data.catalog.products)){catalog=data.catalog;LS.set("rc_catalog",catalog)}
+  if(data.images&&typeof data.images==="object")Object.keys(data.images).forEach(id=>{const src=data.images[id];if(typeof src==="string"&&src.indexOf("data:image/")===0&&/^[A-Za-z0-9_-]+$/.test(id)){imgs[id]=src}});
+  LS.set("rc_imgs",imgs);
   let added=0;
   Object.keys(data.days).forEach(id=>{
     const doc=data.days[id];if(!doc||!Array.isArray(doc.sales)||!/^[A-Za-z0-9_.-]+$/.test(id))return;
@@ -961,8 +1450,11 @@ async function restoreBackup(file){
     (doc.voids||[]).forEach(v=>{if(!cur.voids.includes(v)){cur.voids.push(v);ch=true}});
     if(ch)dirty.add(id);
   });
-  persistLocal();draft=null;draftDirty=false;renderAll();if(prefs.tab==="products")renderProducts();flush();
+  persistLocal();draft=null;draftDirty=false;renderAll();if(prefs.tab==="products")renderProducts();
   toast(`Backup restored — ${added} bill${added===1?"":"s"} added.`);
+  if(sbClient && sbStatus === "connected"){
+    pushLocalToSupabase();
+  }
 }
 
 /* ================= products ================= */
@@ -989,10 +1481,22 @@ function pcardHTML(p,i){
 function renderProducts(){
   if(!draft)startDraft();
   let h="";
+  
+  // Database status card at the top
+  h+=`<div class="card" style="margin-bottom:16px;border-left:4px solid ${sbStatus==='connected'?'var(--good)':'var(--accent)'}">
+    <div class="card-h">
+      <div>
+        <h3>${ICON.db} Cloud Database & Multi-Device Sync</h3>
+        <p class="note">${sbStatus==='connected'?'Connected to Supabase PostgreSQL cloud database with realtime live sync across phones & laptops.':'Connect your Supabase PostgreSQL database for real-time live stock sync across all your phones and laptops.'}</p>
+      </div>
+      <button class="btn sm ${sbStatus==='connected'?'':'primary'}" data-act="opendb">${sbStatus==='connected'?'Database Settings':'Connect Supabase'}</button>
+    </div>
+  </div>`;
+
   if(catalog&&catalog.example)h+=`<div class="banner"><span><b>These are example products.</b> Change the names, prices and sizes to yours, add photos, and set how many pieces you have.</span></div>`;
-  if(!draft.length)h+=`<div class="empty"><b>No products yet</b><p>Add each product you'll sell, with its sizes and how many pieces you have.</p><div class="row c"><button class="btn primary" data-act="addp">Add a product</button><button class="btn" data-act="examples">Load 10 examples</button></div></div>`;
+  if(!draft.length)h+=`<div class="empty"><b>No products yet</b><p>Add each product you'll sell, with its sizes and how many pieces you have.</p><div class="row c"><button class="btn primary" data-act="addp">Add a product</button><button class="btn" data-act="examples">Load 10 examples</button><button class="btn accent" data-act="opendb">Connect Supabase</button></div></div>`;
   h+=`<div class="plist">${draft.map(pcardHTML).join("")}</div>`;
-  h+=`<div class="card datacard"><div class="card-h"><div><h3>Your data</h3><p class="note">${mode==="standalone"?"Hangtag keeps your products, photos and bills in this browser. Download a backup after each sale day. You can also use a backup to move bills from your phone to your laptop.":"Your products and bills sync between your devices. You can also keep a backup file."} Restoring a backup replaces your product list with the one in the file and adds any bills you don't have yet.</p></div></div><div class="row" style="justify-content:flex-start;flex-wrap:wrap"><button class="btn sm" data-act="backup">Download backup</button><label class="btn sm" for="restoreIn">Restore from backup</label><input id="restoreIn" class="sr" type="file" accept="application/json,.json" data-restore></div></div>`;
+  h+=`<div class="card datacard"><div class="card-h"><div><h3>Backup & Storage</h3><p class="note">Download a local JSON backup of your products, stock, photos, and bills at any time. You can restore it to this device or import it into your cloud database.</p></div></div><div class="row" style="justify-content:flex-start;flex-wrap:wrap;gap:8px"><button class="btn sm" data-act="backup">Download backup (.json)</button><label class="btn sm" for="restoreIn">Restore from backup</label><input id="restoreIn" class="sr" type="file" accept="application/json,.json" data-restore><button class="btn sm" data-act="opendb">Database Configuration</button></div></div>`;
   $("#prodBody").innerHTML=h;
   renderSaveBar();
 }
@@ -1019,13 +1523,153 @@ async function fileToThumb(file,size){
 async function saveProducts(){
   const sold=D().sold,newIds=new Set(draft.map(p=>p.id));
   const namesChanged=JSON.stringify(draft.map(p=>p.name))!==JSON.stringify(products().map(p=>p.name));
-  draft.forEach(p=>{if(p.img!==undefined){pend.img[p.id]=p.img||null;if(p.img)imgs[p.id]=p.img;else delete imgs[p.id]}});
-  products().forEach(p=>{if(!newIds.has(p.id)&&imgs[p.id]){pend.img[p.id]=null;delete imgs[p.id]}});
+  draft.forEach(p=>{if(p.img!==undefined){if(p.img)imgs[p.id]=p.img;else delete imgs[p.id]}});
+  products().forEach(p=>{if(!newIds.has(p.id)&&imgs[p.id]){delete imgs[p.id]}});
   catalog={example:!!(catalog&&catalog.example)&&!namesChanged,products:draft.map(p=>({id:p.id,name:String(p.name||"").trim()||"Untitled",price:Math.max(0,Math.round(+p.price||0)),color:okColor(p.color),sizes:p.sizes.map(z=>({s:z.s,stock:(Math.round(+z.left)||0)+(sold[p.id+"|"+z.s]||0)}))}))};
-  pend.cat=true;savePend();LS.set("rc_catalog",catalog);LS.set("rc_imgs",imgs);
-  draft=null;draftDirty=false;renderAll();if(prefs.tab==="products")renderProducts();
-  if(db){await flush();toast(pend.cat?"Saved on this device — it will upload when you're back online.":"Products saved.")}else toast("Products saved on this device.");
+  
+  LS.set("rc_catalog",catalog);
+  LS.set("rc_imgs",imgs);
+  draft=null;
+  draftDirty=false;
+  renderAll();
+  if(prefs.tab==="products")renderProducts();
+  
+  if(sbClient && sbStatus === "connected"){
+    toast("Products saved locally — syncing to Supabase database…");
+    pushLocalToSupabase();
+  } else {
+    toast("Products saved on this device.");
+  }
 }
+
+/* ================= Database Modal & Setup ================= */
+const SQL_SCHEMA_SNIPPET = `-- 1. Run this in Supabase SQL Editor (SQL Editor -> New Query)
+CREATE TABLE IF NOT EXISTS public.hangtag_products (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    price INTEGER NOT NULL DEFAULT 0,
+    color TEXT DEFAULT '#8E8A83',
+    sort_order INTEGER DEFAULT 0,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.hangtag_sizes (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    product_id TEXT NOT NULL REFERENCES public.hangtag_products(id) ON DELETE CASCADE,
+    size TEXT NOT NULL,
+    stock INTEGER NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(product_id, size)
+);
+
+CREATE TABLE IF NOT EXISTS public.hangtag_images (
+    product_id TEXT PRIMARY KEY REFERENCES public.hangtag_products(id) ON DELETE CASCADE,
+    image_data TEXT NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.hangtag_sales (
+    id TEXT PRIMARY KEY,
+    timestamp BIGINT NOT NULL,
+    subtotal INTEGER NOT NULL DEFAULT 0,
+    discount INTEGER NOT NULL DEFAULT 0,
+    total INTEGER NOT NULL DEFAULT 0,
+    payment_method TEXT NOT NULL,
+    device_id TEXT,
+    is_void BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.hangtag_sale_items (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    sale_id TEXT NOT NULL REFERENCES public.hangtag_sales(id) ON DELETE CASCADE,
+    line_no INTEGER NOT NULL DEFAULT 0,
+    product_id TEXT NOT NULL,
+    product_name TEXT NOT NULL,
+    size TEXT NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 1,
+    unit_price INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(sale_id, line_no)
+);
+
+-- Enable RLS and Realtime
+ALTER TABLE public.hangtag_products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.hangtag_sizes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.hangtag_images ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.hangtag_sales ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.hangtag_sale_items ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Public access products" ON public.hangtag_products FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Public access sizes" ON public.hangtag_sizes FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Public access images" ON public.hangtag_images FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Public access sales" ON public.hangtag_sales FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Public access sale_items" ON public.hangtag_sale_items FOR ALL USING (true) WITH CHECK (true);
+
+ALTER PUBLICATION supabase_realtime ADD TABLE public.hangtag_products, public.hangtag_sizes, public.hangtag_images, public.hangtag_sales, public.hangtag_sale_items;`;
+
+function renderDbModal(){
+  const isConn = sbStatus === "connected";
+  $("#modalHost").innerHTML = `<div class="scrim" data-scrim><div class="sheet db-modal" role="dialog" aria-modal="true" aria-label="Database Settings">
+    <div class="sh-head">
+      <div>
+        <h3>Database & Cloud Sync</h3>
+        <p>Connect your Supabase PostgreSQL cloud database for instant multi-device live sync.</p>
+      </div>
+      <button class="iconbtn" data-act="closedb" aria-label="Close">${ICON.x}</button>
+    </div>
+    
+    <div style="margin-bottom:16px">
+      <div class="db-status-badge ${isConn?'connected':sbStatus==='connecting'?'syncing':'local'}">
+        <i></i> <span>${isConn?'Connected to Supabase PostgreSQL':sbStatus==='connecting'?'Connecting…':sbStatus==='error'?'Connection Error':'Local Storage (Standalone)'}</span>
+      </div>
+    </div>
+    
+    <form id="dbConfigForm" onsubmit="return false" style="display:flex;flex-direction:column;gap:12px">
+      <label class="f">
+        <span>Supabase Project URL</span>
+        <input id="in_sb_url" placeholder="https://xyzproject.supabase.co" value="${esc(sbUrl)}" autocomplete="off" autocorrect="off" autocapitalize="off">
+        <span class="hintx">Found in Supabase Settings → API → Project URL</span>
+      </label>
+      
+      <label class="f">
+        <span>Supabase Anon Public API Key</span>
+        <input id="in_sb_key" type="password" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." value="${esc(sbKey)}" autocomplete="off">
+        <span class="hintx">Found in Supabase Settings → API → Project API Keys (anon public)</span>
+      </label>
+      
+      <div class="db-actions">
+        <button class="btn primary" data-act="savedb">Save & Connect</button>
+        <button class="btn" data-act="testdb">Test Connection</button>
+        ${sbUrl?`<button class="btn danger sm" data-act="cleardb">Disconnect / Local Only</button>`:""}
+      </div>
+    </form>
+    
+    ${isConn?`
+      <div class="card" style="margin-top:18px;background:var(--wash)">
+        <div class="card-h">
+          <div>
+            <h3>Cloud Actions</h3>
+            <span class="note">Sync data between your local device and the cloud database.</span>
+          </div>
+        </div>
+        <div class="db-actions" style="margin-top:0">
+          <button class="btn sm primary" data-act="pushdb">Push Local Data to Database</button>
+          <button class="btn sm" data-act="pulldb">Pull Latest from Database</button>
+        </div>
+      </div>
+    `:""}
+    
+    <div style="margin-top:20px;border-top:1px solid var(--line);padding-top:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <span style="font-weight:700;font-size:13.5px">SQL Database Schema (PostgreSQL)</span>
+        <button class="btn xs" data-act="copysql">Copy SQL</button>
+      </div>
+      <p class="note" style="margin-bottom:10px">Run this script in your <b>Supabase SQL Editor</b> to create tables, indexes, security policies, and realtime broadcast.</p>
+      <div class="codebox"><button class="codebox-copy" data-act="copysql">Copy</button><code>${esc(SQL_SCHEMA_SNIPPET)}</code></div>
+    </div>
+  </div></div>`;
+}
+function closeDbModal(){$("#modalHost").innerHTML="";}
 
 /* ================= toast + tooltip ================= */
 let toastT=null;
@@ -1083,7 +1727,7 @@ document.addEventListener("click",async e=>{
   const tab=t.closest("[data-tab]");if(tab){setTab(tab.dataset.tab);return}
   const tile=t.closest(".tile");if(tile){openSize(tile.dataset.pid);return}
   const sz=t.closest(".sz");if(sz&&openPid){addToCart(openPid,sz.dataset.size,sheetQty);return}
-  if(t.matches("[data-scrim]")){closeSheets();return}
+  if(t.matches("[data-scrim]")){closeSheets();closeDbModal();return}
   const pay=t.closest("[data-pay]");if(pay&&!pay.disabled){checkout(pay.dataset.pay);return}
   const inc=t.closest("[data-inc]");if(inc){const c=cart[+inc.dataset.inc];if(c){c.q++;saveCart();renderAll()}return}
   const dec=t.closest("[data-dec]");if(dec){const i=+dec.dataset.dec,c=cart[i];if(c){c.q--;if(c.q<=0)cart.splice(i,1);if(!cart.length)disc=0;saveCart();renderAll()}return}
@@ -1103,7 +1747,7 @@ document.addEventListener("click",async e=>{
     case "clear":cart=[];disc=0;saveCart();closeSheets();renderAll();break;
     case "undolast":if(lastSale)voidSale(lastSale.id);break;
     case "gosetup":setTab("products");break;
-    case "examples":catalog=exampleCatalog();pend.cat=true;savePend();LS.set("rc_catalog",catalog);draft=null;draftDirty=false;renderAll();if(prefs.tab==="products")renderProducts();flush();break;
+    case "examples":catalog=exampleCatalog();LS.set("rc_catalog",catalog);draft=null;draftDirty=false;renderAll();if(prefs.tab==="products")renderProducts();if(sbClient&&sbStatus==="connected")pushLocalToSupabase();break;
     case "rmphoto":if(card&&draft){draft[pi].img=null;markDirty();renderProducts()}break;
     case "delp":if(card&&draft){if(actEl.dataset.confirm){draft.splice(pi,1);markDirty();renderProducts()}else{actEl.dataset.confirm="1";actEl.textContent="Tap again to remove"}}break;
     case "restock":if(card&&draft){const wrap=actEl.closest(".restock");wrap.innerHTML=`<label for="rs_${esc(draft[pi].id)}">Add to every size</label><input id="rs_${esc(draft[pi].id)}" type="number" inputmode="numeric" min="0" placeholder="0"><button class="btn xs" data-act="restockgo">Add</button>`;const inp=wrap.querySelector("input");if(inp)inp.focus()}break;
@@ -1114,8 +1758,65 @@ document.addEventListener("click",async e=>{
     case "export":exportCsv();break;
     case "backup":downloadBackup();break;
     case "allbills":showAllBills=true;renderReport();break;
+    
+    /* Database Actions */
+    case "opendb":renderDbModal();break;
+    case "closedb":closeDbModal();break;
+    case "savedb":{
+      const url = ($("#in_sb_url")?.value||"").trim();
+      const key = ($("#in_sb_key")?.value||"").trim();
+      sbUrl = url;
+      sbKey = key;
+      LS.set("hangtag_sb_url", url);
+      LS.set("hangtag_sb_key", key);
+      const ok = await initSupabase(true);
+      renderDbModal();
+      if(ok) toast("Connected to Supabase PostgreSQL database!");
+      else toast("Connection failed. Check URL, Anon Key, and SQL Schema.");
+      break;
+    }
+    case "testdb":{
+      const url = ($("#in_sb_url")?.value||"").trim();
+      const key = ($("#in_sb_key")?.value||"").trim();
+      if(!url || !key){ toast("Please enter both URL and Anon Key."); return; }
+      try{
+        const testClient = window.supabase.createClient(url, key, { auth: { persistSession: false } });
+        const { error } = await testClient.from('hangtag_products').select('id', { head: true, count: 'exact' });
+        if(error) toast("Test failed: " + error.message);
+        else toast("Connection test successful! Tables accessible.");
+      }catch(err){
+        toast("Test failed: " + (err.message||err));
+      }
+      break;
+    }
+    case "cleardb":{
+      sbUrl = "";
+      sbKey = "";
+      LS.set("hangtag_sb_url", "");
+      LS.set("hangtag_sb_key", "");
+      sbStatus = "disconnected";
+      mode = "standalone";
+      if(sbRealtimeChannel && sbClient) sbClient.removeChannel(sbRealtimeChannel);
+      sbClient = null;
+      renderSync();
+      renderDbModal();
+      toast("Disconnected from Supabase. Running in local storage mode.");
+      break;
+    }
+    case "pushdb":await pushLocalToSupabase();renderDbModal();break;
+    case "pulldb":await pullFromSupabase(true);renderDbModal();break;
+    case "copysql":{
+      try{
+        await navigator.clipboard.writeText(SQL_SCHEMA_SNIPPET);
+        toast("SQL Schema copied to clipboard!");
+      }catch(e){
+        toast("Copy failed. Please manually select the SQL text.");
+      }
+      break;
+    }
   }
 });
+
 document.addEventListener("input",e=>{
   const t=e.target;
   if(t.matches("[data-disc]")){
@@ -1128,6 +1829,7 @@ document.addEventListener("input",e=>{
   else if(t.dataset.si!=null){const z=p.sizes[+t.dataset.si];if(z){z.left=t.value;markDirty()}}
   else if(t.dataset.k==="sizes")markDirty();
 });
+
 document.addEventListener("change",async e=>{
   const t=e.target;
   if(t.id==="repDay"){if(t.value){prefs.period="day";prefs.day=t.value}else prefs.period="today";savePrefs();renderReport();return}
@@ -1138,11 +1840,12 @@ document.addEventListener("change",async e=>{
   if(t.matches("[data-photo]")){
     const f=t.files&&t.files[0];if(!f)return;
     try{p.img=await fileToThumb(f,320);markDirty();renderProducts();toast("Photo added — tap Save products to keep it.")}
-    catch(err){toast("Couldn't read that photo. Try a JPG or PNG.")}
+    catch(err){toast("Couldn't read photo. Try a JPG or PNG.")}
   }
 });
+
 document.addEventListener("keydown",e=>{
-  if(e.key==="Escape"){if(openPid||billOpen){closeSheets();e.preventDefault()}hideTip();return}
+  if(e.key==="Escape"){if(openPid||billOpen){closeSheets();e.preventDefault()}closeDbModal();hideTip();return}
   if(prefs.tab!=="sell"||e.metaKey||e.ctrlKey||e.altKey)return;
   if(e.target.matches&&e.target.matches("input,select,textarea"))return;
   const k=e.key.toLowerCase();
@@ -1154,46 +1857,31 @@ document.addEventListener("keydown",e=>{
   }
   if(!openPid&&cart.length&&(k==="c"||k==="u"||k==="k")){checkout(k==="c"?"cash":k==="u"?"upi":"card");e.preventDefault()}
 });
+
 let rT=null;
 window.addEventListener("resize",()=>{clearTimeout(rT);rT=setTimeout(()=>{if(prefs.tab==="report")renderReport()},160)});
-window.addEventListener("online",()=>flush());
+window.addEventListener("online",async ()=>{
+  if(sbClient && sbStatus !== "connected") await initSupabase();
+  else if(sbClient) await flushSbQueue();
+});
 
 /* ================= boot ================= */
-/* Outside Claude (e.g. GitHub Pages) there is no window.claude: run fully on this device, work offline */
-if(!window.claude){
-  mode="standalone";
-  if("serviceWorker" in navigator&&location.protocol==="https:")window.addEventListener("load",()=>{navigator.serviceWorker.register("sw.js").catch(()=>{})});
-  if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
+if("serviceWorker" in navigator&&location.protocol==="https:"){
+  window.addEventListener("load",()=>{navigator.serviceWorker.register("sw.js").catch(()=>{})});
 }
+if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
+
 renderAll();
 if(prefs.tab==="products")renderProducts();
-(async()=>{try{if(window.claude&&window.claude.use)dlns=await window.claude.use("downloads")}catch(e){}})();
+
+// Initialize Supabase Connection
 (async()=>{
-  if(!window.claude)return;
-  try{db=window.claude.use?await window.claude.use("db"):null}catch(e){db=null}
-  if(!db){mode="local";renderAll();return}
-  mode="online";
-  db.doc("catalog/main").onSnapshot(s=>{
-    if(pend.cat)return;
-    if(s.exists){catalog=JSON.parse(JSON.stringify(s.data()));LS.set("rc_catalog",catalog)}
-    else if(products().length){pend.cat=true;savePend();flush()}
-    renderAll();
-  },()=>{});
-  db.collection("images").onSnapshot(snap=>{
-    const m={};snap.docs.forEach(d=>{const b=d.data();if(b&&typeof b.src==="string"&&b.src.indexOf("data:image/")===0)m[d.id]=b.src});
-    Object.keys(pend.img).forEach(id=>{if(pend.img[id])m[id]=pend.img[id];else delete m[id]});
-    imgs=m;LS.set("rc_imgs",imgs);renderAll();
-  },()=>{});
-  db.collection("days").onSnapshot(snap=>{
-    const m={};snap.docs.forEach(d=>{m[d.id]=d.data()});remoteDays=m;
-    Object.keys(m).forEach(id=>{if(m[id].dev===dev&&!localDays[id])localDays[id]=JSON.parse(JSON.stringify(m[id]))});
-    const today=dayKey(Date.now());
-    Object.keys(localDays).forEach(id=>{if(!dirty.has(id)&&localDays[id].date!==today&&m[id])delete localDays[id]});
-    persistLocal();renderAll();
-  },()=>{mode="local";renderAll()});
-  flush();
-  setInterval(()=>{if(pendingCount())flush()},15000);
+  await initSupabase();
+  setInterval(()=>{
+    if(sbOfflineQueue.length && sbStatus === "connected") flushSbQueue();
+  }, 10000);
 })();
+
 })();
 </script>
 </body>

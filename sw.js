@@ -1,8 +1,8 @@
 /* Hangtag service worker: keeps the app working offline.
    Serves the saved copy first, then refreshes it in the background,
    so a new version shows up on the next open. */
-const CACHE = "hangtag-v1";
-const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icon.svg", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
+const CACHE = "hangtag-v2";
+const SHELL = ["./", "./index.html", "./config.js", "./manifest.webmanifest", "./icon.svg", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)));

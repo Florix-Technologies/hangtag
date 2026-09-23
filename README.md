@@ -1,52 +1,58 @@
 # Hangtag
 
-Tap-to-sell billing and stock tracking for a clothing pop-up. Built for busy sale days on a phone or laptop — no billing machine, QR code or barcode scanner needed.
+Tap-to-sell billing, stock tracking, and sales analytics for clothing pop-ups and retail stores — powered by a **Supabase (PostgreSQL)** cloud database with real-time multi-device sync and offline resilience.
 
 **Live app:** https://florix-technologies.github.io/hangtag/
 
-## What it does
+---
 
-- **Sell in three taps:** product → size → Cash / UPI / Card. Change quantity or add a discount when you need to.
-- **Live stock:** every bill takes pieces off the shelf. Sizes with 3 or fewer pieces, and sold-out sizes, are flagged.
-- **Sales report:** total sales compared with the previous day or period, sales by hour or day, how customers paid (with the cash that should be in the box), best sellers, sizes that sold, a product × size grid, and every bill with cancel / restore. Download any period as a CSV file.
-- **Product photos:** take a photo with your phone or pick one from your gallery. It is shrunk to a small square thumbnail.
-- **Works offline** once it has been opened, and can be installed on your home screen like an app.
+## Highlights
 
-## Using it
+- **Multi-Device Realtime Sync:** Ring up sales on multiple phones and laptops at the same time. Stock counts, live dashboards, and sales reports update across all devices in real time.
+- **PostgreSQL Cloud Database:** Backed by Supabase PostgreSQL tables for products, inventory sizes, images, bills, and line items.
+- **Works Offline:** If the venue loses WiFi or mobile network, sales keep ringing up smoothly. Transactions are safely queued locally and uploaded automatically when connectivity returns.
+- **Tap-to-Sell Interface:** Product → Size → Cash / UPI / Card. Change quantity or add a discount on the fly. Full desktop keyboard shortcuts (`1`–`0` for products, `1`–`9` for sizes, `C` Cash, `U` UPI, `K` Card).
+- **Live Inventory Tracking:** Stock counts decrement automatically with every bill. Restock alerts highlight sizes with 3 or fewer pieces remaining.
+- **Comprehensive Reports:** Real-time revenue charts by hour, day, or month, payment breakdown, best sellers, product × size matrix, bill cancellation & restore, and 1-click CSV export.
 
-1. Open the app and go to **Products**. Replace the example products with yours: name, price, sizes and how many pieces you have. Add photos, then tap **Save products**.
-2. On sale day use **Sell**. On a laptop you can use the keyboard: `1`–`0` picks a product, `1`–`9` a size, then `C` cash · `U` UPI · `K` card.
-3. Check **Stock** and **Reports** at any time.
+---
 
-### Install it on your phone
+## Database Setup (Supabase / PostgreSQL)
 
-- **Android (Chrome):** open the link → menu ⋮ → **Add to Home screen** (or **Install app**).
-- **iPhone (Safari):** open the link → Share → **Add to Home Screen**.
+Connecting a database to Hangtag takes less than 2 minutes:
 
-## Where your data is kept
+### 1. Create a Supabase Project
+1. Go to [supabase.com](https://supabase.com) and create a free project.
+2. In your Supabase project dashboard, open the **SQL Editor** (left sidebar).
+3. Click **New Query**, paste the contents of [`schema.sql`](file:///c:/Users/RAJ/Downloads/hangtag/schema.sql), and click **Run**.
 
-This version keeps everything **in the browser on each device**. There is no server and no account, so:
+### 2. Connect Hangtag
+Open Hangtag and click the **Database Status Pill** in the top navigation bar (or go to **Products → Cloud Database & Multi-Device Sync**):
+1. Copy your **Project URL** and **Anon Public API Key** from Supabase (*Project Settings → API*).
+2. Paste them into the Database Settings modal in Hangtag and click **Save & Connect**.
+3. *(Optional)* Click **"Push Local Data to Database"** to immediately upload your existing catalog, stock, photos, and sales history to PostgreSQL.
 
-- Your phone and your laptop each keep **their own** products and bills. To combine them, use **Products → Download backup** on one device and **Restore from backup** on the other.
-- Clearing the browser's data for this site deletes it. **Download a backup after every sale day.**
+> **Tip:** You can also pre-configure your Supabase credentials in [`config.js`](file:///c:/Users/RAJ/Downloads/hangtag/config.js).
 
-The code in this repository contains no sales data, prices or photos — those stay on your devices.
-
-## Hosting it on GitHub Pages
-
-1. Put all the files from this folder at the top level of the repository.
-2. The repository must be **public** on a free GitHub account (private repositories need a paid plan for Pages).
-3. Go to **Settings → Pages → Build and deployment**. Set **Source** to *Deploy from a branch*, **Branch** to `main` and the folder to `/ (root)`, then **Save**.
-4. After a minute or two the app is live at `https://<your-username>.github.io/<repository-name>/`.
-
-To update the app later, upload the changed files again. Open the app twice afterwards: the first visit refreshes the saved offline copy, the second shows the new version.
+---
 
 ## Files
 
-| File | What it is |
+| File | Description |
 |---|---|
-| `index.html` | The whole app — HTML, CSS and JavaScript in one file |
-| `sw.js` | Keeps the app working offline |
-| `manifest.webmanifest` | Name and icons used when you add it to your home screen |
-| `icon.svg`, `icon-192.png`, `icon-512.png`, `icon-maskable-512.png`, `apple-touch-icon.png` | App icons |
-| `.nojekyll` | Tells GitHub Pages to publish the files exactly as they are (optional) |
+| `index.html` | Complete single-page app with POS, inventory, reports, and Supabase real-time sync |
+| `schema.sql` | PostgreSQL schema script with tables, indexes, RLS policies, and Realtime publications |
+| `config.js` | Optional configuration file for Supabase project credentials |
+| `sw.js` | Service worker for offline caching and PWA installation |
+| `manifest.webmanifest` | Web app manifest for home screen install on iOS and Android |
+| `icon.svg`, `*.png` | Application icons |
+| `.nojekyll` | GitHub Pages configuration |
+
+---
+
+## Hosting on GitHub Pages
+
+1. Commit and push the repository to GitHub.
+2. Go to **Settings → Pages → Build and deployment**.
+3. Set **Source** to *Deploy from a branch*, select branch `main` and folder `/ (root)`, then click **Save**.
+4. Your POS app is live at `https://<your-username>.github.io/<repository-name>/`.

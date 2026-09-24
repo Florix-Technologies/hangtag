@@ -1,0 +1,14 @@
+# Secrets and credentials
+client_secret*.json
+*.env
+*.env.local
+.env
+.env.*
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/

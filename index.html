@@ -444,6 +444,34 @@ kbd{font-family:inherit;font-size:11.5px;font-weight:700;border:1px solid var(--
 .savebar .sbx{margin-right:auto;font-size:13.5px;color:var(--ink-2)}
 .unsaved{color:var(--warn-ink)}
 
+/* ---------- sign-in screen ---------- */
+.authgate{position:fixed;inset:0;z-index:200;background:var(--wash);display:flex;align-items:flex-start;justify-content:center;padding:max(24px,6vh) 16px 24px;overflow:auto}
+html.gated body{overflow:hidden}
+.authcard{width:100%;max-width:400px;background:var(--bg);border:1px solid var(--line);border-radius:18px;padding:28px 24px 24px;box-shadow:var(--shadow-sm);margin:auto 0}
+.authhead{text-align:center}
+.authcard .logo{width:44px;height:44px}
+.authcard h1{margin:10px 0 8px}
+.authsub{color:var(--ink-2);margin:0 0 20px;line-height:1.5;font-size:14.5px;text-align:center}
+.gbtn{width:100%;padding:12px 14px;font-size:15px;gap:10px}
+.gbtn svg{width:18px;height:18px;flex:none}
+.gbtn:disabled,.authcard button:disabled{opacity:.6;cursor:progress}
+.author{display:flex;align-items:center;gap:12px;margin:18px 0 14px;color:var(--ink-3);font-size:12.5px;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+.author::before,.author::after{content:"";flex:1;height:1px;background:var(--line)}
+.authtabs{display:flex;gap:3px;background:var(--wash);padding:4px;border-radius:12px;margin-bottom:14px}
+.authtabs button{flex:1;display:flex;align-items:center;justify-content:center;text-align:center;padding:8px 6px;border-radius:9px;font-weight:600;font-size:14px;color:var(--ink-2)}
+.authtabs button[aria-pressed="true"]{background:var(--bg);color:var(--ink);box-shadow:0 0 0 1px var(--line),var(--shadow-sm)}
+.authform{display:flex;flex-direction:column;gap:12px;text-align:left}
+.authform .f span.lab{font-size:12.5px}
+.authform .f input{font-size:16px;padding:11px 12px}
+.pwhint{font-size:12px;font-weight:500;color:var(--ink-3)}
+.authlinks{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px;min-height:24px}
+.authlinks .link{font-size:13.5px}
+.authnote{margin:14px 0 0;padding:10px 12px;border-radius:10px;background:var(--good-soft);color:var(--good-ink);font-size:13.5px;line-height:1.45}
+.autherr{margin:14px 0 0;padding:10px 12px;border-radius:10px;background:var(--crit-soft);color:var(--crit);font-size:13.5px;line-height:1.45}
+.authcenter{text-align:center;margin-top:14px}
+.authcard:focus{outline:none}
+.acct{cursor:pointer}
+
 @keyframes up{from{transform:translateY(14px);opacity:.5}to{transform:none;opacity:1}}
 .toast{animation-name:toastup}
 @keyframes toastup{from{transform:translate(-50%,14px);opacity:.5}to{transform:translate(-50%,0);opacity:1}}
@@ -454,6 +482,45 @@ kbd{font-family:inherit;font-size:11.5px;font-weight:700;border:1px solid var(--
 </style>
 </head>
 <body>
+<div id="authGate" class="authgate" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+  <div class="authcard" tabindex="-1">
+    <div class="authhead">
+      <svg class="logo" viewBox="0 0 28 28" aria-hidden="true"><path d="M3.5 13.6V5.5a2 2 0 0 1 2-2h8.1a2 2 0 0 1 1.42.59l9.2 9.2a2 2 0 0 1 0 2.83l-8.1 8.1a2 2 0 0 1-2.83 0l-9.2-9.2a2 2 0 0 1-.59-1.42z" fill="#10131F"/><circle cx="9.2" cy="9.2" r="2.1" fill="#fff"/></svg>
+      <h1 id="authTitle" class="wordmark">Hangtag</h1>
+    </div>
+    <p id="authMsg" class="authsub" aria-live="polite">Checking sign-in…</p>
+
+    <div id="authForms" hidden>
+      <button id="googleBtn" class="btn gbtn" type="button"><svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg><span>Continue with Google</span></button>
+      <div class="author"><span>or use email</span></div>
+      <div id="authTabs" class="authtabs" role="group" aria-label="Sign in or create an account">
+        <button type="button" data-authtab="signin" aria-pressed="true">Sign in</button>
+        <button type="button" data-authtab="signup" aria-pressed="false">Create account</button>
+      </div>
+      <form id="authForm" class="authform" novalidate>
+        <label class="f"><span class="lab">Email</span><input id="authEmail" type="email" name="email" autocomplete="email" inputmode="email" autocapitalize="off" spellcheck="false" required></label>
+        <label id="pwWrap" class="f"><span class="lab">Password</span><input id="authPass" type="password" name="password" autocomplete="current-password" minlength="6" required><span id="pwHint" class="pwhint" hidden>At least 6 characters.</span></label>
+        <button id="authSubmit" class="btn primary gbtn" type="submit">Sign in</button>
+      </form>
+      <div class="authlinks">
+        <button id="forgotBtn" class="link" type="button">Forgot password?</button>
+        <button id="backBtn" class="link" type="button" hidden>Back to sign in</button>
+        <button id="resendBtn" class="link" type="button" hidden>Resend confirmation email</button>
+      </div>
+    </div>
+
+    <form id="resetForm" class="authform" novalidate hidden>
+      <label class="f"><span class="lab">New password</span><input id="newPass" type="password" autocomplete="new-password" minlength="6" required><span class="pwhint">At least 6 characters.</span></label>
+      <label class="f"><span class="lab">Type it again</span><input id="newPass2" type="password" autocomplete="new-password" minlength="6" required></label>
+      <button id="resetSubmit" class="btn primary gbtn" type="submit">Save new password</button>
+      <div class="authcenter" style="margin-top:2px"><button id="resetCancel" class="link" type="button">Cancel and sign out</button></div>
+    </form>
+
+    <div class="authcenter"><button id="switchBtn" class="link" type="button" hidden>Sign in with a different account</button></div>
+    <p id="authNote" class="authnote" role="status" hidden></p>
+    <p id="authErr" class="autherr" role="alert" hidden></p>
+  </div>
+</div>
 <header class="appbar">
   <div class="appbar-in">
     <div class="brand">
@@ -467,6 +534,7 @@ kbd{font-family:inherit;font-size:11.5px;font-weight:700;border:1px solid var(--
       <button role="tab" data-tab="products" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 4 3.5 6.6l1.8 4.1 2.2-.9V20h9V9.8l2.2.9 1.8-4.1-5-2.6c-.5 1.3-1.9 2.2-3.5 2.2S9 5.3 8.5 4z"/></svg><span>Products</span></button>
     </nav>
     <button id="sync" class="sync" type="button" tabindex="-1" style="cursor:default" aria-label="Cloud sync status"><i></i><span>Connecting…</span></button>
+    <button id="acctBtn" class="sync acct" type="button" hidden>Sign out</button>
   </div>
 </header>
 
@@ -675,9 +743,375 @@ function myOpenDocId(){
   return id;
 }
 
+/* ================= Sign-in (Google or email, via Supabase Auth) ================= */
+let authUser = null;
+const cloudWanted = !!(sbUrl && sbKey);                    // config.js points at a Supabase project
+const cloudConfigured = cloudWanted && !!window.supabase;  // ...and the Supabase library loaded
+const HOME_URL = location.origin + location.pathname;
+const AUTH_STORE = "hangtag-auth";          // where supabase-js keeps the session
+const RESET_KEY = "hangtag_pw_reset";       // time this device asked for a reset link
+const RECOVERY_KEY = "hangtag_recovery";    // a reset link was opened; new password not saved yet
+const OTP_TYPES = ["signup", "invite", "magiclink", "recovery", "email_change", "email"];
+let authMode = "signin";   // "signin" | "signup" | "forgot"
+let authSettings = null;   // Supabase's public auth settings: which sign-in methods are switched on
+let bootDone = false, signingIn = null;
+let signedOutByUser = false;   // set by Sign out; a token refresh that finishes afterwards must not sign back in
+const clearStoredSession = () => [AUTH_STORE, AUTH_STORE + "-code-verifier", AUTH_STORE + "-user"].forEach(k => { try{ localStorage.removeItem(k); }catch(e){} });
+function makeSbClient(){
+  return window.supabase.createClient(sbUrl, sbKey, {
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: "pkce", storageKey: AUTH_STORE }
+  });
+}
+const aEl = id => document.getElementById(id);
+const recent = key => { const t = +LS.get(key, 0) || 0; return t > 0 && Date.now() - t < 3600e3; };
+function setAuthBusy(on){ ["authSubmit","googleBtn","resendBtn","resetSubmit"].forEach(id => { aEl(id).disabled = on; }); }
+function setAuthError(text){ const e = aEl("authErr"); e.textContent = text || ""; e.hidden = !text; }
+function setAuthNote(text){ const e = aEl("authNote"); e.textContent = text || ""; e.hidden = !text; }
+/* While the sign-in screen is up, the till behind it can't be clicked, tabbed to or read out */
+function setAppInert(on){
+  document.querySelectorAll("body > *").forEach(el => { if(el.id !== "authGate" && el.tagName !== "SCRIPT") el.inert = on; });
+}
+function setAuthMode(mode){
+  authMode = mode;
+  const signup = mode === "signup", forgot = mode === "forgot";
+  document.querySelectorAll("[data-authtab]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.authtab === mode)));
+  aEl("authTabs").hidden = forgot;
+  aEl("pwWrap").hidden = forgot;
+  const pass = aEl("authPass");
+  pass.required = !forgot;
+  pass.setAttribute("autocomplete", signup ? "new-password" : "current-password");
+  aEl("pwHint").hidden = !signup;
+  aEl("authSubmit").textContent = signup ? "Create account" : forgot ? "Send reset link" : "Sign in";
+  aEl("forgotBtn").hidden = mode !== "signin";
+  aEl("backBtn").hidden = !forgot;
+  aEl("resendBtn").hidden = true;
+  aEl("authMsg").textContent = forgot ? "Enter your email and we'll send you a link to set a new password."
+    : signup ? "Create an account with your email and a password, or continue with Google."
+    : "Sign in to open billing and stock.";
+  setAuthError(""); setAuthNote("");
+}
+function showGate(state, opts){
+  opts = opts || {};
+  const gate = aEl("authGate");
+  gate.hidden = false;
+  document.documentElement.classList.add("gated");
+  setAppInert(true);
+  aEl("authForms").hidden = state !== "signin";
+  aEl("resetForm").hidden = state !== "reset";
+  aEl("switchBtn").hidden = state !== "denied";
+  setAuthBusy(false);
+  if(state === "signin") setAuthMode(opts.mode || authMode);
+  else if(state === "loading") aEl("authMsg").textContent = opts.message || "Checking sign-in…";
+  else if(state === "denied") aEl("authMsg").textContent = (opts.email || "This account") + " doesn't have access to this shop yet. Ask the owner to add it, or sign in with another account.";
+  else if(state === "reset") aEl("authMsg").textContent = "Choose a new password for " + (opts.email || "your account") + ".";
+  setAuthError(opts.error || "");
+  setAuthNote(opts.note || "");
+  if(state === "signin" && opts.showResend) aEl("resendBtn").hidden = false;
+  // Move focus into the card (not an input, so phones don't pop the keyboard)
+  if(!gate.contains(document.activeElement)) gate.querySelector(".authcard").focus({ preventScroll: true });
+}
+function hideGate(){ aEl("authGate").hidden = true; document.documentElement.classList.remove("gated"); setAppInert(false); }
+const inResetFlow = () => !aEl("authGate").hidden && !aEl("resetForm").hidden;
+function showAccount(email){
+  const b = aEl("acctBtn");
+  b.hidden = !email; b.textContent = "Sign out"; delete b.dataset.confirm;
+  b.title = email ? "Signed in as " + email : "";
+}
+/* Plain-words versions of Supabase's error messages */
+function authErrorText(e){
+  const m = (e && (e.message || e.error_description)) || String(e || "Something went wrong.");
+  const code = (e && e.code) || "";
+  if(code === "invalid_credentials" || /invalid login credentials/i.test(m)) return "Wrong email or password.";
+  if(code === "email_not_confirmed" || /email not confirmed/i.test(m)) return "Confirm your email first. Open the link we emailed you, then sign in.";
+  if(code === "user_already_exists" || /already (been )?registered/i.test(m)) return "An account with this email already exists. Sign in instead.";
+  if(code === "email_address_not_authorized" || /not allowed for this address|default SMTP/i.test(m)) return "This shop can't send email to that address yet. Use Continue with Google, or ask the owner to set up email sending in Supabase.";
+  if(code === "over_email_send_rate_limit" || /email rate limit/i.test(m)) return "Too many emails were sent in the last hour. Try again later, or use Continue with Google.";
+  if(code === "weak_password" || /password should/i.test(m)) return m;
+  if(/rate limit|too many/i.test(m) || /over_.*rate_limit/.test(code)) return "Too many attempts. Wait a few minutes and try again.";
+  if(/failed to fetch|networkerror|load failed/i.test(m) || e && e.name === "AuthRetryableFetchError") return "Can't reach the server. Check the internet connection and try again.";
+  return m;
+}
+/* Error codes from a link Supabase or Google sent back. Never show the link's own text: anyone can craft it. */
+function linkErrorText(code){
+  code = String(code || "");
+  if(/otp_expired|expired|invalid|flow_state/i.test(code)) return "That link has expired or was already used. Ask for a new one.";
+  if(/access_denied|cancel/i.test(code)) return "Sign-in was cancelled. Try again when you're ready.";
+  return "Sign-in didn't finish. Try again.";
+}
+const isNetErr = e => !!e && (e.name === "AuthRetryableFetchError" || e.status === 0 || e.status >= 500 || /failed to fetch|networkerror|load failed/i.test(e.message || ""));
+async function loadAuthSettings(){
+  if(authSettings) return authSettings;
+  const r = await fetch(sbUrl.replace(/\/+$/, "") + "/auth/v1/settings", { headers: { apikey: sbKey }, cache: "no-store" });
+  if(!r.ok) throw new Error("Auth settings " + r.status);
+  authSettings = await r.json();
+  return authSettings;
+}
+/* Cloud reads and writes need a live signed-in session. Without one supabase-js falls back to the
+   public key, and the server would quietly answer with nothing. */
+async function sbSessionOk(){
+  if(!sbClient) return false;
+  try{ const { data } = await sbClient.auth.getSession(); return !!(data && data.session); }catch(e){ return false; }
+}
+/* Is this account on the shop's access list? */
+async function checkAllowed(){
+  const { data, error } = await sbClient.rpc("hangtag_is_allowed");
+  if(!error) return data === true;
+  // Access list not created in the database yet: the table rules still decide
+  if(error.code === "PGRST202" || /hangtag_is_allowed/.test(error.message || "")) return true;
+  throw error;
+}
+function workLocallyAs(email){
+  hideGate(); showAccount(email);
+  sbStatus = "disconnected"; mode = "standalone"; renderSync();
+}
+function onSignedIn(session){
+  if(signingIn) return signingIn;   // one check at a time; several events can ask at once
+  signingIn = doSignedIn(session).finally(() => { signingIn = null; });
+  return signingIn;
+}
+async function doSignedIn(session){
+  if(inResetFlow()) return;
+  const email = (session && session.user && session.user.email) || "";
+  let ok;
+  try{ ok = await checkAllowed(); }
+  catch(e){
+    // No internet: an account already approved on this device keeps selling offline
+    if(email && LS.get("hangtag_auth_email", "") === email){ authUser = session.user; workLocallyAs(email); return; }
+    showGate("signin", { error: "Couldn't check your access. Check the internet connection and try again." });
+    return;
+  }
+  if(!ok){ authUser = null; LS.set("hangtag_auth_email", ""); showAccount(""); showGate("denied", { email }); return; }
+  authUser = session.user;
+  LS.set("hangtag_auth_email", email);
+  hideGate(); showAccount(email);
+  await initSupabase();
+}
+function onSignedOut(){
+  authUser = null;
+  LS.set("hangtag_auth_email", ""); LS.set(RESET_KEY, ""); LS.set(RECOVERY_KEY, "");
+  if(sbRealtimeChannel && sbClient){ sbClient.removeChannel(sbRealtimeChannel); sbRealtimeChannel = null; }
+  sbStatus = "disconnected"; mode = "standalone"; renderSync();
+  showAccount("");
+  showGate("signin", { mode: "signin" });
+}
+async function signInWithGoogle(){
+  setAuthError(""); setAuthNote("");
+  if(!navigator.onLine){ setAuthError("You're offline. Connect to the internet to sign in."); return; }
+  signedOutByUser = false;
+  setAuthBusy(true);
+  try{
+    let settings = null;
+    try{ settings = await loadAuthSettings(); }catch(e){ /* couldn't check; let Supabase answer */ }
+    if(settings && settings.external && settings.external.google === false){
+      setAuthBusy(false);
+      setAuthError("Google sign-in isn't switched on for this shop yet. Use email and password for now, or ask the owner to turn on Google in Supabase.");
+      return;
+    }
+    LS.set(RESET_KEY, "");
+    const { error } = await sbClient.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: HOME_URL, queryParams: { prompt: "select_account" } }
+    });
+    if(error) throw error;
+    // The browser is now on its way to Google (buttons stay disabled; "pageshow" re-enables them on Back)
+  }catch(e){
+    setAuthBusy(false);
+    setAuthError("Google sign-in failed: " + authErrorText(e));
+  }
+}
+async function onAuthSubmit(ev){
+  ev.preventDefault();
+  const email = aEl("authEmail").value.trim(), password = aEl("authPass").value;
+  setAuthError(""); setAuthNote(""); aEl("resendBtn").hidden = true;
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ setAuthError("Enter a valid email address."); aEl("authEmail").focus(); return; }
+  if(authMode !== "forgot" && password.length < 6){ setAuthError("Password must be at least 6 characters."); aEl("authPass").focus(); return; }
+  if(!navigator.onLine){ setAuthError("You're offline. Connect to the internet to sign in."); return; }
+  signedOutByUser = false;
+  setAuthBusy(true);
+  try{
+    if(authMode === "signin"){
+      const { data, error } = await sbClient.auth.signInWithPassword({ email, password });
+      if(error){
+        if(error.code === "email_not_confirmed" || /email not confirmed/i.test(error.message || "")) aEl("resendBtn").hidden = false;
+        throw error;
+      }
+      aEl("authPass").value = "";
+      LS.set(RESET_KEY, "");
+      showGate("loading", { message: "Signing you in…" });
+      await onSignedIn(data.session);
+    } else if(authMode === "signup"){
+      LS.set(RESET_KEY, "");
+      const { data, error } = await sbClient.auth.signUp({ email, password, options: { emailRedirectTo: HOME_URL } });
+      if(error) throw error;
+      aEl("authPass").value = "";
+      if(data.session){ showGate("loading", { message: "Signing you in…" }); await onSignedIn(data.session); return; }
+      // Supabase doesn't reveal existing emails: an existing account comes back with no identities
+      if(data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0){
+        showGate("signin", { mode: "signin", error: "An account with this email already exists. Sign in, or use Forgot password." });
+        return;
+      }
+      showGate("signin", { mode: "signin", note: "Almost done. We sent a confirmation link to " + email + ". Open it, then sign in here.", showResend: true });
+    } else {
+      const { error } = await sbClient.auth.resetPasswordForEmail(email, { redirectTo: HOME_URL });
+      if(error) throw error;
+      LS.set(RESET_KEY, Date.now());
+      showGate("signin", { mode: "signin", note: "If there's an account for " + email + ", a reset link is on its way. Open it in this same browser to choose a new password." });
+    }
+  }catch(e){
+    setAuthError(authErrorText(e));
+  }finally{
+    setAuthBusy(false);
+  }
+}
+async function resendConfirmation(){
+  const email = aEl("authEmail").value.trim();
+  if(!email){ setAuthError("Enter your email first."); aEl("authEmail").focus(); return; }
+  setAuthBusy(true);
+  try{
+    const { error } = await sbClient.auth.resend({ type: "signup", email, options: { emailRedirectTo: HOME_URL } });
+    if(error) throw error;
+    setAuthError(""); setAuthNote("Sent a new confirmation link to " + email + ".");
+  }catch(e){
+    setAuthError(authErrorText(e));
+  }finally{
+    setAuthBusy(false);
+  }
+}
+function enterReset(email){ LS.set(RECOVERY_KEY, Date.now()); showGate("reset", { email }); }
+async function onResetSubmit(ev){
+  ev.preventDefault();
+  const p1 = aEl("newPass").value, p2 = aEl("newPass2").value;
+  setAuthError("");
+  if(p1.length < 6){ setAuthError("Password must be at least 6 characters."); aEl("newPass").focus(); return; }
+  if(p1 !== p2){ setAuthError("The two passwords don't match."); aEl("newPass2").focus(); return; }
+  setAuthBusy(true);
+  try{
+    const { error } = await sbClient.auth.updateUser({ password: p1 });
+    if(error) throw error;
+    LS.set(RESET_KEY, ""); LS.set(RECOVERY_KEY, "");
+    aEl("newPass").value = ""; aEl("newPass2").value = "";
+    const { data: { session } } = await sbClient.auth.getSession();
+    if(session){ showGate("loading", { message: "Password updated. Signing you in…" }); await onSignedIn(session); if(authUser) toast("Password updated."); }
+    else showGate("signin", { mode: "signin", note: "Password updated. Sign in with your new password." });
+  }catch(e){
+    setAuthError(authErrorText(e));
+  }finally{
+    setAuthBusy(false);
+  }
+}
+async function signOut(){
+  // Local sign-out: only this device. Offline with an expired token supabase-js returns an error and keeps
+  // the session (or waits on the network), which would sign the old account back in later, so remove it here.
+  signedOutByUser = true;
+  let res = null;
+  try{
+    res = await Promise.race([
+      sbClient.auth.signOut({ scope: "local" }),
+      new Promise(r => setTimeout(() => r({ error: new Error("Sign-out timed out") }), 3000))
+    ]);
+  }catch(e){ res = { error: e }; }
+  if(res && res.error){ console.warn("Sign-out notice:", res.error); clearStoredSession(); }
+  onSignedOut();
+}
+async function bootAuth(){
+  const lastEmail = LS.get("hangtag_auth_email", "");
+  if(!cloudWanted){ hideGate(); await initSupabase(); return; }   // no cloud set up: local-only till
+  if(!cloudConfigured){
+    // The sign-in library didn't load (first open with no internet, or the CDN is blocked)
+    if(lastEmail){ workLocallyAs(lastEmail); return; }
+    showGate("loading", { message: "Couldn't load the sign-in service. Check the internet connection, then reload the page." });
+    return;
+  }
+  sbClient = makeSbClient();
+  let recovering = false;
+  // Listen before the client finishes reading the address bar, so a password-reset link is recognised
+  sbClient.auth.onAuthStateChange((event, s) => {
+    if(event === "PASSWORD_RECOVERY"){ recovering = true; return; }
+    if(event === "SIGNED_OUT"){
+      LS.set("hangtag_auth_email", "");
+      if(bootDone && (authUser || aEl("authGate").hidden)) setTimeout(onSignedOut, 0);
+      return;
+    }
+    if(!s || !s.user) return;
+    // A refresh that was already under way when the user signed out: throw it away
+    if(signedOutByUser && (event === "SIGNED_IN" || event === "TOKEN_REFRESHED")){ clearStoredSession(); return; }
+    // Another tab signed in as someone else: start over as that account
+    if(authUser && s.user.id !== authUser.id){ location.reload(); return; }
+    if(!bootDone || inResetFlow()) return;
+    // A token refresh that failed offline has now worked: finish signing in / reconnect
+    if(!authUser && (event === "SIGNED_IN" || event === "TOKEN_REFRESHED")) setTimeout(() => onSignedIn(s), 0);
+    else if(authUser && event === "TOKEN_REFRESHED" && sbStatus !== "connected") setTimeout(() => initSupabase(), 0);
+  });
+  const qs = new URLSearchParams(location.search), hs = new URLSearchParams(location.hash.slice(1));
+  const tokenHash = qs.get("token_hash"), otpType = qs.get("type");
+  const linkErr = qs.get("error_code") || hs.get("error_code") || qs.get("error") || hs.get("error");
+  const cameBack = qs.has("code") || hs.has("access_token") || !!tokenHash;
+  // Email links that carry a token_hash work in any browser, not just the one that asked. They need the
+  // Supabase email templates to link to {{ .RedirectTo }}?token_hash={{ .TokenHash }}&type=... (see schema.sql notes)
+  let otpError = "";
+  if(tokenHash && OTP_TYPES.includes(otpType)){
+    try{
+      const { error } = await sbClient.auth.verifyOtp({ token_hash: tokenHash, type: otpType });
+      if(error) otpError = linkErrorText(error.code || error.message);
+      else if(otpType === "recovery") recovering = true;
+    }catch(e){ otpError = linkErrorText(""); }
+  }
+  let hasStored = false;
+  try{ hasStored = !!localStorage.getItem(AUTH_STORE); }catch(e){}
+  const sessP = sbClient.auth.getSession().then(r => r, e => ({ data: { session: null }, error: e }));
+  // An approved till shouldn't sit on "Checking sign-in…" on a slow or captive network: open locally after 4 s
+  const r = (lastEmail && hasStored && !cameBack) ? await Promise.race([sessP, new Promise(res => setTimeout(() => res(null), 4000))]) : await sessP;
+  const session = r && r.data ? r.data.session : null, sessErr = r ? r.error : null;
+  if(cameBack || linkErr) history.replaceState(null, "", location.pathname);   // tidy the address bar
+  if(r === null){
+    bootDone = true;
+    workLocallyAs(lastEmail);
+    sessP.then(rr => { const s = rr && rr.data && rr.data.session; if(s && !authUser) onSignedIn(s); });
+    return;
+  }
+  if(session && (recovering || (qs.has("code") && recent(RESET_KEY)) || recent(RECOVERY_KEY))){
+    bootDone = true;
+    enterReset(session.user && session.user.email);
+    return;
+  }
+  bootDone = true;
+  if(session){ showGate("loading"); await onSignedIn(session); return; }
+  // Approved before, and the internet is down or flaky: keep selling on this device
+  if(lastEmail && (!navigator.onLine || isNetErr(sessErr))){ workLocallyAs(lastEmail); return; }
+  showGate("signin", {
+    error: otpError || (linkErr ? linkErrorText(linkErr) : ""),
+    note: !otpError && !linkErr && cameBack
+      ? "If you just confirmed your email, sign in below. If you were resetting your password, open the reset link in the same browser you asked from, or ask for a new one."
+      : ""
+  });
+}
+aEl("googleBtn").addEventListener("click", signInWithGoogle);
+aEl("authForm").addEventListener("submit", onAuthSubmit);
+aEl("resetForm").addEventListener("submit", onResetSubmit);
+aEl("resetCancel").addEventListener("click", signOut);
+document.querySelectorAll("[data-authtab]").forEach(b => b.addEventListener("click", () => setAuthMode(b.dataset.authtab)));
+aEl("forgotBtn").addEventListener("click", () => { setAuthMode("forgot"); aEl("authEmail").focus(); });
+aEl("backBtn").addEventListener("click", () => { setAuthMode("signin"); aEl("authEmail").focus(); });
+aEl("resendBtn").addEventListener("click", resendConfirmation);
+aEl("switchBtn").addEventListener("click", signOut);
+aEl("acctBtn").addEventListener("click", e => {
+  const b = e.currentTarget;
+  if(b.dataset.confirm){ signOut(); return; }
+  b.dataset.confirm = "1"; b.textContent = "Tap again to sign out";
+  setTimeout(() => { if(b.dataset.confirm){ delete b.dataset.confirm; b.textContent = "Sign out"; } }, 3000);
+});
+// Back from Google's page restores this page as it was, buttons disabled: turn them back on
+window.addEventListener("pageshow", e => { if(e.persisted && !aEl("authGate").hidden) setAuthBusy(false); });
+
 /* ================= Supabase Database Engine ================= */
-async function initSupabase(forceConnect = false){
-  if(!sbUrl || !sbKey || !window.supabase){
+let sbInitP = null;
+function initSupabase(){
+  if(sbInitP) return sbInitP;
+  sbInitP = initSupabaseOnce().finally(() => { sbInitP = null; });
+  return sbInitP;
+}
+async function initSupabaseOnce(){
+  if(!sbUrl || !sbKey || !window.supabase || !authUser){
     sbStatus = "disconnected";
     mode = "standalone";
     renderSync();
@@ -686,7 +1120,8 @@ async function initSupabase(forceConnect = false){
   sbStatus = "connecting";
   renderSync();
   try{
-    sbClient = window.supabase.createClient(sbUrl, sbKey, { auth: { persistSession: false } });
+    if(!sbClient) sbClient = makeSbClient();
+    if(!(await sbSessionOk())){ sbStatus = "error"; mode = "standalone"; renderSync(); return false; }
     // Quick ping to check connection & schema
     const { error } = await sbClient.from('hangtag_products').select('id', { head: true, count: 'exact' });
     if(error){
@@ -833,7 +1268,7 @@ async function onRemoteImageEvent(payload){
 }
 
 async function pullCatalogFromSupabase(remoteIsTruth = false){
-  if(!sbClient) return;
+  if(!sbClient || !(await sbSessionOk())) return;
   try{
     const { data: prods, error: pErr } = await sbClient.from('hangtag_products').select('*').order('sort_order', { ascending: true });
     if(pErr || !prods) return;
@@ -865,7 +1300,7 @@ async function pullCatalogFromSupabase(remoteIsTruth = false){
 }
 
 async function pullFromSupabase(showToast = true){
-  if(!sbClient || sbStatus !== "connected") return;
+  if(!sbClient || sbStatus !== "connected" || !(await sbSessionOk())) return;
   try{
     await pullCatalogFromSupabase();
     
@@ -922,8 +1357,8 @@ async function pullFromSupabase(showToast = true){
 }
 
 async function pushLocalToSupabase(){
-  if(!sbClient || sbStatus !== "connected"){
-    toast("Please connect to your Supabase database first.");
+  if(!sbClient || sbStatus !== "connected" || !(await sbSessionOk())){
+    toast("Not connected to the cloud. Your changes are saved on this device.");
     return false;
   }
   try{
@@ -1003,10 +1438,19 @@ async function pushLocalToSupabase(){
   }
 }
 
-async function flushSbQueue(){
+let sbFlushP = null, sbFlushAgain = false;
+function flushSbQueue(){
+  if(sbFlushP){ sbFlushAgain = true; return sbFlushP; }
+  sbFlushP = (async () => { do{ sbFlushAgain = false; await flushSbQueueOnce(); } while(sbFlushAgain); })()
+    .finally(() => { sbFlushP = null; });
+  return sbFlushP;
+}
+async function flushSbQueueOnce(){
   if(!sbClient || sbStatus !== "connected" || !sbOfflineQueue.length) return;
+  if(!(await sbSessionOk())) return;   // keep everything queued until signed in again
   const queue = [...sbOfflineQueue];
   const remaining = [];
+  const done = new Set();
   
   for(const item of queue){
     try{
@@ -1028,12 +1472,15 @@ async function flushSbQueue(){
       } else if(item.type === "void"){
         sbOk(await sbClient.from('hangtag_sales').update({ is_void: item.isVoid }).eq('id', item.id));
       }
+      done.add(item);
     }catch(err){
       console.warn("Queue sync item failed:", err);
       remaining.push(item);
+      if(item.type === "sale") break;   // keep order: a later cancel must not run before its bill exists
     }
   }
-  sbOfflineQueue = remaining;
+  // Remove only what uploaded; anything added meanwhile stays
+  sbOfflineQueue = sbOfflineQueue.filter(x => !done.has(x));
   saveSbQueue();
   renderSync();
 }
@@ -1177,31 +1624,11 @@ async function checkout(pay){
   
   toast(`Bill #${no} saved · ${inr(sale.total)} · ${PAYN[pay]}`,()=>voidSale(sale.id));
   
-  // Push to Supabase Cloud Database
-  if(sbClient && sbStatus === "connected"){
-    try{
-      sbOk(await sbClient.from('hangtag_sales').insert({
-        id: sale.id,
-        timestamp: sale.t,
-        subtotal: sale.sub,
-        discount: sale.disc,
-        total: sale.total,
-        payment_method: sale.pay,
-        device_id: dev,
-        is_void: false
-      }));
-      await upsertSaleItems(saleItemRows(sale));
-    }catch(err){
-      console.warn("Supabase sale upload failed, queueing offline:", err);
-      sbOfflineQueue.push({ type: "sale", sale });
-      saveSbQueue();
-      renderSync();
-    }
-  } else {
-    sbOfflineQueue.push({ type: "sale", sale });
-    saveSbQueue();
-    renderSync();
-  }
+  // Queue for the cloud first, so the bill survives a closed tab or a dropped connection, then upload
+  sbOfflineQueue.push({ type: "sale", sale });
+  saveSbQueue();
+  renderSync();
+  flushSbQueue();
 }
 
 async function voidSale(sid){
@@ -1211,20 +1638,10 @@ async function voidSale(sid){
   persistLocal();
   renderAll();
   toast("Bill cancelled — its stock is back on the shelf.");
-  
-  if(sbClient && sbStatus === "connected"){
-    try{
-      sbOk(await sbClient.from('hangtag_sales').update({ is_void: true }).eq('id', sid));
-    }catch(e){
-      sbOfflineQueue.push({ type: "void", id: sid, isVoid: true });
-      saveSbQueue();
-      renderSync();
-    }
-  } else {
-    sbOfflineQueue.push({ type: "void", id: sid, isVoid: true });
-    saveSbQueue();
-    renderSync();
-  }
+  sbOfflineQueue.push({ type: "void", id: sid, isVoid: true });
+  saveSbQueue();
+  renderSync();
+  flushSbQueue();
 }
 
 async function unvoid(sid){
@@ -1243,16 +1660,10 @@ async function unvoid(sid){
   persistLocal();
   renderAll();
   toast("Bill restored.");
-  
-  if(sbClient && sbStatus === "connected"){
-    try{
-      sbOk(await sbClient.from('hangtag_sales').update({ is_void: false }).eq('id', sid));
-    }catch(e){
-      sbOfflineQueue.push({ type: "void", id: sid, isVoid: false });
-      saveSbQueue();
-      renderSync();
-    }
-  }
+  sbOfflineQueue.push({ type: "void", id: sid, isVoid: false });
+  saveSbQueue();
+  renderSync();
+  flushSbQueue();
 }
 
 /* ================= stock ================= */
@@ -1659,6 +2070,7 @@ document.addEventListener("change",async e=>{
 
 document.addEventListener("keydown",e=>{
   if(e.key==="Escape"){if(openPid||billOpen){closeSheets();e.preventDefault()}hideTip();return}
+  if(!$("#authGate").hidden)return;
   if(prefs.tab!=="sell"||e.metaKey||e.ctrlKey||e.altKey)return;
   if(e.target.matches&&e.target.matches("input,select,textarea"))return;
   const k=e.key.toLowerCase();
@@ -1674,8 +2086,14 @@ document.addEventListener("keydown",e=>{
 let rT=null;
 window.addEventListener("resize",()=>{clearTimeout(rT);rT=setTimeout(()=>{if(prefs.tab==="report")renderReport()},160)});
 window.addEventListener("online",async ()=>{
-  if(sbClient && sbStatus !== "connected") await initSupabase();
-  else if(sbClient) await flushSbQueue();
+  if(!sbClient || inResetFlow()) return;
+  if(cloudConfigured && !authUser){
+    // If the token refresh is still cooling down this finds nothing; the TOKEN_REFRESHED listener finishes later
+    try{ const { data: { session } } = await sbClient.auth.getSession(); if(session) await onSignedIn(session); }catch(e){}
+    return;
+  }
+  if(sbStatus !== "connected") await initSupabase();
+  else await flushSbQueue();
 });
 
 /* ================= boot ================= */
@@ -1687,11 +2105,15 @@ if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catc
 renderAll();
 if(prefs.tab==="products")renderProducts();
 
-// Initialize Supabase Connection
+// Sign in, then connect to the cloud database
 (async()=>{
-  await initSupabase();
+  await bootAuth();
+  let tick = 0;
   setInterval(()=>{
+    tick++;
     if(sbOfflineQueue.length && sbStatus === "connected") flushSbQueue();
+    // Signed in but the cloud dropped out: try again every 30 s while online
+    else if(authUser && sbStatus !== "connected" && navigator.onLine && tick % 3 === 0) initSupabase();
   }, 10000);
 })();
 

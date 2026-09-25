@@ -461,6 +461,10 @@ html.gated body{overflow:hidden}
 .authcard button:disabled{opacity:.6;cursor:progress}
 .author{display:flex;align-items:center;gap:12px;margin:18px 0 14px;color:var(--ink-3);font-size:12.5px;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
 .author::before,.author::after{content:"";flex:1;height:1px;background:var(--line)}
+.authtabs{display:flex;gap:3px;background:var(--wash);padding:4px;border-radius:12px;margin-bottom:16px}
+.authtabs button{flex:1;display:flex;align-items:center;justify-content:center;padding:9px 6px;border-radius:9px;font-weight:600;font-size:14.5px;color:var(--ink-2)}
+.authtabs button[aria-pressed="true"]{background:var(--bg);color:var(--ink);box-shadow:0 0 0 1px var(--line),var(--shadow-sm)}
+.authfine .link{font-size:13px;padding:0 2px}
 .authform{display:flex;flex-direction:column;gap:12px;text-align:left}
 .authform .f input,.authform .f select,.authform .f textarea{font-size:16px;padding:11px 12px}
 .pwhint{font-size:12px;font-weight:500;color:var(--ink-3)}
@@ -527,23 +531,26 @@ html.gated body{overflow:hidden}
     </div>
     <p id="authMsg" class="authsub" aria-live="polite">Checking sign-in…</p>
     <div id="authForms" hidden>
+      <div id="authTabs" class="authtabs" role="group" aria-label="Sign in or create an account">
+        <button type="button" data-authtab="signin" aria-pressed="true">Sign in</button>
+        <button type="button" data-authtab="signup" aria-pressed="false">Create account</button>
+      </div>
       <div id="provBtns" class="provbtns">
         <button class="btn gbtn" type="button" data-provider="google"><svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg><span>Continue with Google</span></button>
       </div>
-      <div class="author"><span>or use email</span></div>
+      <div id="orEmail" class="author"><span>or use email</span></div>
       <form id="emailForm" class="authform" novalidate>
         <label id="emailWrap" class="f"><span class="lab">Email</span><input id="authEmail" type="email" name="email" autocomplete="username email" inputmode="email" autocapitalize="off" spellcheck="false" required></label>
-        <div id="emailChip" class="emailchip" hidden><span id="emailChipText"></span><button id="changeEmailBtn" class="link" type="button">Change</button></div>
-        <label id="pwWrap" class="f" hidden><span class="lab" id="pwLabel">Password</span><input id="authPass" type="password" name="password" autocomplete="current-password" minlength="8"><span id="pwHint" class="pwhint" hidden>At least 8 characters.</span></label>
+        <label id="pwWrap" class="f"><span class="lab" id="pwLabel">Password</span><input id="authPass" type="password" name="password" autocomplete="current-password" minlength="8"><span id="pwHint" class="pwhint" hidden>At least 8 characters.</span></label>
         <label id="pw2Wrap" class="f" hidden><span class="lab">Type the password again</span><input id="authPass2" type="password" autocomplete="new-password" minlength="8"></label>
-        <button id="emailSubmit" class="btn primary gbtn" type="submit">Continue with email</button>
+        <button id="emailSubmit" class="btn primary gbtn" type="submit">Sign in</button>
       </form>
       <div class="authlinks">
-        <button id="forgotBtn" class="link" type="button" hidden>Forgot password?</button>
+        <button id="forgotBtn" class="link" type="button">Forgot password?</button>
         <button id="backBtn" class="link" type="button" hidden>Back to sign in</button>
         <button id="resendBtn" class="link" type="button" hidden>Resend confirmation email</button>
       </div>
-      <p class="authfine">New here? Continue with Google or your email to create your account. Every account gets its own private shop.</p>
+      <p id="authSwitch" class="authfine"></p>
     </div>
     <form id="resetForm" class="authform" novalidate hidden>
       <label class="f"><span class="lab">New password</span><input id="newPass" type="password" autocomplete="new-password" minlength="8"><span class="pwhint">At least 8 characters.</span></label>
@@ -807,7 +814,7 @@ const MIN_PW = 8;
 let authSettings = null;   // Supabase's public auth settings: which sign-in services are switched on
 let bootDone = false, signingIn = null;
 let signedOutByUser = false;   // set by Sign out; a token refresh that finishes afterwards must not sign back in
-let emailMode = "email";       // "email" | "password" | "create" | "forgot"
+let emailMode = "signin";      // "signin" | "signup" | "forgot"
 let profile = LS.get("hangtag_profile", null);   // this account's profile (kept per account on this device)
 const clearStoredSession = () => [AUTH_STORE, AUTH_STORE + "-code-verifier", AUTH_STORE + "-user"].forEach(k => { try{ localStorage.removeItem(k); }catch(e){} });
 const recent = key => { const t = +LS.get(key, 0) || 0; return t > 0 && Date.now() - t < 3600e3; };
@@ -838,28 +845,38 @@ function focusCard(gate){ if(!gate.contains(document.activeElement)) gate.queryS
 /* ---------- the email part of the sign-in screen ---------- */
 function setEmailMode(mode){
   emailMode = mode;
-  const email = aEl("authEmail").value.trim();
-  const pick = mode === "email";
-  aEl("emailWrap").hidden = !pick && mode !== "forgot";
-  aEl("emailChip").hidden = pick || mode === "forgot";
-  aEl("emailChipText").textContent = email;
-  aEl("pwWrap").hidden = !(mode === "password" || mode === "create");
-  aEl("pw2Wrap").hidden = mode !== "create";
-  aEl("pwHint").hidden = mode !== "create";
-  aEl("pwLabel").textContent = mode === "create" ? "Choose a password" : "Password";
-  aEl("authPass").setAttribute("autocomplete", mode === "create" ? "new-password" : "current-password");
-  aEl("emailSubmit").textContent = { email: "Continue with email", password: "Sign in", create: "Create account", forgot: "Send reset link" }[mode];
-  aEl("forgotBtn").hidden = mode !== "password";
-  aEl("backBtn").hidden = mode !== "forgot";
+  const up = mode === "signup", forgot = mode === "forgot";
+  document.querySelectorAll("#authTabs [data-authtab]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.authtab === (forgot ? "signin" : mode))));
+  aEl("authTabs").hidden = forgot;
+  aEl("provBtns").hidden = forgot;
+  aEl("orEmail").hidden = forgot;
+  aEl("pwWrap").hidden = forgot;
+  aEl("pw2Wrap").hidden = !up;
+  aEl("pwHint").hidden = !up;
+  aEl("pwLabel").textContent = up ? "Choose a password" : "Password";
+  aEl("authPass").setAttribute("autocomplete", up ? "new-password" : "current-password");
+  aEl("emailSubmit").textContent = up ? "Create account" : forgot ? "Send reset link" : "Sign in";
+  aEl("forgotBtn").hidden = mode !== "signin";
+  aEl("backBtn").hidden = !forgot;
   aEl("resendBtn").hidden = true;
-  aEl("authMsg").textContent = mode === "create" ? "Create your account. Every account gets its own private shop."
-    : mode === "forgot" ? "Enter your email and we'll send you a link to choose a new password."
-    : mode === "password" ? "Welcome back. Enter your password to open your shop."
-    : "Sign in or create your account to open billing and stock.";
-  if(mode !== "password" && mode !== "create"){ aEl("authPass").value = ""; aEl("authPass2").value = ""; }
+  aEl("authMsg").textContent = up ? "Create your Hangtag account. Every account gets its own private shop."
+    : forgot ? "Enter your email and we'll send you a link to choose a new password."
+    : "Sign in to open billing and stock.";
+  const sw = aEl("authSwitch");
+  sw.hidden = forgot;
+  sw.innerHTML = up ? 'Already have an account? <button type="button" class="link" data-switchto="signin">Sign in</button>'
+    : 'New to Hangtag? <button type="button" class="link" data-switchto="signup">Create an account</button>';
+  labelProviders();
+  aEl("authPass").value = ""; aEl("authPass2").value = "";
   setAuthError(""); setAuthNote("");
 }
-function showGate(state, opts){
+/* "Continue with Google" to sign in, "Sign up with Google" on the Create account tab (Google does both) */
+function labelProviders(){
+  document.querySelectorAll("#provBtns [data-provider]").forEach(b => {
+    const p = PROVIDERS[b.dataset.provider], sp = b.querySelector("span");
+    if(p && sp) sp.textContent = (emailMode === "signup" ? "Sign up with " : "Continue with ") + p.label;
+  });
+}function showGate(state, opts){
   opts = opts || {};
   aEl("setupGate").hidden = true;
   const gate = aEl("authGate");
@@ -870,7 +887,7 @@ function showGate(state, opts){
   aEl("authForms").hidden = state !== "signin";
   aEl("resetForm").hidden = state !== "reset";
   setAuthBusy(false);
-  if(state === "signin"){ setEmailMode(opts.mode || "email"); renderProviders(); }
+  if(state === "signin"){ setEmailMode(opts.mode || (location.hash === "#signup" ? "signup" : "signin")); renderProviders(); }
   else if(state === "reset") aEl("authMsg").textContent = "Choose a new password for " + (opts.email || "your account") + ".";
   else aEl("authMsg").textContent = opts.message || "Checking sign-in…";
   setAuthError(opts.error || "");
@@ -925,6 +942,7 @@ async function renderProviders(){
     b.querySelector("span").textContent = "Continue with " + p.label;
     box.appendChild(b);
   });
+  labelProviders();
 }
 /* Cloud reads and writes need a live signed-in session. Without one supabase-js falls back to the
    public key, and the server would refuse or quietly answer with nothing. */
@@ -1281,27 +1299,26 @@ async function onEmailSubmit(ev){
   ev.preventDefault();
   const email = aEl("authEmail").value.trim().toLowerCase(), pass = aEl("authPass").value, pass2 = aEl("authPass2").value;
   setAuthError(""); setAuthNote(""); aEl("resendBtn").hidden = true;
-  if(!validEmail(email)){ setAuthError("Enter a valid email address."); if(aEl("emailWrap").hidden) setEmailMode("email"); aEl("authEmail").focus(); return; }
-  if(!navigator.onLine){ setAuthError("You're offline. Connect to the internet to sign in."); return; }
-  aEl("authEmail").value = email;
-  if(emailMode === "create"){
+  if(!validEmail(email)){ setAuthError("Enter a valid email address."); aEl("authEmail").focus(); return; }
+  if(emailMode === "signin" && !pass){ setAuthError("Enter your password."); aEl("authPass").focus(); return; }
+  if(emailMode === "signup"){
     if(pass.length < MIN_PW){ setAuthError("Choose a password of at least " + MIN_PW + " characters."); aEl("authPass").focus(); return; }
     if(pass !== pass2){ setAuthError("The two passwords don't match."); aEl("authPass2").focus(); return; }
   }
-  if(emailMode === "password" && !pass){ setAuthError("Enter your password."); aEl("authPass").focus(); return; }
+  if(!navigator.onLine){ setAuthError("You're offline. Connect to the internet to sign in."); return; }
+  aEl("authEmail").value = email;
   signedOutByUser = false;
   setAuthBusy(true);
   try{
-    if(emailMode === "email"){
+    if(emailMode !== "forgot"){
+      // How does this email sign in today? (null = couldn't find out; then just try)
       const methods = await signInMethodsFor(email);
-      if(methods && !methods.includes("email")){
-        const oauth = methods.find(m => PROVIDERS[m]);
-        if(oauth){
-          // This email already has an account through Google (or another service): continue with that
-          setAuthNote("This email signs in with " + PROVIDERS[oauth].label + ". Taking you there…");
-          await signInWith(oauth, email);
-          return;
-        }
+      const oauth = methods && !methods.includes("email") ? methods.find(m => PROVIDERS[m]) : null;
+      if(oauth){
+        // This email already has an account through Google (or another service): continue with that
+        setAuthNote("This email already has an account through " + PROVIDERS[oauth].label + ". Taking you there…");
+        await signInWith(oauth, email);
+        return;
       }
       let settings = null;
       try{ settings = await loadAuthSettings(); }catch(e){}
@@ -1309,11 +1326,22 @@ async function onEmailSubmit(ev){
         setAuthError("Email sign-in isn't switched on for this app yet. Use Continue with Google, or ask the owner to turn on Email in Supabase.");
         return;
       }
-      setEmailMode(methods && !methods.length ? "create" : "password");
-      aEl("authPass").focus();
-      return;
+      if(emailMode === "signin" && methods && !methods.length){
+        // No account with this email yet: move to Create account, keeping the email
+        setEmailMode("signup"); aEl("authEmail").value = email;
+        setAuthNote("There's no Hangtag account for " + email + " yet. Choose a password to create one.");
+        aEl("authPass").focus();
+        return;
+      }
+      if(emailMode === "signup" && methods && methods.includes("email")){
+        // Already has an email account: move to Sign in, keeping the email
+        setEmailMode("signin"); aEl("authEmail").value = email;
+        setAuthNote("You already have an account with " + email + ". Enter your password to sign in.");
+        aEl("authPass").focus();
+        return;
+      }
     }
-    if(emailMode === "password"){
+    if(emailMode === "signin"){
       const { data, error } = await sbClient.auth.signInWithPassword({ email, password: pass });
       if(error){
         if(error.code === "email_not_confirmed" || /email not confirmed/i.test(error.message || "")) aEl("resendBtn").hidden = false;
@@ -1323,9 +1351,7 @@ async function onEmailSubmit(ev){
       LS.set(RESET_KEY, "");
       showGate("loading", { message: "Opening your shop…" });
       await onSignedIn(data.session);
-      return;
-    }
-    if(emailMode === "create"){
+    } else if(emailMode === "signup"){
       LS.set(RESET_KEY, "");
       const { data, error } = await sbClient.auth.signUp({ email, password: pass, options: { emailRedirectTo: HOME_URL } });
       if(error) throw error;
@@ -1333,27 +1359,27 @@ async function onEmailSubmit(ev){
       if(data.session){ showGate("loading", { message: "Opening your shop…" }); await onSignedIn(data.session); return; }
       // Supabase doesn't reveal existing emails: an existing account comes back with no identities
       if(data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0){
-        showGate("signin", { mode: "password", error: "An account with this email already exists. Enter its password, or use Forgot password." });
+        showGate("signin", { mode: "signin", error: "An account with this email already exists. Enter its password, or use Forgot password." });
+        aEl("authEmail").value = email;
         return;
       }
-      showGate("signin", { mode: "password", note: "Almost done. We sent a confirmation link to " + email + ". Open it, then sign in here.", showResend: true });
-      return;
-    }
-    if(emailMode === "forgot"){
+      showGate("signin", { mode: "signin", note: "Almost done. We sent a confirmation link to " + email + ". Open it, then sign in here.", showResend: true });
+      aEl("authEmail").value = email;
+    } else {
       const { error } = await sbClient.auth.resetPasswordForEmail(email, { redirectTo: HOME_URL });
       if(error) throw error;
       LS.set(RESET_KEY, Date.now());
-      showGate("signin", { mode: "password", note: "If there's an account for " + email + ", a reset link is on its way. Open it in this same browser to choose a new password." });
+      showGate("signin", { mode: "signin", note: "If there's an account for " + email + ", a reset link is on its way. Open it in this same browser to choose a new password." });
+      aEl("authEmail").value = email;
     }
   }catch(e){
     setAuthError(authErrorText(e));
   }finally{
     if(!aEl("authGate").hidden) setAuthBusy(false);
   }
-}
-async function resendConfirmation(){
+}async function resendConfirmation(){
   const email = aEl("authEmail").value.trim();
-  if(!validEmail(email)){ setAuthError("Enter your email first."); setEmailMode("email"); aEl("authEmail").focus(); return; }
+  if(!validEmail(email)){ setAuthError("Enter your email first."); aEl("authEmail").focus(); return; }
   setAuthBusy(true);
   try{
     const { error } = await sbClient.auth.resend({ type: "signup", email, options: { emailRedirectTo: HOME_URL } });
@@ -1377,7 +1403,7 @@ async function onResetSubmit(ev){
     aEl("newPass").value = ""; aEl("newPass2").value = "";
     const { data: { session } } = await sbClient.auth.getSession();
     if(session){ showGate("loading", { message: "Password updated. Opening your shop…" }); await onSignedIn(session); if(authUser) toast("Password updated."); }
-    else showGate("signin", { mode: "password", note: "Password updated. Sign in with your new password." });
+    else showGate("signin", { mode: "signin", note: "Password updated. Sign in with your new password." });
   }catch(e){ setAuthError(authErrorText(e)); }
   finally{ if(!aEl("authGate").hidden) setAuthBusy(false); }
 }
@@ -1473,9 +1499,15 @@ function makeSbClient(){
 }
 aEl("provBtns").addEventListener("click", e => { const b = e.target.closest("[data-provider]"); if(b) signInWith(b.dataset.provider); });
 aEl("emailForm").addEventListener("submit", onEmailSubmit);
-aEl("changeEmailBtn").addEventListener("click", () => { setEmailMode("email"); aEl("authEmail").focus(); });
-aEl("forgotBtn").addEventListener("click", () => { setEmailMode("forgot"); aEl("authEmail").focus(); });
-aEl("backBtn").addEventListener("click", () => { setEmailMode("password"); aEl("authPass").focus(); });
+aEl("authForms").addEventListener("click", e => {
+  const t = e.target.closest("[data-authtab],[data-switchto]"); if(!t) return;
+  const email = aEl("authEmail").value;
+  setEmailMode(t.dataset.authtab || t.dataset.switchto);
+  aEl("authEmail").value = email;   // keep what they typed
+  (email ? aEl("authPass") : aEl("authEmail")).focus();
+});
+aEl("forgotBtn").addEventListener("click", () => { const em = aEl("authEmail").value; setEmailMode("forgot"); aEl("authEmail").value = em; aEl("authEmail").focus(); });
+aEl("backBtn").addEventListener("click", () => { const em = aEl("authEmail").value; setEmailMode("signin"); aEl("authEmail").value = em; aEl("authPass").focus(); });
 aEl("resendBtn").addEventListener("click", resendConfirmation);
 aEl("resetForm").addEventListener("submit", onResetSubmit);
 aEl("resetCancel").addEventListener("click", signOut);

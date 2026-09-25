@@ -11,11 +11,18 @@
 --     -> Authorized redirect URIs: https://<project-ref>.supabase.co/auth/v1/callback
 --  2. Supabase -> Authentication -> Sign In / Providers -> Google: on, with that client ID and secret.
 --     Other services (Microsoft, Apple, GitHub, Facebook...) show up in the app when you switch them on here.
---  3. Supabase -> Authentication -> Sign In / Providers -> Email: switch OFF, so no accounts are made by
---     email and Supabase never sends verification emails.
---  4. Supabase -> Authentication -> URL Configuration: Site URL = the app address;
+--  3. Supabase -> Authentication -> Sign In / Providers -> Email: ON, with "Confirm email" ON.
+--     The confirmation email proves the person owns the address. Without it, someone could create an
+--     account with another person's email before they do, and get into their shop when they later use Google.
+--  4. Supabase -> Authentication -> Emails -> SMTP Settings: set up your own email sender (for example
+--     Brevo, Resend or a Gmail app password), with sender name "Hangtag". Supabase's built-in sender only
+--     reaches your own team's addresses and about 2 emails an hour. Then edit the email templates' wording.
+--     Optional, so links work in any browser: point the Confirm signup link at
+--       {{ .RedirectTo }}?token_hash={{ .TokenHash }}&type=email   and Reset password at
+--       {{ .RedirectTo }}?token_hash={{ .TokenHash }}&type=recovery
+--  5. Supabase -> Authentication -> URL Configuration: Site URL = the app address;
 --     Redirect URLs = every address the app is opened from (GitHub Pages and http://localhost:3000/).
---  5. Sign in to the app once with the owner account below, then run this script.
+--  6. Sign in to the app once with the owner account below, then run this script.
 -- ==============================================================================
 
 -- Existing products and bills (from before accounts were separate) go to this account.
@@ -57,6 +64,42 @@ DROP TRIGGER IF EXISTS hangtag_on_auth_user_created ON auth.users;
 CREATE TRIGGER hangtag_on_auth_user_created
     AFTER INSERT ON auth.users
     FOR EACH ROW EXECUTE FUNCTION public.hangtag_handle_new_user();
+
+-- Shop details asked for on first sign-in (the same for Google and email accounts)
+ALTER TABLE public.hangtag_profiles ADD COLUMN IF NOT EXISTS phone TEXT;
+ALTER TABLE public.hangtag_profiles ADD COLUMN IF NOT EXISTS city TEXT;
+ALTER TABLE public.hangtag_profiles ADD COLUMN IF NOT EXISTS state TEXT;
+ALTER TABLE public.hangtag_profiles ADD COLUMN IF NOT EXISTS address TEXT;
+ALTER TABLE public.hangtag_profiles ADD COLUMN IF NOT EXISTS business_type TEXT;
+ALTER TABLE public.hangtag_profiles ADD COLUMN IF NOT EXISTS gstin TEXT;
+ALTER TABLE public.hangtag_profiles ADD COLUMN IF NOT EXISTS onboarded_at TIMESTAMPTZ;
+ALTER TABLE public.hangtag_profiles ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'hangtag_profiles_sizes_check') THEN
+        ALTER TABLE public.hangtag_profiles ADD CONSTRAINT hangtag_profiles_sizes_check CHECK (
+            coalesce(char_length(full_name), 0) <= 80 AND coalesce(char_length(shop_name), 0) <= 80 AND
+            coalesce(char_length(phone), 0) <= 20 AND coalesce(char_length(city), 0) <= 60 AND
+            coalesce(char_length(state), 0) <= 60 AND coalesce(char_length(address), 0) <= 200 AND
+            coalesce(char_length(business_type), 0) <= 40 AND coalesce(char_length(avatar_url), 0) <= 500 AND
+            (gstin IS NULL OR gstin ~ '^[0-9]{2}[A-Z0-9]{10}[0-9A-Z]{3}$'));
+    END IF;
+END $$;
+
+-- How an email address signs in today, so the app can send a Google user to Google instead of making a
+-- second account. Returns e.g. {google}, {email}, {email,google}, or {} for someone new.
+-- Note: this lets anyone check whether an email has a Hangtag account (the app needs it before sign-in).
+CREATE OR REPLACE FUNCTION public.hangtag_sign_in_methods(p_email TEXT)
+RETURNS TEXT[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = ''
+AS $$
+    SELECT coalesce(array_agg(DISTINCT i.provider ORDER BY i.provider), '{}'::TEXT[])
+    FROM auth.users u
+    JOIN auth.identities i ON i.user_id = u.id
+    WHERE lower(u.email) = lower(btrim(p_email));
+$$;
+REVOKE EXECUTE ON FUNCTION public.hangtag_sign_in_methods(TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.hangtag_sign_in_methods(TEXT) TO anon, authenticated;
 
 -- Profiles for accounts that already exist
 INSERT INTO public.hangtag_profiles (id, email, full_name, avatar_url)

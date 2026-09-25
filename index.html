@@ -445,22 +445,69 @@ kbd{font-family:inherit;font-size:11.5px;font-weight:700;border:1px solid var(--
 .unsaved{color:var(--warn-ink)}
 
 /* ---------- sign-in screen ---------- */
-.authgate{position:fixed;inset:0;z-index:200;background:var(--wash);display:flex;align-items:flex-start;justify-content:center;padding:max(24px,8vh) 16px 24px;overflow:auto}
+.authgate{position:fixed;inset:0;z-index:200;background:var(--wash);display:flex;align-items:flex-start;justify-content:center;padding:max(24px,6vh) 16px 24px;overflow:auto}
 html.gated body{overflow:hidden}
 .authcard{width:100%;max-width:400px;background:var(--bg);border:1px solid var(--line);border-radius:18px;padding:28px 24px 24px;box-shadow:var(--shadow-sm);margin:auto 0}
+.authcard.wide{max-width:560px}
 .authcard:focus{outline:none}
 .authhead{text-align:center}
 .authcard .logo{width:44px;height:44px}
 .authcard h1{margin:10px 0 8px}
+.authcard h2.setup-t{margin:10px 0 6px;font-size:21px;text-align:center}
 .authsub{color:var(--ink-2);margin:0 0 20px;line-height:1.5;font-size:14.5px;text-align:center}
 .provbtns{display:flex;flex-direction:column;gap:10px}
 .gbtn{width:100%;padding:12px 14px;font-size:15px;gap:10px}
 .gbtn svg{width:18px;height:18px;flex:none}
 .authcard button:disabled{opacity:.6;cursor:progress}
+.author{display:flex;align-items:center;gap:12px;margin:18px 0 14px;color:var(--ink-3);font-size:12.5px;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+.author::before,.author::after{content:"";flex:1;height:1px;background:var(--line)}
+.authform{display:flex;flex-direction:column;gap:12px;text-align:left}
+.authform .f input,.authform .f select,.authform .f textarea{font-size:16px;padding:11px 12px}
+.pwhint{font-size:12px;font-weight:500;color:var(--ink-3)}
+.authlinks{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px 10px;margin-top:10px;min-height:8px}
+.authlinks .link{font-size:13.5px}
+.emailchip{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--wash);font-size:14px;font-weight:600;color:var(--ink);word-break:break-all}
 .authfine{margin:16px 0 0;color:var(--ink-3);font-size:12.5px;line-height:1.5;text-align:center}
 .authnote{margin:14px 0 0;padding:10px 12px;border-radius:10px;background:var(--good-soft);color:var(--good-ink);font-size:13.5px;line-height:1.45}
 .autherr{margin:14px 0 0;padding:10px 12px;border-radius:10px;background:var(--crit-soft);color:var(--crit);font-size:13.5px;line-height:1.45}
-.acct{cursor:pointer}
+.authcenter{text-align:center;margin-top:12px}
+/* profile form (setup screen + settings) */
+.pgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.pgrid .full{grid-column:1/-1}
+@media (max-width:520px){.pgrid{grid-template-columns:1fr}}
+.req{color:var(--crit);margin-left:2px}
+.fhint{font-size:12px;font-weight:500;color:var(--ink-3)}
+.f.bad input,.f.bad select{border-color:var(--crit)}
+/* account button + menu */
+.acctwrap{position:relative}
+.acctbtn{display:inline-flex;align-items:center;gap:8px;padding:3px 10px 3px 3px;border:1px solid var(--line);border-radius:999px;background:var(--bg);font-weight:600;font-size:13px;color:var(--ink);max-width:220px}
+.acctbtn:hover{background:var(--wash)}
+.acctbtn .an{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:599px){.acctbtn{padding:3px}.acctbtn .an{display:none}}
+.avatar{width:30px;height:30px;border-radius:50%;flex:none;display:grid;place-items:center;background:var(--ink);color:#fff;font-size:12.5px;font-weight:700;overflow:hidden;letter-spacing:.02em}
+.avatar img{width:100%;height:100%;object-fit:cover}
+.avatar.lg{width:48px;height:48px;font-size:17px}
+.acctmenu{position:absolute;right:0;top:calc(100% + 8px);z-index:70;width:280px;background:var(--bg);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow-lg);padding:6px;animation:fade .12s ease}
+.am-head{display:flex;gap:10px;align-items:center;padding:10px 10px 12px;border-bottom:1px solid var(--line);margin-bottom:6px}
+.am-head b{display:block;font-size:14.5px;line-height:1.3}
+.am-head div > span{display:block;font-size:12.5px;color:var(--ink-3);line-height:1.35;word-break:break-all}
+.acctmenu button{display:flex;width:100%;align-items:center;gap:10px;padding:10px;border-radius:9px;font-size:14px;font-weight:600;color:var(--ink);text-align:left}
+.acctmenu button:hover,.acctmenu button:focus-visible{background:var(--wash)}
+.acctmenu button.danger{color:var(--crit)}
+.acctmenu hr{border:0;border-top:1px solid var(--line);margin:6px 0}
+/* welcome line on Sell */
+.welcome{display:flex;align-items:center;gap:12px;padding:12px 14px;margin-bottom:14px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(135deg,var(--accent-soft),var(--bg) 70%)}
+.welcome b{font-size:16px}
+.welcome .ws{font-size:13px;color:var(--ink-2);margin-top:1px}
+.welcome .wx{margin-left:auto}
+/* settings sheet */
+.settings{max-width:640px}
+.setsec{border-top:1px solid var(--line);margin-top:18px;padding-top:16px}
+.setsec h4{margin:0 0 10px;font-size:14px}
+.kv{display:grid;grid-template-columns:140px 1fr;gap:8px 12px;font-size:13.5px}
+.kv dt{color:var(--ink-3)} .kv dd{margin:0;word-break:break-all}
+@media (max-width:520px){.kv{grid-template-columns:1fr}.kv dd{margin-bottom:6px}}
+.setactions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
 
 @keyframes up{from{transform:translateY(14px);opacity:.5}to{transform:none;opacity:1}}
 .toast{animation-name:toastup}
@@ -483,10 +530,41 @@ html.gated body{overflow:hidden}
       <div id="provBtns" class="provbtns">
         <button class="btn gbtn" type="button" data-provider="google"><svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg><span>Continue with Google</span></button>
       </div>
-      <p class="authfine">New here? Continuing creates your account. Each account has its own products, stock and sales.</p>
+      <div class="author"><span>or use email</span></div>
+      <form id="emailForm" class="authform" novalidate>
+        <label id="emailWrap" class="f"><span class="lab">Email</span><input id="authEmail" type="email" name="email" autocomplete="username email" inputmode="email" autocapitalize="off" spellcheck="false" required></label>
+        <div id="emailChip" class="emailchip" hidden><span id="emailChipText"></span><button id="changeEmailBtn" class="link" type="button">Change</button></div>
+        <label id="pwWrap" class="f" hidden><span class="lab" id="pwLabel">Password</span><input id="authPass" type="password" name="password" autocomplete="current-password" minlength="8"><span id="pwHint" class="pwhint" hidden>At least 8 characters.</span></label>
+        <label id="pw2Wrap" class="f" hidden><span class="lab">Type the password again</span><input id="authPass2" type="password" autocomplete="new-password" minlength="8"></label>
+        <button id="emailSubmit" class="btn primary gbtn" type="submit">Continue with email</button>
+      </form>
+      <div class="authlinks">
+        <button id="forgotBtn" class="link" type="button" hidden>Forgot password?</button>
+        <button id="backBtn" class="link" type="button" hidden>Back to sign in</button>
+        <button id="resendBtn" class="link" type="button" hidden>Resend confirmation email</button>
+      </div>
+      <p class="authfine">New here? Continue with Google or your email to create your account. Every account gets its own private shop.</p>
     </div>
+    <form id="resetForm" class="authform" novalidate hidden>
+      <label class="f"><span class="lab">New password</span><input id="newPass" type="password" autocomplete="new-password" minlength="8"><span class="pwhint">At least 8 characters.</span></label>
+      <label class="f"><span class="lab">Type it again</span><input id="newPass2" type="password" autocomplete="new-password" minlength="8"></label>
+      <button id="resetSubmit" class="btn primary gbtn" type="submit">Save new password</button>
+      <div class="authcenter"><button id="resetCancel" class="link" type="button">Cancel and sign out</button></div>
+    </form>
     <p id="authNote" class="authnote" role="status" hidden></p>
     <p id="authErr" class="autherr" role="alert" hidden></p>
+  </div>
+</div>
+<div id="setupGate" class="authgate" role="dialog" aria-modal="true" aria-labelledby="setupTitle" hidden>
+  <div class="authcard wide" tabindex="-1">
+    <div class="authhead">
+      <svg class="logo" viewBox="0 0 28 28" aria-hidden="true"><path d="M3.5 13.6V5.5a2 2 0 0 1 2-2h8.1a2 2 0 0 1 1.42.59l9.2 9.2a2 2 0 0 1 0 2.83l-8.1 8.1a2 2 0 0 1-2.83 0l-9.2-9.2a2 2 0 0 1-.59-1.42z" fill="#10131F"/><circle cx="9.2" cy="9.2" r="2.1" fill="#fff"/></svg>
+      <h2 id="setupTitle" class="setup-t">Set up your shop</h2>
+    </div>
+    <p class="authsub">A few details to get started. You can change them any time in Profile &amp; shop settings.</p>
+    <form id="setupForm" class="authform" novalidate></form>
+    <p id="setupErr" class="autherr" role="alert" hidden></p>
+    <div class="authcenter"><button id="setupSignOut" class="link" type="button">Not you? Sign out</button></div>
   </div>
 </div>
 <header class="appbar">
@@ -502,13 +580,17 @@ html.gated body{overflow:hidden}
       <button role="tab" data-tab="products" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 4 3.5 6.6l1.8 4.1 2.2-.9V20h9V9.8l2.2.9 1.8-4.1-5-2.6c-.5 1.3-1.9 2.2-3.5 2.2S9 5.3 8.5 4z"/></svg><span>Products</span></button>
     </nav>
     <button id="sync" class="sync" type="button" tabindex="-1" style="cursor:default" aria-label="Cloud sync status"><i></i><span>Connecting…</span></button>
-    <button id="acctBtn" class="sync acct" type="button" hidden>Sign out</button>
+    <div class="acctwrap">
+      <button id="acctBtn" class="acctbtn" type="button" aria-haspopup="menu" aria-expanded="false" hidden><span id="acctAvatar" class="avatar"></span><span id="acctName" class="an"></span></button>
+      <div id="acctMenu" class="acctmenu" role="menu" aria-label="Account" hidden></div>
+    </div>
   </div>
 </header>
 
 <main class="wrap">
   <section id="v-sell" class="sell">
     <div class="sell-main">
+      <div id="welcome" class="welcome" hidden></div>
       <div class="viewhead">
         <div>
           <h2 class="vt">Tap to sell</h2>
@@ -711,17 +793,24 @@ function myOpenDocId(){
   return id;
 }
 
-/* ================= Sign-in (Google and other sign-in services, via Supabase Auth) ================= */
+/* ================= Sign-in (Google, other services, or email) + profiles ================= */
 let authUser = null;
 const cloudWanted = !!(sbUrl && sbKey);                    // config.js points at a Supabase project
 const cloudConfigured = cloudWanted && !!window.supabase;  // ...and the Supabase library loaded
 const HOME_URL = location.origin + location.pathname;
 const AUTH_STORE = "hangtag-auth";          // where supabase-js keeps the session
+const RESET_KEY = "hangtag_pw_reset";       // time this device asked for a password-reset link
+const RECOVERY_KEY = "hangtag_recovery";    // a reset link was opened; new password not saved yet
+const PICK_ACCOUNT = "hangtag_pick_account";   // set by Sign out: show Google's account chooser on the next sign-in
+const OTP_TYPES = ["signup", "invite", "magiclink", "recovery", "email_change", "email"];
+const MIN_PW = 8;
 let authSettings = null;   // Supabase's public auth settings: which sign-in services are switched on
 let bootDone = false, signingIn = null;
 let signedOutByUser = false;   // set by Sign out; a token refresh that finishes afterwards must not sign back in
-const PICK_ACCOUNT = "hangtag_pick_account";   // set by Sign out: show the account chooser on the next sign-in
+let emailMode = "email";       // "email" | "password" | "create" | "forgot"
+let profile = LS.get("hangtag_profile", null);   // this account's profile (kept per account on this device)
 const clearStoredSession = () => [AUTH_STORE, AUTH_STORE + "-code-verifier", AUTH_STORE + "-user"].forEach(k => { try{ localStorage.removeItem(k); }catch(e){} });
+const recent = key => { const t = +LS.get(key, 0) || 0; return t > 0 && Date.now() - t < 3600e3; };
 /* Sign-in services shown when switched on in Supabase (Authentication > Sign In / Providers). Google is always shown. */
 const PROVIDERS = {
   google:        { label: "Google" },
@@ -734,56 +823,88 @@ const PROVIDERS = {
   gitlab:        { label: "GitLab" },
   twitter:       { label: "X" }
 };
+const PROVIDER_NAMES = { email: "Email and password", google: "Google", azure: "Microsoft", apple: "Apple", github: "GitHub", facebook: "Facebook", linkedin_oidc: "LinkedIn", discord: "Discord", gitlab: "GitLab", twitter: "X" };
 const aEl = id => document.getElementById(id);
-function setAuthBusy(on){ document.querySelectorAll("#provBtns button").forEach(b => { b.disabled = on; }); }
+function setAuthBusy(on){ document.querySelectorAll("#authGate button, #authGate input").forEach(b => { b.disabled = on; }); }
 function setAuthError(text){ const e = aEl("authErr"); e.textContent = text || ""; e.hidden = !text; }
 function setAuthNote(text){ const e = aEl("authNote"); e.textContent = text || ""; e.hidden = !text; }
-/* While the sign-in screen is up, the till behind it can't be clicked, tabbed to or read out */
+/* While a sign-in or setup screen is up, the till behind it can't be clicked, tabbed to or read out */
 function setAppInert(on){
-  document.querySelectorAll("body > *").forEach(el => { if(el.id !== "authGate" && el.tagName !== "SCRIPT") el.inert = on; });
+  document.querySelectorAll("body > *").forEach(el => { if(el.id !== "authGate" && el.id !== "setupGate" && el.tagName !== "SCRIPT") el.inert = on; });
+}
+const gateUp = () => !aEl("authGate").hidden || !aEl("setupGate").hidden;
+function focusCard(gate){ if(!gate.contains(document.activeElement)) gate.querySelector(".authcard").focus({ preventScroll: true }); }
+
+/* ---------- the email part of the sign-in screen ---------- */
+function setEmailMode(mode){
+  emailMode = mode;
+  const email = aEl("authEmail").value.trim();
+  const pick = mode === "email";
+  aEl("emailWrap").hidden = !pick && mode !== "forgot";
+  aEl("emailChip").hidden = pick || mode === "forgot";
+  aEl("emailChipText").textContent = email;
+  aEl("pwWrap").hidden = !(mode === "password" || mode === "create");
+  aEl("pw2Wrap").hidden = mode !== "create";
+  aEl("pwHint").hidden = mode !== "create";
+  aEl("pwLabel").textContent = mode === "create" ? "Choose a password" : "Password";
+  aEl("authPass").setAttribute("autocomplete", mode === "create" ? "new-password" : "current-password");
+  aEl("emailSubmit").textContent = { email: "Continue with email", password: "Sign in", create: "Create account", forgot: "Send reset link" }[mode];
+  aEl("forgotBtn").hidden = mode !== "password";
+  aEl("backBtn").hidden = mode !== "forgot";
+  aEl("resendBtn").hidden = true;
+  aEl("authMsg").textContent = mode === "create" ? "Create your account. Every account gets its own private shop."
+    : mode === "forgot" ? "Enter your email and we'll send you a link to choose a new password."
+    : mode === "password" ? "Welcome back. Enter your password to open your shop."
+    : "Sign in or create your account to open billing and stock.";
+  if(mode !== "password" && mode !== "create"){ aEl("authPass").value = ""; aEl("authPass2").value = ""; }
+  setAuthError(""); setAuthNote("");
 }
 function showGate(state, opts){
   opts = opts || {};
+  aEl("setupGate").hidden = true;
   const gate = aEl("authGate");
   gate.hidden = false;
   document.documentElement.classList.add("gated");
   setAppInert(true);
+  closeAcctMenu();
   aEl("authForms").hidden = state !== "signin";
+  aEl("resetForm").hidden = state !== "reset";
   setAuthBusy(false);
-  aEl("authMsg").textContent = state === "signin"
-    ? "Sign in to open billing and stock."
-    : (opts.message || "Checking sign-in…");
+  if(state === "signin"){ setEmailMode(opts.mode || "email"); renderProviders(); }
+  else if(state === "reset") aEl("authMsg").textContent = "Choose a new password for " + (opts.email || "your account") + ".";
+  else aEl("authMsg").textContent = opts.message || "Checking sign-in…";
   setAuthError(opts.error || "");
   setAuthNote(opts.note || "");
-  if(state === "signin") renderProviders();
-  // Move focus into the card (not a button, so screen readers start at the top)
-  if(!gate.contains(document.activeElement)) gate.querySelector(".authcard").focus({ preventScroll: true });
+  if(state === "signin" && opts.showResend) aEl("resendBtn").hidden = false;
+  focusCard(gate);
 }
-function hideGate(){ aEl("authGate").hidden = true; document.documentElement.classList.remove("gated"); setAppInert(false); }
-function displayName(user){
-  const m = (user && user.user_metadata) || {};
-  return m.full_name || m.name || (user && user.email) || "";
-}
-function showAccount(email, name){
-  const b = aEl("acctBtn");
-  b.hidden = !email; b.textContent = "Sign out"; delete b.dataset.confirm;
-  b.title = email ? "Signed in as " + (name && name !== email ? name + " (" + email + ")" : email) : "";
-}
+function hideGate(){ aEl("authGate").hidden = true; if(aEl("setupGate").hidden){ document.documentElement.classList.remove("gated"); setAppInert(false); } }
+const inResetFlow = () => !aEl("authGate").hidden && !aEl("resetForm").hidden;
+
 /* Plain-words versions of Supabase's error messages */
 function authErrorText(e){
   const m = (e && (e.message || e.error_description)) || String(e || "Something went wrong.");
-  if(/rate limit|too many/i.test(m)) return "Too many attempts. Wait a few minutes and try again.";
+  const code = (e && e.code) || "";
+  if(code === "invalid_credentials" || /invalid login credentials/i.test(m)) return "Wrong email or password.";
+  if(code === "email_not_confirmed" || /email not confirmed/i.test(m)) return "Confirm your email first. Open the link we emailed you, then sign in.";
+  if(code === "user_already_exists" || /already (been )?registered/i.test(m)) return "An account with this email already exists. Sign in instead.";
+  if(code === "email_provider_disabled" || code === "signup_disabled" || /signups? not allowed|email logins are disabled|provider is not enabled/i.test(m)) return "Email sign-in isn't switched on for this app yet. Use Continue with Google, or ask the owner to turn on Email in Supabase.";
+  if(code === "email_address_not_authorized" || /not allowed for this address|default SMTP/i.test(m)) return "This app can't send email to that address yet. Use Continue with Google, or ask the owner to set up email sending in Supabase.";
+  if(code === "over_email_send_rate_limit" || /email rate limit/i.test(m)) return "Too many emails were sent in the last hour. Try again later, or use Continue with Google.";
+  if(code === "weak_password" || /password should/i.test(m)) return m;
+  if(/rate limit|too many/i.test(m) || /over_.*rate_limit/.test(code)) return "Too many attempts. Wait a few minutes and try again.";
   if(/failed to fetch|networkerror|load failed/i.test(m) || e && e.name === "AuthRetryableFetchError") return "Can't reach the server. Check the internet connection and try again.";
   return m;
 }
-/* Error codes from a link Supabase or the sign-in service sent back. Never show the link's own text: anyone can craft it. */
+/* Error codes from a link Supabase or a sign-in service sent back. Never show the link's own text: anyone can craft it. */
 function linkErrorText(code){
   code = String(code || "");
+  if(/otp_expired|expired|invalid|flow_state/i.test(code)) return "That link has expired or was already used. Try again.";
   if(/access_denied|cancel/i.test(code)) return "Sign-in was cancelled. Try again when you're ready.";
-  if(/expired|invalid|flow_state/i.test(code)) return "That sign-in link has expired. Try again.";
   return "Sign-in didn't finish. Try again.";
 }
 const isNetErr = e => !!e && (e.name === "AuthRetryableFetchError" || e.status === 0 || e.status >= 500 || /failed to fetch|networkerror|load failed/i.test(e.message || ""));
+const validEmail = v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 async function loadAuthSettings(){
   if(authSettings) return authSettings;
   const r = await fetch(sbUrl.replace(/\/+$/, "") + "/auth/v1/settings", { headers: { apikey: sbKey }, cache: "no-store" });
@@ -811,11 +932,20 @@ async function sbSessionOk(){
   if(!sbClient) return false;
   try{ const { data } = await sbClient.auth.getSession(); return !!(data && data.session); }catch(e){ return false; }
 }
+/* How does this email sign in today? ["google"], ["email"], both, or [] for a new person.
+   null means we couldn't find out (database not updated yet, or offline). */
+async function signInMethodsFor(email){
+  try{
+    const { data, error } = await sbClient.rpc("hangtag_sign_in_methods", { p_email: email });
+    if(error) return null;
+    return Array.isArray(data) ? data : [];
+  }catch(e){ return null; }
+}
 
 /* ---------- Each account keeps its own data on this device ----------
    The app works on the plain keys below. When a different account signs in, the current data is put away
-   under its owner and that account's own data (or a fresh start) is brought back, then the page reloads. */
-const USER_KEYS = ["hangtag_sb_queue", "rc_local", "rc_dirty", "rc_pend", "rc_cart", "rc_disc", "rc_catalog", "rc_imgs"];
+   under its owner and that account's own data (or a fresh start) is brought back. */
+const USER_KEYS = ["hangtag_sb_queue", "rc_local", "rc_dirty", "rc_pend", "rc_cart", "rc_disc", "rc_catalog", "rc_imgs", "hangtag_profile"];
 const MUST_KEEP = ["hangtag_sb_queue", "rc_local", "rc_dirty"];   // unsent work: never drop these
 const DATA_OWNER = "hangtag_data_owner";
 const stashKey = (owner, k) => "hangtag_u_" + owner + "_" + k;
@@ -854,6 +984,7 @@ function loadUserState(){
   cart = LS.get("rc_cart", []); if(!Array.isArray(cart)) cart = [];
   disc = Math.max(0, +LS.get("rc_disc", 0) || 0);
   sbOfflineQueue = LS.get("hangtag_sb_queue", []); if(!Array.isArray(sbOfflineQueue)) sbOfflineQueue = [];
+  profile = LS.get("hangtag_profile", null);
   draft = null; draftDirty = false; lastSale = null; openPid = null; billOpen = false; showAllBills = false;
   closeSheets();
   renderAll();
@@ -864,9 +995,215 @@ window.addEventListener("storage", e => {
   if(e.key === DATA_OWNER && authUser && e.newValue && JSON.parse(e.newValue) !== authUser.id) location.reload();
 });
 
+/* ---------- Profile: required shop details, the same for every sign-in method ---------- */
+const BUSINESS_TYPES = ["Clothing boutique", "Pop-up or exhibition stall", "Retail store", "Online seller", "Wholesale", "Other"];
+const PROFILE_FIELDS = [
+  { k: "full_name", label: "Your name", req: true, ac: "name", max: 80 },
+  { k: "shop_name", label: "Shop name", req: true, ac: "organization", max: 80 },
+  { k: "phone", label: "Phone number", req: true, ac: "tel", type: "tel", im: "tel", max: 20, hint: "10 digits, or with country code" },
+  { k: "business_type", label: "Type of business", select: BUSINESS_TYPES },
+  { k: "city", label: "City", req: true, ac: "address-level2", max: 60 },
+  { k: "state", label: "State", req: true, ac: "address-level1", max: 60 },
+  { k: "address", label: "Shop address", ac: "street-address", full: true, max: 200, hint: "Optional. Shown on bills later." },
+  { k: "gstin", label: "GST number", max: 15, hint: "Optional. 15 characters, e.g. 27ABCDE1234F1Z5", upper: true }
+];
+const REQUIRED_PROFILE = PROFILE_FIELDS.filter(f => f.req).map(f => f.k);
+const profileComplete = p => !!p && REQUIRED_PROFILE.every(k => String(p[k] || "").trim());
+function profileFieldsHTML(p, prefix){
+  p = p || {};
+  return '<div class="pgrid">' + PROFILE_FIELDS.map(f => {
+    const id = prefix + "_" + f.k, v = p[f.k] == null ? "" : String(p[f.k]);
+    const lab = '<span class="lab">' + esc(f.label) + (f.req ? '<span class="req" aria-hidden="true">*</span>' : "") + "</span>";
+    let input;
+    if(f.select){
+      input = '<select id="' + id + '" name="' + f.k + '"><option value="">Choose…</option>' +
+        f.select.map(o => '<option' + (o === v ? " selected" : "") + ">" + esc(o) + "</option>").join("") + "</select>";
+    } else {
+      input = '<input id="' + id + '" name="' + f.k + '" type="' + (f.type || "text") + '" value="' + esc(v) + '"' +
+        (f.ac ? ' autocomplete="' + f.ac + '"' : "") + (f.im ? ' inputmode="' + f.im + '"' : "") +
+        (f.max ? ' maxlength="' + f.max + '"' : "") + (f.req ? " required" : "") + (f.upper ? ' autocapitalize="characters"' : "") + ">";
+    }
+    return '<label class="f' + (f.full ? " full" : "") + '" data-field="' + f.k + '">' + lab + input + (f.hint ? '<span class="fhint">' + esc(f.hint) + "</span>" : "") + "</label>";
+  }).join("") + "</div>";
+}
+/* Read and check the form. Returns { values } or { error, field }. */
+function readProfileForm(form){
+  const out = {};
+  PROFILE_FIELDS.forEach(f => {
+    const el = form.querySelector('[name="' + f.k + '"]');
+    let v = el ? String(el.value || "").trim().replace(/\s+/g, " ") : "";
+    if(f.upper) v = v.toUpperCase().replace(/\s/g, "");
+    out[f.k] = v || null;
+  });
+  form.querySelectorAll(".f.bad").forEach(x => x.classList.remove("bad"));
+  const bad = (k, msg) => { const w = form.querySelector('[data-field="' + k + '"]'); if(w){ w.classList.add("bad"); const i = w.querySelector("input,select"); if(i) i.focus(); } return { error: msg, field: k }; };
+  for(const f of PROFILE_FIELDS){ if(f.req && !out[f.k]) return bad(f.k, f.label + " is required."); }
+  const digits = String(out.phone || "").replace(/\D/g, "");
+  if(digits.length < 10 || digits.length > 15 || !/^[+0-9 ()-]+$/.test(out.phone)) return bad("phone", "Enter a valid phone number (at least 10 digits).");
+  if(out.gstin && !/^[0-9]{2}[A-Z0-9]{10}[0-9A-Z]{3}$/.test(out.gstin)) return bad("gstin", "GST number should be 15 letters and digits, like 27ABCDE1234F1Z5.");
+  return { values: out };
+}
+/* Load this account's profile from the cloud (or this device when offline). fresh = came from the cloud. */
+async function loadProfile(user){
+  const m = user.user_metadata || {};
+  try{
+    const { data, error } = await sbClient.from("hangtag_profiles").select("*").eq("id", user.id).maybeSingle();
+    if(error) throw error;
+    let p = data;
+    if(!p){
+      // The sign-up trigger didn't make one (older database): make it now
+      p = { id: user.id, email: user.email || null, full_name: m.full_name || m.name || null, avatar_url: m.avatar_url || m.picture || null };
+      const r = await sbClient.from("hangtag_profiles").upsert(p);
+      if(r.error) console.warn("Profile not created:", r.error.message);
+    }
+    // Keep email and photo current; never overwrite details the person typed
+    const patch = { last_seen_at: new Date().toISOString() };
+    if(user.email && p.email !== user.email) patch.email = user.email;
+    if(!p.avatar_url && (m.avatar_url || m.picture)) patch.avatar_url = m.avatar_url || m.picture;
+    sbClient.from("hangtag_profiles").update(patch).eq("id", user.id).then(r => { if(r.error) console.warn("Profile not updated:", r.error.message); }, () => {});
+    profile = Object.assign({}, p, patch);
+    if(!profile.full_name && (m.full_name || m.name)) profile.full_name = m.full_name || m.name;
+    LS.set("hangtag_profile", profile);
+    return { profile, fresh: true };
+  }catch(e){
+    console.warn("Profile from this device:", e && e.message || e);
+    profile = LS.get("hangtag_profile", null);
+    return { profile, fresh: false };
+  }
+}
+async function saveProfileDetails(values){
+  const row = Object.assign({ id: authUser.id, email: authUser.email || null, updated_at: new Date().toISOString() }, values);
+  if(!profile || !profile.onboarded_at) row.onboarded_at = new Date().toISOString();
+  const { error } = await sbClient.from("hangtag_profiles").upsert(row);
+  if(error){
+    if(/column .* does not exist|schema cache/i.test(error.message || "")) throw new Error("The database needs the latest update (schema.sql) before profiles can be saved.");
+    throw new Error(authErrorText(error));
+  }
+  profile = Object.assign({}, profile || {}, row);
+  LS.set("hangtag_profile", profile);
+}
+function showSetup(p){
+  aEl("authGate").hidden = true;
+  const g = aEl("setupGate");
+  aEl("setupForm").innerHTML = profileFieldsHTML(p, "su") + '<button id="setupSubmit" class="btn primary gbtn" type="submit">Save and open my shop</button>';
+  aEl("setupErr").hidden = true;
+  g.hidden = false;
+  document.documentElement.classList.add("gated");
+  setAppInert(true);
+  focusCard(g);
+}
+function hideSetup(){ aEl("setupGate").hidden = true; if(aEl("authGate").hidden){ document.documentElement.classList.remove("gated"); setAppInert(false); } }
+async function onSetupSubmit(ev){
+  ev.preventDefault();
+  const form = aEl("setupForm"), err = aEl("setupErr");
+  const r = readProfileForm(form);
+  if(r.error){ err.textContent = r.error; err.hidden = false; return; }
+  const btn = aEl("setupSubmit"); btn.disabled = true; err.hidden = true;
+  try{
+    await saveProfileDetails(r.values);
+    hideSetup();
+    await enterApp(true);
+  }catch(e){
+    err.textContent = e.message || "Couldn't save. Try again."; err.hidden = false;
+  }finally{ btn.disabled = false; }
+}
+
+/* ---------- Account button, menu, welcome line, settings ---------- */
+function displayName(){ return (profile && profile.full_name) || (authUser && authUser.user_metadata && (authUser.user_metadata.full_name || authUser.user_metadata.name)) || (authUser && authUser.email) || LS.get("hangtag_auth_email", "") || ""; }
+const firstName = () => String(displayName()).split(/[\s@]/)[0];
+function avatarHTML(){
+  const url = (profile && profile.avatar_url) || (authUser && authUser.user_metadata && (authUser.user_metadata.avatar_url || authUser.user_metadata.picture));
+  if(url && /^https:\/\//.test(url)) return '<img src="' + esc(url) + '" alt="" referrerpolicy="no-referrer">';
+  return esc(initials(displayName()));
+}
+function renderAccount(){
+  const email = (authUser && authUser.email) || LS.get("hangtag_auth_email", "");
+  const b = aEl("acctBtn");
+  b.hidden = !email;
+  if(!email){ closeAcctMenu(); return; }
+  aEl("acctAvatar").innerHTML = avatarHTML();
+  aEl("acctName").textContent = firstName();
+  b.title = "Signed in as " + displayName() + (displayName() !== email ? " (" + email + ")" : "");
+  b.setAttribute("aria-label", "Account: " + displayName());
+  document.title = (profile && profile.shop_name ? profile.shop_name + " · " : "") + "Hangtag";
+  renderWelcome();
+}
+function renderWelcome(){
+  const w = aEl("welcome");
+  const name = firstName();
+  if(!name || !(authUser || LS.get("hangtag_auth_email", "")) || LS.get("hangtag_welcome_hidden", "") === dayKey(Date.now())){ w.hidden = true; return; }
+  const hr = new Date().getHours();
+  const hello = hr < 12 ? "Good morning" : hr < 17 ? "Good afternoon" : "Good evening";
+  const shop = profile && profile.shop_name ? profile.shop_name + (profile.city ? " · " + profile.city : "") : "";
+  w.innerHTML = '<span class="avatar">' + avatarHTML() + '</span><div><b></b><div class="ws"></div></div><button class="iconbtn wx" type="button" data-welcome-close aria-label="Hide welcome message">' + ICON.x + "</button>";
+  w.querySelector("b").textContent = hello + ", " + name;
+  w.querySelector(".ws").textContent = shop || "Welcome to your shop.";
+  w.hidden = false;
+}
+function openAcctMenu(){
+  const m = aEl("acctMenu"), email = (authUser && authUser.email) || LS.get("hangtag_auth_email", "");
+  m.innerHTML = '<div class="am-head"><span class="avatar lg">' + avatarHTML() + '</span><div><b></b><span class="ame"></span><span class="ams"></span></div></div>' +
+    '<button type="button" role="menuitem" data-am="settings">Profile &amp; shop settings</button>' +
+    '<button type="button" role="menuitem" data-am="backup">Download backup</button>' +
+    '<hr><button type="button" role="menuitem" data-am="signout" class="danger">Sign out</button>';
+  m.querySelector("b").textContent = displayName();
+  m.querySelector(".ame").textContent = email;
+  m.querySelector(".ams").textContent = profile && profile.shop_name ? profile.shop_name : "";
+  m.hidden = false;
+  aEl("acctBtn").setAttribute("aria-expanded", "true");
+  m.querySelector("button").focus();
+}
+function closeAcctMenu(){ const m = aEl("acctMenu"); if(m){ m.hidden = true; } const b = aEl("acctBtn"); if(b) b.setAttribute("aria-expanded", "false"); }
+function methodNames(){
+  const ids = (authUser && authUser.identities) || [];
+  const list = [...new Set(ids.map(i => i.provider))];
+  if(!list.length && authUser && authUser.app_metadata && authUser.app_metadata.providers) list.push(...authUser.app_metadata.providers);
+  return list.map(p => PROVIDER_NAMES[p] || p).join(", ") || "—";
+}
+function openSettings(){
+  closeAcctMenu();
+  const p = profile || {}, email = (authUser && authUser.email) || LS.get("hangtag_auth_email", "");
+  const since = (authUser && authUser.created_at) || p.created_at;
+  const host = $("#modalHost");
+  host.innerHTML = '<div class="scrim" data-settings-scrim><div class="sheet settings" role="dialog" aria-modal="true" aria-labelledby="setTitle">' +
+    '<div class="sh-head"><span class="avatar lg">' + avatarHTML() + '</span><div style="flex:1;min-width:0"><h3 id="setTitle" style="margin:0">Profile &amp; shop settings</h3><p class="note" style="margin:2px 0 0" id="setSub"></p></div>' +
+    '<button class="iconbtn" type="button" data-settings-close aria-label="Close">' + ICON.x + "</button></div>" +
+    '<form id="profileForm" class="authform" novalidate>' + profileFieldsHTML(p, "ps") +
+    '<p id="profileErr" class="autherr" role="alert" hidden></p><div class="setactions"><button class="btn primary" type="submit" id="profileSave">Save changes</button></div></form>' +
+    '<div class="setsec"><h4>Account</h4><dl class="kv"><dt>Email</dt><dd id="kvEmail"></dd><dt>Signs in with</dt><dd id="kvMethod"></dd><dt>Member since</dt><dd id="kvSince"></dd><dt>Account ID</dt><dd id="kvId"></dd></dl></div>' +
+    '<div class="setsec"><h4>Your data</h4><p class="note" style="margin:0">Your products, stock and bills are private to this account. Download a copy any time.</p>' +
+    '<div class="setactions"><button class="btn sm" type="button" data-settings-act="backup">Download backup</button><button class="btn sm" type="button" data-settings-act="export">Export sales (CSV)</button></div></div>' +
+    '<div class="setsec"><div class="setactions" style="margin-top:0"><button class="btn sm danger" type="button" data-settings-act="signout">Sign out</button></div></div>' +
+    "</div></div>";
+  $("#setSub").textContent = email;
+  $("#kvEmail").textContent = email || "—";
+  $("#kvMethod").textContent = methodNames();
+  $("#kvSince").textContent = since ? new Date(since).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) : "—";
+  $("#kvId").textContent = authUser ? authUser.id.slice(0, 8) : "—";
+  if(!authUser || !navigator.onLine){ const e = $("#profileErr"); e.textContent = "You're offline. Changes can be saved once you're back online."; e.hidden = false; }
+  host.querySelector("#ps_full_name").focus({ preventScroll: true });
+}
+function closeSettings(){ $("#modalHost").innerHTML = ""; }
+async function onProfileSubmit(form){
+  const err = $("#profileErr"), btn = $("#profileSave");
+  const r = readProfileForm(form);
+  if(r.error){ err.textContent = r.error; err.hidden = false; return; }
+  if(!authUser || !sbClient){ err.textContent = "You're offline. Changes can be saved once you're back online."; err.hidden = false; return; }
+  btn.disabled = true; err.hidden = true;
+  try{
+    await saveProfileDetails(r.values);
+    renderAccount();
+    closeSettings();
+    toast("Profile saved.");
+  }catch(e){ err.textContent = e.message || "Couldn't save. Try again."; err.hidden = false; }
+  finally{ btn.disabled = false; }
+}
+
+/* ---------- signing in and out ---------- */
 function workLocallyAs(email){
-  hideGate(); showAccount(email);
+  hideGate(); hideSetup();
   sbStatus = "disconnected"; mode = "standalone"; renderSync();
+  renderAccount();
 }
 function onSignedIn(session){
   if(signingIn) return signingIn;   // one at a time; several events can ask at once
@@ -874,6 +1211,7 @@ function onSignedIn(session){
   return signingIn;
 }
 async function doSignedIn(session){
+  if(inResetFlow()) return;
   const user = session && session.user;
   if(!user) return;
   const email = user.email || "";
@@ -884,33 +1222,30 @@ async function doSignedIn(session){
   if(switched) loadUserState();   // this account's own products and bills, no page reload
   LS.set(PICK_ACCOUNT, "");
   authUser = user;
-  hideGate(); showAccount(email, displayName(user));
-  await initSupabase();
-  saveProfile(user);
+  const { profile: p, fresh } = await loadProfile(user);
+  // First time (or details missing): ask for the shop details before opening the till
+  if(fresh && !profileComplete(p)){ showSetup(Object.assign({ full_name: (user.user_metadata || {}).full_name || (user.user_metadata || {}).name || "" }, p || {})); return; }
+  await enterApp(false);
 }
-/* Keep this account's profile row up to date (name, email, photo from the sign-in service) */
-async function saveProfile(user){
-  if(!sbClient || !user || !navigator.onLine) return;
-  const m = user.user_metadata || {};
-  try{
-    const { error } = await sbClient.from("hangtag_profiles").upsert({
-      id: user.id, email: user.email || null,
-      full_name: m.full_name || m.name || null, avatar_url: m.avatar_url || m.picture || null,
-      last_seen_at: new Date().toISOString()
-    });
-    if(error) console.warn("Profile not saved:", error.message);
-  }catch(e){ console.warn("Profile not saved:", e); }
+async function enterApp(firstTime){
+  hideGate(); hideSetup();
+  renderAccount();
+  if(firstTime) toast("Welcome to Hangtag, " + firstName() + ". Your shop is ready.");
+  await initSupabase();
 }
 function onSignedOut(){
   authUser = null;
-  LS.set("hangtag_auth_email", "");
+  LS.set("hangtag_auth_email", ""); LS.set(RESET_KEY, ""); LS.set(RECOVERY_KEY, "");
   if(sbRealtimeChannel && sbClient){ sbClient.removeChannel(sbRealtimeChannel); sbRealtimeChannel = null; }
   sbStatus = "disconnected"; mode = "standalone"; renderSync();
-  showAccount("");
+  closeSettings(); closeAcctMenu();
+  renderAccount();
+  aEl("welcome").hidden = true;
+  document.title = "Hangtag";
   showGate("signin");
 }
-async function signInWith(provider){
-  setAuthError(""); setAuthNote("");
+async function signInWith(provider, loginHint){
+  setAuthError(""); if(!loginHint) setAuthNote("");
   if(!navigator.onLine){ setAuthError("You're offline. Connect to the internet to sign in."); return; }
   const p = PROVIDERS[provider];
   if(!p) return;
@@ -924,11 +1259,15 @@ async function signInWith(provider){
       setAuthError(p.label + " sign-in isn't switched on for this app yet. Ask the owner to turn it on in Supabase.");
       return;
     }
+    LS.set(RESET_KEY, "");
     const options = { redirectTo: HOME_URL };
     if(p.scopes) options.scopes = p.scopes;
+    const qp = {};
     // Only ask to choose an account after Sign out (switching accounts). Asking every time makes people who
     // aren't already signed in to Google type their details and then pick the same account again.
-    if((provider === "google" || provider === "azure") && LS.get(PICK_ACCOUNT, "")) options.queryParams = { prompt: "select_account" };
+    if((provider === "google" || provider === "azure") && LS.get(PICK_ACCOUNT, "")) qp.prompt = "select_account";
+    if(loginHint && provider === "google") qp.login_hint = loginHint;   // pre-fill the email on Google's page
+    if(Object.keys(qp).length) options.queryParams = qp;
     const { error } = await sbClient.auth.signInWithOAuth({ provider, options });
     if(error) throw error;
     // The browser is now on its way to the sign-in service (buttons stay disabled; "pageshow" re-enables them on Back)
@@ -936,6 +1275,111 @@ async function signInWith(provider){
     setAuthBusy(false);
     setAuthError(p.label + " sign-in failed: " + authErrorText(e));
   }
+}
+/* Email: first ask for the address, then decide - Google account, password, or new account */
+async function onEmailSubmit(ev){
+  ev.preventDefault();
+  const email = aEl("authEmail").value.trim().toLowerCase(), pass = aEl("authPass").value, pass2 = aEl("authPass2").value;
+  setAuthError(""); setAuthNote(""); aEl("resendBtn").hidden = true;
+  if(!validEmail(email)){ setAuthError("Enter a valid email address."); if(aEl("emailWrap").hidden) setEmailMode("email"); aEl("authEmail").focus(); return; }
+  if(!navigator.onLine){ setAuthError("You're offline. Connect to the internet to sign in."); return; }
+  aEl("authEmail").value = email;
+  if(emailMode === "create"){
+    if(pass.length < MIN_PW){ setAuthError("Choose a password of at least " + MIN_PW + " characters."); aEl("authPass").focus(); return; }
+    if(pass !== pass2){ setAuthError("The two passwords don't match."); aEl("authPass2").focus(); return; }
+  }
+  if(emailMode === "password" && !pass){ setAuthError("Enter your password."); aEl("authPass").focus(); return; }
+  signedOutByUser = false;
+  setAuthBusy(true);
+  try{
+    if(emailMode === "email"){
+      const methods = await signInMethodsFor(email);
+      if(methods && !methods.includes("email")){
+        const oauth = methods.find(m => PROVIDERS[m]);
+        if(oauth){
+          // This email already has an account through Google (or another service): continue with that
+          setAuthNote("This email signs in with " + PROVIDERS[oauth].label + ". Taking you there…");
+          await signInWith(oauth, email);
+          return;
+        }
+      }
+      let settings = null;
+      try{ settings = await loadAuthSettings(); }catch(e){}
+      if(settings && settings.external && settings.external.email === false){
+        setAuthError("Email sign-in isn't switched on for this app yet. Use Continue with Google, or ask the owner to turn on Email in Supabase.");
+        return;
+      }
+      setEmailMode(methods && !methods.length ? "create" : "password");
+      aEl("authPass").focus();
+      return;
+    }
+    if(emailMode === "password"){
+      const { data, error } = await sbClient.auth.signInWithPassword({ email, password: pass });
+      if(error){
+        if(error.code === "email_not_confirmed" || /email not confirmed/i.test(error.message || "")) aEl("resendBtn").hidden = false;
+        throw error;
+      }
+      aEl("authPass").value = "";
+      LS.set(RESET_KEY, "");
+      showGate("loading", { message: "Opening your shop…" });
+      await onSignedIn(data.session);
+      return;
+    }
+    if(emailMode === "create"){
+      LS.set(RESET_KEY, "");
+      const { data, error } = await sbClient.auth.signUp({ email, password: pass, options: { emailRedirectTo: HOME_URL } });
+      if(error) throw error;
+      aEl("authPass").value = ""; aEl("authPass2").value = "";
+      if(data.session){ showGate("loading", { message: "Opening your shop…" }); await onSignedIn(data.session); return; }
+      // Supabase doesn't reveal existing emails: an existing account comes back with no identities
+      if(data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0){
+        showGate("signin", { mode: "password", error: "An account with this email already exists. Enter its password, or use Forgot password." });
+        return;
+      }
+      showGate("signin", { mode: "password", note: "Almost done. We sent a confirmation link to " + email + ". Open it, then sign in here.", showResend: true });
+      return;
+    }
+    if(emailMode === "forgot"){
+      const { error } = await sbClient.auth.resetPasswordForEmail(email, { redirectTo: HOME_URL });
+      if(error) throw error;
+      LS.set(RESET_KEY, Date.now());
+      showGate("signin", { mode: "password", note: "If there's an account for " + email + ", a reset link is on its way. Open it in this same browser to choose a new password." });
+    }
+  }catch(e){
+    setAuthError(authErrorText(e));
+  }finally{
+    if(!aEl("authGate").hidden) setAuthBusy(false);
+  }
+}
+async function resendConfirmation(){
+  const email = aEl("authEmail").value.trim();
+  if(!validEmail(email)){ setAuthError("Enter your email first."); setEmailMode("email"); aEl("authEmail").focus(); return; }
+  setAuthBusy(true);
+  try{
+    const { error } = await sbClient.auth.resend({ type: "signup", email, options: { emailRedirectTo: HOME_URL } });
+    if(error) throw error;
+    setAuthError(""); setAuthNote("Sent a new confirmation link to " + email + ".");
+  }catch(e){ setAuthError(authErrorText(e)); }
+  finally{ setAuthBusy(false); aEl("resendBtn").hidden = false; }
+}
+function enterReset(email){ LS.set(RECOVERY_KEY, Date.now()); showGate("reset", { email }); }
+async function onResetSubmit(ev){
+  ev.preventDefault();
+  const p1 = aEl("newPass").value, p2 = aEl("newPass2").value;
+  setAuthError("");
+  if(p1.length < MIN_PW){ setAuthError("Choose a password of at least " + MIN_PW + " characters."); aEl("newPass").focus(); return; }
+  if(p1 !== p2){ setAuthError("The two passwords don't match."); aEl("newPass2").focus(); return; }
+  setAuthBusy(true);
+  try{
+    const { error } = await sbClient.auth.updateUser({ password: p1 });
+    if(error) throw error;
+    LS.set(RESET_KEY, ""); LS.set(RECOVERY_KEY, "");
+    aEl("newPass").value = ""; aEl("newPass2").value = "";
+    const { data: { session } } = await sbClient.auth.getSession();
+    if(session){ showGate("loading", { message: "Password updated. Opening your shop…" }); await onSignedIn(session); if(authUser) toast("Password updated."); }
+    else showGate("signin", { mode: "password", note: "Password updated. Sign in with your new password." });
+  }catch(e){ setAuthError(authErrorText(e)); }
+  finally{ if(!aEl("authGate").hidden) setAuthBusy(false); }
 }
 async function signOut(){
   // Local sign-out: only this device. Offline with an expired token supabase-js returns an error and keeps
@@ -962,10 +1406,13 @@ async function bootAuth(){
     return;
   }
   sbClient = makeSbClient();
+  let recovering = false;
+  // Listen before the client finishes reading the address bar, so a password-reset link is recognised
   sbClient.auth.onAuthStateChange((event, s) => {
+    if(event === "PASSWORD_RECOVERY"){ recovering = true; return; }
     if(event === "SIGNED_OUT"){
       LS.set("hangtag_auth_email", "");
-      if(bootDone && (authUser || aEl("authGate").hidden)) setTimeout(onSignedOut, 0);
+      if(bootDone && (authUser || !gateUp())) setTimeout(onSignedOut, 0);
       return;
     }
     if(!s || !s.user) return;
@@ -973,14 +1420,25 @@ async function bootAuth(){
     if(signedOutByUser && (event === "SIGNED_IN" || event === "TOKEN_REFRESHED")){ clearStoredSession(); return; }
     // Another tab signed in as someone else: start over as that account
     if(authUser && s.user.id !== authUser.id){ location.reload(); return; }
-    if(!bootDone) return;
+    if(authUser && event === "USER_UPDATED") authUser = s.user;
+    if(!bootDone || inResetFlow()) return;
     // A token refresh that failed offline has now worked: finish signing in / reconnect
     if(!authUser && (event === "SIGNED_IN" || event === "TOKEN_REFRESHED")) setTimeout(() => onSignedIn(s), 0);
     else if(authUser && event === "TOKEN_REFRESHED" && sbStatus !== "connected") setTimeout(() => initSupabase(), 0);
   });
   const qs = new URLSearchParams(location.search), hs = new URLSearchParams(location.hash.slice(1));
+  const tokenHash = qs.get("token_hash"), otpType = qs.get("type");
   const linkErr = qs.get("error_code") || hs.get("error_code") || qs.get("error") || hs.get("error");
-  const cameBack = qs.has("code") || hs.has("access_token");
+  const cameBack = qs.has("code") || hs.has("access_token") || !!tokenHash;
+  // Email links that carry a token_hash work in any browser, not just the one that asked (see schema.sql notes)
+  let otpError = "";
+  if(tokenHash && OTP_TYPES.includes(otpType)){
+    try{
+      const { error } = await sbClient.auth.verifyOtp({ token_hash: tokenHash, type: otpType });
+      if(error) otpError = linkErrorText(error.code || error.message);
+      else if(otpType === "recovery") recovering = true;
+    }catch(e){ otpError = linkErrorText(""); }
+  }
   let hasStored = false;
   try{ hasStored = !!localStorage.getItem(AUTH_STORE); }catch(e){}
   const sessP = sbClient.auth.getSession().then(r => r, e => ({ data: { session: null }, error: e }));
@@ -994,10 +1452,19 @@ async function bootAuth(){
     sessP.then(rr => { const s = rr && rr.data && rr.data.session; if(s && !authUser) onSignedIn(s); });
     return;
   }
-  if(session){ showGate("loading"); await onSignedIn(session); return; }
+  if(session && (recovering || (qs.has("code") && recent(RESET_KEY)) || recent(RECOVERY_KEY))){
+    enterReset(session.user && session.user.email);
+    return;
+  }
+  if(session){ showGate("loading", { message: "Opening your shop…" }); await onSignedIn(session); return; }
   // Signed in here before, and the internet is down or flaky: keep selling on this device
   if(lastEmail && (!navigator.onLine || isNetErr(sessErr))){ workLocallyAs(lastEmail); return; }
-  showGate("signin", { error: linkErr ? linkErrorText(linkErr) : (cameBack ? "Sign-in didn't finish. Try again." : "") });
+  showGate("signin", {
+    error: otpError || (linkErr ? linkErrorText(linkErr) : ""),
+    note: !otpError && !linkErr && cameBack
+      ? "If you just confirmed your email, sign in below. If you were resetting your password, open the reset link in the same browser you asked from, or ask for a new one."
+      : ""
+  });
 }
 function makeSbClient(){
   return window.supabase.createClient(sbUrl, sbKey, {
@@ -1005,13 +1472,37 @@ function makeSbClient(){
   });
 }
 aEl("provBtns").addEventListener("click", e => { const b = e.target.closest("[data-provider]"); if(b) signInWith(b.dataset.provider); });
-aEl("acctBtn").addEventListener("click", e => {
-  const b = e.currentTarget;
-  if(b.dataset.confirm){ signOut(); return; }
-  b.dataset.confirm = "1"; b.textContent = "Tap again to sign out";
-  setTimeout(() => { if(b.dataset.confirm){ delete b.dataset.confirm; b.textContent = "Sign out"; } }, 3000);
+aEl("emailForm").addEventListener("submit", onEmailSubmit);
+aEl("changeEmailBtn").addEventListener("click", () => { setEmailMode("email"); aEl("authEmail").focus(); });
+aEl("forgotBtn").addEventListener("click", () => { setEmailMode("forgot"); aEl("authEmail").focus(); });
+aEl("backBtn").addEventListener("click", () => { setEmailMode("password"); aEl("authPass").focus(); });
+aEl("resendBtn").addEventListener("click", resendConfirmation);
+aEl("resetForm").addEventListener("submit", onResetSubmit);
+aEl("resetCancel").addEventListener("click", signOut);
+aEl("setupForm").addEventListener("submit", onSetupSubmit);
+aEl("setupSignOut").addEventListener("click", signOut);
+aEl("acctBtn").addEventListener("click", e => { e.stopPropagation(); if(aEl("acctMenu").hidden) openAcctMenu(); else closeAcctMenu(); });
+aEl("acctMenu").addEventListener("click", e => {
+  const b = e.target.closest("[data-am]"); if(!b) return;
+  const act = b.dataset.am; closeAcctMenu();
+  if(act === "settings") openSettings();
+  else if(act === "backup") downloadBackup();
+  else if(act === "signout") signOut();
 });
-// Back from the sign-in service restores this page as it was, buttons disabled: turn them back on
+document.addEventListener("click", e => {
+  if(!aEl("acctMenu").hidden && !e.target.closest(".acctwrap")) closeAcctMenu();
+  if(e.target.closest("[data-welcome-close]")){ LS.set("hangtag_welcome_hidden", dayKey(Date.now())); aEl("welcome").hidden = true; }
+  if(e.target.matches("[data-settings-scrim]") || e.target.closest("[data-settings-close]")) closeSettings();
+  const sa = e.target.closest("[data-settings-act]");
+  if(sa){ const a = sa.dataset.settingsAct; if(a === "backup") downloadBackup(); else if(a === "export") exportCsv(); else if(a === "signout"){ closeSettings(); signOut(); } }
+});
+document.addEventListener("submit", e => { if(e.target.id === "profileForm"){ e.preventDefault(); onProfileSubmit(e.target); } });
+document.addEventListener("keydown", e => {
+  if(e.key !== "Escape") return;
+  if(!aEl("acctMenu").hidden){ closeAcctMenu(); aEl("acctBtn").focus(); }
+  else if($("#modalHost").innerHTML) closeSettings();
+});
+// Back from a sign-in service restores this page as it was, buttons disabled: turn them back on
 window.addEventListener("pageshow", e => { if(e.persisted && !aEl("authGate").hidden) setAuthBusy(false); });
 
 /* ================= Supabase Database Engine ================= */
@@ -1981,7 +2472,7 @@ document.addEventListener("change",async e=>{
 
 document.addEventListener("keydown",e=>{
   if(e.key==="Escape"){if(openPid||billOpen){closeSheets();e.preventDefault()}hideTip();return}
-  if(!$("#authGate").hidden)return;
+  if(!$("#authGate").hidden||!$("#setupGate").hidden)return;
   if(prefs.tab!=="sell"||e.metaKey||e.ctrlKey||e.altKey)return;
   if(e.target.matches&&e.target.matches("input,select,textarea"))return;
   const k=e.key.toLowerCase();
@@ -1997,7 +2488,7 @@ document.addEventListener("keydown",e=>{
 let rT=null;
 window.addEventListener("resize",()=>{clearTimeout(rT);rT=setTimeout(()=>{if(prefs.tab==="report")renderReport()},160)});
 window.addEventListener("online",async ()=>{
-  if(!sbClient) return;
+  if(!sbClient || inResetFlow() || !$("#setupGate").hidden) return;
   if(cloudConfigured && !authUser){
     // If the token refresh is still cooling down this finds nothing; the TOKEN_REFRESHED listener finishes later
     try{ const { data: { session } } = await sbClient.auth.getSession(); if(session) await onSignedIn(session); }catch(e){}

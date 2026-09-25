@@ -195,7 +195,14 @@ kbd{font-family:inherit;font-size:11.5px;font-weight:700;border:1px solid var(--
 .sz:hover{border-color:var(--ink)}
 .sz:active{background:var(--wash)}
 .sz .kh{position:absolute;top:7px;right:9px;font-size:10.5px;font-weight:700;color:var(--ink-3)}
-.sh-foot{display:flex;justify-content:space-between;align-items:center;margin-top:16px;gap:10px}
+.sz.sel{border-color:var(--ink);background:var(--accent-soft);box-shadow:0 0 0 1.5px var(--ink)}
+.sz.sel::after{border-color:transparent}
+.sh-acts{display:flex;gap:8px;align-items:center;margin-left:auto}
+.step input{width:46px;height:32px;border:0;background:transparent;text-align:center;font-weight:700;font-size:15px;font-variant-numeric:tabular-nums;color:var(--ink);-moz-appearance:textfield;appearance:textfield}
+.step input::-webkit-outer-spin-button,.step input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.step input:focus{outline:2px solid var(--ink);outline-offset:-2px;border-radius:6px}
+@media (max-width:520px){.sh-foot{flex-wrap:wrap}.sh-acts{width:100%}.sh-acts .btn{flex:1}}
+.sh-foot{display:flex;justify-content:space-between;align-items:center;margin-top:16px;gap:10px;flex-wrap:wrap}
 .qty{display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--ink-2);font-weight:600}
 .step{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:10px;background:var(--bg)}
 .step button{width:32px;height:32px;font-size:18px;font-weight:600;color:var(--ink-2);border-radius:9px}
@@ -601,7 +608,7 @@ html.gated body{overflow:hidden}
       <div class="viewhead">
         <div>
           <h2 class="vt">Tap to sell</h2>
-          <p>Product → size → how they paid. <span class="deskonly">Keys: <kbd>1</kbd>–<kbd>0</kbd> product, <kbd>1</kbd>–<kbd>9</kbd> size, then <kbd>C</kbd> cash · <kbd>U</kbd> UPI · <kbd>K</kbd> card.</span></p>
+          <p>Product → size → how they paid. <span class="deskonly">Keys: <kbd>1</kbd>–<kbd>0</kbd> product, <kbd>1</kbd>–<kbd>9</kbd> size, <kbd>+</kbd>/<kbd>−</kbd> quantity, <kbd>Enter</kbd> add, then <kbd>C</kbd> cash · <kbd>U</kbd> UPI · <kbd>K</kbd> card.</span></p>
         </div>
         <div class="seg" role="group" aria-label="Product view">
           <button data-density="photos" aria-pressed="true">Photos</button>
@@ -704,7 +711,7 @@ let cart=LS.get("rc_cart",[]); if(!Array.isArray(cart))cart=[];
 let disc=Math.max(0,+LS.get("rc_disc",0)||0);
 let prefs=Object.assign({tab:"sell",density:"photos",period:"today",day:""},LS.get("rc_prefs",{}));
 if(!["sell","stock","report","products"].includes(prefs.tab))prefs.tab="sell";
-let openPid=null, sheetQty=1, billOpen=false, justAdded=null;
+let openPid=null, sheetQty=1, sheetSize=null, billOpen=false, justAdded=null;
 let draft=null, draftDirty=false;
 let lastSale=null;
 const showTable={time:false,size:false};
@@ -2011,16 +2018,31 @@ function billBarHTML(){
 function typingDisc(){const a=document.activeElement;return !!(a&&a.matches&&a.matches("[data-disc]"))}
 function renderBill(){if(typingDisc())return;$("#billPanel").innerHTML=billPanelHTML("panel");$("#billBar").innerHTML=billBarHTML()}
 
-function openSize(pid){if(!prod(pid))return;openPid=pid;sheetQty=1;billOpen=false;renderSizeSheet();const f=$("#sheetHost .sz");if(f)f.focus({preventScroll:true})}
+function openSize(pid){if(!prod(pid))return;openPid=pid;sheetQty=1;sheetSize=null;billOpen=false;renderSizeSheet();const f=$("#sheetHost .sz");if(f)f.focus({preventScroll:true})}
 function renderSizeSheet(){
   const p=prod(openPid);if(!p){closeSheets();return}
   document.body.style.overflow="hidden";
   $("#sheetHost").innerHTML=`<div class="scrim" data-scrim><div class="sheet" role="dialog" aria-modal="true" aria-label="Choose size for ${esc(p.name)}">
-    <div class="sh-head">${thumb(p,"md")}<div class="sh-t"><h3>${esc(p.name)}</h3><p>${inr(p.price)} · tap a size to add it to the bill</p></div><button class="iconbtn" data-act="closesheet" aria-label="Close">${ICON.x}</button></div>
-    <div class="sizes">${p.sizes.map((z,i)=>{const l=leftOf(p,z.s)-cartQty(p.id,z.s),c=l<=0?"out":l<=3?"low":"";return `<button class="sz ${c}" data-size="${esc(z.s)}"><b>${esc(z.s)}</b><small>${l<=0?"Sold out":l+" left"}</small>${i<9?`<span class="kh">${i+1}</span>`:""}</button>`}).join("")}</div>
-    <div class="sh-foot"><span class="qty">Quantity <span class="step"><button data-act="qm" aria-label="Fewer">−</button><b>${sheetQty}</b><button data-act="qp" aria-label="More">+</button></span></span><button class="btn sm" data-act="closesheet">Cancel</button></div>
+    <div class="sh-head">${thumb(p,"md")}<div class="sh-t"><h3>${esc(p.name)}</h3><p>${inr(p.price)} · pick a size, set the quantity, then add</p></div><button class="iconbtn" data-act="closesheet" aria-label="Close">${ICON.x}</button></div>
+    <div class="sizes">${p.sizes.map((z,i)=>{const l=leftOf(p,z.s)-cartQty(p.id,z.s),c=l<=0?"out":l<=3?"low":"";return `<button class="sz ${c}${z.s===sheetSize?" sel":""}" data-size="${esc(z.s)}" aria-pressed="${z.s===sheetSize}"><b>${esc(z.s)}</b><small>${l<=0?"Sold out":l+" left"}</small>${i<9?`<span class="kh">${i+1}</span>`:""}</button>`}).join("")}</div>
+    <div class="sh-foot"><label class="qty" for="sheetQty">Quantity <span class="step"><button type="button" data-act="qm" aria-label="Fewer">−</button><input id="sheetQty" data-sheetqty type="number" inputmode="numeric" min="1" max="99" value="${sheetQty}" aria-label="Quantity"><button type="button" data-act="qp" aria-label="More">+</button></span></label>
+      <div class="sh-acts"><button class="btn sm" data-act="closesheet">Cancel</button><button class="btn sm primary" data-act="addsize" id="addSizeBtn"${sheetSize?"":" disabled"}>${addSizeLabel(p)}</button></div></div>
   </div></div>`;
 }
+function addSizeLabel(p){
+  if(!sheetSize) return "Pick a size";
+  return "Add " + sheetQty + " × " + esc(sheetSize) + " · " + inr((+p.price || 0) * sheetQty);
+}
+/* Update the open size window in place (keeps focus while typing the quantity) */
+function updateSizeSheet(){
+  const p = prod(openPid); if(!p) return;
+  $$("#sheetHost .sz").forEach(b => { const on = b.dataset.size === sheetSize; b.classList.toggle("sel", on); b.setAttribute("aria-pressed", String(on)); });
+  const q = $("#sheetQty"); if(q && document.activeElement !== q) q.value = sheetQty;
+  const a = $("#addSizeBtn"); if(a){ a.disabled = !sheetSize; a.innerHTML = addSizeLabel(p); }
+}
+/* After a size is picked, Enter should add it (not re-click the focused size button) */
+function focusAddBtn(){ const a = $("#addSizeBtn"); if(a && !a.disabled) a.focus({ preventScroll: true }); }
+function addPickedSize(){ if(openPid && sheetSize) addToCart(openPid, sheetSize, sheetQty); }
 function renderBillSheet(){
   if(!cart.length){closeSheets();return}
   if(typingDisc())return;
@@ -2423,7 +2445,9 @@ function renderAll(){
   else if(t==="stock")renderStock();
   else if(t==="report")renderReport();
   else if(t==="products"){const a=document.activeElement;if(!draftDirty&&!(a&&a.closest&&a.closest("#v-products")))renderProducts()}
-  if(openPid)renderSizeSheet();else if(billOpen)renderBillSheet();
+  // Don't redraw the size window under someone typing a quantity (a live update can arrive any time)
+  if(openPid){if(document.activeElement&&document.activeElement.id==="sheetQty")updateSizeSheet();else renderSizeSheet()}
+  else if(billOpen)renderBillSheet();
 }
 function setTab(t){
   if(prefs.tab===t)return;
@@ -2439,7 +2463,7 @@ document.addEventListener("click",async e=>{
   const t=e.target;if(!t.closest)return;
   const tab=t.closest("[data-tab]");if(tab){setTab(tab.dataset.tab);return}
   const tile=t.closest(".tile");if(tile){openSize(tile.dataset.pid);return}
-  const sz=t.closest(".sz");if(sz&&openPid){addToCart(openPid,sz.dataset.size,sheetQty);return}
+  const sz=t.closest(".sz");if(sz&&openPid){sheetSize=sz.dataset.size;updateSizeSheet();focusAddBtn();return}
   if(t.matches("[data-scrim]")){closeSheets();return}
   const pay=t.closest("[data-pay]");if(pay&&!pay.disabled){checkout(pay.dataset.pay);return}
   const inc=t.closest("[data-inc]");if(inc){const c=cart[+inc.dataset.inc];if(c){c.q++;saveCart();renderAll()}return}
@@ -2455,8 +2479,9 @@ document.addEventListener("click",async e=>{
   switch(act){
     case "closesheet":closeSheets();break;
     case "openbill":billOpen=true;openPid=null;renderBillSheet();break;
-    case "qm":sheetQty=Math.max(1,sheetQty-1);renderSizeSheet();break;
-    case "qp":sheetQty=Math.min(99,sheetQty+1);renderSizeSheet();break;
+    case "qm":sheetQty=Math.max(1,sheetQty-1);updateSizeSheet();break;
+    case "qp":sheetQty=Math.min(99,sheetQty+1);updateSizeSheet();break;
+    case "addsize":addPickedSize();break;
     case "clear":cart=[];disc=0;saveCart();closeSheets();renderAll();break;
     case "undolast":if(lastSale)voidSale(lastSale.id);break;
     case "gosetup":setTab("products");break;
@@ -2477,6 +2502,7 @@ document.addEventListener("click",async e=>{
 
 document.addEventListener("input",e=>{
   const t=e.target;
+  if(t.matches("[data-sheetqty]")){const v=parseInt(t.value,10);sheetQty=isNaN(v)?1:Math.max(1,Math.min(99,v));updateSizeSheet();return}
   if(t.matches("[data-disc]")){
     disc=Math.max(0,Math.round(+t.value||0));saveCart();
     const sub=cartSub(),tot=inr(sub-Math.min(disc,sub));$$("[data-grand]").forEach(g=>{g.textContent=tot});return;
@@ -2502,18 +2528,23 @@ document.addEventListener("change",async e=>{
   }
 });
 
+document.addEventListener("focusout",e=>{if(e.target.matches&&e.target.matches("[data-sheetqty]"))e.target.value=sheetQty});
 document.addEventListener("keydown",e=>{
   if(e.key==="Escape"){if(openPid||billOpen){closeSheets();e.preventDefault()}hideTip();return}
+  // Enter in the quantity box adds the picked size
+  if(e.key==="Enter"&&openPid&&e.target.matches&&e.target.matches("[data-sheetqty]")){e.preventDefault();addPickedSize();return}
   if(!$("#authGate").hidden||!$("#setupGate").hidden)return;
   if(prefs.tab!=="sell"||e.metaKey||e.ctrlKey||e.altKey)return;
   if(e.target.matches&&e.target.matches("input,select,textarea"))return;
   const k=e.key.toLowerCase();
   if(/^[0-9]$/.test(k)){
     const i=(+k||10)-1;
-    if(openPid){const p=prod(openPid);if(p&&p.sizes[i]&&k!=="0")addToCart(openPid,p.sizes[i].s,sheetQty)}
+    if(openPid){const p=prod(openPid);if(p&&p.sizes[i]&&k!=="0"){sheetSize=p.sizes[i].s;updateSizeSheet();focusAddBtn()}}
     else{const p=products()[i];if(p)openSize(p.id)}
     e.preventDefault();return;
   }
+  if(openPid&&(k==="+"||k==="="||k==="-")){sheetQty=Math.max(1,Math.min(99,sheetQty+(k==="-"?-1:1)));updateSizeSheet();e.preventDefault();return}
+  if(openPid&&k==="enter"&&sheetSize&&!(e.target.closest&&e.target.closest("button"))){addPickedSize();e.preventDefault();return}
   if(!openPid&&cart.length&&(k==="c"||k==="u"||k==="k")){checkout(k==="c"?"cash":k==="u"?"upi":"card");e.preventDefault()}
 });
 

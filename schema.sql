@@ -3,8 +3,10 @@
 -- Run this complete script in your Supabase project's SQL Editor (SQL Editor -> New Query).
 -- It is safe to run again. If anything fails, nothing is changed.
 --
--- Every account has its own shop: its own profile, products, stock, photos and bills.
--- Nobody can see or change another account's data.
+-- Every account has its own shop: its own profile, products, variants (colour + size), stock history,
+-- bills, returns, customers and settings. Nobody can see or change another account's data.
+-- The first run of the variant upgrade keeps a copy of the old product, size and bill tables
+-- (hangtag_backup_v2_*) and ends with a migration report you can check.
 --
 -- Sign-in setup (do these first):
 --  1. Google Cloud Console -> APIs & Services -> Credentials -> your OAuth client (Web application)
@@ -285,6 +287,220 @@ BEGIN
 END $$;
 
 -- ==============================================================================
+-- 3b. Variants (every colour + size), stock history, customers, returns and exchanges
+--     Stock is never stored as a single number that could drift. For each variant it is:
+--       opening + stock in + adjustments (hangtag_stock_moves)
+--       − pieces on bills that aren't cancelled (hangtag_sale_items)
+--       + pieces returned (hangtag_return_items)
+-- ==============================================================================
+
+-- Safety copy of the tables this upgrade changes, made once, the first time it runs.
+-- These copies can't be read through the app or the API (row security on, no rules).
+DO $$
+BEGIN
+    IF to_regclass('public.hangtag_backup_v2_products') IS NULL THEN
+        CREATE TABLE public.hangtag_backup_v2_products AS TABLE public.hangtag_products;
+        CREATE TABLE public.hangtag_backup_v2_sizes AS TABLE public.hangtag_sizes;
+        CREATE TABLE public.hangtag_backup_v2_sales AS TABLE public.hangtag_sales;
+        CREATE TABLE public.hangtag_backup_v2_sale_items AS TABLE public.hangtag_sale_items;
+        ALTER TABLE public.hangtag_backup_v2_products ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE public.hangtag_backup_v2_sizes ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE public.hangtag_backup_v2_sales ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE public.hangtag_backup_v2_sale_items ENABLE ROW LEVEL SECURITY;
+        REVOKE ALL ON TABLE public.hangtag_backup_v2_products, public.hangtag_backup_v2_sizes,
+            public.hangtag_backup_v2_sales, public.hangtag_backup_v2_sale_items FROM anon, authenticated;
+    END IF;
+END $$;
+
+-- Products: category, brand, description, cost price, archive, and the order of colours and sizes
+ALTER TABLE public.hangtag_products ADD COLUMN IF NOT EXISTS category TEXT;
+ALTER TABLE public.hangtag_products ADD COLUMN IF NOT EXISTS brand TEXT;
+ALTER TABLE public.hangtag_products ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE public.hangtag_products ADD COLUMN IF NOT EXISTS cost_price INTEGER;
+ALTER TABLE public.hangtag_products ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE public.hangtag_products ADD COLUMN IF NOT EXISTS options JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+-- One row per colour + size of a product. SKU and barcode belong to the variant.
+CREATE TABLE IF NOT EXISTS public.hangtag_variants (
+    owner_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    id TEXT NOT NULL,
+    product_id TEXT NOT NULL,
+    color TEXT NOT NULL DEFAULT '',
+    size TEXT NOT NULL DEFAULT '',
+    sku TEXT,
+    barcode TEXT,
+    price INTEGER CHECK (price IS NULL OR price >= 0),
+    cost_price INTEGER CHECK (cost_price IS NULL OR cost_price >= 0),
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    sort_order INTEGER DEFAULT 0,
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (owner_id, id),
+    CONSTRAINT hangtag_variants_product_fkey FOREIGN KEY (owner_id, product_id)
+        REFERENCES public.hangtag_products (owner_id, id) ON DELETE CASCADE
+);
+-- SKU and barcode are unique within each shop (not across shops)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_hangtag_variants_sku ON public.hangtag_variants (owner_id, lower(sku)) WHERE sku IS NOT NULL AND sku <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_hangtag_variants_barcode ON public.hangtag_variants (owner_id, barcode) WHERE barcode IS NOT NULL AND barcode <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_hangtag_variants_combo ON public.hangtag_variants (owner_id, product_id, color, size);
+CREATE INDEX IF NOT EXISTS idx_hangtag_variants_product ON public.hangtag_variants (owner_id, product_id);
+
+-- Stock history: opening stock, stock in (with optional cost), adjustments (with a reason)
+CREATE TABLE IF NOT EXISTS public.hangtag_stock_moves (
+    owner_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    id TEXT NOT NULL,
+    variant_id TEXT NOT NULL,
+    product_id TEXT,
+    type TEXT NOT NULL CHECK (type IN ('OPENING','RESTOCK','ADJUST')),
+    qty INTEGER NOT NULL,
+    cost_price INTEGER CHECK (cost_price IS NULL OR cost_price >= 0),
+    note TEXT CHECK (note IS NULL OR char_length(note) <= 200),
+    t BIGINT NOT NULL,
+    device_id TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (owner_id, id),
+    CONSTRAINT hangtag_stock_moves_variant_fkey FOREIGN KEY (owner_id, variant_id)
+        REFERENCES public.hangtag_variants (owner_id, id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_hangtag_moves_variant ON public.hangtag_stock_moves (owner_id, variant_id);
+
+-- Bills: number, customer, GST, and exchange details. Bill lines: the exact variant, plus copies of
+-- colour, SKU and cost at the time of sale, so old bills and profit never change when products are edited.
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS bill_no TEXT;
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS customer_id TEXT;
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS customer_name TEXT;
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS customer_phone TEXT;
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS tax_rate NUMERIC(5,2) NOT NULL DEFAULT 0;
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS tax_amount INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS tax_inclusive BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'sale';
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS exchange_id TEXT;
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS credit INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE public.hangtag_sale_items ADD COLUMN IF NOT EXISTS variant_id TEXT;
+ALTER TABLE public.hangtag_sale_items ADD COLUMN IF NOT EXISTS color TEXT NOT NULL DEFAULT '';
+ALTER TABLE public.hangtag_sale_items ADD COLUMN IF NOT EXISTS sku TEXT;
+ALTER TABLE public.hangtag_sale_items ADD COLUMN IF NOT EXISTS cost_price INTEGER;
+CREATE INDEX IF NOT EXISTS idx_hangtag_sale_items_variant ON public.hangtag_sale_items (owner_id, variant_id);
+CREATE INDEX IF NOT EXISTS idx_hangtag_sales_customer ON public.hangtag_sales (owner_id, customer_id);
+
+-- Customers (optional on a bill)
+CREATE TABLE IF NOT EXISTS public.hangtag_customers (
+    owner_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    id TEXT NOT NULL,
+    name TEXT NOT NULL CHECK (char_length(name) BETWEEN 1 AND 80),
+    phone TEXT CHECK (phone IS NULL OR char_length(phone) <= 20),
+    email TEXT CHECK (email IS NULL OR char_length(email) <= 120),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (owner_id, id)
+);
+CREATE INDEX IF NOT EXISTS idx_hangtag_customers_phone ON public.hangtag_customers (owner_id, phone);
+
+-- Returns and exchanges, always linked to the original bill
+CREATE TABLE IF NOT EXISTS public.hangtag_returns (
+    owner_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    id TEXT NOT NULL,
+    sale_id TEXT NOT NULL,
+    t BIGINT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'return' CHECK (kind IN ('return','exchange')),
+    exchange_id TEXT,
+    refund_amount INTEGER NOT NULL DEFAULT 0 CHECK (refund_amount >= 0),
+    refund_method TEXT,
+    value INTEGER NOT NULL DEFAULT 0 CHECK (value >= 0),
+    note TEXT CHECK (note IS NULL OR char_length(note) <= 200),
+    device_id TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (owner_id, id),
+    CONSTRAINT hangtag_returns_sale_fkey FOREIGN KEY (owner_id, sale_id)
+        REFERENCES public.hangtag_sales (owner_id, id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_hangtag_returns_sale ON public.hangtag_returns (owner_id, sale_id);
+CREATE TABLE IF NOT EXISTS public.hangtag_return_items (
+    owner_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    return_id TEXT NOT NULL,
+    line_no INTEGER NOT NULL,
+    sale_id TEXT NOT NULL,
+    sale_line_no INTEGER NOT NULL,
+    variant_id TEXT,
+    product_id TEXT,
+    product_name TEXT NOT NULL,
+    color TEXT NOT NULL DEFAULT '',
+    size TEXT NOT NULL DEFAULT '',
+    sku TEXT,
+    quantity INTEGER NOT NULL CHECK (quantity > 0),
+    unit_price NUMERIC(12,2) NOT NULL DEFAULT 0,
+    value INTEGER NOT NULL DEFAULT 0,
+    cost_price INTEGER,
+    PRIMARY KEY (owner_id, return_id, line_no),
+    CONSTRAINT hangtag_return_items_return_fkey FOREIGN KEY (owner_id, return_id)
+        REFERENCES public.hangtag_returns (owner_id, id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_hangtag_return_items_line ON public.hangtag_return_items (owner_id, sale_id, sale_line_no);
+
+-- The database itself refuses to return more of a bill line than was bought
+CREATE OR REPLACE FUNCTION public.hangtag_check_return_qty()
+RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path = ''
+AS $$
+DECLARE
+    bought INTEGER;
+    already INTEGER;
+BEGIN
+    SELECT quantity INTO bought FROM public.hangtag_sale_items
+     WHERE owner_id = NEW.owner_id AND sale_id = NEW.sale_id AND line_no = NEW.sale_line_no;
+    IF bought IS NULL THEN
+        RAISE EXCEPTION 'Bill line % of bill % was not found', NEW.sale_line_no, NEW.sale_id USING ERRCODE = 'foreign_key_violation';
+    END IF;
+    SELECT COALESCE(SUM(quantity), 0) INTO already FROM public.hangtag_return_items
+     WHERE owner_id = NEW.owner_id AND sale_id = NEW.sale_id AND sale_line_no = NEW.sale_line_no
+       AND NOT (return_id = NEW.return_id AND line_no = NEW.line_no);
+    IF already + NEW.quantity > bought THEN
+        RAISE EXCEPTION 'Can''t return % piece(s): % bought, % already returned', NEW.quantity, bought, already USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS hangtag_return_qty ON public.hangtag_return_items;
+CREATE TRIGGER hangtag_return_qty BEFORE INSERT OR UPDATE ON public.hangtag_return_items
+    FOR EACH ROW EXECUTE FUNCTION public.hangtag_check_return_qty();
+
+-- ---------- Move existing size-based products to variants (only products that have no variants yet) ----------
+-- Each old size becomes a variant with id "<product id>:<size>" and no colour; its stock becomes an opening
+-- stock record. The app on each device uses the same ids, so nothing is counted twice.
+INSERT INTO public.hangtag_variants (owner_id, id, product_id, color, size, sort_order)
+SELECT s.owner_id, s.product_id || ':' || s.size, s.product_id, '', s.size,
+       row_number() OVER (PARTITION BY s.owner_id, s.product_id ORDER BY s.size)
+FROM public.hangtag_sizes s
+JOIN public.hangtag_products p ON p.owner_id = s.owner_id AND p.id = s.product_id
+WHERE NOT EXISTS (SELECT 1 FROM public.hangtag_variants v WHERE v.owner_id = s.owner_id AND v.product_id = s.product_id)
+ON CONFLICT DO NOTHING;
+-- products that had no sizes at all get one plain variant
+INSERT INTO public.hangtag_variants (owner_id, id, product_id, color, size)
+SELECT p.owner_id, p.id || ':', p.id, '', ''
+FROM public.hangtag_products p
+WHERE NOT EXISTS (SELECT 1 FROM public.hangtag_variants v WHERE v.owner_id = p.owner_id AND v.product_id = p.id)
+ON CONFLICT DO NOTHING;
+-- size order for migrated products (S, M, L … then numbers, then anything else)
+UPDATE public.hangtag_products p
+SET options = jsonb_build_object('colors', '[]'::jsonb, 'sizes', COALESCE((
+        SELECT jsonb_agg(v.size ORDER BY COALESCE(array_position(ARRAY['XXS','XS','S','M','L','XL','XXL','2XL','XXXL','3XL','4XL','5XL'], upper(v.size))::numeric,
+                                                   CASE WHEN v.size ~ '^[0-9]+(\.[0-9]+)?$' THEN 100 + v.size::numeric ELSE 1000 END), v.size)
+        FROM public.hangtag_variants v WHERE v.owner_id = p.owner_id AND v.product_id = p.id AND v.size <> ''), '[]'::jsonb))
+WHERE p.options IS NULL OR p.options = '{}'::jsonb;
+-- opening stock = pieces received under the old size list (so pieces in hand stay exactly the same)
+INSERT INTO public.hangtag_stock_moves (owner_id, id, variant_id, product_id, type, qty, note, t)
+SELECT s.owner_id, 'open:' || s.product_id || ':' || s.size, s.product_id || ':' || s.size, s.product_id, 'OPENING', s.stock,
+       'Opening stock (moved from the old size list)', (extract(epoch FROM now()) * 1000)::bigint
+FROM public.hangtag_sizes s
+WHERE s.stock <> 0
+  AND EXISTS (SELECT 1 FROM public.hangtag_variants v WHERE v.owner_id = s.owner_id AND v.id = s.product_id || ':' || s.size)
+ON CONFLICT DO NOTHING;
+-- old bill lines point at their variant (names, sizes and prices on the bill are not touched)
+UPDATE public.hangtag_sale_items si
+SET variant_id = si.product_id || ':' || si.size
+WHERE si.variant_id IS NULL
+  AND EXISTS (SELECT 1 FROM public.hangtag_variants v WHERE v.owner_id = si.owner_id AND v.id = si.product_id || ':' || si.size);
+
+-- ==============================================================================
 -- 4. Indexes for reports
 -- ==============================================================================
 DROP INDEX IF EXISTS public.idx_hangtag_sizes_prod;
@@ -300,7 +516,7 @@ CREATE INDEX IF NOT EXISTS idx_hangtag_sale_items_prod ON public.hangtag_sale_it
 DO $$
 DECLARE t TEXT;
 BEGIN
-    FOREACH t IN ARRAY ARRAY['hangtag_products','hangtag_sizes','hangtag_images','hangtag_sales','hangtag_sale_items','hangtag_meta'] LOOP
+    FOREACH t IN ARRAY ARRAY['hangtag_products','hangtag_sizes','hangtag_images','hangtag_sales','hangtag_sale_items','hangtag_meta','hangtag_variants','hangtag_stock_moves','hangtag_customers','hangtag_returns','hangtag_return_items'] LOOP
         EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
         EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 'Public access to ' || t, t);
         EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 'Approved staff access to ' || t, t);
@@ -326,22 +542,61 @@ DROP TABLE IF EXISTS public.hangtag_allowed_users;
 -- Signed-out visitors (just the public key) get no table access at all.
 -- Their requests fail loudly instead of quietly returning nothing, so the app keeps unsent work queued.
 REVOKE ALL ON TABLE public.hangtag_products, public.hangtag_sizes, public.hangtag_images,
-    public.hangtag_sales, public.hangtag_sale_items, public.hangtag_meta, public.hangtag_profiles FROM anon;
+    public.hangtag_sales, public.hangtag_sale_items, public.hangtag_meta, public.hangtag_profiles,
+    public.hangtag_variants, public.hangtag_stock_moves, public.hangtag_customers,
+    public.hangtag_returns, public.hangtag_return_items FROM anon;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.hangtag_products, public.hangtag_sizes, public.hangtag_images,
-    public.hangtag_sales, public.hangtag_sale_items, public.hangtag_meta TO authenticated;
+    public.hangtag_sales, public.hangtag_sale_items, public.hangtag_meta,
+    public.hangtag_variants, public.hangtag_stock_moves, public.hangtag_customers,
+    public.hangtag_returns, public.hangtag_return_items TO authenticated;
+REVOKE EXECUTE ON FUNCTION public.hangtag_check_return_qty() FROM PUBLIC, anon;
 GRANT SELECT, INSERT, UPDATE ON TABLE public.hangtag_profiles TO authenticated;
 
 -- ==============================================================================
 -- 6. Realtime: live updates between a person's own phones and laptops
 -- ==============================================================================
 DO $$
+DECLARE t TEXT;
 BEGIN
-    ALTER PUBLICATION supabase_realtime ADD TABLE
-        public.hangtag_products,
-        public.hangtag_sizes,
-        public.hangtag_images,
-        public.hangtag_sales,
-        public.hangtag_sale_items;
-EXCEPTION WHEN OTHERS THEN
-    NULL; -- already added
+    FOREACH t IN ARRAY ARRAY['hangtag_products','hangtag_sizes','hangtag_images','hangtag_sales','hangtag_sale_items',
+                             'hangtag_variants','hangtag_stock_moves','hangtag_customers','hangtag_returns','hangtag_return_items','hangtag_meta'] LOOP
+        BEGIN
+            EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I', t);
+        EXCEPTION WHEN OTHERS THEN
+            NULL; -- already added (or realtime not available)
+        END;
+    END LOOP;
 END $$;
+
+-- ==============================================================================
+-- 7. Migration report (shown below the editor after running). "ok" should say true on every row.
+-- ==============================================================================
+SELECT check_name, value, expected, value = expected AS ok FROM (
+    SELECT 1 AS n, 'Products with at least one variant' AS check_name,
+           (SELECT count(*) FROM public.hangtag_products p WHERE EXISTS (SELECT 1 FROM public.hangtag_variants v WHERE v.owner_id = p.owner_id AND v.product_id = p.id))::bigint AS value,
+           (SELECT count(*) FROM public.hangtag_products)::bigint AS expected
+    UNION ALL
+    SELECT 2, 'Old sizes that became variants',
+           (SELECT count(*) FROM public.hangtag_backup_v2_sizes b WHERE EXISTS (SELECT 1 FROM public.hangtag_variants v WHERE v.owner_id = b.owner_id AND v.id = b.product_id || ':' || b.size))::bigint,
+           (SELECT count(*) FROM public.hangtag_backup_v2_sizes b WHERE EXISTS (SELECT 1 FROM public.hangtag_products p WHERE p.owner_id = b.owner_id AND p.id = b.product_id))::bigint
+    UNION ALL
+    SELECT 3, 'Pieces received under the old size list = opening stock',
+           (SELECT COALESCE(sum(m.qty), 0) FROM public.hangtag_stock_moves m WHERE m.type = 'OPENING' AND m.id LIKE 'open:%'
+              AND EXISTS (SELECT 1 FROM public.hangtag_backup_v2_sizes b WHERE b.owner_id = m.owner_id AND m.id = 'open:' || b.product_id || ':' || b.size))::bigint,
+           (SELECT COALESCE(sum(b.stock), 0) FROM public.hangtag_backup_v2_sizes b WHERE EXISTS (SELECT 1 FROM public.hangtag_variants v WHERE v.owner_id = b.owner_id AND v.id = b.product_id || ':' || b.size))::bigint
+    UNION ALL
+    SELECT 4, 'Bills (unchanged)', (SELECT count(*) FROM public.hangtag_sales s WHERE EXISTS (SELECT 1 FROM public.hangtag_backup_v2_sales b WHERE b.owner_id = s.owner_id AND b.id = s.id))::bigint,
+           (SELECT count(*) FROM public.hangtag_backup_v2_sales)::bigint
+    UNION ALL
+    SELECT 5, 'Sales total of those bills in rupees (unchanged)',
+           (SELECT COALESCE(sum(s.total), 0) FROM public.hangtag_sales s WHERE EXISTS (SELECT 1 FROM public.hangtag_backup_v2_sales b WHERE b.owner_id = s.owner_id AND b.id = s.id))::bigint,
+           (SELECT COALESCE(sum(total), 0) FROM public.hangtag_backup_v2_sales)::bigint
+    UNION ALL
+    SELECT 6, 'Pieces on those bills (unchanged)',
+           (SELECT COALESCE(sum(i.quantity), 0) FROM public.hangtag_sale_items i WHERE EXISTS (SELECT 1 FROM public.hangtag_backup_v2_sale_items b WHERE b.owner_id = i.owner_id AND b.sale_id = i.sale_id AND b.line_no = i.line_no))::bigint,
+           (SELECT COALESCE(sum(quantity), 0) FROM public.hangtag_backup_v2_sale_items)::bigint
+    UNION ALL
+    SELECT 7, 'Old bill lines linked to their variant',
+           (SELECT count(*) FROM public.hangtag_sale_items i WHERE i.variant_id IS NOT NULL AND EXISTS (SELECT 1 FROM public.hangtag_backup_v2_sale_items b WHERE b.owner_id = i.owner_id AND b.sale_id = i.sale_id AND b.line_no = i.line_no))::bigint,
+           (SELECT count(*) FROM public.hangtag_backup_v2_sale_items b WHERE EXISTS (SELECT 1 FROM public.hangtag_variants v WHERE v.owner_id = b.owner_id AND v.id = b.product_id || ':' || b.size))::bigint
+) r ORDER BY n;

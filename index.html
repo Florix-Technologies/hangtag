@@ -720,6 +720,7 @@ const AUTH_STORE = "hangtag-auth";          // where supabase-js keeps the sessi
 let authSettings = null;   // Supabase's public auth settings: which sign-in services are switched on
 let bootDone = false, signingIn = null;
 let signedOutByUser = false;   // set by Sign out; a token refresh that finishes afterwards must not sign back in
+const PICK_ACCOUNT = "hangtag_pick_account";   // set by Sign out: show the account chooser on the next sign-in
 const clearStoredSession = () => [AUTH_STORE, AUTH_STORE + "-code-verifier", AUTH_STORE + "-user"].forEach(k => { try{ localStorage.removeItem(k); }catch(e){} });
 /* Sign-in services shown when switched on in Supabase (Authentication > Sign In / Providers). Google is always shown. */
 const PROVIDERS = {
@@ -842,6 +843,22 @@ function switchLocalDataTo(userId){
   LS.set(DATA_OWNER, userId);
   return true;
 }
+/* Re-read everything the till keeps per account, after switchLocalDataTo swapped it in */
+function loadUserState(){
+  catalog = LS.get("rc_catalog", null);
+  imgs = LS.get("rc_imgs", {}); if(!imgs || typeof imgs !== "object") imgs = {};
+  remoteDays = {};
+  localDays = LS.get("rc_local", {}); if(!localDays || typeof localDays !== "object") localDays = {};
+  dirty = new Set(LS.get("rc_dirty", []));
+  pend = LS.get("rc_pend", null); if(!pend || typeof pend !== "object") pend = { cat: false, img: {} }; if(!pend.img) pend.img = {};
+  cart = LS.get("rc_cart", []); if(!Array.isArray(cart)) cart = [];
+  disc = Math.max(0, +LS.get("rc_disc", 0) || 0);
+  sbOfflineQueue = LS.get("hangtag_sb_queue", []); if(!Array.isArray(sbOfflineQueue)) sbOfflineQueue = [];
+  draft = null; draftDirty = false; lastSale = null; openPid = null; billOpen = false; showAllBills = false;
+  closeSheets();
+  renderAll();
+  if(prefs.tab === "products") renderProducts();
+}
 // Another tab switched this device to a different account: reload so this tab doesn't write into it
 window.addEventListener("storage", e => {
   if(e.key === DATA_OWNER && authUser && e.newValue && JSON.parse(e.newValue) !== authUser.id) location.reload();
@@ -864,7 +881,8 @@ async function doSignedIn(session){
   try{ switched = switchLocalDataTo(user.id); }
   catch(e){ showGate("signin", { error: e.message }); return; }
   LS.set("hangtag_auth_email", email);
-  if(switched){ showGate("loading", { message: "Opening your shop…" }); location.reload(); return; }
+  if(switched) loadUserState();   // this account's own products and bills, no page reload
+  LS.set(PICK_ACCOUNT, "");
   authUser = user;
   hideGate(); showAccount(email, displayName(user));
   await initSupabase();
@@ -908,7 +926,9 @@ async function signInWith(provider){
     }
     const options = { redirectTo: HOME_URL };
     if(p.scopes) options.scopes = p.scopes;
-    if(provider === "google" || provider === "azure") options.queryParams = { prompt: "select_account" };
+    // Only ask to choose an account after Sign out (switching accounts). Asking every time makes people who
+    // aren't already signed in to Google type their details and then pick the same account again.
+    if((provider === "google" || provider === "azure") && LS.get(PICK_ACCOUNT, "")) options.queryParams = { prompt: "select_account" };
     const { error } = await sbClient.auth.signInWithOAuth({ provider, options });
     if(error) throw error;
     // The browser is now on its way to the sign-in service (buttons stay disabled; "pageshow" re-enables them on Back)
@@ -921,6 +941,7 @@ async function signOut(){
   // Local sign-out: only this device. Offline with an expired token supabase-js returns an error and keeps
   // the session (or waits on the network), which would sign the old account back in later, so remove it here.
   signedOutByUser = true;
+  LS.set(PICK_ACCOUNT, "1");
   let res = null;
   try{
     res = await Promise.race([

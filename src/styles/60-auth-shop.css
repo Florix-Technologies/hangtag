@@ -1,0 +1,70 @@
+/* Sign-in screen, shop setup/profile form, account menu, welcome line, settings sheet. */
+/* ---------- sign-in screen ---------- */
+.authgate{position:fixed;inset:0;z-index:200;background:var(--wash);display:flex;align-items:flex-start;justify-content:center;padding:max(24px,6vh) 16px 24px;overflow:auto}
+html.gated body{overflow:hidden}
+.authcard{width:100%;max-width:400px;background:var(--bg);border:1px solid var(--line);border-radius:18px;padding:28px 24px 24px;box-shadow:var(--shadow-sm);margin:auto 0}
+.authcard.wide{max-width:560px}
+.authcard:focus{outline:none}
+.authhead{text-align:center}
+.authcard .logo{width:44px;height:44px}
+.authcard h1{margin:10px 0 8px}
+.authcard h2.setup-t{margin:10px 0 6px;font-size:21px;text-align:center}
+.authsub{color:var(--ink-2);margin:0 0 20px;line-height:1.5;font-size:14.5px;text-align:center}
+.provbtns{display:flex;flex-direction:column;gap:10px}
+.gbtn{width:100%;padding:12px 14px;font-size:15px;gap:10px}
+.gbtn svg{width:18px;height:18px;flex:none}
+.authcard button:disabled{opacity:.6;cursor:progress}
+.author{display:flex;align-items:center;gap:12px;margin:18px 0 14px;color:var(--ink-3);font-size:12.5px;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+.author::before,.author::after{content:"";flex:1;height:1px;background:var(--line)}
+.authtabs{display:flex;gap:3px;background:var(--wash);padding:4px;border-radius:12px;margin-bottom:16px}
+.authtabs button{flex:1;display:flex;align-items:center;justify-content:center;padding:9px 6px;border-radius:9px;font-weight:600;font-size:14.5px;color:var(--ink-2)}
+.authtabs button[aria-pressed="true"]{background:var(--bg);color:var(--ink);box-shadow:0 0 0 1px var(--line),var(--shadow-sm)}
+.authfine .link{font-size:13px;padding:0 2px}
+.authform{display:flex;flex-direction:column;gap:12px;text-align:left}
+.authform .f input,.authform .f select,.authform .f textarea{font-size:16px;padding:11px 12px}
+.pwhint{font-size:12px;font-weight:500;color:var(--ink-3)}
+.authlinks{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px 10px;margin-top:10px;min-height:8px}
+.authlinks .link{font-size:13.5px}
+.emailchip{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--wash);font-size:14px;font-weight:600;color:var(--ink);word-break:break-all}
+.authfine{margin:16px 0 0;color:var(--ink-3);font-size:12.5px;line-height:1.5;text-align:center}
+.authnote{margin:14px 0 0;padding:10px 12px;border-radius:10px;background:var(--good-soft);color:var(--good-ink);font-size:13.5px;line-height:1.45}
+.autherr{margin:14px 0 0;padding:10px 12px;border-radius:10px;background:var(--crit-soft);color:var(--crit);font-size:13.5px;line-height:1.45}
+.authcenter{text-align:center;margin-top:12px}
+/* profile form (setup screen + settings) */
+.pgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.pgrid .full{grid-column:1/-1}
+@media (max-width:520px){.pgrid{grid-template-columns:1fr}}
+.req{color:var(--crit);margin-left:2px}
+.fhint{font-size:12px;font-weight:500;color:var(--ink-3)}
+.f.bad input,.f.bad select{border-color:var(--crit)}
+/* account button + menu */
+.acctwrap{position:relative}
+.acctbtn{display:inline-flex;align-items:center;gap:8px;padding:3px 10px 3px 3px;border:1px solid var(--line);border-radius:999px;background:var(--bg);font-weight:600;font-size:13px;color:var(--ink);max-width:220px}
+.acctbtn:hover{background:var(--wash)}
+.acctbtn .an{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:599px){.acctbtn{padding:3px}.acctbtn .an{display:none}}
+.avatar{width:30px;height:30px;border-radius:50%;flex:none;display:grid;place-items:center;background:var(--ink);color:#fff;font-size:12.5px;font-weight:700;overflow:hidden;letter-spacing:.02em}
+.avatar img{width:100%;height:100%;object-fit:cover}
+.avatar.lg{width:48px;height:48px;font-size:17px}
+.acctmenu{position:absolute;right:0;top:calc(100% + 8px);z-index:70;width:280px;background:var(--bg);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow-lg);padding:6px;animation:fade .12s ease}
+.am-head{display:flex;gap:10px;align-items:center;padding:10px 10px 12px;border-bottom:1px solid var(--line);margin-bottom:6px}
+.am-head b{display:block;font-size:14.5px;line-height:1.3}
+.am-head div > span{display:block;font-size:12.5px;color:var(--ink-3);line-height:1.35;word-break:break-all}
+.acctmenu button{display:flex;width:100%;align-items:center;gap:10px;padding:10px;border-radius:9px;font-size:14px;font-weight:600;color:var(--ink);text-align:left}
+.acctmenu button:hover,.acctmenu button:focus-visible{background:var(--wash)}
+.acctmenu button.danger{color:var(--crit)}
+.acctmenu hr{border:0;border-top:1px solid var(--line);margin:6px 0}
+/* welcome line on Sell */
+.welcome{display:flex;align-items:center;gap:12px;padding:12px 14px;margin-bottom:14px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(135deg,var(--accent-soft),var(--bg) 70%)}
+.welcome b{font-size:16px}
+.welcome .ws{font-size:13px;color:var(--ink-2);margin-top:1px}
+.welcome .wx{margin-left:auto}
+/* settings sheet */
+.settings{max-width:640px}
+.setsec{border-top:1px solid var(--line);margin-top:18px;padding-top:16px}
+.setsec h4{margin:0 0 10px;font-size:14px}
+.kv{display:grid;grid-template-columns:140px 1fr;gap:8px 12px;font-size:13.5px}
+.kv dt{color:var(--ink-3)} .kv dd{margin:0;word-break:break-all}
+@media (max-width:520px){.kv{grid-template-columns:1fr}.kv dd{margin-bottom:6px}}
+.setactions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+

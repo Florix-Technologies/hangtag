@@ -5,6 +5,9 @@ client_secret*.json
 .env
 .env.*
 
+# Test dependencies
+node_modules/
+
 # OS and editor files
 .DS_Store
 Thumbs.db
@@ -12,3 +15,9 @@ Thumbs.db
 *.swo
 .vscode/
 .idea/
+
+# Test output
+tests/.artifacts/
+
+# Build output (bundle check only; the app is served from src/)
+dist/

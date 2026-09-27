@@ -1,0 +1,40 @@
+// Composition root for ports: provides the infrastructure implementation of each port (contracts in shared/di/ports.js).
+import { provide } from '../shared/di/services.js';
+import { LS } from '../infrastructure/storage/local-storage.js';
+import { downscaleImage, fileToThumb, readAsBase64, saveFile, sha256Hex } from '../infrastructure/browser/files.js';
+import { createCloudGateway } from '../infrastructure/supabase/cloud-gateway.js';
+import { AUTH_STORE } from '../features/auth/config.js';
+import { sbKey, sbUrl } from '../shared/config/app-config.js';
+import { store } from '../shared/state/store.js';
+import { createLocalFirstProductRepository } from '../infrastructure/repositories/local-first-product-repository.js';
+import { createLocalFirstStockRepository } from '../infrastructure/repositories/local-first-stock-repository.js';
+import { dropQueued, enqueue, flushSbQueue } from '../features/sync/services/outbox.js';
+import { saveCatalog, saveImgs, saveMoves, saveSbQueue } from '../shared/state/persistence.js';
+import { enterApp, signOut } from '../features/auth/services/session.js';
+import { barcodeSVG } from '../infrastructure/codes/barcode-svg.js';
+import { qrSVG } from '../infrastructure/codes/qr-svg.js';
+import { svgToPngBlob } from '../infrastructure/codes/png.js';
+import { symbologyFor } from '../domain/catalog/barcode.js';
+import { createBillExtractor } from '../infrastructure/extraction/bill-extractor.js';
+import { createLocalFirstStockImport } from '../infrastructure/repositories/local-first-stock-import.js';
+import { invalidate } from '../features/inventory/services/ledger.js';
+
+/* Called first at start-up (app/main.js), before the state is restored from storage */
+export function installContainer(){
+  provide("storage", LS);
+  const files = { saveFile, fileToThumb, svgToPng: svgToPngBlob, sha256Hex, downscaleImage, readAsBase64 };
+  provide("files", files);
+  provide("barcodeService", { render: barcodeSVG, symbology: symbologyFor });
+  provide("qrCodeService", { render: qrSVG });
+  // Sign out / open the shop, for the screens around sign-in (shared/ui/session-actions.js)
+  provide("session", { signOut, enterApp });
+  // Supabase: the current client is read on every call (it is created at sign-in; tests may replace it)
+  const cloudGateway = createCloudGateway({ getClient: () => store.sbClient, url: sbUrl, key: sbKey, storageKey: AUTH_STORE });
+  provide("cloud", cloudGateway);
+  // Local-first repositories: this device's state first, then the upload queue (features/sync/services/outbox.js)
+  const outbox = { enqueue, dropQueued };
+  provide("productRepository", createLocalFirstProductRepository({ store, persist: { saveCatalog, saveMoves, saveImgs, saveSbQueue }, outbox }));
+  provide("stockRepository", createLocalFirstStockRepository({ store, persist: { saveMoves, saveCatalog }, outbox }));
+  provide("documentExtractionService", createBillExtractor({ cloud: cloudGateway, files }));
+  provide("inventoryImportService", createLocalFirstStockImport({ store, cloud: cloudGateway, persist: { saveCatalog, saveMoves }, outbox: { flush: flushSbQueue }, invalidate }));
+}

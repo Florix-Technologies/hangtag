@@ -2,8 +2,10 @@
 // so "build" means: keep the offline file list current and prove the app is consistent.
 //   node scripts/build.mjs          update sw.js (file list + cache version), check architecture, bundle-check, lint
 //   node scripts/build.mjs --check  same checks, but fail instead of writing when sw.js is out of date (CI/tests)
+//   The deployable site is the repository root (GitHub Pages). A normal build also copies exactly those files
+//   (the offline file list + sw.js) to dist/site for hosts that serve a build folder (Vercel: vercel.json).
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -80,5 +82,18 @@ if (lintErrors || lintWarnings) {
   if (lintErrors) failed = true;
 }
 console.log(`lint ${lintErrors ? 'failed' : 'ok'}: ${lint.length} files, ${lintErrors} errors, ${lintWarnings} warnings`);
+
+// 6. Deployable copy for Vercel (dist/site): the app shell and every module/stylesheet the service worker lists, plus
+//    sw.js and the maskable icon the manifest names. Nothing else (no tests, scripts, supabase/ or node_modules).
+if (!CHECK && !failed) {
+  const SITE = path.join(ROOT, 'dist', 'site');
+  rmSync(SITE, { recursive: true, force: true });
+  for (const f of [...shellFiles, path.join(ROOT, 'sw.js'), path.join(ROOT, 'icon-maskable-512.png')]) {
+    const to = path.join(SITE, path.relative(ROOT, f));
+    mkdirSync(path.dirname(to), { recursive: true });
+    cpSync(f, to);
+  }
+  console.log(`site ok: dist/site (${shellFiles.length + 2} files)`);
+}
 
 process.exit(failed ? 1 : 0);

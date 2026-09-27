@@ -128,3 +128,13 @@
  *   details.kind "denied" | "unavailable" | "busy" | "failed".
  * @property {() => void} stop   Releases the camera.
  */
+
+/**
+ * "customerRepository": the shop's customers. Implementation: infrastructure/repositories/local-first-customer-repository.js
+ * (this device first, then uploaded; the database keeps each shop's customers to itself). Reach it through
+ * features/customers/repositories/customer-repository.js.
+ * @typedef {Object} CustomerRepositoryPort
+ * @property {() => Object[]} list
+ * @property {(id: string) => (Object|null)} get
+ * @property {(c: {id, name, phone, email, gstin, type, t}) => Object} save
+ */

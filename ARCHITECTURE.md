@@ -87,7 +87,7 @@ eslint.config.js         Lint rules for src/ (undefined names, unused variables)
 | `inventory` | Stock page, stock in, stock adjustment, supplier bill import (upload → review → confirm), the stock ledger read model | `recordStockOperation`, `readSupplierBill`, `planSupplierBill`, `confirmSupplierBill` |
 | `sales` | Sell screen, search, variant picker, cart, checkout, cancelling bills | `checkout`, `voidSale`, `unvoid` |
 | `receipts` | Receipt model, receipt layouts, print/image/share/WhatsApp, bill view | – |
-| `customers` | Customer picker, customer history | – |
+| `customers` | Customers page (search by name/mobile), customer picker on the bill, add/edit (individual or business, GSTIN), purchase history | `saveCustomer`, `setBillCustomer` |
 | `returns` | Returns and exchanges | – |
 | `reports` | Reports page, periods, CSV export | – |
 | `backup` | Backup file and restore preview | – |
@@ -171,6 +171,7 @@ export const archiveProduct = (pid, on) => productRepository().setArchived(pid, 
 | `stockRepository` | `infrastructure/repositories/local-first-stock-repository.js` | `features/inventory/repositories/stock-repository.js` |
 | `barcodeService` / `qrCodeService` | `infrastructure/codes/` | product editor code previews, stickers |
 | `documentExtractionService` | `infrastructure/extraction/bill-extractor.js` → Edge Function `extract-bill` | `features/inventory/use-cases/import-supplier-bill.js` |
+| `customerRepository` | `infrastructure/repositories/local-first-customer-repository.js` | `features/customers/repositories/customer-repository.js` |
 | `barcodeScanner` | `infrastructure/scanner/camera-scanner.js` | `features/sales/components/camera-scan.js` (Sell → Scan), rules in `domain/sales/scan-rules.js`, `use-cases/scan-to-cart.js` |
 | `inventoryImportService` | `infrastructure/repositories/local-first-stock-import.js` → RPC `hangtag_import_stock` | `features/inventory/use-cases/import-supplier-bill.js` |
 
@@ -237,7 +238,6 @@ the write behind a repository first.**
 |---|---|
 | `features/sales/use-cases/checkout.js` | Sales, void/unvoid, the upload queue. It also closes the bill sheet and shows the receipt, so its UI steps should move to the component. |
 | `features/returns/components/return-sheet.js` | Returns, and queues their upload |
-| `features/customers/components/customer-picker.js` | New customers, and queues their upload |
 | `features/products/components/colour-groups.js` | Merges products into colour groups (catalog, moves, product uploads/deletes) |
 | `features/products/services/examples.js`, `features/products/services/catalog.js` | The example catalog, and the catalog upgrade on load |
 | `features/backup/services/backup-file.js` | Restores every slice from a backup file |

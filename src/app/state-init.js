@@ -27,7 +27,7 @@ export function initState(){
   store.settings = Object.assign({},DEFAULT_SETTINGS,objOr(storage.get("rc_settings",{}),{}));
   store.cartCust = storage.get("rc_cartcust",null);            // customer on the bill being rung up
   store.prefs = Object.assign({tab:"sell",density:"photos",period:"today",day:"",from:"",to:""},storage.get("rc_prefs",{}));
-  if(!["sell","stock","report","products"].includes(store.prefs.tab))store.prefs.tab="sell";
+  if(!["sell","stock","report","products","customers"].includes(store.prefs.tab))store.prefs.tab="sell";
   store.pick = null;            // variant picker: {pid, color, qty:{vid:n}, last, target:"cart"|"exchange"}
   store.billOpen = false;
   store.justAdded = null;

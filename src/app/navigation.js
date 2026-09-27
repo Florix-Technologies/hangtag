@@ -1,4 +1,5 @@
 // App shell: tab bar, page switching, full re-render (provided as the "renderer" port behind shared/ui/render.js).
+import { renderCustomers } from '../features/customers/pages/customers-page.js';
 import { store } from '../shared/state/store.js';
 import { renderStock } from '../features/inventory/pages/stock-page.js';
 import { invalidate } from '../features/inventory/services/ledger.js';
@@ -18,7 +19,7 @@ import { $, $$ } from '../shared/dom.js';
 
 export function renderNav(){
   $$(".nav [data-tab]").forEach(b=>b.setAttribute("aria-selected",String(b.dataset.tab===store.prefs.tab)));
-  ["sell","stock","report","products"].forEach(t=>{$("#v-"+t).hidden=t!==store.prefs.tab});
+  ["sell","stock","report","products","customers"].forEach(t=>{$("#v-"+t).hidden=t!==store.prefs.tab});
   $("#billBar").hidden=store.prefs.tab!=="sell";
   $$("[data-density]").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.density===store.prefs.density)));
 }
@@ -28,6 +29,7 @@ function renderViews(){
   if(t==="sell"){renderGrid();renderBill()}
   else if(t==="stock")renderStock();
   else if(t==="report")renderReport();
+  else if(t==="customers")renderCustomers();
   else if(t==="products"){const a=document.activeElement;if(!(a&&a.closest&&a.closest("#v-products")&&a.id!=="prodSearch"))renderProducts()}
   // Don't redraw a window under someone typing in it (a live update can arrive any time)
   const a=document.activeElement, typing=a&&a.matches&&a.matches("#sheetHost input");

@@ -90,6 +90,7 @@
       <button role="tab" data-tab="stock" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 5.5a2 2 0 1 1 3 1.7c-.6.4-1 .9-1 1.6V10"/><path d="M12 10 3.4 16.3c-.8.6-.4 1.7.6 1.7h16c1 0 1.4-1.1.6-1.7z"/></svg><span>Stock</span></button>
       <button role="tab" data-tab="report" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M5 20v-8M10 20V5M15 20v-5M20 20V9"/></svg><span>Reports</span></button>
       <button role="tab" data-tab="products" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 4 3.5 6.6l1.8 4.1 2.2-.9V20h9V9.8l2.2.9 1.8-4.1-5-2.6c-.5 1.3-1.9 2.2-3.5 2.2S9 5.3 8.5 4z"/></svg><span>Products</span></button>
+      <button role="tab" data-tab="customers" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.6a3.5 3.5 0 0 1 0 6.8M21.5 20a6.5 6.5 0 0 0-4-6"/></svg><span>Customers</span></button>
     </nav>
     <button id="sync" class="sync" type="button" tabindex="-1" style="cursor:default" aria-label="Cloud sync status"><i></i><span>Connecting…</span></button>
     <div class="acctwrap">
@@ -138,6 +139,11 @@
       <span id="repCustom" class="filters" style="margin:0" hidden><input type="date" id="repFrom" class="datein on" aria-label="From"><span class="note">to</span><input type="date" id="repTo" class="datein on" aria-label="To"></span>
     </div>
     <div id="repBody"></div>
+  </section>
+
+  <section id="v-customers" hidden>
+    <div class="viewhead"><div><h2 class="vt">Customers</h2><p>People and businesses you bill. Search by name or mobile; open one to see everything they bought.</p></div></div>
+    <div id="custBody"></div>
   </section>
 
   <section id="v-products" hidden>

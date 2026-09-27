@@ -1,61 +1,105 @@
-// Choose/add a customer; customer history.
+// Customers: choose / add one for the bill (Sell), the add/edit form, and a customer's profile with purchase history.
 import { store } from '../../../shared/state/store.js';
+import { CUSTOMER_TYPES, searchCustomers, typeLabel } from '../../../domain/customers/customer.js';
 import { custStats } from '../services/customer-stats.js';
-import { D } from '../../inventory/services/ledger.js';
-import { enqueue, flushSbQueue } from '../../sync/services/outbox.js';
+import { purchaseHistory } from '../services/purchase-history.js';
+import { customerRepository } from '../repositories/customer-repository.js';
+import { saveCustomer, setBillCustomer } from '../use-cases/save-customer.js';
+import { flushSbQueue } from '../../sync/services/outbox.js';
 import { closeModal } from '../../../shared/components/modal.js';
 import { toast } from '../../../shared/components/toast.js';
 import { ICON } from '../../../shared/constants/icons.js';
 import { $, esc } from '../../../shared/dom.js';
-import { dayKey, dayLab } from '../../../shared/formatting/dates.js';
+import { dayKey, dayLab, hhmm } from '../../../shared/formatting/dates.js';
 import { inr } from '../../../shared/formatting/money.js';
-import { saveCart, saveCustomers } from '../../../shared/state/persistence.js';
 import { renderAll } from '../../../shared/ui/render.js';
-import { uid } from '../../../shared/utils/ids.js';
-import { initials, norm } from '../../../shared/utils/text.js';
+import { initials } from '../../../shared/utils/text.js';
 
+/* store.custForm = { id?, name, phone, email, gstin, type, from: "sell" | "page", err, field, dup } while the form is open */
+const badge = c => c.type === "business" ? `<span class="ctype">Business</span>` : "";
+const sheet = (label, inner) => `<div class="scrim" data-modal-scrim><div class="sheet custsheet" role="dialog" aria-modal="true" aria-label="${esc(label)}">${inner}</div></div>`;
+
+/* ---------- Sell: customer for this bill ---------- */
 export function openCustPicker(){ store.custQ=""; store.custForm=null; renderCustPicker(); const i=$("#custQ"); if(i) i.focus(); }
 export function renderCustPicker(){
-  const st=custStats(), q=norm(store.custQ).trim(), digits=q.replace(/\D/g,"");
-  const list=Object.values(store.customers).filter(c=>!q||norm(c.name).includes(q)||(digits&&String(c.phone||"").replace(/\D/g,"").includes(digits))||norm(c.email).includes(q))
-    .sort((a,b)=>((st[b.id]||{}).last||b.t||0)-((st[a.id]||{}).last||a.t||0)).slice(0,30);
-  $("#modalHost").innerHTML=`<div class="scrim" data-modal-scrim><div class="sheet custsheet" role="dialog" aria-modal="true" aria-label="Customer">
-    <div class="sh-head"><div class="sh-t"><h3>Customer</h3><p>Optional. Pick someone or add them; you can skip this for walk-ins.</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
-    ${store.custForm?custFormHTML():`<div class="search"><input id="custQ" type="search" placeholder="Search name or phone" value="${esc(store.custQ)}" autocomplete="off"></div>
-    <div class="custlist">${list.length?list.map(c=>{const s=st[c.id]||{bills:0,total:0};return `<div class="custrow"><button class="custpick" data-custpick="${esc(c.id)}"><span class="avatar sm">${esc(initials(c.name))}</span><span><b>${esc(c.name)}</b><small>${esc(c.phone||c.email||"")}${s.bills?" · "+s.bills+" bill"+(s.bills>1?"s":"")+" · "+inr(s.total):""}</small></span></button><button class="link xs" data-custhist="${esc(c.id)}">History</button></div>`}).join(""):`<p class="muted">${Object.keys(store.customers).length?"No one matches.":"No customers yet."}</p>`}</div>
-    <div class="setactions"><button class="btn sm primary" data-act="custnew">+ Add new customer</button>${store.cartCust&&store.cartCust.name?`<button class="btn sm" data-act="nocust">Walk-in (no customer)</button>`:""}</div>`}
-  </div></div>`;
+  if(store.custForm){ renderCustForm(); return; }
+  const st=custStats(), list=searchCustomers(customerRepository().list(), store.custQ, st).slice(0,30);
+  $("#modalHost").innerHTML=sheet("Customer",`
+    <div class="sh-head"><div class="sh-t"><h3>Customer for this bill</h3><p>Optional. Pick someone, add them, or carry on without one.</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
+    <div class="search"><input id="custQ" type="search" placeholder="Search name or mobile" value="${esc(store.custQ)}" autocomplete="off" inputmode="search"></div>
+    <div class="custlist" id="custPickList">${list.length?list.map(c=>{const s=st[c.id]||{bills:0,total:0};return `<div class="custrow"><button class="custpick" data-custpick="${esc(c.id)}"><span class="avatar sm">${esc(initials(c.name))}</span><span><b>${esc(c.name)}${badge(c)}</b><small>${esc(c.phone||c.email||"")}${s.bills?" · "+s.bills+" bill"+(s.bills>1?"s":"")+" · "+inr(s.total):""}</small></span></button><button class="iconbtn sm" data-custhist="${esc(c.id)}" aria-label="History of ${esc(c.name)}">${ICON.up||"›"}</button></div>`}).join(""):`<p class="muted">${store.custQ?"No customer matches “"+esc(store.custQ)+"”.":"No customers yet."}</p>`}</div>
+    <div class="setactions"><button class="btn sm primary" data-act="custnew">+ Add new customer</button><button class="btn sm" data-act="nocust">Continue without customer</button></div>`);
+}
+
+/* ---------- the add / edit form (Sell and the Customers page) ---------- */
+export function newCustomerForm(from){
+  const q=String(store.custQ||"").trim(), phoneLike=/^[+\d][\d\s()-]*$/.test(q);
+  store.custForm={name:phoneLike?"":q,phone:phoneLike?q:"",email:"",gstin:"",type:"individual",from};
+  renderCustForm(); const i=$("#custForm [name=name]"); if(i) i.focus();
+}
+export function editCustomerForm(id){
+  const c=customerRepository().get(id); if(!c) return;
+  store.custForm={id:c.id,name:c.name,phone:c.phone||"",email:c.email||"",gstin:c.gstin||"",type:c.type||"individual",from:store.prefs.tab==="customers"?"page":"sell"};
+  renderCustForm();
 }
 export function custFormHTML(){
-  const c=store.custForm||{};
-  return `<form id="custForm" class="authform" novalidate><div class="pgrid">
-    <label class="f"><span class="lab">Name<span class="req">*</span></span><input name="name" value="${esc(c.name||"")}" maxlength="80" autocomplete="off" required></label>
-    <label class="f"><span class="lab">Phone</span><input name="phone" type="tel" inputmode="tel" value="${esc(c.phone||"")}" maxlength="20" autocomplete="off"></label>
-    <label class="f full"><span class="lab">Email</span><input name="email" type="email" inputmode="email" value="${esc(c.email||"")}" maxlength="120" autocomplete="off"></label></div>
-    <p id="custErr" class="autherr" hidden></p>
-    <div class="setactions"><button class="btn sm primary" type="submit">${c.id?"Save":"Save and add to bill"}</button><button class="btn sm" type="button" data-act="custback">Back</button></div></form>`;
+  const c=store.custForm||{}, biz=c.type==="business";
+  const dupBtn=c.dup?(c.from==="sell"?`<button type="button" class="btn xs" data-custpick="${esc(c.dup.id)}">Use ${esc(c.dup.name)}</button>`:`<button type="button" class="btn xs" data-custhist="${esc(c.dup.id)}">Open ${esc(c.dup.name)}</button>`):"";
+  return `<form id="custForm" class="authform" novalidate>
+    <div class="ctypes" role="radiogroup" aria-label="Customer type">${CUSTOMER_TYPES.map(([v,l])=>`<label class="ctypeopt"><input type="radio" name="type" value="${v}"${(c.type||"individual")===v?" checked":""}> ${l}</label>`).join("")}</div>
+    <div class="pgrid">
+    <label class="f full"><span class="lab">${biz?"Business name":"Name"}<span class="req">*</span></span><input name="name" value="${esc(c.name||"")}" maxlength="80" autocomplete="off" required></label>
+    <label class="f"><span class="lab">Mobile</span><input name="phone" type="tel" inputmode="tel" value="${esc(c.phone||"")}" maxlength="20" autocomplete="off" placeholder="10-digit mobile"></label>
+    <label class="f"><span class="lab">Email</span><input name="email" type="email" inputmode="email" value="${esc(c.email||"")}" maxlength="120" autocomplete="off"></label>
+    <label class="f full"><span class="lab">GSTIN${biz?"":" (optional)"}</span><input name="gstin" value="${esc(c.gstin||"")}" maxlength="15" autocomplete="off" autocapitalize="characters" placeholder="e.g. 27ABCDE1234F1Z5"></label></div>
+    <p id="custErr" class="autherr"${c.err?"":" hidden"} role="alert">${esc(c.err||"")} ${dupBtn}</p>
+    <div class="setactions"><button class="btn sm primary" type="submit">${c.id?"Save":c.from==="sell"?"Save and add to bill":"Save customer"}</button><button class="btn sm" type="button" data-act="custback">${c.id||c.from==="sell"?"Back":"Cancel"}</button></div></form>`;
 }
+function renderCustForm(){
+  const c=store.custForm;
+  $("#modalHost").innerHTML=sheet(c.id?"Edit customer":"New customer",`
+    <div class="sh-head"><div class="sh-t"><h3>${c.id?"Edit customer":"New customer"}</h3><p>${c.from==="sell"&&!c.id?"They go on this bill once saved.":"Name is required; the rest helps you find them and bill businesses."}</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
+    ${custFormHTML()}`);
+}
+/* The type switch relabels the form without losing what was typed */
+export function custFormType(form){ store.custForm=Object.assign(store.custForm||{},formValues(form)); renderCustForm(); }
+const formValues=form=>{const f=new FormData(form);return {name:String(f.get("name")||""),phone:String(f.get("phone")||""),email:String(f.get("email")||""),gstin:String(f.get("gstin")||""),type:String(f.get("type")||"individual")}};
 export function saveCustomerForm(form){
-  const f=new FormData(form), name=String(f.get("name")||"").trim().replace(/\s+/g," "), phone=String(f.get("phone")||"").trim(), email=String(f.get("email")||"").trim();
-  const err=$("#custErr"); const bad=m=>{err.textContent=m;err.hidden=false};
-  if(!name) return bad("Enter the customer's name.");
-  if(phone&&!/^[+0-9 ()-]{7,20}$/.test(phone)) return bad("Enter a valid phone number.");
-  if(email&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return bad("Enter a valid email address.");
-  const dup=phone&&Object.values(store.customers).find(c=>c.id!==(store.custForm&&store.custForm.id)&&c.phone&&c.phone.replace(/\D/g,"")===phone.replace(/\D/g,""));
-  if(dup) return bad(`${dup.name} already has this phone number.`);
-  const editing=store.custForm&&store.custForm.id;
-  const c=editing?Object.assign(store.customers[store.custForm.id],{name,phone,email}):{id:"c"+uid(),name,phone,email,t:Date.now()};
-  store.customers[c.id]=c; saveCustomers(); enqueue({type:"cust",id:c.id,cust:c}); flushSbQueue();
-  if(editing){ openCustHistory(c.id); toast("Customer saved."); return; }
-  store.cartCust={id:c.id,name:c.name,phone:c.phone}; saveCart(); closeModal(); renderAll(); toast(c.name+" added to the bill.");
+  const cur=store.custForm||{from:"sell"}, v=formValues(form), r=saveCustomer(v,{id:cur.id});
+  if(r.error){
+    store.custForm=Object.assign({},cur,v,{err:r.error,field:r.field||"",dup:r.duplicate?{id:r.duplicate.id,name:r.duplicate.name}:null});
+    renderCustForm(); const x=$(`#custForm [name=${r.field==="phone"?"phone":r.field||"name"}]`); if(x) x.focus();
+    return;
+  }
+  flushSbQueue();
+  const c=r.customer; store.custForm=null;
+  if(r.created&&cur.from==="sell"){ setBillCustomer(c); closeModal(); renderAll(); toast(c.name+" added to the bill."); return; }
+  renderAll(); openCustHistory(c.id); toast(r.created?"Customer saved.":"Customer details saved.");
 }
+export function custBack(){
+  const c=store.custForm||{}; store.custForm=null;
+  if(c.id) return openCustHistory(c.id);
+  if(c.from==="page") return closeModal();
+  renderCustPicker();
+}
+/* Pick a customer for the bill (from the Sell picker, a profile or the "Use …" button) */
+export function pickCustomer(id){
+  const c=customerRepository().get(id); if(!c) return;
+  setBillCustomer(c); store.custForm=null; closeModal(); renderAll(); toast(c.name+" added to the bill.");
+}
+
+/* ---------- profile: details and purchase history ---------- */
 export function openCustHistory(cid){
-  const c=store.customers[cid]; if(!c) return;
-  const bills=D().sales.filter(s=>s.cust&&s.cust.id===cid).slice().reverse(), st=custStats()[cid]||{bills:0,total:0,last:0};
-  $("#modalHost").innerHTML=`<div class="scrim" data-modal-scrim><div class="sheet custsheet" role="dialog" aria-modal="true" aria-label="${esc(c.name)}">
-    <div class="sh-head"><span class="avatar lg">${esc(initials(c.name))}</span><div class="sh-t"><h3>${esc(c.name)}</h3><p>${esc([c.phone,c.email].filter(Boolean).join(" · ")||"No contact details")}</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
-    <div class="tmini cust3"><div><span>Bills</span><b>${st.bills}</b></div><div><span>Total spent</span><b>${inr(st.total)}</b></div><div><span>Last visit</span><b>${st.last?esc(dayLab(dayKey(st.last))):"—"}</b></div></div>
-    <div class="custbills">${bills.length?bills.map(s=>`<button class="custbill" data-billview="${esc(s.id)}"><span>${esc(s.no)} · ${esc(dayLab(dayKey(s.t)))}${s.void?" · cancelled":""}</span><span>${s.items.reduce((a,i)=>a+i.q,0)} pcs · <b>${inr(s.total)}</b></span></button>`).join(""):`<p class="muted">No bills yet.</p>`}</div>
-    <div class="setactions"><button class="btn sm" data-custedit="${esc(c.id)}">Edit details</button><button class="btn sm primary" data-custpick="${esc(c.id)}">Add to current bill</button></div>
-  </div></div>`;
+  const c=customerRepository().get(cid); if(!c) return;
+  const h=purchaseHistory(cid);
+  const billHTML=b=>`<button class="custbill" data-billview="${esc(b.id)}"><span class="cb-top"><b>${esc(b.no||"Bill")}</b><span>${esc(dayLab(dayKey(b.t)))} · ${esc(hhmm(b.t))}${b.pay?" · "+esc(b.pay):""}</span><b class="cb-tot">${inr(b.total)}</b></span>
+    <span class="cb-items">${b.items.map(i=>`<span>${esc(i.name)}${i.label?" · "+esc(i.label):""} × ${i.q}</span>`).join("")}</span>
+    <span class="cb-foot">${b.pieces} piece${b.pieces===1?"":"s"}${b.kind==="exchange"?" · exchange":""}${b.returned?` · ${inr(b.returned)} refunded`:""}</span></button>`;
+  $("#modalHost").innerHTML=sheet(c.name,`
+    <div class="sh-head"><span class="avatar lg">${esc(initials(c.name))}</span><div class="sh-t"><h3>${esc(c.name)}${badge(c)}</h3><p>${esc([c.phone,c.email].filter(Boolean).join(" · ")||"No contact details")}${c.gstin?`<br><span class="cgst">GSTIN ${esc(c.gstin)}</span>`:""}</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
+    <div class="tmini cust3"><div><span>Bills</span><b>${h.count}</b></div><div><span>Total spent</span><b>${inr(h.spent)}</b></div><div><span>Last visit</span><b>${h.last?esc(dayLab(dayKey(h.last))):"—"}</b></div></div>
+    <h4 class="custh">Purchase history</h4>
+    <div class="custbills">${h.bills.length?h.bills.map(billHTML).join(""):`<p class="muted">No completed bills yet.</p>`}</div>
+    <div class="setactions"><button class="btn sm" data-custedit="${esc(c.id)}">Edit details</button><button class="btn sm primary" data-custpick="${esc(c.id)}">${store.cartCust&&store.cartCust.id===c.id?"On the current bill":"Add to current bill"}</button></div>`);
 }
+export const customerTypeLabel = typeLabel;

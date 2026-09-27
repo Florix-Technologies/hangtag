@@ -741,6 +741,17 @@ GRANT EXECUTE ON FUNCTION public.hangtag_import_stock(JSONB, JSONB, JSONB, JSONB
 REVOKE EXECUTE ON FUNCTION public.hangtag_variants_fill_options() FROM PUBLIC, anon;
 
 -- ==============================================================================
+-- 3d. Customer details: GSTIN and customer type (an individual or a business). Existing customers become individuals.
+-- ==============================================================================
+ALTER TABLE public.hangtag_customers ADD COLUMN IF NOT EXISTS gstin TEXT;
+ALTER TABLE public.hangtag_customers ADD COLUMN IF NOT EXISTS customer_type TEXT NOT NULL DEFAULT 'individual';
+ALTER TABLE public.hangtag_customers DROP CONSTRAINT IF EXISTS hangtag_customers_gstin_check;
+ALTER TABLE public.hangtag_customers ADD CONSTRAINT hangtag_customers_gstin_check CHECK (gstin IS NULL OR gstin ~ '^[0-9]{2}[A-Z0-9]{10}[0-9A-Z]{3}$');
+ALTER TABLE public.hangtag_customers DROP CONSTRAINT IF EXISTS hangtag_customers_type_check;
+ALTER TABLE public.hangtag_customers ADD CONSTRAINT hangtag_customers_type_check CHECK (customer_type IN ('individual','business'));
+CREATE INDEX IF NOT EXISTS idx_hangtag_customers_name ON public.hangtag_customers (owner_id, lower(name));
+
+-- ==============================================================================
 -- 4. Indexes for reports
 -- ==============================================================================
 DROP INDEX IF EXISTS public.idx_hangtag_sizes_prod;

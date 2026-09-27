@@ -125,3 +125,22 @@
 .scan-foot .btn{background:transparent;color:#fff;border-color:rgba(255,255,255,.45)}
 .scan-foot .btn.primary{background:#fff;color:#10131F;border-color:#fff}
 .scan-status .btn{background:rgba(255,255,255,.14);color:#fff;border-color:rgba(255,255,255,.35)}
+
+/* ---------- customers ---------- */
+.ctype{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;font-size:11px;font-weight:700;background:var(--accent-soft);color:var(--good-ink);vertical-align:middle}
+.ctypes{display:flex;gap:8px;margin-bottom:10px}
+.ctypeopt{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;min-height:44px;border:1px solid var(--line-2);border-radius:12px;font-weight:600;cursor:pointer}
+.ctypeopt:has(input:checked){border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.cgst{font-size:12.5px;color:var(--ink-3)}
+.custh{margin:14px 0 6px;font-size:14px}
+.custbill{display:flex;flex-direction:column;align-items:stretch;gap:4px;width:100%;text-align:left;padding:10px 12px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px;background:var(--bg)}
+.cb-top{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px}.cb-top span{color:var(--ink-3);font-size:12.5px}.cb-tot{margin-left:auto}
+.cb-items{display:flex;flex-direction:column;font-size:13px;color:var(--ink-2)}
+.cb-foot{font-size:12px;color:var(--ink-3)}
+.custtools{display:flex;gap:8px;align-items:center;margin-bottom:10px}.custtools .search{flex:1}.custtools .btn{min-height:44px;flex:none}
+.custpage{display:flex;flex-direction:column;gap:8px}
+.custcard{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;width:100%;text-align:left;padding:10px 12px;min-height:60px;border:1px solid var(--line);border-radius:14px;background:var(--bg)}
+.custcard:hover{border-color:var(--line-2)}
+.cc-main,.cc-side{display:flex;flex-direction:column;min-width:0}.cc-main b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cc-main small,.cc-side small{color:var(--ink-3);font-size:12.5px}.cc-side{align-items:flex-end;text-align:right}
+@media (max-width:699px){.custtools{flex-wrap:wrap}.custtools .btn{width:100%}#custSearch,#custQ{font-size:16px;min-height:46px}}

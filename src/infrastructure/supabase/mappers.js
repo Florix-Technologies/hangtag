@@ -37,7 +37,7 @@ export const rowToMove = r => ({ id:r.id, v:r.variant_id, p:r.product_id, type:r
 export const returnRow = r => ({ id:r.id, sale_id:r.sale, t:r.t, kind:r.kind||"return", exchange_id:r.ex||null, refund_amount:r.refund||0, refund_method:r.pay||null, value:r.value||0, note:r.note||null, device_id:r.dev||store.dev });
 export const returnItemRows = r => r.items.map((i,k)=>({ return_id:r.id, line_no:k, sale_id:r.sale, sale_line_no:i.ln, variant_id:i.v||null, product_id:i.p, product_name:i.n,
   color:i.c||"", size:i.s==null?"":i.s, variant_label:i.vl||null, options:ovToRow(i.ov), sku:i.sku||null, quantity:i.q, unit_price:i.price, value:i.value||0, cost_price:i.cost==null?null:i.cost }));
-export const custRow = c => ({ id:c.id, name:c.name, phone:c.phone||null, email:c.email||null, created_at:new Date(c.t||Date.now()).toISOString(), updated_at:new Date().toISOString() });
+export const custRow = c => ({ id:c.id, name:c.name, phone:c.phone||null, email:c.email||null, gstin:c.gstin||null, customer_type:c.type==='business'?'business':'individual', created_at:new Date(c.t||Date.now()).toISOString(), updated_at:new Date().toISOString() });
 /* Downloads: product, variant, return, return line and customer rows to app records */
 export function rowToProduct(p){
   // rows without options.opts (saved before options existed, or by an older app version) keep their colour/size lists,
@@ -54,7 +54,7 @@ export const rowToReturnItem = i => ({ ln:i.sale_line_no, v:i.variant_id||undefi
   c:i.color||"", s:i.size, vl:i.variant_label||"", ov:rowToOv(i.options), sku:i.sku||"", q:i.quantity, price:i.unit_price, value:i.value||0, cost:i.cost_price==null?null:i.cost_price });
 export const rowToReturn = (r, items) => ({ id:r.id, sale:r.sale_id, t:Number(r.t), kind:r.kind||"return", ex:r.exchange_id||null, refund:r.refund_amount||0,
   pay:r.refund_method||"cash", value:r.value||0, note:r.note||"", dev:r.device_id, items:items||[] });
-export const rowToCustomer = r => ({ id:r.id, name:r.name, phone:r.phone||"", email:r.email||"", t:Date.parse(r.created_at)||0 });
+export const rowToCustomer = r => ({ id:r.id, name:r.name, phone:r.phone||"", email:r.email||"", gstin:r.gstin||"", type:r.customer_type==='business'?'business':'individual', t:Date.parse(r.created_at)||0 });
 
 /* ---------- supplier bill imports ---------- */
 export const rowToImport = r => ({ id:r.id, fileHash:r.file_hash||"", fileName:r.file_name||"", supplier:r.supplier_name||"", gstin:r.supplier_gstin||"",

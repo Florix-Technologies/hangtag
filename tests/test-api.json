@@ -52,6 +52,7 @@
   "periodData",
   "periodRange",
   "PICK_ACCOUNT",
+  "pickCustomer",
   "prod",
   "products",
   "pullCatalogFromSupabase",

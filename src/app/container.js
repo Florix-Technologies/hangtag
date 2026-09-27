@@ -9,7 +9,7 @@ import { store } from '../shared/state/store.js';
 import { createLocalFirstProductRepository } from '../infrastructure/repositories/local-first-product-repository.js';
 import { createLocalFirstStockRepository } from '../infrastructure/repositories/local-first-stock-repository.js';
 import { dropQueued, enqueue, flushSbQueue } from '../features/sync/services/outbox.js';
-import { saveCatalog, saveImgs, saveMoves, saveSbQueue } from '../shared/state/persistence.js';
+import { saveCatalog, saveCustomers, saveImgs, saveMoves, saveSbQueue } from '../shared/state/persistence.js';
 import { enterApp, signOut } from '../features/auth/services/session.js';
 import { barcodeSVG } from '../infrastructure/codes/barcode-svg.js';
 import { qrSVG } from '../infrastructure/codes/qr-svg.js';
@@ -18,6 +18,7 @@ import { symbologyFor } from '../domain/catalog/barcode.js';
 import { createBillExtractor } from '../infrastructure/extraction/bill-extractor.js';
 import { createCameraScanner } from '../infrastructure/scanner/camera-scanner.js';
 import { createLocalFirstStockImport } from '../infrastructure/repositories/local-first-stock-import.js';
+import { createLocalFirstCustomerRepository } from '../infrastructure/repositories/local-first-customer-repository.js';
 import { invalidate } from '../features/inventory/services/ledger.js';
 
 /* Called first at start-up (app/main.js), before the state is restored from storage */
@@ -37,6 +38,7 @@ export function installContainer(){
   const outbox = { enqueue, dropQueued };
   provide("productRepository", createLocalFirstProductRepository({ store, persist: { saveCatalog, saveMoves, saveImgs, saveSbQueue }, outbox }));
   provide("stockRepository", createLocalFirstStockRepository({ store, persist: { saveMoves, saveCatalog }, outbox }));
+  provide("customerRepository", createLocalFirstCustomerRepository({ store, persist: { saveCustomers }, outbox }));
   provide("documentExtractionService", createBillExtractor({ cloud: cloudGateway, files }));
   provide("inventoryImportService", createLocalFirstStockImport({ store, cloud: cloudGateway, persist: { saveCatalog, saveMoves }, outbox: { flush: flushSbQueue }, invalidate }));
 }

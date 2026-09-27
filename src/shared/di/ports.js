@@ -117,3 +117,14 @@
  * @property {(plan: Object, meta: Object) => Promise<Object>} commit   One all-or-nothing RPC (hangtag_import_stock), then applied on
  *   this device. Throws AppError CONFLICT (details.kind "file"|"invoice") for a likely repeat unless meta.allowDuplicate.
  */
+
+/**
+ * "barcodeScanner": the camera reading barcodes/QR codes. Implementation: infrastructure/scanner/camera-scanner.js
+ * (rear camera preferred; the browser's BarcodeDetector, else the bundled ZXing decoder).
+ * @typedef {Object} BarcodeScannerPort
+ * @property {() => boolean} available
+ * @property {(video: HTMLVideoElement, handlers: {onCode: (text: string) => void, onError?: Function}) => Promise<{native: boolean}>} start
+ *   Opens the camera; onCode runs for every read (often, while one code stays in view). Throws AppError with
+ *   details.kind "denied" | "unavailable" | "busy" | "failed".
+ * @property {() => void} stop   Releases the camera.
+ */

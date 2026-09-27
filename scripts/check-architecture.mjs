@@ -38,8 +38,9 @@ for (const [f, { deps, text }] of graph) {
     const DL = layerOf(d);
     if (!ALLOWED[L] || !ALLOWED[L].includes(DL)) violations.push(`${f} (${L}) must not import ${d} (${DL})`);
   }
-  // Logging goes through shared/logging/logger.js (one place to change how the app logs)
-  if (f !== 'shared/logging/logger.js' && /\bconsole\.(log|info|warn|error|debug)\(/.test(text))
+  // Logging goes through shared/logging/logger.js (one place to change how the app logs); vendored third-party code
+  // (a vendor/ folder) is kept exactly as published
+  if (f !== 'shared/logging/logger.js' && !/\/vendor\//.test(f) && /\bconsole\.(log|info|warn|error|debug)\(/.test(text))
     violations.push(`${f}: calls console directly (use shared/logging/logger.js)`);
   // Only infrastructure talks to Supabase or the network: no supabase-js client use, table queries or fetch elsewhere
   // (features reach Supabase through the "cloud" port; checking store.sbClient for presence is allowed)

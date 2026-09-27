@@ -44,6 +44,7 @@ src/
 │   │                    local-first-stock-import.js (supplier bills: one RPC, then applied locally)
 │   ├── codes/           barcode-svg.js (EAN-13/UPC-A/EAN-8/Code 128), qr-svg.js (+ vendor/qrcode-generator.js, MIT), png.js
 │   ├── extraction/      bill-extractor.js (calls the extract-bill Edge Function)
+│   ├── scanner/         camera-scanner.js (rear camera; BarcodeDetector, else vendor/zxing-decode.js, Apache-2.0)
 │   ├── storage/         local-storage.js (the "storage" port)
 │   └── browser/         files.js: download/share, photo → thumbnail, SHA-256, photo downscale, base64 (the "files" port)
 ├── shared/              Cross-cutting code every layer may use
@@ -170,6 +171,7 @@ export const archiveProduct = (pid, on) => productRepository().setArchived(pid, 
 | `stockRepository` | `infrastructure/repositories/local-first-stock-repository.js` | `features/inventory/repositories/stock-repository.js` |
 | `barcodeService` / `qrCodeService` | `infrastructure/codes/` | product editor code previews, stickers |
 | `documentExtractionService` | `infrastructure/extraction/bill-extractor.js` → Edge Function `extract-bill` | `features/inventory/use-cases/import-supplier-bill.js` |
+| `barcodeScanner` | `infrastructure/scanner/camera-scanner.js` | `features/sales/components/camera-scan.js` (Sell → Scan), rules in `domain/sales/scan-rules.js`, `use-cases/scan-to-cart.js` |
 | `inventoryImportService` | `infrastructure/repositories/local-first-stock-import.js` → RPC `hangtag_import_stock` | `features/inventory/use-cases/import-supplier-bill.js` |
 
 `app/main.js` calls `installContainer()` and `installNavigation()` before anything reads storage or renders. The

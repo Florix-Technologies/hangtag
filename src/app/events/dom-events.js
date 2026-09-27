@@ -12,6 +12,7 @@ import { SIZE_PRESETS, edAction, edAddOption, edAddValues, edCombos, edFieldInpu
   openEditor, renderEditor, saveEditor } from '../../features/products/components/product-editor.js';
 import { openStickers, stickerAction, stickerChange } from '../../features/products/components/stickers.js';
 import { billImportChange, billImportClick, billImportInput, openBillImport } from '../../features/inventory/components/bill-import.js';
+import { openScanner, scanAction } from '../../features/sales/components/camera-scan.js';
 import { renderProducts } from '../../features/products/pages/products-page.js';
 import { loadExamples } from '../../features/products/services/examples.js';
 import { deleteProduct, setArchived } from '../../features/products/components/product-actions.js';
@@ -42,6 +43,7 @@ export function installDomEvents(){
 
   document.addEventListener("click",async e=>{
     const t=e.target;if(!t.closest)return;
+    const sc=t.closest("[data-scan]");if(sc&&store.scan){scanAction(sc.dataset.scan);return}
     const tab=t.closest("[data-tab]");if(tab){closeModal();setTab(tab.dataset.tab);return}
     const tile=t.closest(".tile");if(tile){openPicker(tile.dataset.pid);return}
     // variant picker
@@ -127,6 +129,7 @@ export function installDomEvents(){
       case "stockin":openProductChooser("in");break;
       case "stockadj":openProductChooser("adjust");break;
       case "billimport":openBillImport();break;
+      case "scan":openScanner();break;
       case "sosave":saveStockOp();break;
       case "rtsave":saveReturn();break;
       case "exadd":openProductChooser("exchange");break;

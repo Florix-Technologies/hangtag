@@ -3,6 +3,8 @@
 import globals from "globals";
 
 export default [
+  // vendored third-party code is kept exactly as published
+  { ignores: ["src/**/vendor/**"] },
   {
     files: ["src/**/*.js"],
     languageOptions: {

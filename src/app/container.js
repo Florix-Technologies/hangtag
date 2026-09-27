@@ -16,6 +16,7 @@ import { qrSVG } from '../infrastructure/codes/qr-svg.js';
 import { svgToPngBlob } from '../infrastructure/codes/png.js';
 import { symbologyFor } from '../domain/catalog/barcode.js';
 import { createBillExtractor } from '../infrastructure/extraction/bill-extractor.js';
+import { createCameraScanner } from '../infrastructure/scanner/camera-scanner.js';
 import { createLocalFirstStockImport } from '../infrastructure/repositories/local-first-stock-import.js';
 import { invalidate } from '../features/inventory/services/ledger.js';
 
@@ -26,6 +27,7 @@ export function installContainer(){
   provide("files", files);
   provide("barcodeService", { render: barcodeSVG, symbology: symbologyFor });
   provide("qrCodeService", { render: qrSVG });
+  provide("barcodeScanner", createCameraScanner());
   // Sign out / open the shop, for the screens around sign-in (shared/ui/session-actions.js)
   provide("session", { signOut, enterApp });
   // Supabase: the current client is read on every call (it is created at sign-in; tests may replace it)

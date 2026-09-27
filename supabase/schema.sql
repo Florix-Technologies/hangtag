@@ -1213,9 +1213,13 @@ SELECT check_name, value, expected, value = expected AS ok FROM (
            (SELECT count(*) FROM public.hangtag_products p WHERE EXISTS (SELECT 1 FROM public.hangtag_variants v WHERE v.owner_id = p.owner_id AND v.product_id = p.id))::bigint AS value,
            (SELECT count(*) FROM public.hangtag_products)::bigint AS expected
     UNION ALL
+    -- expected: every old size of a product still in the shop, plus sizes whose variant was moved into another product
+    -- ("Combine colours" keeps variant ids, e.g. p2:M under p1, and removes the merged product). Fails only when a
+    -- size of a product that is still there has no variant.
     SELECT 2, 'Old sizes that became variants',
            (SELECT count(*) FROM public.hangtag_backup_v2_sizes b WHERE EXISTS (SELECT 1 FROM public.hangtag_variants v WHERE v.owner_id = b.owner_id AND v.id = b.product_id || ':' || b.size))::bigint,
-           (SELECT count(*) FROM public.hangtag_backup_v2_sizes b WHERE EXISTS (SELECT 1 FROM public.hangtag_products p WHERE p.owner_id = b.owner_id AND p.id = b.product_id))::bigint
+           (SELECT count(*) FROM public.hangtag_backup_v2_sizes b WHERE EXISTS (SELECT 1 FROM public.hangtag_products p WHERE p.owner_id = b.owner_id AND p.id = b.product_id)
+              OR EXISTS (SELECT 1 FROM public.hangtag_variants v WHERE v.owner_id = b.owner_id AND v.id = b.product_id || ':' || b.size))::bigint
     UNION ALL
     SELECT 3, 'Pieces received under the old size list = opening stock',
            (SELECT COALESCE(sum(m.qty), 0) FROM public.hangtag_stock_moves m WHERE m.type = 'OPENING' AND m.id LIKE 'open:%'

@@ -164,6 +164,31 @@ async function lastResult(db, sql) { const res = await db.exec(sql); return res[
   x = await tryAs(f, A, `INSERT INTO public.hangtag_products (id, name, price, category, brand, cost_price, archived, options) VALUES ('p1','Tee',599,'T-shirts','Own',300,false,'{"colors":["Black"],"sizes":["M"]}')`);
   check('product with category, brand, cost, archive and options', !x.err, x.err);
   await f.close();
+
+  // "Combine colours" (products/components/colour-groups.js) keeps variant ids: p2's sizes move under p1 as White and p2
+  // is removed. The report must still count those old sizes as migrated (it happened on the live database: 319 vs 314).
+  console.log('\n=== after "Combine colours" merged two migrated products ===');
+  const g = new PGlite(); await g.exec(SUPABASE);
+  await g.exec(V1); await g.exec(LINE_NO); await g.exec(LEGACY);
+  await g.exec(`INSERT INTO auth.users (id, email) VALUES ('${A}','florixenergy@gmail.com')`);
+  await g.exec(`INSERT INTO auth.identities (user_id, provider, email) VALUES ('${A}','google','florixenergy@gmail.com')`);
+  await g.exec(V4); await g.exec(NEW);
+  await as(g, A, `UPDATE public.hangtag_variants SET option_values = jsonb_build_array('Black', size) WHERE product_id = 'p1'`);
+  await as(g, A, `UPDATE public.hangtag_variants SET product_id = 'p1', option_values = jsonb_build_array('White', size) WHERE product_id = 'p2'`);
+  await as(g, A, `UPDATE public.hangtag_stock_moves SET product_id = 'p1' WHERE product_id = 'p2'`);
+  await as(g, A, `UPDATE public.hangtag_products SET name = 'Oversized Tee', options = '{"opts":[{"name":"Colour","values":["Black","White"]},{"name":"Size","values":["S","M","L","XL"]}]}' WHERE id = 'p1'`);
+  await as(g, A, `DELETE FROM public.hangtag_products WHERE id = 'p2'`);
+  const REPORT = NEW.slice(NEW.lastIndexOf('SELECT check_name')).replace(/;\s*$/, '');
+  const row2 = async () => (await g.query(REPORT)).rows.find((r) => r.check_name === 'Old sizes that became variants');
+  const oldExpected = (await g.query(`SELECT count(*)::int n FROM public.hangtag_backup_v2_sizes b WHERE EXISTS (SELECT 1 FROM public.hangtag_products p WHERE p.owner_id = b.owner_id AND p.id = b.product_id)`)).rows[0].n;
+  check('the old check would have failed here (6 old sizes, only 4 still under their first product)', oldExpected === 4, oldExpected);
+  const rep3 = await lastResult(g, NEW);
+  check('after the merge the script still runs and every report row is ok (old sizes 6/6)', rep3.rows.every((r) => r.ok) && Number((await row2()).value) === 6,
+    rep3.rows.map((r) => `${r.check_name}: ${r.value}/${r.expected}`));
+  await as(g, A, `DELETE FROM public.hangtag_variants WHERE id = 'p1:S'`);
+  const r2 = await row2();
+  check('a size of a product that is still there without its variant still fails the check (5/6)', Number(r2.value) === 5 && Number(r2.expected) === 6 && r2.ok === false, r2);
+  await g.close();
   console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');
   process.exit(fails ? 1 : 0);
 })();

@@ -25,7 +25,7 @@ import { exAvail } from '../../features/returns/services/return-rules.js';
 import { closeSheets, renderBill, renderBillSheet, updateBillTotals } from '../../features/sales/components/bill-panel.js';
 import { addPicked, openPicker, renderPicker, setPickQty } from '../../features/sales/components/variant-picker.js';
 import { renderGrid } from '../../features/sales/pages/sell-page.js';
-import { addOne, availOf } from '../../features/sales/services/cart.js';
+import { addOne, availOf, removeLine, setLineQty } from '../../features/sales/services/cart.js';
 import { checkout, unvoid, voidSale } from '../../features/sales/use-cases/checkout.js';
 import { enqueue, flushSbQueue } from '../../features/sync/services/outbox.js';
 import { closeModal } from '../../shared/components/modal.js';
@@ -55,6 +55,7 @@ export function installDomEvents(){
     if(t.closest("[data-edclose]")){store.editor=null;closeModal();return}
     const pay=t.closest("[data-pay]");if(pay&&!pay.disabled){checkout(pay.dataset.pay);return}
     const inc=t.closest("[data-inc]");if(inc){const c=store.cart[+inc.dataset.inc];if(c){if(availOf(c.v)<=0){toast("No more in stock.");return}c.q++;saveCart();renderAll()}return}
+    const rl=t.closest("[data-rmline]");if(rl){removeLine(+rl.dataset.rmline);renderAll();if(store.billOpen&&store.cart.length)renderBillSheet();return}
     const dec=t.closest("[data-dec]");if(dec){const i=+dec.dataset.dec,c=store.cart[i];if(c){c.q--;if(c.q<=0)store.cart.splice(i,1);if(!store.cart.length)store.disc=0;saveCart();renderAll()}return}
     const den=t.closest("[data-density]");if(den){store.prefs.density=den.dataset.density;savePrefs();renderNav();renderGrid();return}
     const per=t.closest("[data-period]");if(per){store.prefs.period=per.dataset.period;if(per.dataset.period==="custom"&&!store.prefs.from){store.prefs.from=addDays(dayKey(Date.now()),-6);store.prefs.to=dayKey(Date.now())}store.showAllBills=false;savePrefs();renderReport();return}
@@ -165,6 +166,7 @@ export function installDomEvents(){
     if(t.id==="soSetCost"&&store.stockOp){store.stockOp.setCost=t.checked;return}
     if(t.matches("[data-disc]")){renderBill();return}
     if(t.matches("[data-restore]")){const f=t.files&&t.files[0];t.value="";if(f)await restoreBackup(f);return}
+    if(t.matches("[data-lineqty]")){const r=setLineQty(+t.dataset.lineqty,t.value);if(!r.ok&&r.message)toast(r.message);t.blur();renderAll();if(store.billOpen)renderBillSheet();return}
     if(store.stickers&&stickerChange(t))return;
     if(store.billImport&&await billImportChange(t))return;
     if(store.editor){

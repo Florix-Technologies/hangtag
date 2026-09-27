@@ -18,8 +18,12 @@ import { initials } from '../../../shared/utils/text.js';
 export function payBtns(dis){const d=dis?" disabled":"";return `<button class="pay cash" data-pay="cash"${d}>Cash<span class="kh">C</span></button><button class="pay upi" data-pay="upi"${d}>UPI<span class="kh">U</span></button><button class="pay card" data-pay="card"${d}>Card<span class="kh">K</span></button>`}
 export function lineHTML(c,i){
   const p=prod(c.p)||{id:c.p,name:c.name,color:c.color};
-  const lab=lineLabel(c), a=availOf(c.v);
-  return `<div class="li">${thumb(p,"sm")}<div><div class="nm">${esc(c.name)}</div><div class="sub">${lab?`<span class="szl">${esc(lab)}</span>`:""}<span>${inr(c.price)} each</span></div></div><div class="lir"><span class="amt">${inr(c.q*c.price)}</span><span class="step"><button data-dec="${i}" aria-label="One less ${esc(c.name)} ${esc(lab)}">−</button><b>${c.q}</b><button data-inc="${i}" aria-label="One more ${esc(c.name)} ${esc(lab)}"${a<=0?" disabled":""}>+</button></span></div></div>`;
+  const lab=lineLabel(c), a=availOf(c.v), what=esc((c.name+" "+lab).trim());
+  return `<div class="li" data-li="${i}">${thumb(p,"sm")}<div><div class="nm">${esc(c.name)}</div><div class="sub">${lab?`<span class="szl">${esc(lab)}</span>`:""}${c.sku?`<span class="lsku">SKU ${esc(c.sku)}</span>`:""}<span>${inr(c.price)} each</span></div>`+
+    `<button type="button" class="link xs rmline" data-rmline="${i}" aria-label="Remove ${what} from the bill">Remove</button></div>`+
+    `<div class="lir"><span class="amt" data-lineamt="${i}">${inr(c.q*c.price)}</span><span class="step"><button data-dec="${i}" aria-label="One less ${what}">−</button>`+
+    `<input type="number" inputmode="numeric" min="1" max="${c.q+Math.max(0,a)}" step="1" value="${c.q}" data-lineqty="${i}" aria-label="Quantity of ${what}">`+
+    `<button data-inc="${i}" aria-label="One more ${what}"${a<=0?" disabled":""}>+</button></span></div></div>`;
 }
 export function custLineHTML(){
   if(store.cartCust&&store.cartCust.name)return `<div class="custline"><span class="avatar sm">${esc(initials(store.cartCust.name))}</span><div><b>${esc(store.cartCust.name)}</b>${store.cartCust.phone?`<span>${esc(store.cartCust.phone)}</span>`:""}</div><button class="link xs" data-act="pickcust">Change</button><button class="iconbtn sm" data-act="nocust" aria-label="Remove customer">${ICON.x}</button></div>`;
@@ -51,7 +55,7 @@ export function billBarHTML(){
   const pcs=cartPcs(),T=billTotals(store.cart,store.disc);
   return `<button class="bb-sum" data-act="openbill" aria-label="View bill"><span class="bb-th">${store.cart.slice(-3).map(c=>thumb(prod(c.p)||{id:c.p,name:c.name,color:c.color},"xs")).join("")}</span><span class="bb-cnt"><b>${pcs} piece${pcs>1?"s":""}${store.cartCust&&store.cartCust.name?" · "+esc(store.cartCust.name):""}</b><small>View bill ${ICON.up}</small></span><span class="bb-total" data-grand>${inr(T.total)}</span></button><div class="pays">${payBtns(false)}</div>`;
 }
-export function typingDisc(){const a=document.activeElement;return !!(a&&a.matches&&a.matches("[data-disc]"))}
+export function typingDisc(){const a=document.activeElement;return !!(a&&a.matches&&a.matches("[data-disc],[data-lineqty]"))}
 export function renderBill(){if(typingDisc())return;$("#billPanel").innerHTML=billPanelHTML("panel");$("#billBar").innerHTML=billBarHTML()}
 export function updateBillTotals(){const T=billTotals(store.cart,store.disc);$$("[data-grand]").forEach(g=>{g.textContent=inr(T.total)});$$("[data-tax]").forEach(g=>{g.textContent=inr(T.tax)})}
 export function renderBillSheet(){

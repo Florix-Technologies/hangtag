@@ -3,6 +3,7 @@
 import { cleanProductName, takenCodes, validateProductDraft } from '../../src/domain/catalog/product-validation.js';
 import { lineLabel, numOrNull, priceRange, vCost, vLabel, vPrice, variantsOf } from '../../src/domain/catalog/variants.js';
 import { upgradeCatalog } from '../../src/domain/catalog/catalog-migration.js';
+import { checkQty } from '../../src/domain/sales/cart-rules.js';
 import { szRank } from '../../src/domain/catalog/sizes.js';
 import { computeBillTotals } from '../../src/domain/sales/bill-totals.js';
 import { formatInvoiceNo, pcsOf } from '../../src/domain/sales/sale.js';
@@ -70,6 +71,11 @@ check('v1 → v2: a product with no sizes gets one plain variant; prices whole; 
 const v3 = { version: 3, products: [] };
 check('a v3 catalog is returned unchanged', upgradeCatalog(v3, { deviceId: 'd', now: 1 }).cat === v3);
 check('v1 → v3: sizes become a Size option with aligned variants', JSON.stringify(up.cat.products[0].opts) === '[{"n":"Size","v":["M","L"]}]' && JSON.stringify(up.cat.products[0].variants[0].o) === '["M"]');
+
+// ---------- bill line quantities ----------
+check('quantity: a whole number from 1 to the stock', checkQty('3', 5).q === 3 && checkQty(' 5 ', 5).q === 5 && checkQty(2, null).q === 2);
+check('quantity: 0, negative, decimals and text are refused', !!checkQty('0', 5).error && !!checkQty('-1', 5).error && !!checkQty('2.5', 5).error && !!checkQty('abc', 5).error && !!checkQty('', 5).error);
+check('quantity: more than the stock is capped, with the reason', checkQty('9', 4).q === 4 && checkQty('9', 4).error === 'Only 4 in stock.' && checkQty('1', 0).error === 'That one is sold out.' && checkQty('1', 0).q === undefined);
 
 // ---------- bill totals, invoice numbers ----------
 const lines = [{ q: 2, price: 500 }, { q: 1, price: 250 }];

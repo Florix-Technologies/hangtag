@@ -3,7 +3,7 @@ import { AppError, ERROR_CODES as C } from '../../shared/errors/app-error.js';
 
 const NETWORK = /failed to fetch|networkerror|network request failed|load failed|fetch failed|timed? ?out|econn|enotfound/i;
 const AUTH = /jwt|token (has )?expired|not authenticated|invalid claim|refresh token/i;
-const OUTDATED = /PGRST205|42P01|42703|does not exist|schema cache/i;
+const OUTDATED = /PGRST20[25]|42P01|42703|42883|does not exist|schema cache/i;
 
 export function toAppError(e){
   if(e instanceof AppError) return e;

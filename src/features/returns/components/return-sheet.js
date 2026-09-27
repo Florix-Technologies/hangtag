@@ -2,7 +2,7 @@
 import { lineLabel } from '../../../domain/catalog/options.js';
 import { store } from '../../../shared/state/store.js';
 import { billTotals } from '../../sales/services/totals.js';
-import { PAYN } from '../../../domain/sales/sale.js';
+import { PAY_LABELS, paymentsOf } from '../../../domain/sales/payments.js';
 import { D } from '../../inventory/services/ledger.js';
 import { exAvail, retValue, returnable, unitValue } from '../services/return-rules.js';
 import { closeSheets } from '../../sales/components/bill-panel.js';
@@ -20,9 +20,11 @@ import { saveReturns } from '../../../shared/state/persistence.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { uid } from '../../../shared/utils/ids.js';
 
+/* The original bill's customer, for the new bill of an exchange */
+const exCust=s=>s.cust?{id:s.cust.id,name:s.cust.name,phone:s.cust.phone}:null;
 export function openReturn(sid){
   const s=D().saleById[sid]; if(!s||s.void) return;
-  store.retState={sid, q:{}, mode:"return", pay:s.pay, reason:"Didn't fit", note:"", newItems:[], collect:"cash"};
+  store.retState={sid, q:{}, mode:"return", pay:(paymentsOf(s)[0]||{method:"cash"}).method, reason:"Didn't fit", note:"", newItems:[], collect:"cash"};
   closeModal(); renderReturnSheet();
 }
 export function renderReturnSheet(){
@@ -32,7 +34,7 @@ export function renderReturnSheet(){
   const lines=s.items.map((i,k)=>{const ln=i.ln!=null?i.ln:k,max=returnable(s,i,k),q=store.retState.q[ln]||0;
     return `<div class="rt-line${max?"":" done"}"><div><b>${esc(i.n)}</b><span>${esc(lineLabel(i)||"")}${lineLabel(i)?" · ":""}bought ${i.q}${i.q-max?" · "+(i.q-max)+" already returned":""} · ${inr(unitValue(s,i))} each</span></div>
       ${max?`<span class="step"><button data-rtm="${ln}" aria-label="One less"${q?"":" disabled"}>−</button><b>${q}</b><button data-rtp="${ln}" aria-label="One more"${q<max?"":" disabled"}>+</button></span>`:`<span class="note">Nothing left to return</span>`}</div>`}).join("");
-  const nT=billTotals(store.retState.newItems,0), diff=nT.total-val;
+  const nT=billTotals(store.retState.newItems,null,exCust(s)), diff=nT.total-val;
   let exHTML="";
   if(ex){
     exHTML=`<div class="setsec"><h4>New items</h4>${store.retState.newItems.length?store.retState.newItems.map((c,i)=>`<div class="rt-line"><div><b>${esc(c.name)}</b><span>${esc(lineLabel(c))} · ${inr(c.price)} each</span></div><span class="step"><button data-exm="${i}" aria-label="One less">−</button><b>${c.q}</b><button data-exp="${i}" aria-label="One more"${exAvail(c.v)>0?"":" disabled"}>+</button></span></div>`).join(""):`<p class="muted">Add what the customer is taking instead.</p>`}
@@ -40,7 +42,7 @@ export function renderReturnSheet(){
       <div class="rt-sum">${[["Returned items",inr(val)],["New items",inr(nT.total)]].map(([a,b])=>`<div class="row"><span>${a}</span><span class="tnum">${b}</span></div>`).join("")}
       <div class="row tot"><span>${diff>0?"Customer pays":diff<0?"Refund to customer":"Even exchange"}</span><span class="grand">${diff?inr(Math.abs(diff)):"₹0"}</span></div></div>`;
   }
-  const payRow=(label,key)=>`<div class="rt-pay"><span>${label}</span><div class="seg">${["cash","upi","card"].map(k=>`<button type="button" data-rtpay="${key}:${k}" aria-pressed="${store.retState[key]===k}">${PAYN[k]}</button>`).join("")}</div></div>`;
+  const payRow=(label,key)=>`<div class="rt-pay"><span>${label}</span><div class="seg">${["cash","upi","card"].map(k=>`<button type="button" data-rtpay="${key}:${k}" aria-pressed="${store.retState[key]===k}">${PAY_LABELS[k]}</button>`).join("")}</div></div>`;
   $("#sheetHost").innerHTML=`<div class="scrim" data-scrim><div class="sheet retsheet" role="dialog" aria-modal="true" aria-label="Return or exchange">
     <div class="sh-head"><div class="sh-t"><h3>${ex?"Exchange":"Return"} · bill ${esc(s.no)}</h3><p>${esc(dtLong(s.t))}${s.cust?" · "+esc(s.cust.name):""}</p></div><button class="iconbtn" data-act="closesheet" aria-label="Close">${ICON.x}</button></div>
     <div class="seg rt-mode" role="group" aria-label="Return or exchange"><button data-rtmode="return" aria-pressed="${!ex}">Return for refund</button><button data-rtmode="exchange" aria-pressed="${ex}">Exchange</button></div>
@@ -70,10 +72,10 @@ export function saveReturn(){
   const t=Date.now(), exId=ex?"x"+uid():null;
   let newSale=null, refund=val;
   if(ex){
-    const saved=store.cartCust; store.cartCust=s.cust?{id:s.cust.id,name:s.cust.name,phone:s.cust.phone}:null;
-    newSale=newSaleRecord(store.retState.newItems,0,store.retState.collect,{kind:"exchange",ex:exId});
-    store.cartCust=saved;
-    newSale.credit=Math.min(val,newSale.total);
+    // the new bill is for the same customer; what comes back is credit against it, the rest is paid or refunded
+    const cust=exCust(s), credit=Math.min(val,billTotals(store.retState.newItems,null,cust).total);
+    newSale=newSaleRecord(store.retState.newItems,null,store.retState.collect,{kind:"exchange",ex:exId,cust,credit});
+    if(newSale.error) return bad(newSale.error);
     refund=Math.max(0,val-newSale.total);
   }
   const ret={id:"r"+uid(),sale:s.id,t,kind:ex?"exchange":"return",ex:exId,refund,pay:store.retState.pay,value:val,note:reason,dev:store.dev,items};
@@ -82,5 +84,5 @@ export function saveReturn(){
   if(newSale){ store.lastSale=newSale; recordSale(newSale); } else { renderSync(); flushSbQueue(); }
   store.retState=null; closeSheets(); renderAll();
   if(newSale) showPaid(newSale);
-  else toast(`Return saved · refund ${inr(refund)} by ${PAYN[ret.pay]}. Stock is back on the shelf.`);
+  else toast(`Return saved · refund ${inr(refund)} by ${PAY_LABELS[ret.pay]}. Stock is back on the shelf.`);
 }

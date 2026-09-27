@@ -1,6 +1,7 @@
 // Keeps each account's local data separate on a shared device.
 import { store } from '../../../shared/state/store.js';
 import { DEFAULT_SETTINGS } from '../../../domain/shop/settings.js';
+import { discountInput } from '../../../domain/sales/discounts.js';
 import { applyCatalogMigration } from '../../products/services/catalog.js';
 import { closeSheets } from '../../sales/components/bill-panel.js';
 import { closeModal } from '../../../shared/components/modal.js';
@@ -50,7 +51,7 @@ export function loadUserState(){
   store.dirty = new Set(storage.get("rc_dirty", []));
   store.pend = objOr(storage.get("rc_pend", null), { cat: false, img: {} }); if(!store.pend.img) store.pend.img = {};
   store.cart = storage.get("rc_cart", []); if(!Array.isArray(store.cart)) store.cart = [];
-  store.disc = Math.max(0, +storage.get("rc_disc", 0) || 0);
+  store.disc = discountInput(storage.get("rc_disc", null));
   store.cartCust = storage.get("rc_cartcust", null);
   store.moves = objOr(storage.get("rc_moves", {}), {});
   store.returnsMap = objOr(storage.get("rc_returns", {}), {});

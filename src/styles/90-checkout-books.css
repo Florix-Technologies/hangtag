@@ -1,0 +1,63 @@
+/* ---------- discounts on the bill ---------- */
+.li .ldisc{color:var(--good-ink);font-weight:600}
+.li .ldbtn{margin-top:4px;margin-right:12px;padding:2px 0}
+.amt s{color:var(--ink-3);font-weight:500;font-size:12.5px;margin-right:2px}
+.discrow label{white-space:nowrap}
+.discwrap .dtype{display:inline-flex;border:1px solid var(--line-2);border-radius:8px;overflow:hidden;background:var(--bg)}
+.discwrap .dtype button{min-width:30px;padding:5px 8px;font-weight:700;font-size:13px;color:var(--ink-3)}
+.discwrap .dtype button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+.discwrap .dtype button:disabled{opacity:.5}
+.bp-foot .row.disc span+span{color:var(--good-ink)}
+.bp-foot .row.muted,.paysum .row.muted{color:var(--ink-3);font-size:13px}
+.discerr,.paysheet .err,.discsheet .err{margin:0;padding:8px 10px;border-radius:10px;background:var(--crit-soft);color:var(--crit);font-size:13px;font-weight:600}
+.discerr[hidden],.paysheet .err[hidden],.discsheet .err[hidden]{display:none}
+.sheet.discsheet{max-width:440px;display:flex;flex-direction:column;gap:12px}
+.ldseg.seg,.paymodes.seg{background:var(--wash);display:flex;width:100%}
+.ldseg.seg button,.paymodes.seg button{flex:1;min-height:40px;text-align:center}
+.ldprev{margin:0;font-size:14px;color:var(--ink-2)}
+.discsheet .f input{min-height:44px;font-size:16px}
+
+/* ---------- payment ---------- */
+.sheet.paysheet{max-width:500px;display:flex;flex-direction:column;gap:12px}
+.paysum{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border-radius:14px;background:var(--wash);font-size:14px;color:var(--ink-2)}
+.paysum .row.disc span+span{color:var(--good-ink)}
+.paysum .tot{color:var(--ink);font-weight:700;padding-top:6px;border-top:1px dashed var(--line-2)}
+.paysum .grand{font-size:20px}
+.payfields{display:flex;flex-direction:column;gap:10px}
+.payfields .f input{min-height:46px;font-size:16px}
+.payfields .f small{font-weight:500;color:var(--ink-3)}
+.payfields .note{margin:0}
+.quick{display:flex;gap:8px;flex-wrap:wrap}.quick .chip{padding:6px 12px;min-height:36px}
+.splitrows{display:flex;flex-direction:column;gap:8px}
+.splitrow{display:grid;grid-template-columns:56px minmax(0,1fr) auto;gap:8px;align-items:center}
+.splitrow .spl{font-weight:700}
+.splitrow input{min-height:46px;font-size:16px;padding:8px 10px;border:1px solid var(--line-2);border-radius:10px;text-align:right;font-variant-numeric:tabular-nums;background:var(--bg);color:var(--ink)}
+.splitrows .f{margin:0 0 4px 64px}
+.paylive{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.paylive div{display:flex;flex-direction:column;gap:2px;padding:8px 10px;border:1px solid var(--line);border-radius:12px}
+.paylive span{font-size:12px;color:var(--ink-3);font-weight:600}.paylive b{font-variant-numeric:tabular-nums}
+.paylive b.due{color:var(--crit)}
+.paid-change{margin:0;font-size:15px}.paid-change b{font-size:18px}.paid-change span{color:var(--ink-3);font-size:13px}
+.c-split{--c:var(--ink-3)}
+
+/* ---------- cash book and bank book ---------- */
+@media (min-width:1000px){.span-6{grid-column:span 6}}
+.bookkpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:8px}
+.bookkpis div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.bookkpis span{font-size:12px;color:var(--ink-3);font-weight:600}.bookkpis b{font-variant-numeric:tabular-nums;font-size:15px}
+.bookkpis .hl b{color:var(--good-ink)}
+.sheet.booksheet{max-width:640px}
+.bklist{display:flex;flex-direction:column;margin-top:10px;border-top:1px solid var(--line)}
+.bkrow{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:10px;align-items:center;width:100%;text-align:left;padding:10px 4px;border-bottom:1px solid var(--line);min-height:52px}
+.bkrow:hover{background:var(--wash)}
+.bk-w{display:flex;flex-direction:column;min-width:0}.bk-w small{color:var(--ink-3);font-size:12.5px}
+.bk-a,.bk-b{font-variant-numeric:tabular-nums;text-align:right}.bk-a.in{color:var(--good-ink);font-weight:700}.bk-a.out{color:var(--crit);font-weight:700}
+.bk-b{min-width:84px;color:var(--ink-2)}
+.bkrow.off .bk-a,.bkrow.off .bk-w b{text-decoration:line-through;color:var(--ink-3)}
+.bkline{display:flex;justify-content:space-between;padding:10px 4px;border-bottom:1px solid var(--line);font-weight:600}
+@media (max-width:699px){
+  .bookkpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .li .ldbtn{padding:8px 0}
+  .discwrap input{width:72px;font-size:16px}
+  .bk-b{min-width:0}
+}

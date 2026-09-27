@@ -29,7 +29,11 @@ import { closeSheets, renderBill, renderBillSheet, updateBillTotals } from '../.
 import { addPicked, openPicker, renderPicker, setPickQty } from '../../features/sales/components/variant-picker.js';
 import { renderGrid } from '../../features/sales/pages/sell-page.js';
 import { addOne, availOf, removeLine, setLineQty } from '../../features/sales/services/cart.js';
-import { checkout, unvoid, voidSale } from '../../features/sales/use-cases/checkout.js';
+import { unvoid, voidSale } from '../../features/sales/use-cases/checkout.js';
+import { setBillDiscount } from '../../features/sales/use-cases/discounts.js';
+import { applyLineDiscount, lineDiscountInput, lineDiscountType, openLineDiscount } from '../../features/sales/components/discount-sheet.js';
+import { completePayment, openPayment, payInput, payMode, payQuick, payRest } from '../../features/sales/components/payment-sheet.js';
+import { openBook } from '../../features/finance/components/books-view.js';
 import { enqueue, flushSbQueue } from '../../features/sync/services/outbox.js';
 import { closeModal } from '../../shared/components/modal.js';
 import { toast } from '../../shared/components/toast.js';
@@ -55,12 +59,20 @@ export function installDomEvents(){
     const addv=t.closest("[data-addv]");if(addv){addOne(addv.dataset.addv);store.sellQuery="";const si=$("#sellSearch");if(si)si.value="";renderGrid();return}
     if(t.matches("[data-scrim]")){if(t.matches("[data-paid]")){closeSheets();return}if(store.pick&&store.pick.target==="exchange"){store.pick=null;renderReturnSheet();return}store.retState=null;closeSheets();return}
     if(store.billImport&&t.closest("[data-billimp]")&&billImportClick(t))return;
-    if(t.matches("[data-modal-scrim]")||t.closest("[data-modal-close]")){if(t.matches("[data-editor]")&&store.editor)return;if(t.matches("[data-billimp]")&&store.billImport)return;closeModal();return}
+    if(t.matches("[data-modal-scrim]")||t.closest("[data-modal-close]")){if(t.matches("[data-editor]")&&store.editor)return;if(t.matches("[data-billimp]")&&store.billImport)return;store.payState=null;store.lineDisc=null;closeModal();return}
     if(t.closest("[data-edclose]")){store.editor=null;closeModal();return}
-    const pay=t.closest("[data-pay]");if(pay&&!pay.disabled){checkout(pay.dataset.pay);return}
+    // discounts and payment
+    const pay=t.closest("[data-pay]");if(pay&&!pay.disabled){openPayment(pay.dataset.pay);return}
+    const pm=t.closest("[data-paymode]");if(pm&&store.payState){payMode(pm.dataset.paymode);return}
+    const prs=t.closest("[data-payrest]");if(prs&&store.payState){payRest(prs.dataset.payrest);return}
+    const pq=t.closest("[data-payquick]");if(pq&&store.payState){payQuick(pq.dataset.payquick);return}
+    const ld=t.closest("[data-linedisc]");if(ld){openLineDiscount(+ld.dataset.linedisc);return}
+    const ldt=t.closest("[data-ldtype]");if(ldt&&store.lineDisc){lineDiscountType(ldt.dataset.ldtype);return}
+    const dty=t.closest("[data-disctype]");if(dty&&!dty.disabled){const d=store.disc||{value:""};setBillDiscount({type:dty.dataset.disctype,value:d.value});const w=dty.closest(".bp-foot"),id=w&&w.querySelector("[data-disc]")&&w.querySelector("[data-disc]").id;renderAll();if(store.billOpen)renderBillSheet();const i=id&&document.getElementById(id);if(i)i.focus();return}
+    const bk=t.closest("[data-book]");if(bk){openBook(bk.dataset.book);return}
     const inc=t.closest("[data-inc]");if(inc){const c=store.cart[+inc.dataset.inc];if(c){if(availOf(c.v)<=0){toast("No more in stock.");return}c.q++;saveCart();renderAll()}return}
     const rl=t.closest("[data-rmline]");if(rl){removeLine(+rl.dataset.rmline);renderAll();if(store.billOpen&&store.cart.length)renderBillSheet();return}
-    const dec=t.closest("[data-dec]");if(dec){const i=+dec.dataset.dec,c=store.cart[i];if(c){c.q--;if(c.q<=0)store.cart.splice(i,1);if(!store.cart.length)store.disc=0;saveCart();renderAll()}return}
+    const dec=t.closest("[data-dec]");if(dec){const i=+dec.dataset.dec,c=store.cart[i];if(c){c.q--;if(c.q<=0)store.cart.splice(i,1);if(!store.cart.length)store.disc=null;saveCart();renderAll()}return}
     const den=t.closest("[data-density]");if(den){store.prefs.density=den.dataset.density;savePrefs();renderNav();renderGrid();return}
     const per=t.closest("[data-period]");if(per){store.prefs.period=per.dataset.period;if(per.dataset.period==="custom"&&!store.prefs.from){store.prefs.from=addDays(dayKey(Date.now()),-6);store.prefs.to=dayKey(Date.now())}store.showAllBills=false;savePrefs();renderReport();return}
     const tb=t.closest("[data-table]");if(tb){showTable[tb.dataset.table]=!showTable[tb.dataset.table];renderReport();return}
@@ -117,7 +129,10 @@ export function installDomEvents(){
       case "openbill":store.billOpen=true;store.pick=null;renderBillSheet();break;
       case "addpicked":addPicked();break;
       case "newsale":closeSheets();{const s=$("#sellSearch");if(s&&window.innerWidth>=1000)s.focus()}break;
-      case "clear":store.cart=[];store.disc=0;store.cartCust=null;saveCart();closeSheets();renderAll();break;
+      case "clear":store.cart=[];store.disc=null;store.cartCust=null;saveCart();closeSheets();renderAll();break;
+      case "paydone":completePayment();break;
+      case "ldapply":applyLineDiscount(false);break;
+      case "ldremove":applyLineDiscount(true);break;
       case "pickcust":openCustPicker();break;
       case "nocust":setBillCustomer(null);store.custForm=null;closeModal();renderAll();break;
       case "custnew":newCustomerForm("sell");break;
@@ -143,7 +158,9 @@ export function installDomEvents(){
   document.addEventListener("input",e=>{
     const t=e.target;
     if(t.matches("[data-cellqty]")&&store.pick){const v=t.dataset.cellqty;setPickQty(v,t.value===""?0:t.value);return}
-    if(t.matches("[data-disc]")){store.disc=Math.max(0,Math.round(+t.value||0));saveCart();updateBillTotals();return}
+    if(t.matches("[data-disc]")){setBillDiscount({type:store.disc&&store.disc.type,value:t.value});updateBillTotals();return}
+    if(t.id==="ldVal"){lineDiscountInput(t.value);return}
+    if(t.matches("[data-payf]")&&store.payState){payInput(t);return}
     if(t.id==="sellSearch"){store.sellQuery=t.value;renderGrid();return}
     if(t.id==="prodSearch"){store.prodQuery=t.value;renderProducts();return}
     if(t.id==="custSearch"){store.custPageQ=t.value;renderCustomerList();return}

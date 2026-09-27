@@ -1,19 +1,21 @@
 // Receipt markup for 80 mm and A4.
-import { receiptModel } from '../services/receipt-model.js';
+import { gstLines, payLines, receiptModel } from '../services/receipt-model.js';
 import { esc } from '../../../shared/dom.js';
 import { dtLong } from '../../../shared/formatting/dates.js';
-import { inr } from '../../../shared/formatting/money.js';
+import { inr, inrx } from '../../../shared/formatting/money.js';
 
 export function receiptHTML(s,paper){
   const R=receiptModel(s), a4=paper==="a4";
   const row=(l,r,cls)=>`<div class="r-row${cls?" "+cls:""}"><span>${l}</span><span>${r}</span></div>`;
   let h=`<div class="rcpt${a4?" a4":""}">`;
   h+=`<div class="r-shop"><b>${esc(R.shop.name)}</b>${R.shop.address?`<span>${esc(R.shop.address)}</span>`:""}${R.shop.phone?`<span>Phone ${esc(R.shop.phone)}</span>`:""}${R.shop.gstin?`<span>GSTIN ${esc(R.shop.gstin)}</span>`:""}</div>`;
-  h+=`<div class="r-meta">${a4?`<b class="r-title">${R.rate?"Tax invoice":"Invoice"}</b>`:""}${row("Bill",esc(R.no))}${row("Date",esc(dtLong(R.t)))}${R.cust?row("Customer",esc(R.cust.name)+(R.cust.phone?" · "+esc(R.cust.phone):"")):""}${R.void?`<div class="r-void">CANCELLED</div>`:""}</div>`;
-  h+=`<table class="r-items"><thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>${R.lines.map(l=>`<tr><td><b>${esc(l.name)}</b>${l.var?`<span>${esc(l.var)}${l.sku?" · "+esc(l.sku):""}</span>`:l.sku?`<span>${esc(l.sku)}</span>`:""}</td><td>${l.q}</td><td>${inr(l.price)}</td><td>${inr(l.amt)}</td></tr>`).join("")}</tbody></table>`;
-  h+=`<div class="r-tot">${row("Subtotal",inr(R.sub))}${R.disc?row("Discount","−"+inr(R.disc)):""}${R.rate&&!R.incl?row("GST "+R.rate+"%",inr(R.tax)):""}${row("Total",inr(R.total),"big")}${R.rate&&R.incl?row("Includes GST "+R.rate+"%",inr(R.tax),"small"):""}`;
+  h+=`<div class="r-meta">${a4?`<b class="r-title">${R.tax?"Tax invoice":"Invoice"}</b>`:""}${row("Bill",esc(R.no))}${row("Date",esc(dtLong(R.t)))}${R.cust?row("Customer",esc(R.cust.name)+(R.cust.phone?" · "+esc(R.cust.phone):"")):""}${R.cust&&R.cust.gstin?row("Customer GSTIN",esc(R.cust.gstin)):""}${R.void?`<div class="r-void">CANCELLED</div>`:""}</div>`;
+  h+=`<table class="r-items"><thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>${R.lines.map(l=>`<tr><td><b>${esc(l.name)}</b>${l.var?`<span>${esc(l.var)}${l.sku?" · "+esc(l.sku):""}</span>`:l.sku?`<span>${esc(l.sku)}</span>`:""}</td><td>${l.q}</td><td>${inr(l.price)}</td><td>${inr(l.amt)}${l.disc?`<span>−${inrx(l.disc)}</span>`:""}</td></tr>`).join("")}</tbody></table>`;
+  const G=gstLines(R);
+  h+=`<div class="r-tot">${row("Subtotal",inr(R.sub))}${R.disc?row("Discount","−"+inrx(R.disc)):""}${R.incl?"":G.map(g=>row(g.label,inrx(g.amount))).join("")}${R.roundOff?row("Round off",(R.roundOff>0?"+":"")+inrx(R.roundOff)):""}${row("Total",inr(R.total),"big")}${R.incl?G.map(g=>row("Includes "+g.label,inrx(g.amount),"small")).join(""):""}`;
   if(R.credit) h+=row("Exchange credit","−"+inr(R.credit))+row("Paid ("+esc(R.pay)+")",inr(R.paid),"big");
-  else h+=row("Paid",esc(R.pay));
+  else if(R.pays.length>1) h+=payLines(R).map(p=>row("Paid by "+esc(p.label)+(p.note?` <small>${esc(p.note)}</small>`:""),inrx(p.amount))).join("");
+  else h+=row("Paid",esc(R.pay)+(payLines(R)[0]&&payLines(R)[0].note?" · "+esc(payLines(R)[0].note):""));
   if(R.returned) h+=row("Returned items",inr(R.returned),"small")+(R.refunded?row("Refunded",inr(R.refunded),"small"):"");
   h+=`</div>${R.footer?`<p class="r-foot">${esc(R.footer)}</p>`:""}</div>`;
   return h;

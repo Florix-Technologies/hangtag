@@ -1,4 +1,4 @@
-// Supabase query helpers: error handling, paging, chunked upserts (for the gateway).
+// Supabase query helpers: error handling and paging (for the gateway).
 import { toAppError } from './errors.js';
 
 /* supabase-js returns {error} instead of throwing — turn it into a throw (an AppError) so callers can queue a retry */
@@ -14,7 +14,4 @@ export async function sbFetchAll(client,table,orders){
     if(!data||data.length<N)break;
   }
   return out;
-}
-export async function upsertChunks(client, table, rows, opts){
-  for(let i=0;i<rows.length;i+=500) sbOk(await client.from(table).upsert(rows.slice(i,i+500), opts));
 }

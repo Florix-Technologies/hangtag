@@ -65,7 +65,9 @@ const vid=(c,s)=>`const p=products().find(x=>x.name==="Street Tee");return p.var
     const lines=await run(A,'return cart.map(c=>[c.c,c.s,c.q])');
     check('TEST 4: bill keeps separate lines for each variant',JSON.stringify(lines)===JSON.stringify([["Black","L",2],["Black","XL",1],["White","M",3]]),lines);
     check('TEST 4: bill shows colour / size on each line',(await A.$$eval('#billPanel .li .szl',x=>x.map(e=>e.textContent))).join("|")==="Black / L|Black / XL|White / M");
-    await A.keyboard.press('c');await sleep(400);   // pay cash with the shortcut
+    await A.keyboard.press('c');await sleep(300);   // pay cash with the shortcut: the payment screen opens on Cash
+    check('C opens the payment screen with Cash chosen',await vis(A,'#paySheet')&&(await A.$eval('#paySheet [data-paymode="cash"]',b=>b.getAttribute('aria-pressed')))==='true');
+    await A.keyboard.press('Enter');await sleep(400);   // Enter completes the sale
     check('checkout by keyboard shows Payment successful',await vis(A,'#sheetHost [data-paid]'));
     await A.keyboard.press('Enter');await sleep(150);
     const after=await run(A,'return Object.fromEntries(products().find(x=>x.name==="Street Tee").variants.map(v=>[v.id,stockOf(v.id)]))');
@@ -188,7 +190,7 @@ const vid=(c,s)=>`const p=products().find(x=>x.name==="Street Tee");return p.var
     await A.type('#custForm [name=name]','Meera Shah');await A.type('#custForm [name=phone]','9812345678');
     await A.click('#custForm [type=submit]');await sleep(150);
     check('customer added to the bill',/Meera Shah/.test(await txt(A,'#billPanel .custline')||''));
-    await run(A,`addOne(${JSON.stringify(ids.WM)})`);await A.click('#billPanel [data-pay="upi"]');await sleep(300);
+    await run(A,`addOne(${JSON.stringify(ids.WM)})`);await A.click('#billPanel [data-pay="upi"]');await sleep(200);await A.click('#payDone');await sleep(300);
     const cs=await run(A,'const s=D().sales[D().sales.length-1];return s.cust&&s.cust.name');
     check('bill carries the customer',cs==='Meera Shah');
     await A.keyboard.press('Escape');

@@ -4,8 +4,8 @@
 -- It is safe to run again. If anything fails, nothing is changed.
 --
 -- Every account has its own shop: its own profile, products, variants (any options: colour, size, storage...),
--- stock history, supplier bills, bills, returns, customers and settings. Nobody can see or change another
--- account's data.
+-- stock history, supplier bills, bills (with their discounts, GST and payments), cash and bank books, returns,
+-- customers and settings. Nobody can see or change another account's data.
 -- The first run of the variant upgrade keeps a copy of the old product, size and bill tables
 -- (hangtag_backup_v2_*), the first run of the options upgrade keeps a copy of products and variants
 -- (hangtag_backup_v3_*), and the script ends with a migration report you can check.
@@ -752,6 +752,387 @@ ALTER TABLE public.hangtag_customers ADD CONSTRAINT hangtag_customers_type_check
 CREATE INDEX IF NOT EXISTS idx_hangtag_customers_name ON public.hangtag_customers (owner_id, lower(name));
 
 -- ==============================================================================
+-- 3e. Discounts, GST, payments and the money books
+--   Bills keep their discounts (on lines and on the whole bill), their GST split (CGST + SGST inside the state, IGST
+--   across states; on each line and in total) and the round off. Payments are a table of their own: one row per bill
+--   and method (cash, UPI, card), so a bill can be split, and together they must equal what was due.
+--   Every payment and every refund posts one financial transaction pointing at its bill, and every transaction one
+--   cash book entry (cash) or bank book entry (UPI, card). Only the database writes transactions and book entries
+--   (the app can read them); their ids come from the payment or return id, so posting again never duplicates.
+--   Cancelling a bill marks its payments, transactions and entries cancelled (restoring it posts them again).
+--   Bills saved before this get their payment (the method they were paid by, for what was due) and are posted too.
+-- ==============================================================================
+-- Discounts and GST can have paise now
+ALTER TABLE public.hangtag_sales ALTER COLUMN discount TYPE NUMERIC(12,2);
+ALTER TABLE public.hangtag_sales ALTER COLUMN tax_amount TYPE NUMERIC(12,2);
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS item_discount NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS bill_discount NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS bill_discount_type TEXT;
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS bill_discount_value NUMERIC(12,2);
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS taxable_amount NUMERIC(12,2);
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS cgst_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS sgst_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS igst_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS round_off NUMERIC(4,2) NOT NULL DEFAULT 0;
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS gst_mode TEXT;           -- none | intra (CGST + SGST) | inter (IGST); empty = saved by an older app
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS place_of_supply TEXT;    -- GST state code, e.g. 27
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS customer_gstin TEXT;
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS customer_type TEXT;
+-- Bills saved before: their discount was on the whole bill, and their GST counts as CGST + SGST halves
+UPDATE public.hangtag_sales
+   SET bill_discount = discount, item_discount = 0, taxable_amount = total - tax_amount,
+       gst_mode = CASE WHEN tax_amount > 0 THEN 'intra' ELSE 'none' END,
+       cgst_amount = round(tax_amount / 2, 2), sgst_amount = tax_amount - round(tax_amount / 2, 2), igst_amount = 0
+ WHERE gst_mode IS NULL;
+-- (NOT VALID: checked for every new or changed bill, without re-reading old ones)
+ALTER TABLE public.hangtag_sales DROP CONSTRAINT IF EXISTS hangtag_sales_money_check;
+ALTER TABLE public.hangtag_sales ADD CONSTRAINT hangtag_sales_money_check CHECK (
+    discount >= 0 AND discount <= subtotal AND item_discount >= 0 AND bill_discount >= 0 AND tax_amount >= 0 AND total >= 0
+    AND cgst_amount >= 0 AND sgst_amount >= 0 AND igst_amount >= 0 AND round_off BETWEEN -0.5 AND 0.5) NOT VALID;
+ALTER TABLE public.hangtag_sales DROP CONSTRAINT IF EXISTS hangtag_sales_gst_check;
+ALTER TABLE public.hangtag_sales ADD CONSTRAINT hangtag_sales_gst_check CHECK (gst_mode IS NULL OR (
+    gst_mode IN ('none','intra','inter') AND tax_amount = cgst_amount + sgst_amount + igst_amount AND discount = item_discount + bill_discount
+    AND (gst_mode <> 'none' OR tax_amount = 0) AND (gst_mode <> 'intra' OR igst_amount = 0)
+    AND (gst_mode <> 'inter' OR (cgst_amount = 0 AND sgst_amount = 0)))) NOT VALID;
+ALTER TABLE public.hangtag_sales DROP CONSTRAINT IF EXISTS hangtag_sales_bill_discount_check;
+ALTER TABLE public.hangtag_sales ADD CONSTRAINT hangtag_sales_bill_discount_check CHECK ((bill_discount_type IS NULL AND bill_discount_value IS NULL)
+    OR (bill_discount_type IN ('percent','fixed') AND bill_discount_value > 0 AND (bill_discount_type <> 'percent' OR bill_discount_value <= 100)));
+ALTER TABLE public.hangtag_sales DROP CONSTRAINT IF EXISTS hangtag_sales_supply_check;
+ALTER TABLE public.hangtag_sales ADD CONSTRAINT hangtag_sales_supply_check CHECK ((place_of_supply IS NULL OR place_of_supply ~ '^[0-9]{2}$')
+    AND (customer_gstin IS NULL OR customer_gstin ~ '^[0-9]{2}[A-Z0-9]{10}[0-9A-Z]{3}$') AND (customer_type IS NULL OR customer_type IN ('individual','business')));
+ALTER TABLE public.hangtag_sales DROP CONSTRAINT IF EXISTS hangtag_sales_payment_method_check;
+ALTER TABLE public.hangtag_sales ADD CONSTRAINT hangtag_sales_payment_method_check CHECK (payment_method IN ('cash','upi','card','split')) NOT VALID;
+
+-- Bill lines: the line discount, its share of the bill discount, and its GST
+ALTER TABLE public.hangtag_sale_items ADD COLUMN IF NOT EXISTS discount_type TEXT;
+ALTER TABLE public.hangtag_sale_items ADD COLUMN IF NOT EXISTS discount_value NUMERIC(12,2);
+ALTER TABLE public.hangtag_sale_items ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE public.hangtag_sale_items ADD COLUMN IF NOT EXISTS bill_discount_share NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE public.hangtag_sale_items ADD COLUMN IF NOT EXISTS taxable_value NUMERIC(12,2);
+ALTER TABLE public.hangtag_sale_items ADD COLUMN IF NOT EXISTS gst_rate NUMERIC(5,2);
+ALTER TABLE public.hangtag_sale_items ADD COLUMN IF NOT EXISTS cgst_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE public.hangtag_sale_items ADD COLUMN IF NOT EXISTS sgst_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE public.hangtag_sale_items ADD COLUMN IF NOT EXISTS igst_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE public.hangtag_sale_items ADD COLUMN IF NOT EXISTS line_total NUMERIC(12,2);
+ALTER TABLE public.hangtag_sale_items ADD COLUMN IF NOT EXISTS hsn TEXT;
+ALTER TABLE public.hangtag_sale_items DROP CONSTRAINT IF EXISTS hangtag_sale_items_discount_check;
+ALTER TABLE public.hangtag_sale_items ADD CONSTRAINT hangtag_sale_items_discount_check CHECK ((discount_type IS NULL AND discount_value IS NULL)
+    OR (discount_type IN ('percent','fixed') AND discount_value > 0 AND (discount_type <> 'percent' OR discount_value <= 100)));
+ALTER TABLE public.hangtag_sale_items DROP CONSTRAINT IF EXISTS hangtag_sale_items_money_check;
+ALTER TABLE public.hangtag_sale_items ADD CONSTRAINT hangtag_sale_items_money_check CHECK (discount_amount >= 0 AND bill_discount_share >= 0
+    AND discount_amount + bill_discount_share <= quantity * unit_price AND cgst_amount >= 0 AND sgst_amount >= 0 AND igst_amount >= 0
+    AND (gst_rate IS NULL OR gst_rate BETWEEN 0 AND 100)) NOT VALID;
+
+-- Payments: one per bill and method
+CREATE TABLE IF NOT EXISTS public.hangtag_payments (
+    owner_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    id TEXT NOT NULL,                              -- "<bill id>:<method>"
+    sale_id TEXT NOT NULL,
+    method TEXT NOT NULL CHECK (method IN ('cash','upi','card')),
+    amount NUMERIC(12,2) NOT NULL CHECK (amount > 0),
+    tendered NUMERIC(12,2),                        -- cash handed over (cash only)
+    change_given NUMERIC(12,2) NOT NULL DEFAULT 0,
+    reference TEXT CHECK (reference IS NULL OR char_length(reference) <= 40),
+    status TEXT NOT NULL DEFAULT 'completed' CHECK (status IN ('completed','cancelled')),
+    t BIGINT NOT NULL,
+    device_id TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (owner_id, id),
+    -- one row per method on a bill (no duplicate allocation); its index also finds a bill's payments
+    CONSTRAINT hangtag_payments_sale_method_key UNIQUE (owner_id, sale_id, method),
+    -- the id is always made from the bill and the method, so a payment can never be pointed at another bill
+    CONSTRAINT hangtag_payments_id_check CHECK (id = sale_id || ':' || method),
+    CONSTRAINT hangtag_payments_cash_check CHECK ((method = 'cash' AND tendered >= amount AND change_given = tendered - amount)
+                                               OR (method <> 'cash' AND tendered IS NULL AND change_given = 0)),
+    CONSTRAINT hangtag_payments_sale_fkey FOREIGN KEY (owner_id, sale_id) REFERENCES public.hangtag_sales (owner_id, id) ON DELETE CASCADE
+);
+-- Financial transactions: money in (a payment on a bill) or out (a refund on a return), always pointing at the bill
+CREATE TABLE IF NOT EXISTS public.hangtag_fin_txns (
+    owner_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    id TEXT NOT NULL,                              -- "ft:<payment id>" or "ft:<return id>"
+    kind TEXT NOT NULL CHECK (kind IN ('sale_receipt','refund')),
+    direction TEXT NOT NULL CHECK (direction IN ('in','out')),
+    method TEXT NOT NULL CHECK (method IN ('cash','upi','card')),
+    amount NUMERIC(12,2) NOT NULL CHECK (amount > 0),
+    sale_id TEXT NOT NULL,
+    payment_id TEXT,
+    return_id TEXT,
+    reference TEXT,
+    status TEXT NOT NULL DEFAULT 'posted' CHECK (status IN ('posted','cancelled')),
+    t BIGINT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (owner_id, id),
+    CONSTRAINT hangtag_fin_txns_payment_key UNIQUE (owner_id, payment_id),
+    CONSTRAINT hangtag_fin_txns_return_key UNIQUE (owner_id, return_id),
+    CONSTRAINT hangtag_fin_txns_source_check CHECK ((kind = 'sale_receipt' AND direction = 'in' AND payment_id IS NOT NULL AND return_id IS NULL)
+                                                 OR (kind = 'refund' AND direction = 'out' AND return_id IS NOT NULL AND payment_id IS NULL)),
+    CONSTRAINT hangtag_fin_txns_sale_fkey FOREIGN KEY (owner_id, sale_id) REFERENCES public.hangtag_sales (owner_id, id) ON DELETE CASCADE,
+    CONSTRAINT hangtag_fin_txns_payment_fkey FOREIGN KEY (owner_id, payment_id) REFERENCES public.hangtag_payments (owner_id, id) ON DELETE CASCADE,
+    CONSTRAINT hangtag_fin_txns_return_fkey FOREIGN KEY (owner_id, return_id) REFERENCES public.hangtag_returns (owner_id, id) ON DELETE CASCADE
+);
+-- reconciliation reads a bill's transactions, and cancelling a bill updates them
+CREATE INDEX IF NOT EXISTS idx_hangtag_fin_txns_sale ON public.hangtag_fin_txns (owner_id, sale_id);
+-- Cash book: cash transactions (cash sales in, cash refunds out)
+CREATE TABLE IF NOT EXISTS public.hangtag_cash_book (
+    owner_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    id TEXT NOT NULL,                              -- "cb:<transaction id>"
+    fin_txn_id TEXT NOT NULL,
+    sale_id TEXT NOT NULL,
+    entry_type TEXT NOT NULL CHECK (entry_type IN ('cash_sale','cash_refund')),
+    amount_in NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (amount_in >= 0),
+    amount_out NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (amount_out >= 0),
+    cash_received NUMERIC(12,2),
+    change_given NUMERIC(12,2) NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'posted' CHECK (status IN ('posted','cancelled')),
+    t BIGINT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (owner_id, id),
+    CONSTRAINT hangtag_cash_book_txn_key UNIQUE (owner_id, fin_txn_id),
+    CONSTRAINT hangtag_cash_book_side_check CHECK ((amount_in > 0) <> (amount_out > 0)),
+    CONSTRAINT hangtag_cash_book_txn_fkey FOREIGN KEY (owner_id, fin_txn_id) REFERENCES public.hangtag_fin_txns (owner_id, id) ON DELETE CASCADE
+);
+-- the book is read in date order, with a running balance
+CREATE INDEX IF NOT EXISTS idx_hangtag_cash_book_time ON public.hangtag_cash_book (owner_id, t);
+-- Bank book: UPI and card transactions
+CREATE TABLE IF NOT EXISTS public.hangtag_bank_book (
+    owner_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    id TEXT NOT NULL,                              -- "bb:<transaction id>"
+    fin_txn_id TEXT NOT NULL,
+    sale_id TEXT NOT NULL,
+    method TEXT NOT NULL CHECK (method IN ('upi','card')),
+    entry_type TEXT NOT NULL CHECK (entry_type IN ('receipt','refund')),
+    reference TEXT,
+    amount_in NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (amount_in >= 0),
+    amount_out NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (amount_out >= 0),
+    status TEXT NOT NULL DEFAULT 'posted' CHECK (status IN ('posted','cancelled')),
+    t BIGINT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (owner_id, id),
+    CONSTRAINT hangtag_bank_book_txn_key UNIQUE (owner_id, fin_txn_id),
+    CONSTRAINT hangtag_bank_book_side_check CHECK ((amount_in > 0) <> (amount_out > 0)),
+    CONSTRAINT hangtag_bank_book_txn_fkey FOREIGN KEY (owner_id, fin_txn_id) REFERENCES public.hangtag_fin_txns (owner_id, id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_hangtag_bank_book_time ON public.hangtag_bank_book (owner_id, t);
+
+-- A bill's payments never add up to more than was due (the total less any exchange credit)
+CREATE OR REPLACE FUNCTION public.hangtag_payments_check()
+RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
+DECLARE
+    due NUMERIC;
+    other NUMERIC;
+BEGIN
+    SELECT GREATEST(s.total - s.credit, 0) INTO due FROM public.hangtag_sales s WHERE s.owner_id = NEW.owner_id AND s.id = NEW.sale_id;
+    IF due IS NULL THEN
+        RAISE EXCEPTION 'Bill % was not found', NEW.sale_id USING ERRCODE = 'foreign_key_violation';
+    END IF;
+    SELECT COALESCE(SUM(amount), 0) INTO other FROM public.hangtag_payments
+     WHERE owner_id = NEW.owner_id AND sale_id = NEW.sale_id AND id <> NEW.id;
+    IF other + NEW.amount > due THEN
+        RAISE EXCEPTION 'Payments on this bill would come to % but only % is due', other + NEW.amount, due USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_payments_check ON public.hangtag_payments;
+CREATE TRIGGER hangtag_payments_check BEFORE INSERT OR UPDATE ON public.hangtag_payments
+    FOR EACH ROW EXECUTE FUNCTION public.hangtag_payments_check();
+
+-- Posting runs as the database owner, so the app can't write transactions or book entries itself. The owner_id always
+-- comes from the payment or return row, which row security has already checked.
+CREATE OR REPLACE FUNCTION public.hangtag_post_payment()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    ft TEXT := 'ft:' || NEW.id;
+    voided BOOLEAN;
+    st TEXT;
+BEGIN
+    SELECT is_void INTO voided FROM public.hangtag_sales WHERE owner_id = NEW.owner_id AND id = NEW.sale_id;
+    st := CASE WHEN NEW.status = 'completed' AND NOT COALESCE(voided, FALSE) THEN 'posted' ELSE 'cancelled' END;
+    INSERT INTO public.hangtag_fin_txns (owner_id, id, kind, direction, method, amount, sale_id, payment_id, reference, status, t)
+    VALUES (NEW.owner_id, ft, 'sale_receipt', 'in', NEW.method, NEW.amount, NEW.sale_id, NEW.id, NEW.reference, st, NEW.t)
+    ON CONFLICT (owner_id, id) DO UPDATE SET method = EXCLUDED.method, amount = EXCLUDED.amount, reference = EXCLUDED.reference,
+        status = EXCLUDED.status, t = EXCLUDED.t;
+    IF NEW.method = 'cash' THEN
+        DELETE FROM public.hangtag_bank_book WHERE owner_id = NEW.owner_id AND fin_txn_id = ft;
+        INSERT INTO public.hangtag_cash_book (owner_id, id, fin_txn_id, sale_id, entry_type, amount_in, cash_received, change_given, status, t)
+        VALUES (NEW.owner_id, 'cb:' || ft, ft, NEW.sale_id, 'cash_sale', NEW.amount, COALESCE(NEW.tendered, NEW.amount), NEW.change_given, st, NEW.t)
+        ON CONFLICT (owner_id, id) DO UPDATE SET amount_in = EXCLUDED.amount_in, cash_received = EXCLUDED.cash_received,
+            change_given = EXCLUDED.change_given, status = EXCLUDED.status, t = EXCLUDED.t;
+    ELSE
+        DELETE FROM public.hangtag_cash_book WHERE owner_id = NEW.owner_id AND fin_txn_id = ft;
+        INSERT INTO public.hangtag_bank_book (owner_id, id, fin_txn_id, sale_id, method, entry_type, reference, amount_in, status, t)
+        VALUES (NEW.owner_id, 'bb:' || ft, ft, NEW.sale_id, NEW.method, 'receipt', NEW.reference, NEW.amount, st, NEW.t)
+        ON CONFLICT (owner_id, id) DO UPDATE SET method = EXCLUDED.method, reference = EXCLUDED.reference, amount_in = EXCLUDED.amount_in,
+            status = EXCLUDED.status, t = EXCLUDED.t;
+    END IF;
+    RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_post_payment ON public.hangtag_payments;
+CREATE TRIGGER hangtag_post_payment AFTER INSERT OR UPDATE ON public.hangtag_payments
+    FOR EACH ROW EXECUTE FUNCTION public.hangtag_post_payment();
+
+CREATE OR REPLACE FUNCTION public.hangtag_post_refund()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    ft TEXT := 'ft:' || NEW.id;
+    voided BOOLEAN;
+    st TEXT;
+BEGIN
+    IF COALESCE(NEW.refund_amount, 0) <= 0 OR COALESCE(NEW.refund_method, '') NOT IN ('cash','upi','card') THEN
+        DELETE FROM public.hangtag_fin_txns WHERE owner_id = NEW.owner_id AND id = ft;
+        RETURN NULL;
+    END IF;
+    SELECT is_void INTO voided FROM public.hangtag_sales WHERE owner_id = NEW.owner_id AND id = NEW.sale_id;
+    st := CASE WHEN COALESCE(voided, FALSE) THEN 'cancelled' ELSE 'posted' END;
+    INSERT INTO public.hangtag_fin_txns (owner_id, id, kind, direction, method, amount, sale_id, return_id, status, t)
+    VALUES (NEW.owner_id, ft, 'refund', 'out', NEW.refund_method, NEW.refund_amount, NEW.sale_id, NEW.id, st, NEW.t)
+    ON CONFLICT (owner_id, id) DO UPDATE SET method = EXCLUDED.method, amount = EXCLUDED.amount, status = EXCLUDED.status, t = EXCLUDED.t;
+    IF NEW.refund_method = 'cash' THEN
+        DELETE FROM public.hangtag_bank_book WHERE owner_id = NEW.owner_id AND fin_txn_id = ft;
+        INSERT INTO public.hangtag_cash_book (owner_id, id, fin_txn_id, sale_id, entry_type, amount_out, status, t)
+        VALUES (NEW.owner_id, 'cb:' || ft, ft, NEW.sale_id, 'cash_refund', NEW.refund_amount, st, NEW.t)
+        ON CONFLICT (owner_id, id) DO UPDATE SET amount_out = EXCLUDED.amount_out, status = EXCLUDED.status, t = EXCLUDED.t;
+    ELSE
+        DELETE FROM public.hangtag_cash_book WHERE owner_id = NEW.owner_id AND fin_txn_id = ft;
+        INSERT INTO public.hangtag_bank_book (owner_id, id, fin_txn_id, sale_id, method, entry_type, amount_out, status, t)
+        VALUES (NEW.owner_id, 'bb:' || ft, ft, NEW.sale_id, NEW.refund_method, 'refund', NEW.refund_amount, st, NEW.t)
+        ON CONFLICT (owner_id, id) DO UPDATE SET method = EXCLUDED.method, amount_out = EXCLUDED.amount_out, status = EXCLUDED.status, t = EXCLUDED.t;
+    END IF;
+    RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_post_refund ON public.hangtag_returns;
+CREATE TRIGGER hangtag_post_refund AFTER INSERT OR UPDATE ON public.hangtag_returns
+    FOR EACH ROW EXECUTE FUNCTION public.hangtag_post_refund();
+
+-- Cancelling (or restoring) a bill cancels (or re-posts) its payments, transactions and book entries
+CREATE OR REPLACE FUNCTION public.hangtag_sale_status()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    st TEXT := CASE WHEN NEW.is_void THEN 'cancelled' ELSE 'posted' END;
+BEGIN
+    UPDATE public.hangtag_payments SET status = CASE WHEN NEW.is_void THEN 'cancelled' ELSE 'completed' END
+     WHERE owner_id = NEW.owner_id AND sale_id = NEW.id;
+    UPDATE public.hangtag_fin_txns SET status = st WHERE owner_id = NEW.owner_id AND sale_id = NEW.id;
+    UPDATE public.hangtag_cash_book SET status = st
+     WHERE owner_id = NEW.owner_id AND fin_txn_id IN (SELECT id FROM public.hangtag_fin_txns WHERE owner_id = NEW.owner_id AND sale_id = NEW.id);
+    UPDATE public.hangtag_bank_book SET status = st
+     WHERE owner_id = NEW.owner_id AND fin_txn_id IN (SELECT id FROM public.hangtag_fin_txns WHERE owner_id = NEW.owner_id AND sale_id = NEW.id);
+    RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_sale_status ON public.hangtag_sales;
+CREATE TRIGGER hangtag_sale_status AFTER UPDATE OF is_void ON public.hangtag_sales
+    FOR EACH ROW WHEN (OLD.is_void IS DISTINCT FROM NEW.is_void) EXECUTE FUNCTION public.hangtag_sale_status();
+
+-- A bill saved by an older app version (it sends no payments) gets its one payment when the saving transaction ends
+CREATE OR REPLACE FUNCTION public.hangtag_sale_default_payment()
+RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
+DECLARE
+    s public.hangtag_sales;
+BEGIN
+    SELECT * INTO s FROM public.hangtag_sales WHERE owner_id = NEW.owner_id AND id = NEW.id;
+    IF FOUND AND s.total - s.credit > 0 AND s.payment_method IN ('cash','upi','card')
+       AND NOT EXISTS (SELECT 1 FROM public.hangtag_payments p WHERE p.owner_id = s.owner_id AND p.sale_id = s.id) THEN
+        INSERT INTO public.hangtag_payments (owner_id, id, sale_id, method, amount, tendered, change_given, status, t, device_id)
+        VALUES (s.owner_id, s.id || ':' || s.payment_method, s.id, s.payment_method, s.total - s.credit,
+                CASE WHEN s.payment_method = 'cash' THEN s.total - s.credit END, 0,
+                CASE WHEN s.is_void THEN 'cancelled' ELSE 'completed' END, s.timestamp, s.device_id)
+        ON CONFLICT DO NOTHING;
+    END IF;
+    RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_sale_default_payment ON public.hangtag_sales;
+CREATE CONSTRAINT TRIGGER hangtag_sale_default_payment AFTER INSERT ON public.hangtag_sales
+    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.hangtag_sale_default_payment();
+
+-- Saves bills with their lines and payments, all or nothing. Runs with the caller's own rights (row security applies).
+-- p_bills: [{ sale: {hangtag_sales columns}, items: [{hangtag_sale_items columns}], payments: [{hangtag_payments columns}] }]
+-- Saving the same bill again updates it (a safe retry), and payments no longer on it are removed. Each bill's
+-- payments must add up to exactly what was due, or nothing is saved.
+CREATE OR REPLACE FUNCTION public.hangtag_save_sales(p_bills JSONB)
+RETURNS JSONB LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+DECLARE
+    uid UUID := auth.uid();
+    b JSONB;
+    s public.hangtag_sales;
+    voided BOOLEAN;
+    due NUMERIC;
+    paid NUMERIC;
+    n INT := 0;
+BEGIN
+    IF uid IS NULL THEN RAISE EXCEPTION 'Sign in to save bills.' USING ERRCODE = '42501'; END IF;
+    FOR b IN SELECT * FROM jsonb_array_elements(COALESCE(p_bills, '[]'::jsonb)) LOOP
+        s := jsonb_populate_record(NULL::public.hangtag_sales, b -> 'sale');
+        IF COALESCE(s.id, '') = '' THEN RAISE EXCEPTION 'A bill has no id.' USING ERRCODE = '22023'; END IF;
+        INSERT INTO public.hangtag_sales (id, timestamp, subtotal, discount, total, payment_method, device_id, is_void, bill_no,
+            customer_id, customer_name, customer_phone, tax_rate, tax_amount, tax_inclusive, kind, exchange_id, credit,
+            item_discount, bill_discount, bill_discount_type, bill_discount_value, taxable_amount, cgst_amount, sgst_amount, igst_amount,
+            round_off, gst_mode, place_of_supply, customer_gstin, customer_type)
+        VALUES (s.id, s.timestamp, COALESCE(s.subtotal, 0), COALESCE(s.discount, 0), COALESCE(s.total, 0), s.payment_method, s.device_id,
+            COALESCE(s.is_void, FALSE), s.bill_no, s.customer_id, s.customer_name, s.customer_phone, COALESCE(s.tax_rate, 0),
+            COALESCE(s.tax_amount, 0), COALESCE(s.tax_inclusive, TRUE), COALESCE(s.kind, 'sale'), s.exchange_id, COALESCE(s.credit, 0),
+            COALESCE(s.item_discount, 0), COALESCE(s.bill_discount, 0), s.bill_discount_type, s.bill_discount_value, s.taxable_amount,
+            COALESCE(s.cgst_amount, 0), COALESCE(s.sgst_amount, 0), COALESCE(s.igst_amount, 0), COALESCE(s.round_off, 0),
+            s.gst_mode, s.place_of_supply, s.customer_gstin, s.customer_type)
+        ON CONFLICT (owner_id, id) DO UPDATE SET timestamp = EXCLUDED.timestamp, subtotal = EXCLUDED.subtotal, discount = EXCLUDED.discount,
+            total = EXCLUDED.total, payment_method = EXCLUDED.payment_method, device_id = EXCLUDED.device_id, is_void = EXCLUDED.is_void,
+            bill_no = EXCLUDED.bill_no, customer_id = EXCLUDED.customer_id, customer_name = EXCLUDED.customer_name,
+            customer_phone = EXCLUDED.customer_phone, tax_rate = EXCLUDED.tax_rate, tax_amount = EXCLUDED.tax_amount,
+            tax_inclusive = EXCLUDED.tax_inclusive, kind = EXCLUDED.kind, exchange_id = EXCLUDED.exchange_id, credit = EXCLUDED.credit,
+            item_discount = EXCLUDED.item_discount, bill_discount = EXCLUDED.bill_discount, bill_discount_type = EXCLUDED.bill_discount_type,
+            bill_discount_value = EXCLUDED.bill_discount_value, taxable_amount = EXCLUDED.taxable_amount, cgst_amount = EXCLUDED.cgst_amount,
+            sgst_amount = EXCLUDED.sgst_amount, igst_amount = EXCLUDED.igst_amount, round_off = EXCLUDED.round_off, gst_mode = EXCLUDED.gst_mode,
+            place_of_supply = EXCLUDED.place_of_supply, customer_gstin = EXCLUDED.customer_gstin, customer_type = EXCLUDED.customer_type;
+        INSERT INTO public.hangtag_sale_items (sale_id, line_no, product_id, product_name, size, quantity, unit_price, variant_id, color, sku,
+            cost_price, variant_label, options, discount_type, discount_value, discount_amount, bill_discount_share, taxable_value, gst_rate,
+            cgst_amount, sgst_amount, igst_amount, line_total, hsn)
+        SELECT s.id, i.line_no, i.product_id, i.product_name, COALESCE(i.size, ''), COALESCE(i.quantity, 1), COALESCE(i.unit_price, 0),
+            i.variant_id, COALESCE(i.color, ''), i.sku, i.cost_price, i.variant_label, i.options, i.discount_type, i.discount_value,
+            COALESCE(i.discount_amount, 0), COALESCE(i.bill_discount_share, 0), i.taxable_value, i.gst_rate, COALESCE(i.cgst_amount, 0),
+            COALESCE(i.sgst_amount, 0), COALESCE(i.igst_amount, 0), i.line_total, i.hsn
+        FROM jsonb_populate_recordset(NULL::public.hangtag_sale_items, COALESCE(b -> 'items', '[]'::jsonb)) i
+        ON CONFLICT (owner_id, sale_id, line_no) DO UPDATE SET product_id = EXCLUDED.product_id, product_name = EXCLUDED.product_name,
+            size = EXCLUDED.size, quantity = EXCLUDED.quantity, unit_price = EXCLUDED.unit_price, variant_id = EXCLUDED.variant_id,
+            color = EXCLUDED.color, sku = EXCLUDED.sku, cost_price = EXCLUDED.cost_price, variant_label = EXCLUDED.variant_label,
+            options = EXCLUDED.options, discount_type = EXCLUDED.discount_type, discount_value = EXCLUDED.discount_value,
+            discount_amount = EXCLUDED.discount_amount, bill_discount_share = EXCLUDED.bill_discount_share, taxable_value = EXCLUDED.taxable_value,
+            gst_rate = EXCLUDED.gst_rate, cgst_amount = EXCLUDED.cgst_amount, sgst_amount = EXCLUDED.sgst_amount,
+            igst_amount = EXCLUDED.igst_amount, line_total = EXCLUDED.line_total, hsn = EXCLUDED.hsn;
+        SELECT x.is_void, GREATEST(x.total - x.credit, 0) INTO voided, due FROM public.hangtag_sales x WHERE x.owner_id = uid AND x.id = s.id;
+        DELETE FROM public.hangtag_payments p WHERE p.owner_id = uid AND p.sale_id = s.id
+           AND p.id NOT IN (SELECT y ->> 'id' FROM jsonb_array_elements(COALESCE(b -> 'payments', '[]'::jsonb)) y);
+        INSERT INTO public.hangtag_payments (id, sale_id, method, amount, tendered, change_given, reference, status, t, device_id)
+        SELECT p.id, s.id, p.method, p.amount, p.tendered, COALESCE(p.change_given, 0), NULLIF(btrim(p.reference), ''),
+            CASE WHEN voided THEN 'cancelled' ELSE 'completed' END, COALESCE(p.t, s.timestamp), p.device_id
+        FROM jsonb_populate_recordset(NULL::public.hangtag_payments, COALESCE(b -> 'payments', '[]'::jsonb)) p
+        ON CONFLICT (owner_id, id) DO UPDATE SET method = EXCLUDED.method, amount = EXCLUDED.amount, tendered = EXCLUDED.tendered,
+            change_given = EXCLUDED.change_given, reference = EXCLUDED.reference, status = EXCLUDED.status, t = EXCLUDED.t,
+            device_id = EXCLUDED.device_id;
+        SELECT COALESCE(SUM(amount), 0) INTO paid FROM public.hangtag_payments WHERE owner_id = uid AND sale_id = s.id;
+        IF paid <> due THEN
+            RAISE EXCEPTION 'The payments on bill % come to % but % is due', COALESCE(s.bill_no, s.id), paid, due USING ERRCODE = 'check_violation';
+        END IF;
+        n := n + 1;
+    END LOOP;
+    RETURN jsonb_build_object('status', 'saved', 'bills', n);
+END $$;
+REVOKE ALL ON FUNCTION public.hangtag_save_sales(JSONB) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.hangtag_save_sales(JSONB) TO authenticated;
+REVOKE EXECUTE ON FUNCTION public.hangtag_payments_check(), public.hangtag_post_payment(), public.hangtag_post_refund(),
+    public.hangtag_sale_status(), public.hangtag_sale_default_payment() FROM PUBLIC, anon;
+
+-- Bills saved before: the payment each was made with, for what was due (the triggers above post it)
+INSERT INTO public.hangtag_payments (owner_id, id, sale_id, method, amount, tendered, change_given, status, t, device_id)
+SELECT s.owner_id, s.id || ':' || s.payment_method, s.id, s.payment_method, s.total - s.credit,
+       CASE WHEN s.payment_method = 'cash' THEN s.total - s.credit END, 0,
+       CASE WHEN s.is_void THEN 'cancelled' ELSE 'completed' END, s.timestamp, s.device_id
+FROM public.hangtag_sales s
+WHERE s.total - s.credit > 0 AND s.payment_method IN ('cash','upi','card')
+  AND NOT EXISTS (SELECT 1 FROM public.hangtag_payments p WHERE p.owner_id = s.owner_id AND p.sale_id = s.id)
+ON CONFLICT DO NOTHING;
+-- Refunds on returns saved before (touching the row posts it)
+UPDATE public.hangtag_returns r SET refund_amount = r.refund_amount
+ WHERE r.refund_amount > 0 AND NOT EXISTS (SELECT 1 FROM public.hangtag_fin_txns f WHERE f.owner_id = r.owner_id AND f.return_id = r.id);
+
+-- ==============================================================================
 -- 4. Indexes for reports
 -- ==============================================================================
 DROP INDEX IF EXISTS public.idx_hangtag_sizes_prod;
@@ -767,7 +1148,8 @@ CREATE INDEX IF NOT EXISTS idx_hangtag_sale_items_prod ON public.hangtag_sale_it
 DO $$
 DECLARE t TEXT;
 BEGIN
-    FOREACH t IN ARRAY ARRAY['hangtag_products','hangtag_sizes','hangtag_images','hangtag_sales','hangtag_sale_items','hangtag_meta','hangtag_variants','hangtag_stock_moves','hangtag_customers','hangtag_returns','hangtag_return_items','hangtag_stock_imports'] LOOP
+    FOREACH t IN ARRAY ARRAY['hangtag_products','hangtag_sizes','hangtag_images','hangtag_sales','hangtag_sale_items','hangtag_meta','hangtag_variants','hangtag_stock_moves','hangtag_customers','hangtag_returns','hangtag_return_items','hangtag_stock_imports',
+                     'hangtag_payments','hangtag_fin_txns','hangtag_cash_book','hangtag_bank_book'] LOOP
         EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
         EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 'Public access to ' || t, t);
         EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 'Approved staff access to ' || t, t);
@@ -795,11 +1177,15 @@ DROP TABLE IF EXISTS public.hangtag_allowed_users;
 REVOKE ALL ON TABLE public.hangtag_products, public.hangtag_sizes, public.hangtag_images,
     public.hangtag_sales, public.hangtag_sale_items, public.hangtag_meta, public.hangtag_profiles,
     public.hangtag_variants, public.hangtag_stock_moves, public.hangtag_customers,
-    public.hangtag_returns, public.hangtag_return_items, public.hangtag_stock_imports FROM anon;
+    public.hangtag_returns, public.hangtag_return_items, public.hangtag_stock_imports,
+    public.hangtag_payments, public.hangtag_fin_txns, public.hangtag_cash_book, public.hangtag_bank_book FROM anon;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.hangtag_products, public.hangtag_sizes, public.hangtag_images,
     public.hangtag_sales, public.hangtag_sale_items, public.hangtag_meta,
     public.hangtag_variants, public.hangtag_stock_moves, public.hangtag_customers,
-    public.hangtag_returns, public.hangtag_return_items, public.hangtag_stock_imports TO authenticated;
+    public.hangtag_returns, public.hangtag_return_items, public.hangtag_stock_imports, public.hangtag_payments TO authenticated;
+-- Financial transactions and the cash and bank books are written only by the database (section 3e): read-only here
+REVOKE ALL ON TABLE public.hangtag_fin_txns, public.hangtag_cash_book, public.hangtag_bank_book FROM authenticated;
+GRANT SELECT ON TABLE public.hangtag_fin_txns, public.hangtag_cash_book, public.hangtag_bank_book TO authenticated;
 REVOKE EXECUTE ON FUNCTION public.hangtag_check_return_qty() FROM PUBLIC, anon;
 GRANT SELECT, INSERT, UPDATE ON TABLE public.hangtag_profiles TO authenticated;
 
@@ -859,4 +1245,22 @@ SELECT check_name, value, expected, value = expected AS ok FROM (
            (SELECT count(*) FROM public.hangtag_products p WHERE p.options ? 'opts' AND NOT EXISTS (SELECT 1 FROM public.hangtag_variants v
               WHERE v.owner_id = p.owner_id AND v.product_id = p.id AND v.active AND jsonb_array_length(v.option_values) <> jsonb_array_length(p.options -> 'opts')))::bigint,
            (SELECT count(*) FROM public.hangtag_products)::bigint
+    UNION ALL
+    SELECT 10, 'Bills whose payments add up to what was due',
+           (SELECT count(*) FROM public.hangtag_sales s WHERE (SELECT COALESCE(sum(p.amount), 0) FROM public.hangtag_payments p
+              WHERE p.owner_id = s.owner_id AND p.sale_id = s.id) = GREATEST(s.total - s.credit, 0))::bigint,
+           (SELECT count(*) FROM public.hangtag_sales)::bigint
+    UNION ALL
+    SELECT 11, 'Payments posted as a financial transaction',
+           (SELECT count(*) FROM public.hangtag_payments p WHERE EXISTS (SELECT 1 FROM public.hangtag_fin_txns f WHERE f.owner_id = p.owner_id AND f.payment_id = p.id))::bigint,
+           (SELECT count(*) FROM public.hangtag_payments)::bigint
+    UNION ALL
+    SELECT 12, 'Refunds posted as a financial transaction',
+           (SELECT count(*) FROM public.hangtag_returns r WHERE EXISTS (SELECT 1 FROM public.hangtag_fin_txns f WHERE f.owner_id = r.owner_id AND f.return_id = r.id))::bigint,
+           (SELECT count(*) FROM public.hangtag_returns r WHERE r.refund_amount > 0 AND r.refund_method IN ('cash','upi','card'))::bigint
+    UNION ALL
+    SELECT 13, 'Financial transactions in the cash or bank book',
+           (SELECT count(*) FROM public.hangtag_fin_txns f WHERE EXISTS (SELECT 1 FROM public.hangtag_cash_book c WHERE c.owner_id = f.owner_id AND c.fin_txn_id = f.id)
+              OR EXISTS (SELECT 1 FROM public.hangtag_bank_book b WHERE b.owner_id = f.owner_id AND b.fin_txn_id = f.id))::bigint,
+           (SELECT count(*) FROM public.hangtag_fin_txns)::bigint
 ) r ORDER BY n;

@@ -3,9 +3,9 @@
 import { makeSbClient } from './client.js';
 import { toAppError } from './errors.js';
 import { AppError, ERROR_CODES } from '../../shared/errors/app-error.js';
-import { sbFetchAll, sbOk, upsertChunks } from './query.js';
-import { custRow, moveRow, productRow, returnItemRows, returnRow, rowToCustomer, rowToItem, rowToMove, rowToProduct,
-  rowToImport, rowToReturn, rowToReturnItem, rowToSale, rowToVariant, saleItemRows, saleRow, variantRows } from './mappers.js';
+import { sbFetchAll, sbOk } from './query.js';
+import { billArgs, custRow, moveRow, productRow, returnItemRows, returnRow, rowToCustomer, rowToItem, rowToMove, rowToPayment, rowToProduct,
+  rowToImport, rowToReturn, rowToReturnItem, rowToSale, rowToVariant, variantRows } from './mappers.js';
 
 export function createCloudGateway({ getClient, url, key, storageKey }){
   const db = () => getClient();
@@ -36,12 +36,12 @@ export function createCloudGateway({ getClient, url, key, storageKey }){
     auth,
     /* How an email signs in today: resolves the raw { data, error } of the RPC */
     signInMethods: email => db().rpc("hangtag_sign_in_methods", { p_email: email }),
-    /* Quick check that the database has the current tables (schema.sql has been run).
+    /* Quick check that the database has the current tables (schema.sql has been run; the payments table is the newest).
        Resolves { error: null } or { error: AppError } — OUTDATED_DATABASE when the tables are missing. */
     async checkSchema(){
-      const { error } = await table('hangtag_stock_imports').select('id', { head: true, count: 'exact' });
+      const { error } = await table('hangtag_payments').select('id', { head: true, count: 'exact' });
       if(!error) return { error: null };
-      const missing = /hangtag_stock_imports|hangtag_variants|PGRST205|42P01|does not exist|schema cache/i.test((error.code||"")+" "+(error.message||""));
+      const missing = /hangtag_payments|hangtag_stock_imports|hangtag_variants|PGRST205|42P01|does not exist|schema cache/i.test((error.code||"")+" "+(error.message||""));
       return { error: missing ? new AppError(ERROR_CODES.OUTDATED_DATABASE, "The database needs the latest update (schema.sql).", { cause: error }) : toAppError(error) };
     },
 
@@ -67,11 +67,9 @@ export function createCloudGateway({ getClient, url, key, storageKey }){
     records: { toSale: rowToSale, toSaleLine: rowToItem, toMove: rowToMove },
 
     /* ---------- uploads (one per queued change; each throws on failure so the queue keeps it) ---------- */
-    async saveSale(sale){
-      sbOk(await table('hangtag_sales').upsert(Object.assign(saleRow(sale), { is_void:false })));
-      const rows = saleItemRows(sale);
-      if(rows.length) sbOk(await table('hangtag_sale_items').upsert(rows, { onConflict:'owner_id,sale_id,line_no' }));
-    },
+    /* A bill with its lines and payments, all or nothing (RPC hangtag_save_sales: the database refuses payments that
+       don't add up to the amount due, and posts the financial transactions and cash / bank book entries itself) */
+    async saveSale(sale){ sbOk(await db().rpc('hangtag_save_sales', { p_bills: [billArgs(Object.assign({}, sale, { void:false }))] })); },
     async setSaleVoid(id, isVoid){ sbOk(await table('hangtag_sales').update({ is_void: isVoid }).eq('id', id)); },
     /* index = the product's position in the list (its sort order) */
     async saveProduct(p, index){
@@ -105,11 +103,9 @@ export function createCloudGateway({ getClient, url, key, storageKey }){
     },
     async saveCustomer(c){ sbOk(await table('hangtag_customers').upsert(custRow(c))); },
     async saveSettings(settings){ sbOk(await table('hangtag_meta').upsert({ key:'settings', value:settings, updated_at:new Date().toISOString() })); },
-    /* Every bill (with its cancelled flag) and every bill line, in chunks */
+    /* Every bill (with its cancelled flag, lines and payments), 100 bills per call */
     async saveAllSales(sales){
-      await upsertChunks(db(), 'hangtag_sales', sales.map(s => Object.assign(saleRow(s), { is_void:!!s.void })));
-      const rows = []; sales.forEach(s => rows.push(...saleItemRows(s)));
-      await upsertChunks(db(), 'hangtag_sale_items', rows, { onConflict:'owner_id,sale_id,line_no' });
+      for(let i = 0; i < sales.length; i += 100) sbOk(await db().rpc('hangtag_save_sales', { p_bills: sales.slice(i, i + 100).map(billArgs) }));
     },
 
     /* ---------- downloads (throw on failure unless noted) ---------- */
@@ -136,13 +132,20 @@ export function createCloudGateway({ getClient, url, key, storageKey }){
       const { data } = sbOk(await table('hangtag_meta').select('value').eq('key','settings').maybeSingle());
       return data ? data.value : null;
     },
-    /* Every bill with its lines */
+    /* Every bill with its lines and payments */
     async fetchSales(){
       const sales = await sbFetchAll(db(), 'hangtag_sales', ['timestamp','id']);
       const items = await sbFetchAll(db(), 'hangtag_sale_items', ['sale_id','line_no']);
-      const itemsBySale = {};
+      const pays = await sbFetchAll(db(), 'hangtag_payments', ['sale_id','id']);
+      const itemsBySale = {}, paysBySale = {};
       items.forEach(it => { (itemsBySale[it.sale_id] = itemsBySale[it.sale_id] || []).push(rowToItem(it)); });
-      return sales.map(s => rowToSale(s, itemsBySale[s.id] || []));
+      pays.forEach(p => { (paysBySale[p.sale_id] = paysBySale[p.sale_id] || []).push(rowToPayment(p)); });
+      return sales.map(s => rowToSale(s, itemsBySale[s.id] || [], paysBySale[s.id]));
+    },
+    /* One bill's payments (for a bill that arrived live) */
+    async fetchSalePayments(saleId){
+      const { data } = sbOk(await table('hangtag_payments').select('*').eq('sale_id', saleId).order('id'));
+      return (data || []).map(rowToPayment);
     },
     /* One bill's line rows (for a bill that arrived live) */
     async fetchSaleLineRows(saleId){

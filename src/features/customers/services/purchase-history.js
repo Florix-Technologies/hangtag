@@ -1,7 +1,7 @@
 // A customer's completed bills (cancelled bills are left out), newest first, from the bills already on this device.
 import { D } from '../../inventory/services/ledger.js';
 import { lineLabel } from '../../../domain/catalog/variants.js';
-import { PAYN } from '../../../domain/sales/sale.js';
+import { payLabel } from '../../../domain/sales/payments.js';
 
 /* → { bills: [{ id, no, t, kind, items: [{ name, label, q, price }], pieces, total, pay, returned }], count, spent, last } */
 export function purchaseHistory(cid){
@@ -11,7 +11,7 @@ export function purchaseHistory(cid){
     id: s.id, no: s.no || "", t: s.t, kind: s.kind || "sale",
     items: s.items.map(i => ({ name: i.n, label: lineLabel(i), q: i.q, price: i.price })),
     pieces: s.items.reduce((a, i) => a + i.q, 0), total: s.total - (s.credit || 0),
-    pay: PAYN[s.pay] || s.pay || "", returned: refunds[s.id] || 0,
+    pay: payLabel(s), returned: refunds[s.id] || 0,
   }));
   return { bills, count: bills.length, spent: bills.reduce((a, b) => a + b.total - b.returned, 0), last: bills.length ? bills[0].t : 0 };
 }

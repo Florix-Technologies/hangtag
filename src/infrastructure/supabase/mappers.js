@@ -2,6 +2,10 @@
 import { store } from '../../shared/state/store.js';
 import { variantsOf } from '../../domain/catalog/variants.js';
 import { isColourOption, isSizeOption, legacyCS } from '../../domain/catalog/options.js';
+import { normalizeDiscount } from '../../domain/sales/discounts.js';
+import { paymentsOf } from '../../domain/sales/payments.js';
+import { round2 } from '../../domain/sales/paise.js';
+import { saleGstSplit } from '../../domain/sales/gst.js';
 import { okColor } from '../../shared/utils/colors.js';
 
 /* ---------- row <-> app shapes ---------- */
@@ -9,18 +13,48 @@ import { okColor } from '../../shared/utils/colors.js';
 /* option snapshot on bill/return lines: app [{n,v}] <-> database [{name,value}] */
 const ovToRow = ov => Array.isArray(ov) && ov.length ? ov.map(x => ({ name:x.n||"", value:x.v })) : null;
 const rowToOv = o => Array.isArray(o) ? o.map(x => ({ n:x&&x.name||"", v:String(x&&x.value!=null?x.value:"") })) : [];
-export const rowToItem = i => ({ p:i.product_id, v:i.variant_id||undefined, n:i.product_name, c:i.color||"", s:i.size, vl:i.variant_label||"", ov:rowToOv(i.options), sku:i.sku||"", q:i.quantity, price:i.unit_price, cost:i.cost_price==null?null:i.cost_price, ln:i.line_no });
-export function rowToSale(s, items){
-  return { id:s.id, no:s.bill_no||undefined, t:Number(s.timestamp), items:items||[], sub:s.subtotal, disc:s.discount, total:s.total,
-    tax:s.tax_amount||0, taxRate:s.tax_rate==null?0:+s.tax_rate, taxIncl:s.tax_inclusive!==false, credit:s.credit||0,
+/* NUMERIC columns can arrive as strings */
+const num = v => v==null||v==="" ? null : +v;
+const numOr0 = v => +v || 0;
+export const rowToItem = i => Object.assign({ p:i.product_id, v:i.variant_id||undefined, n:i.product_name, c:i.color||"", s:i.size, vl:i.variant_label||"", ov:rowToOv(i.options), sku:i.sku||"", q:i.quantity, price:i.unit_price, cost:i.cost_price==null?null:i.cost_price, ln:i.line_no },
+  // discounts and GST of the line (bills saved since line discounts)
+  i.discount_type ? { disc:{ type:i.discount_type, value:numOr0(i.discount_value) } } : {},
+  i.line_total!=null ? { dAmt:numOr0(i.discount_amount), bdAmt:numOr0(i.bill_discount_share), gst:numOr0(i.gst_rate), hsn:i.hsn||"", tx:num(i.taxable_value),
+    cgst:numOr0(i.cgst_amount), sgst:numOr0(i.sgst_amount), igst:numOr0(i.igst_amount), lt:num(i.line_total) } : {});
+export function rowToSale(s, items, payments){
+  const sale = { id:s.id, no:s.bill_no||undefined, t:Number(s.timestamp), items:items||[], sub:s.subtotal, disc:numOr0(s.discount), total:s.total,
+    tax:numOr0(s.tax_amount), taxRate:s.tax_rate==null?0:+s.tax_rate, taxIncl:s.tax_inclusive!==false, credit:s.credit||0,
     kind:s.kind||"sale", ex:s.exchange_id||null, pay:s.payment_method, dev:s.device_id, void:s.is_void,
-    cust:s.customer_id||s.customer_name?{id:s.customer_id||null,name:s.customer_name||"",phone:s.customer_phone||""}:null };
+    cust:s.customer_id||s.customer_name?Object.assign({id:s.customer_id||null,name:s.customer_name||"",phone:s.customer_phone||""},
+      s.customer_gstin?{gstin:s.customer_gstin}:{}, s.customer_type==="business"?{type:"business"}:{}):null };
+  if(s.gst_mode) Object.assign(sale, { itemDisc:numOr0(s.item_discount), billDiscAmt:numOr0(s.bill_discount),
+    billDisc:s.bill_discount_type?{ type:s.bill_discount_type, value:numOr0(s.bill_discount_value) }:null,
+    taxable:num(s.taxable_amount), cgst:numOr0(s.cgst_amount), sgst:numOr0(s.sgst_amount), igst:numOr0(s.igst_amount), roundOff:numOr0(s.round_off),
+    gst:{ mode:s.gst_mode, pos:s.place_of_supply||"" } });
+  if(payments && payments.length) sale.payments = payments;
+  return sale;
 }
-export const saleRow = s => ({ id:s.id, timestamp:s.t, subtotal:s.sub, discount:s.disc||0, total:s.total, payment_method:s.pay, device_id:s.dev||store.dev,
-  bill_no:s.no||null, customer_id:s.cust&&s.cust.id||null, customer_name:s.cust&&s.cust.name||null, customer_phone:s.cust&&s.cust.phone||null,
-  tax_rate:s.taxRate||0, tax_amount:s.tax||0, tax_inclusive:s.taxIncl!==false, kind:s.kind||"sale", exchange_id:s.ex||null, credit:s.credit||0 });
-export const saleItemRows = s => (s.items||[]).map((i,k)=>({ sale_id:s.id, line_no:i.ln!=null?i.ln:k, product_id:i.p, variant_id:i.v||null, product_name:i.n,
-  color:i.c||"", size:i.s==null?"":i.s, variant_label:i.vl||null, options:ovToRow(i.ov), sku:i.sku||null, quantity:i.q, unit_price:i.price, cost_price:i.cost==null?null:i.cost }));
+export function saleRow(s){
+  const g = saleGstSplit(s), bd = normalizeDiscount(s.billDisc), itemDisc = s.itemDisc||0;
+  return { id:s.id, timestamp:s.t, subtotal:s.sub, discount:s.disc||0, total:s.total, payment_method:s.pay, device_id:s.dev||store.dev,
+    bill_no:s.no||null, customer_id:s.cust&&s.cust.id||null, customer_name:s.cust&&s.cust.name||null, customer_phone:s.cust&&s.cust.phone||null,
+    tax_rate:s.taxRate||0, tax_amount:s.tax||0, tax_inclusive:s.taxIncl!==false, kind:s.kind||"sale", exchange_id:s.ex||null, credit:s.credit||0,
+    item_discount:itemDisc, bill_discount:s.billDiscAmt!=null ? s.billDiscAmt : round2((s.disc||0)-itemDisc), bill_discount_type:bd?bd.type:null, bill_discount_value:bd?bd.value:null,
+    taxable_amount:s.taxable!=null ? s.taxable : round2(s.total-(s.tax||0)-(s.roundOff||0)), cgst_amount:g.cgst, sgst_amount:g.sgst, igst_amount:g.igst,
+    round_off:s.roundOff||0, gst_mode:g.mode, place_of_supply:s.gst&&s.gst.pos||null,
+    customer_gstin:s.cust&&s.cust.gstin||null, customer_type:s.cust?(s.cust.type==="business"?"business":"individual"):null };
+}
+export const saleItemRows = s => (s.items||[]).map((i,k)=>{ const d = normalizeDiscount(i.disc); return { sale_id:s.id, line_no:i.ln!=null?i.ln:k, product_id:i.p, variant_id:i.v||null, product_name:i.n,
+  color:i.c||"", size:i.s==null?"":i.s, variant_label:i.vl||null, options:ovToRow(i.ov), sku:i.sku||null, quantity:i.q, unit_price:i.price, cost_price:i.cost==null?null:i.cost,
+  discount_type:d?d.type:null, discount_value:d?d.value:null, discount_amount:i.dAmt||0, bill_discount_share:i.bdAmt||0, taxable_value:i.tx==null?null:i.tx,
+  gst_rate:i.gst==null?null:i.gst, cgst_amount:i.cgst||0, sgst_amount:i.sgst||0, igst_amount:i.igst||0, line_total:i.lt==null?null:i.lt, hsn:i.hsn||null }; });
+/* A bill's payments (one row per method; bills from before split payments have one) */
+export const paymentRows = s => paymentsOf(s).map(p => ({ id:p.id, sale_id:s.id, method:p.method, amount:p.amount,
+  tendered:p.method==="cash" ? (p.received==null ? p.amount : p.received) : null, change_given:p.change||0, reference:p.ref||null, t:s.t, device_id:s.dev||store.dev }));
+export const rowToPayment = r => Object.assign({ id:r.id, method:r.method, amount:+r.amount },
+  r.method==="cash" ? { received:r.tendered==null ? +r.amount : +r.tendered, change:numOr0(r.change_given) } : {}, r.reference ? { ref:r.reference } : {});
+/* One bill for RPC hangtag_save_sales */
+export const billArgs = s => ({ sale:Object.assign(saleRow(s), { is_void:!!s.void }), items:saleItemRows(s), payments:paymentRows(s) });
 /* options column: { opts:[{name, values}], colors, sizes } — colors/sizes are copies for older app versions */
 export function optionsRow(p){
   const opts = Array.isArray(p.opts) ? p.opts : [], pick = f => { const o = opts.find(x => f(x.n)); return o ? o.v.slice() : []; };

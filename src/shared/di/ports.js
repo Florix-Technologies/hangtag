@@ -54,10 +54,13 @@
  * @property {(handlers: Object, onStatus: Function) => any} subscribe  Live updates per table (sale, saleLine, catalog, image, move,
  *   returns, customers, settings); returns the channel for removeChannel().
  * @property {Object} records                                Row → app record converters for live updates (toSale, toSaleLine, toMove).
- * @property {Function} saveSale  Also: setSaleVoid, saveProduct(p, index), deleteVariants, deleteProduct, saveImage, saveMove,
- *   saveReturn, saveCustomer, saveSettings, saveAllSales. Used by the outbox (features/sync/services/outbox.js) only.
+ * @property {Function} saveSale  A bill with its lines and payments in one step (RPC hangtag_save_sales; the database checks the
+ *   payments add up and posts the financial transactions and cash / bank book entries). Also: setSaleVoid, saveProduct(p, index),
+ *   deleteVariants, deleteProduct, saveImage, saveMove, saveReturn, saveCustomer, saveSettings, saveAllSales.
+ *   Used by the outbox (features/sync/services/outbox.js) only.
  * @property {Function} fetchProducts  Also: fetchVariants, fetchImages, fetchMoves, fetchReturns, fetchCustomers, fetchSettings,
- *   fetchSales, fetchSaleLineRows. Used by downloads (features/sync/services/pull.js).
+ *   fetchSales (bills with lines and payments), fetchSaleLineRows, fetchSalePayments. Used by downloads
+ *   (features/sync/services/pull.js, remote-events.js).
  * @property {Function} getProfile  Also: createProfile, updateProfile, saveProfile (the hangtag_profiles row of the signed-in user).
  */
 

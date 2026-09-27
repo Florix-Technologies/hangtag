@@ -34,15 +34,16 @@ export function periodData(from,to){
   return {all,live,rets};
 }
 /* Every piece sold (+) and returned (−), resolved to its variant and parent product.
-   amt = what the customer paid (discount and GST shared out); rev = the same without GST; cost from the bill's saved cost. */
+   amt = what the customer paid (discount and GST shared out); rev = the same without GST; cost from the bill's saved cost.
+   Bills saved since line discounts keep each line's own total (lt) and taxable value (tx); older ones are shared out pro rata. */
 
 export function netLines(live,rets){
   const d=D(), out=[];
   const who=i=>{const vid=d.resolve(i),r=vid&&d.vIdx[vid],cs=r?legacyCS(r.p.opts,r.v.o):{c:i.c||"",s:i.s||""};return {vid:vid||(i.p+":"+(i.s||"")),pid:r?r.p.id:i.p,name:r?r.p.name:i.n,c:cs.c,s:cs.s,vl:r?vLabel(r.v):lineLabel(i)}};
   live.forEach(s=>{const ratio=s.sub>0?s.total/s.sub:1,exTax=s.total?(s.total-(s.tax||0))/s.total:1;
-    s.items.forEach(i=>{const amt=i.q*i.price*ratio;out.push(Object.assign(who(i),{q:i.q,amt,rev:amt*exTax,cost:i.cost==null?null:i.cost*i.q,t:s.t}))})});
+    s.items.forEach(i=>{const amt=i.lt!=null?i.lt:i.q*i.price*ratio;out.push(Object.assign(who(i),{q:i.q,amt,rev:i.tx!=null?i.tx:amt*exTax,cost:i.cost==null?null:i.cost*i.q,t:s.t}))})});
   rets.forEach(r=>{const s=d.saleById[r.sale],exTax=s&&s.total?(s.total-(s.tax||0))/s.total:1;
-    r.items.forEach(i=>{out.push(Object.assign(who(i),{q:-i.q,amt:-(i.value||0),rev:-(i.value||0)*exTax,cost:i.cost==null?null:-i.cost*i.q,t:r.t}))})});
+    r.items.forEach(i=>{const sl=s&&s.items.find(x=>x.ln===i.ln),ex=sl&&sl.lt?sl.tx/sl.lt:exTax;out.push(Object.assign(who(i),{q:-i.q,amt:-(i.value||0),rev:-(i.value||0)*ex,cost:i.cost==null?null:-i.cost*i.q,t:r.t}))})});
   return out;
 }
 export function kstats(live,rets){

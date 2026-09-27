@@ -24,7 +24,7 @@ await db.close();
 
 // 2) tiny PostgREST stand-in (one account)
 const PK = { hangtag_products: ['id'], hangtag_variants: ['id'], hangtag_images: ['product_id'], hangtag_sales: ['id'], hangtag_sale_items: ['sale_id', 'line_no'],
-  hangtag_stock_moves: ['id'], hangtag_returns: ['id'], hangtag_return_items: ['return_id', 'line_no'], hangtag_customers: ['id'], hangtag_meta: ['key'], hangtag_profiles: ['id'] };
+  hangtag_stock_moves: ['id'], hangtag_returns: ['id'], hangtag_return_items: ['return_id', 'line_no'], hangtag_customers: ['id'], hangtag_meta: ['key'], hangtag_profiles: ['id'], hangtag_payments: ['id'] };
 const store = {}; const writes = []; const badCols = [];
 const tbl = t => (store[t] = store[t] || []);
 const key = (t, r) => (PK[t] || ['id']).map(k => r[k]).join('|');
@@ -49,7 +49,16 @@ function handle(r) {
   if (u.pathname.startsWith('/realtime')) return r.abort();
   const mt = u.pathname.match(/^\/rest\/v1\/(?:rpc\/)?(\w+)/); if (!mt) return r.abort();
   const t = mt[1], q = [...u.searchParams.entries()];
-  if (u.pathname.includes('/rpc/')) return r.respond({ status: 200, contentType: 'application/json', headers: CORS, body: '[]' });
+  if (u.pathname.includes('/rpc/')) {
+    // hangtag_save_sales: bills with their lines and payments (same columns as the tables; payments must add up to what was due)
+    const body = JSON.parse(r.postData() || '{}');
+    if (t === 'hangtag_save_sales') for (const b of body.p_bills) {
+      const paid = b.payments.reduce((a, p) => a + p.amount, 0), due = Math.max(0, b.sale.total - b.sale.credit);
+      if (Math.round(paid * 100) !== Math.round(due * 100)) return r.respond({ status: 400, contentType: 'application/json', headers: CORS, body: JSON.stringify({ code: '23514', message: `payments ${paid} but ${due} is due` }) });
+      [['hangtag_sales', [b.sale]], ['hangtag_sale_items', b.items], ['hangtag_payments', b.payments]].forEach(([tt, rs]) => { rs.forEach(x => Object.keys(x).forEach(c => { if (cols[tt] && !cols[tt].has(c)) badCols.push(tt + '.' + c); })); upsert(tt, rs); writes.push({ t: tt, m: 'RPC', n: rs.length }); });
+    }
+    return r.respond({ status: 200, contentType: 'application/json', headers: CORS, body: '[]' });
+  }
   if (m === 'HEAD') return r.respond({ status: 200, headers: Object.assign({ 'content-range': '*/' + tbl(t).length }, CORS) });
   if (m === 'GET') { const rows = filt(t, q); const obj = /vnd\.pgrst\.object/.test(r.headers()['accept'] || ''); return r.respond({ status: 200, contentType: 'application/json', headers: Object.assign({ 'content-range': '0-' + rows.length + '/*' }, CORS), body: JSON.stringify(obj ? (rows[0] || null) : rows) }); }
   const body = r.postData() ? JSON.parse(r.postData()) : null;
@@ -96,6 +105,7 @@ try {
   const sale = tbl('hangtag_sales')[0], items = tbl('hangtag_sale_items');
   check('bill uploaded with number, customer and GST fields', sale && /^INV-\d{6}-001$/.test(sale.bill_no) && sale.customer_name === 'Riya' && sale.kind === 'sale', sale);
   check('bill lines uploaded with variant, colour and cost', items.length === 2 && items.every(i => i.variant_id && i.color && i.cost_price === 320), items.map(i => [i.variant_id, i.color, i.cost_price]));
+  check('its payment uploaded with it (UPI, for the total)', JSON.stringify(tbl('hangtag_payments').map(p => [p.id, p.method, p.amount])) === JSON.stringify([[sale.id + ':upi', 'upi', sale.total]]), tbl('hangtag_payments'));
   // return and exchange, stock in, adjustment, settings
   await run(A, `const s=D().sales[0];openReturn(s.id);retState.q[0]=1;saveReturn();
     openReturn(s.id);retState.mode="exchange";retState.q[1]=1;const p=prod("p1");addToLines(retState.newItems,p.variants.find(x=>x.o[0]==="Navy"&&x.o[1]==="XL").id,1);saveReturn();

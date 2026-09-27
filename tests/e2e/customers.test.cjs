@@ -67,7 +67,7 @@ let fails = 0; const check = (n, ok, i) => { if (!ok) fails++; console.log((ok ?
   await p.screenshot({ path: H.ARTIFACTS + '/cu1_desktop_list.png' });
 
   // ---------- Sell: select existing / add new / continue without ----------
-  const pay = async (how) => { await sleep(700); await p.click(`#billPanel [data-pay="${how}"]`); await sleep(300); await run('closeSheets()'); await sleep(100); };
+  const pay = async (how) => { await sleep(700); await p.click(`#billPanel [data-pay="${how}"]`); await sleep(200); await p.click('#payDone'); await sleep(300); await run('closeSheets()'); await sleep(100); };
   await run(`setTab("sell");addOne(${JSON.stringify(ids.tee)});addOne(${JSON.stringify(ids.tee)});renderAll()`); await sleep(150);
   await p.click('#billPanel [data-act="pickcust"]'); await sleep(150);
   await p.type('#custQ', 'meera'); await sleep(150);

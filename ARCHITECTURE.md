@@ -35,11 +35,13 @@ src/
 │   │                    product-validation.js, catalog-migration.js
 │   ├── inventory/       stock-levels.js, stock-operation.js (stock in / adjustment → moves),
 │   │                    bill-import.js (supplier bill review lines, catalog matching, the import plan)
-│   ├── sales/           bill-totals.js (subtotal, discount, GST), sale.js (pieces, payment names, invoice numbers)
+│   ├── sales/           checkout-totals.js (the one bill calculation), discounts.js, gst.js, payments.js, paise.js,
+│   │                    cart-rules.js, scan-rules.js, sale.js (pieces, invoice numbers)
+│   ├── finance/         books.js (financial transactions, cash book, bank book, reconciliation)
 │   └── shop/            profile.js + profile-validation.js, settings.js + settings-validation.js
 ├── infrastructure/      Everything that talks to the outside world
 │   ├── supabase/        client.js (makeSbClient), cloud-gateway.js (the "cloud" port), mappers.js (row ↔ record),
-│   │                    query.js (sbOk, paging, chunked upserts), errors.js (→ AppError)
+│   │                    query.js (sbOk, paging), errors.js (→ AppError)
 │   ├── repositories/    local-first-product-repository.js, local-first-stock-repository.js,
 │   │                    local-first-stock-import.js (supplier bills: one RPC, then applied locally)
 │   ├── codes/           barcode-svg.js (EAN-13/UPC-A/EAN-8/Code 128), qr-svg.js (+ vendor/qrcode-generator.js, MIT), png.js
@@ -60,7 +62,7 @@ src/
 │   ├── constants/       Icons
 │   ├── utils/           Ids, text, colours, objects
 │   └── dom.js           $ / $$ queries, HTML escaping (esc), keyed list patching
-└── styles/              CSS in cascade order (00-base … 70-variants-bills-returns)
+└── styles/              CSS in cascade order (00-base … 90-checkout-books)
 supabase/
 ├── schema.sql           Database of the live app (hangtag_* tables, RLS, triggers). Run in the SQL Editor; safe to re-run
 ├── migrations/          Next-generation database foundation (Phase 1: shops, members, RLS). Not applied to the live project
@@ -85,7 +87,8 @@ eslint.config.js         Lint rules for src/ (undefined names, unused variables)
 | `shop` | Shop profile (setup and settings), account menu, billing/stock settings | `saveShopProfile`, `saveBillingSettings` |
 | `products` | Product list, product editor (optional options/variants with any names, per-variant SKU/barcode/price/cost, HSN/GST), barcode/QR codes, stickers, colour grouping, examples, archive/delete, photos | `saveProduct`, `archiveProduct`, `removeProduct`, `photoFromFile` |
 | `inventory` | Stock page, stock in, stock adjustment, supplier bill import (upload → review → confirm), the stock ledger read model | `recordStockOperation`, `readSupplierBill`, `planSupplierBill`, `confirmSupplierBill` |
-| `sales` | Sell screen, search, variant picker, cart, checkout, cancelling bills | `checkout`, `voidSale`, `unvoid` |
+| `sales` | Sell screen, search, variant picker, cart, line and bill discounts, GST on the bill, payment screen (cash / UPI / card / split), checkout, cancelling bills | `checkout`, `setLineDiscount`, `setBillDiscount`, `voidSale`, `unvoid` |
+| `finance` | Financial transactions, cash book and bank book (read models over bills and returns), their views on Reports, a bill's payments in the bill view | – |
 | `receipts` | Receipt model, receipt layouts, print/image/share/WhatsApp, bill view | – |
 | `customers` | Customers page (search by name/mobile), customer picker on the bill, add/edit (individual or business, GSTIN), purchase history | `saveCustomer`, `setBillCustomer` |
 | `returns` | Returns and exchanges | – |
@@ -99,7 +102,7 @@ eslint.config.js         Lint rules for src/ (undefined names, unused variables)
 |---|---|---|
 | **Presentation** (`features/*/pages`, `features/*/components`, `app/events`) | Markup, reading forms, loading states, showing errors and toasts, calling use cases | Call Supabase; hold business rules beyond simple input handling |
 | **Application** (`features/*/use-cases`, `features/*/services`) | Workflows (SaveProduct, SaveShopProfile, RecordStockOperation, Checkout…): apply domain rules, then call repositories and ports; read models over state | Import `infrastructure/` or `app/` (use ports) |
-| **Domain** (`domain/`) | Rules: variant price/cost inheritance, catalog upgrades, SKU/barcode uniqueness, product/profile/settings validation, stock operations, bill totals, invoice numbers, stock levels | Use browser APIs, the state store, Supabase, or anything outside `domain/` and `shared/` |
+| **Domain** (`domain/`) | Rules: variant price/cost inheritance, catalog upgrades, SKU/barcode uniqueness, product/profile/settings validation, stock operations, discounts, GST, bill totals, payments, the money books, invoice numbers, stock levels | Use browser APIs, the state store, Supabase, or anything outside `domain/` and `shared/` |
 | **Infrastructure** (`infrastructure/`) | Supabase client, gateway, mappers and error mapping; localStorage; files; repository implementations | Import `features/` or `app/` |
 | **Shared** (`shared/`) | Helpers every layer may use: config, ports registry, state store, errors, logger, UI primitives | Import any other layer |
 | **Composition root** (`app/`) | Start-up order, providing implementations to ports, global event wiring | Hold business rules |
@@ -199,6 +202,122 @@ ProductEditor (component: reads the form)
   client on every call, so signing in again or a test can swap it.
 - **The database is the authority.** Row-level security (`owner_id = auth.uid()`), unique SKU/barcode per shop, the
   return-quantity trigger and foreign keys live in `supabase/schema.sql`. Frontend checks only give quick feedback.
+- **Bills are saved in one step.** The outbox sends a bill with its lines and payments to RPC `hangtag_save_sales`,
+  which saves all of it or none (see [Money](#money-discounts-gst-payments-and-the-books)).
+
+## Money: discounts, GST, payments and the books
+
+All bill money is worked out in one place, `domain/sales/checkout-totals.js` (`computeCheckout`), in paise (whole
+numbers, `domain/sales/paise.js`) so sums never drift. Everything else reads its result: the bill panel and bar, the
+payment screen, the saved bill and the receipt. `features/sales/services/totals.js` (`billTotals`) only gathers what
+the calculation needs from the app: settings, the shop profile, each product's GST rate and the bill's customer.
+
+### Calculation order
+
+```text
+subtotal (Σ q × price)
+  → line discounts      each line: % of the line, or ₹ off the line                          domain/sales/discounts.js
+  → bill discount       % or ₹ of what the line discounts leave, shared over the lines exactly (largest remainder)
+  → taxable amount      per line, after both discounts
+  → GST                 per line: CGST + SGST (half the rate each, always equal) or IGST       domain/sales/gst.js
+                        prices that include GST: the tax is taken out; otherwise it is added on top
+  → round off           the total to the nearest rupee (half up); the difference shows as "Round off"
+  → grand total
+  → payment allocation  cash / UPI / card parts that must equal the amount due              domain/sales/payments.js
+```
+
+- **Discounts** (`discounts.js`) are `{ type: "percent" | "fixed", value }`, on a line (`cart[i].disc`) or on the
+  bill (`store.disc`, kept as typed). A discount can never take off more than it applies to. `checkBillDiscounts` names
+  the first problem; the bill shows it and the pay buttons wait until it is fixed. `setLineDiscount` and
+  `setBillDiscount` (`features/sales/use-cases/discounts.js`) change them. No GST is worked out here.
+- **GST** (`gst.js`): `placeOfSupply({ settings, shop, customer })` decides the mode.
+  - `none`: GST is switched off in settings.
+  - `inter` (IGST): the customer's GSTIN is from another state than the shop (the shop's GSTIN, else its state name).
+  - `intra` (CGST + SGST): everything else, including walk-ins and customers without a GSTIN.
+
+  A business customer with a GSTIN is marked B2B. A line's rate is the product's own GST rate, else the shop's
+  (`lineRate`). Older bills that kept only a GST amount count as CGST + SGST halves (`saleGstSplit`; the database
+  upgrade does the same).
+- **The saved bill** (`newSaleRecord` in `features/sales/use-cases/checkout.js`) keeps every figure:
+  - on the bill: `sub`, `disc` (= `itemDisc` + `billDiscAmt`), `billDisc`, `taxable`, `tax`, `cgst`, `sgst`, `igst`,
+    `roundOff`, `total`, `gst: { mode, pos, b2b }`, and the customer's GSTIN and type;
+  - on each line: `disc`, `dAmt`, `bdAmt`, `gst` (the rate), `hsn`, `tx` (taxable), `cgst` / `sgst` / `igst` and `lt`
+    (the line total).
+
+  Receipts, returns (`unitValue` uses `lt`) and reports (`netLines` uses `lt` and `tx`) read these saved figures,
+  never today's rates.
+
+### Payments and split payments
+
+```text
+Cash / UPI / Card button (or C / U / K) → payment screen (features/sales/components/payment-sheet.js)
+  shows subtotal, discount, taxable amount, GST, round off and grand total; Paid, Balance and Change
+  one method: cash with "amount received" (and quick amounts) → change; UPI or card with an optional reference
+  Split: an amount per method ("Rest" fills the balance), cash received for change, references
+  → settlePayments(due, parts): each part a known method, once per method, ≥ 0, at most 2 decimals, together exactly
+    what is due; only cash may be handed over in excess (the rest is change)
+  → checkout(parts) → newSaleRecord → recordSale (this device first) → outbox → RPC hangtag_save_sales
+```
+
+- `checkout(method)` still pays the whole amount due in one method (the keyboard path and the tests use it).
+- A bill's `payments` are `[{ id: "<bill id>:<method>", method, amount, received?, change?, ref? }]`. Its `pay` is the
+  method, or `"split"`.
+- Bills saved before split payments have no `payments`: `paymentsOf(sale)` gives them one payment, in their method,
+  for what was due (`total − credit`). An exchange covered by its credit has no payment.
+- There is no payment gateway: UPI and card payments are recorded, not charged.
+
+### Financial transactions, cash book and bank book
+
+```text
+bill ──< payment ──1 financial transaction ──1 cash book entry (cash) | bank book entry (UPI, card)
+return with a refund ──1 financial transaction ──1 cash book entry (cash refund) | bank book entry (UPI or card refund)
+```
+
+- `domain/finance/books.js` derives them:
+  - `financialTransactions(sales, returns)`: ids `ft:<payment id>` and `ft:<return id>`, each naming its bill;
+  - `cashBook(txns, { from, to })`: the opening balance, entries with the balance after each, cash sales (what stays in
+    the drawer), cash received, change given, refunds and the closing balance;
+  - `bankBook(txns, { from, to })`: UPI and card receipts, refunds and references;
+  - `reconcileSale(sale, txns)`: whether a bill's receipts match what was due.
+- A cancelled bill keeps its entries, marked `cancelled`, and they leave every balance. Restoring it posts them again.
+- `features/finance/services/books-data.js` runs these over this device's bills and returns, so the books work
+  offline. `components/books-view.js` shows the Cash book and Bank book cards on Reports (for the chosen period) and
+  the full lists. The bill view lists a bill's payments and whether they match.
+- The database posts the very same entries with the same ids (below). `supabase/tests/payments.test.mjs` checks that
+  the two agree.
+
+### Reconciliation
+
+- **Before a sale completes**, the payments must equal the amount due (`settlePayments`) and every discount must fit
+  (`checkBillDiscounts`). Otherwise nothing is recorded.
+- **In the database**, `hangtag_save_sales` refuses a bill whose payments don't add up to `total − credit`, and a trigger
+  refuses payments that would exceed it. A bill has one payment per method (`UNIQUE (owner_id, sale_id, method)`),
+  and a payment's id must be `<bill id>:<method>`.
+- **Posting is idempotent.** Transaction and entry ids come from the payment or return id, and each book entry is unique
+  per transaction, so retries and re-uploads never duplicate anything.
+- **Checks:** `reconcileSale` in the app; rows 10–13 of the migration report in the database (every bill's payments
+  match, every payment and refund is posted, every transaction is in a book).
+
+### Database relationships (schema.sql section 3e)
+
+| Table | Keys | Points at | Written by |
+|---|---|---|---|
+| `hangtag_sales` (+ discount, GST split, round off, place of supply, customer GSTIN and type) | `(owner_id, id)` | – | RPC `hangtag_save_sales` (older app versions: upsert) |
+| `hangtag_sale_items` (+ line discount, bill-discount share, taxable value, GST rate and amounts, line total, HSN) | `(owner_id, sale_id, line_no)` | sale (cascade) | the RPC |
+| `hangtag_payments` | `(owner_id, id)`; unique `(owner_id, sale_id, method)` | sale (cascade) | the RPC; for a bill from an older app version, a deferred trigger adds its one payment |
+| `hangtag_fin_txns` | `(owner_id, id)`; unique payment; unique return | sale, payment or return (cascade) | triggers only (the app can read) |
+| `hangtag_cash_book`, `hangtag_bank_book` | `(owner_id, id)`; unique transaction | financial transaction (cascade) | triggers only (the app can read) |
+
+Triggers:
+
+- `hangtag_payments_check`: a bill's payments never exceed what is due.
+- `hangtag_post_payment`, `hangtag_post_refund`: post the transaction and its book entry. They are `SECURITY DEFINER`
+  and take the owner from the row that row security has already checked.
+- `hangtag_sale_status`: cancelling or restoring a bill (`is_void`) cancels or re-posts its entries.
+- `hangtag_sale_default_payment` (deferred): the one payment of a bill saved without payments.
+
+Every table has the "Own rows only" RLS policy. Indexes: `(owner_id, sale_id)` on transactions (reconciliation and
+cancelling) and `(owner_id, t)` on both books (read in date order).
 
 ## State
 
@@ -276,7 +395,7 @@ an `AppError`.
   | `42501` (RLS) | `PERMISSION` |
   | `23505` | `CONFLICT` |
   | JWT or `PGRST301` | `AUTH` |
-  | Missing table or column | `OUTDATED_DATABASE` |
+  | Missing table, column or function (`PGRST202`, `PGRST205`) | `OUTDATED_DATABASE` |
   | `23514` / `P0001` (rules in `schema.sql`) | `VALIDATION` |
   | `23503` | `NOT_FOUND` |
   | Anything else | `UNKNOWN` |
@@ -337,10 +456,10 @@ after changing any file under `src/`, and commit the updated `sw.js` with it.**
 
 | Kind | Where | What |
 |---|---|---|
-| Unit | `tests/unit` | `domain.test.mjs`: domain rules. `use-cases.test.mjs`: use cases with fake ports. `infrastructure.test.mjs`: the gateway against a fake client, mappers, error mapping, repositories. `ports.test.mjs`: the ports registry, render bus and persistence. `architecture.test.mjs`: layer rules, no cycles, test API. `build.test.mjs`: `npm run check` (offline list, bundle, lint) |
-| Database | `supabase/tests` | Schema, RLS isolation, triggers and migrations, on PGlite with Supabase stubs |
+| Unit | `tests/unit` | `domain.test.mjs`: domain rules. `checkout.test.mjs`: discounts, GST, totals, payments, split payments, the books and the checkout use cases. `use-cases.test.mjs`: use cases with fake ports. `infrastructure.test.mjs`: the gateway against a fake client, mappers, error mapping, repositories. `ports.test.mjs`: the ports registry, render bus and persistence. `architecture.test.mjs`: layer rules, no cycles, test API. `build.test.mjs`: `npm run check` (offline list, bundle, lint) |
+| Database | `supabase/tests` | Schema, RLS isolation, triggers and migrations, on PGlite with Supabase stubs. `payments.test.mjs`: the 3e upgrade, the bill RPC, payment rules, posting, cancelling, refunds, isolation, and that the database and `domain/finance/books.js` give the same entries |
 | Integration (app ↔ cloud) | `tests/e2e/cloud-roundtrip.test.mjs` | Two devices sync through the real supabase-js against a stand-in PostgREST that rejects unknown columns |
-| E2E | `tests/e2e` | Sign-in (Google, email, tabs), per-account data, offline queue and service worker, POS flows (variants, returns, exchanges, receipts), shop setup and settings |
+| E2E | `tests/e2e` | Sign-in (Google, email, tabs), per-account data, offline queue and service worker, POS flows (variants, returns, exchanges, receipts), shop setup and settings. `checkout-payments.test.mjs`: discounts, GST (CGST + SGST and IGST), cash, UPI, card and split payments on desktop and phone against the real schema, the books, cancel and restore, returns, a second device |
 
 Commands:
 
@@ -383,3 +502,8 @@ Phase 3 and 4 were added this way:
 - **Supplier bills:** planning in `domain/inventory/bill-import.js`; reading behind `documentExtractionService` (an Edge
   Function holds the provider key); saving behind `inventoryImportService` (one database transaction). A different OCR
   provider only needs a new provider file in `supabase/functions/extract-bill/providers/`.
+
+Phases 9–12 (discounts, GST, payments, split payments, cash and bank books) were added the same way: rules in
+`domain/sales/` and `domain/finance/`, use cases in `features/sales/use-cases/`, read models in
+`features/finance/services/`, and one RPC plus posting triggers in `schema.sql` section 3e (see
+[Money](#money-discounts-gst-payments-and-the-books)).

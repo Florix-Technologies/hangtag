@@ -3,7 +3,8 @@ import { lineLabel } from '../../../domain/catalog/options.js';
 import { store } from '../../../shared/state/store.js';
 import { vLabel, variantsOf } from '../../../domain/catalog/variants.js';
 import { levelOf } from '../../inventory/services/stock-levels.js';
-import { PAYN } from '../../../domain/sales/sale.js';
+import { payLabel, paymentsOf } from '../../../domain/sales/payments.js';
+import { bankCardHTML, cashCardHTML } from '../../finance/components/books-view.js';
 import { D } from '../../inventory/services/ledger.js';
 import { productLeft, stockOf } from '../../inventory/services/stock.js';
 import { thumb } from '../../products/components/thumb.js';
@@ -34,7 +35,9 @@ export function drawSizes(lines){
   colChart(host,order.map(s=>({short:s,v:m[s]||0,tv:(m[s]||0)+" pcs",tl:"Size "+s,tm:Math.round((m[s]||0)/tot*100)+"% of pieces sold"})),{axis:v=>String(v),peak:v=>v+" pcs",int:true,labelW:24,aria:"Pieces sold by size"});
 }
 export function payHTML(live,rets,R){
-  const segs=[["upi","UPI"],["cash","Cash"],["card","Card"]].map(([k,l])=>{const ss=live.filter(s=>s.pay===k),rf=rets.filter(r=>r.pay===k&&r.refund);return{k,l,v:ss.reduce((a,s)=>a+s.total-(s.credit||0),0)-rf.reduce((a,r)=>a+r.refund,0),n:ss.length,rf:rf.reduce((a,r)=>a+r.refund,0)}});
+  // each payment counts under its own method, so a split bill adds to more than one
+  const paid=(s,k)=>paymentsOf(s).filter(p=>p.method===k).reduce((a,p)=>a+p.amount,0);
+  const segs=[["upi","UPI"],["cash","Cash"],["card","Card"]].map(([k,l])=>{const ss=live.filter(s=>paid(s,k)>0),rf=rets.filter(r=>r.pay===k&&r.refund);return{k,l,v:ss.reduce((a,s)=>a+paid(s,k),0)-rf.reduce((a,r)=>a+r.refund,0),n:ss.length,rf:rf.reduce((a,r)=>a+r.refund,0)}});
   const tot=segs.reduce((a,s)=>a+Math.max(0,s.v),0);if(!tot&&!segs.some(s=>s.v))return `<p class="muted">No payments in this period.</p>`;
   const pct=v=>tot?Math.round(Math.max(0,v)/tot*100):0;
   let h=`<div class="stack" role="img" aria-label="${esc(segs.map(s=>s.l+" "+pct(s.v)+"%").join(", "))}">${segs.filter(s=>s.v>0).map(s=>`<span class="seg c-${s.k}" style="flex-grow:${s.v}" tabindex="0" data-tipv="${esc(inr(s.v))}" data-tipl="${esc(s.l+" · "+pct(s.v)+"%")}" data-tipm="${esc(s.n+" bill"+(s.n===1?"":"s"))}"></span>`).join("")}</div>`;
@@ -100,7 +103,7 @@ export function billsHTML(all,R){
   const cap=store.showAllBills?400:25,list=all.slice(0,cap),multi=R.from!==R.to;let h=`<div class="bills">`,cur="";
   list.forEach(s=>{const k=dayKey(s.t);if(multi&&k!==cur){cur=k;h+=`<div class="bday">${esc(dayLong(k))}</div>`}
     const rt=D().retBySale[s.id],tags=(s.kind==="exchange"?`<span class="btag">Exchange</span>`:"")+(rt&&rt.length?`<span class="btag">${rt.some(r=>r.kind==="exchange")?"Exchanged":"Returned"}</span>`:"")+(s.cust?`<span class="btag c">${esc(s.cust.name)}</span>`:"");
-    h+=`<div class="bill${s.void?" void":""}"><span class="bt">${esc(hhmm(s.t))}</span><button class="bi asbtn" data-billview="${esc(s.id)}">${s.items.map(i=>`${esc(i.n)}${lineLabel(i)?` <span class="szl">${esc(lineLabel(i))}</span>`:""}${i.q>1?" ×"+i.q:""}`).join(", ")}${tags}</button><span class="ptag c-${esc(s.pay)}">${PAYN[s.pay]||esc(s.pay)}</span><span class="ba">${inr(s.total)}</span><button class="btn xs" data-billview="${esc(s.id)}">Open</button></div>`});
+    h+=`<div class="bill${s.void?" void":""}"><span class="bt">${esc(hhmm(s.t))}</span><button class="bi asbtn" data-billview="${esc(s.id)}">${s.items.map(i=>`${esc(i.n)}${lineLabel(i)?` <span class="szl">${esc(lineLabel(i))}</span>`:""}${i.q>1?" ×"+i.q:""}`).join(", ")}${tags}</button><span class="ptag c-${esc(s.pay)}">${esc(payLabel(s))}</span><span class="ba">${inr(s.total)}</span><button class="btn xs" data-billview="${esc(s.id)}">Open</button></div>`});
   if(all.length>cap)h+=store.showAllBills?`<p class="muted">Showing the latest ${cap} of ${all.length} bills — download the CSV for all of them.</p>`:`<div class="row c" style="padding-top:12px"><button class="btn sm" data-act="allbills">Show all ${all.length} bills</button></div>`;
   return h+`</div>`;
 }
@@ -119,6 +122,8 @@ export function renderReport(){
   h+=`<div class="dash">
     <div class="card span-8"><div class="card-h"><h3>${TS.title}</h3><button class="btn xs" data-table="time" aria-pressed="${showTable.time}">${showTable.time?"Show chart":"Show table"}</button></div><div id="chTime" class="chart"></div></div>
     <div class="card span-4"><div class="card-h"><h3>How customers paid</h3></div>${payHTML(live,rets,R)}</div>
+    <div class="card span-6"><div class="card-h"><h3>Cash book</h3><span class="note">Cash in and out, with the balance</span></div>${cashCardHTML(R)}</div>
+    <div class="card span-6"><div class="card-h"><h3>Bank book</h3><span class="note">UPI and card payments</span></div>${bankCardHTML(R)}</div>
     <div class="card span-12"><div class="card-h"><h3>Gross profit</h3><span class="note">Sales minus the cost of the pieces sold</span></div>${profitHTML(lines)}</div>
     <div class="card span-7"><div class="card-h"><h3>Best sellers</h3><span class="note">Pieces sold · amount</span></div>${bestHTML(lines)}</div>
     <div class="card span-5"><div class="card-h"><h3>Sizes that sold</h3><button class="btn xs" data-table="size" aria-pressed="${showTable.size}">${showTable.size?"Show chart":"Show table"}</button></div><div id="chSize" class="chart"></div></div>

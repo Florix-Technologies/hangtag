@@ -1,6 +1,7 @@
 // Start-up values of the application state (restored from this device's storage, through the "storage" port, where saved).
 import { store } from '../shared/state/store.js';
 import { DEFAULT_SETTINGS } from '../domain/shop/settings.js';
+import { discountInput } from '../domain/sales/discounts.js';
 import { storage } from '../shared/state/persistence.js';
 import { objOr } from '../shared/utils/objects.js';
 
@@ -20,7 +21,7 @@ export function initState(){
   if(!store.pend.img)store.pend.img={};
   store.cart = storage.get("rc_cart",[]);
   if(!Array.isArray(store.cart))store.cart=[];
-  store.disc = Math.max(0,+storage.get("rc_disc",0)||0);
+  store.disc = discountInput(storage.get("rc_disc",null));   // bill discount box { type: "fixed"|"percent", value } (older versions saved ₹ off as a number)
   store.moves = objOr(storage.get("rc_moves",{}),{});          // stock history: opening, stock in, adjustments (by id)
   store.returnsMap = objOr(storage.get("rc_returns",{}),{});   // returns and exchanges (by id)
   store.customers = objOr(storage.get("rc_customers",{}),{});  // customers (by id)
@@ -74,6 +75,8 @@ export function initState(){
   store.lastCheckout = 0;
   store.custQ = "";
   store.custForm = null;
+  store.lineDisc = null;        // line discount sheet: { i, type, value, err }
+  store.payState = null;        // payment sheet: { mode:"single"|"split", method, received, ref, split:{cash,upi,card}, recv, refs, err }
   /* ================= returns and exchanges ================= */
 
   store.retState = null;

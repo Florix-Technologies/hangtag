@@ -9,7 +9,8 @@ import { addPicked, openPicker, pickRows, renderPicker, setPickQty } from '../..
 import { renderGrid } from '../../features/sales/pages/sell-page.js';
 import { addOne } from '../../features/sales/services/cart.js';
 import { findByCode, sellProducts, variantHits } from '../../features/sales/services/search.js';
-import { checkout } from '../../features/sales/use-cases/checkout.js';
+import { openPayment, completePayment } from '../../features/sales/components/payment-sheet.js';
+import { applyLineDiscount } from '../../features/sales/components/discount-sheet.js';
 import { closeModal } from '../../shared/components/modal.js';
 import { toast } from '../../shared/components/toast.js';
 import { hideTip } from '../../shared/components/tooltip.js';
@@ -30,7 +31,7 @@ export function handleKey(e){
   if(store.pick&&(k==="+"||k==="="||k==="-")&&store.pick.last){setPickQty(store.pick.last,(store.pick.qty[store.pick.last]||0)+(k==="-"?-1:1));e.preventDefault();return}
   if(store.pick&&(k==="arrowdown"||k==="arrowup")){const p=prod(store.pick.pid);const cs=p?pickRows(p).colors:[];if(cs.length>1){const i=cs.indexOf(store.pick.color);store.pick.color=cs[(i+(k==="arrowdown"?1:cs.length-1))%cs.length];renderPicker();e.preventDefault()}return}
   if(store.pick&&k==="enter"&&!(e.target.closest&&e.target.closest("[data-act],[data-color],[data-cellminus],.iconbtn"))){addPicked();e.preventDefault();return}
-  if(!store.pick&&store.cart.length&&(k==="c"||k==="u"||k==="k")){checkout(k==="c"?"cash":k==="u"?"upi":"card");if(e.preventDefault)e.preventDefault()}
+  if(!store.pick&&store.cart.length&&(k==="c"||k==="u"||k==="k")){openPayment(k==="c"?"cash":k==="u"?"upi":"card");if(e.preventDefault)e.preventDefault()}
 }
 
 /* Registered once at start-up (app/main.js). */
@@ -40,7 +41,7 @@ export function installKeyboard(){
     if(e.key==="Escape"){
       if(store.scan){closeScanner();e.preventDefault();return}
       if(!$("#acctMenu").hidden)return;
-      if($("#modalHost").innerHTML){if(store.editor||store.billImport)return; /* the product editor only closes with Cancel or ×, so work is never lost by accident */ closeModal();e.preventDefault();return}
+      if($("#modalHost").innerHTML){if(store.editor||store.billImport)return; /* the product editor only closes with Cancel or ×, so work is never lost by accident */ store.payState=null;store.lineDisc=null;closeModal();e.preventDefault();return}
       if(store.pick&&store.pick.target==="exchange"){store.pick=null;renderReturnSheet();e.preventDefault();return}
       if(store.pick||store.billOpen||$("#sheetHost").innerHTML){store.retState=null;closeSheets();e.preventDefault()}hideTip();return;
     }
@@ -55,6 +56,9 @@ export function installKeyboard(){
     }
     if(e.key==="Enter"&&store.pick&&e.target.matches&&e.target.matches("[data-cellqty]")){e.preventDefault();addPicked();return}
     if($("#sheetHost [data-paid]")&&(e.key==="Enter"||e.key===" ")&&!(e.target.closest&&e.target.closest("button"))){closeSheets();e.preventDefault();return}
+    // Enter on the payment screen completes the sale (when the payments add up); in the line discount box it applies
+    if(e.key==="Enter"&&store.payState&&e.target.closest&&e.target.closest("#paySheet")&&!(e.target.closest("button"))){e.preventDefault();const b=$("#payDone");if(b&&!b.disabled)completePayment();return}
+    if(e.key==="Enter"&&store.lineDisc&&e.target.id==="ldVal"){e.preventDefault();applyLineDiscount(false);return}
     if($("#modalHost").innerHTML)return;
     if(store.prefs.tab!=="sell"||e.metaKey||e.ctrlKey||e.altKey)return;
     if(e.target.matches&&e.target.matches("input,select,textarea"))return;

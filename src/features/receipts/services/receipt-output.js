@@ -2,12 +2,12 @@
 import { store } from '../../../shared/state/store.js';
 import { D } from '../../inventory/services/ledger.js';
 import { RECEIPT_CSS, receiptHTML } from '../components/receipt-view.js';
-import { receiptModel, receiptText } from './receipt-model.js';
+import { gstLines, payLines, receiptModel, receiptText } from './receipt-model.js';
 import { toast } from '../../../shared/components/toast.js';
 import { use } from '../../../shared/di/services.js';
 import { esc } from '../../../shared/dom.js';
 import { dtLong } from '../../../shared/formatting/dates.js';
-import { inr } from '../../../shared/formatting/money.js';
+import { inr, inrx } from '../../../shared/formatting/money.js';
 import { logger } from '../../../shared/logging/logger.js';
 
 export function printSale(sid){
@@ -41,9 +41,13 @@ export async function receiptPNG(s){
   rule();
   R.lines.forEach(l=>{wrap(l.name,W-2*P-150).forEach((ln,i)=>i===0?pair(ln,inr(l.amt),{bold:true,size:21}):text(ln,{bold:true,size:21}));text(`${l.var?l.var+" · ":""}${l.q} × ${inr(l.price)}`,{size:18,color:"#444"})});
   rule();
-  pair("Subtotal",inr(R.sub)); if(R.disc) pair("Discount","−"+inr(R.disc)); if(R.rate&&!R.incl) pair("GST "+R.rate+"%",inr(R.tax));
-  pair("Total",inr(R.total),{bold:true,size:28}); if(R.rate&&R.incl) pair("Includes GST "+R.rate+"%",inr(R.tax),{size:18});
-  if(R.credit){pair("Exchange credit","−"+inr(R.credit));pair("Paid ("+R.pay+")",inr(R.paid),{bold:true})} else pair("Paid",R.pay);
+  const G=gstLines(R);
+  pair("Subtotal",inr(R.sub)); if(R.disc) pair("Discount","−"+inrx(R.disc)); if(!R.incl) G.forEach(g=>pair(g.label,inrx(g.amount))); if(R.roundOff) pair("Round off",(R.roundOff>0?"+":"")+inrx(R.roundOff));
+  pair("Total",inr(R.total),{bold:true,size:28}); if(R.incl) G.forEach(g=>pair("Includes "+g.label,inrx(g.amount),{size:18}));
+  if(R.credit){pair("Exchange credit","−"+inr(R.credit));pair("Paid ("+R.pay+")",inr(R.paid),{bold:true})}
+  else if(R.pays.length>1) payLines(R).forEach(p=>pair("Paid by "+p.label,inrx(p.amount)));
+  else pair("Paid",R.pay);
+  if(R.change) pair("Change",inrx(R.change));
   if(R.footer){y+=6;wrap(R.footer,W-2*P).forEach(l=>text(l,{align:"c",size:19}))}
   c.width=W; c.height=y+P;
   x.fillStyle="#fff"; x.fillRect(0,0,W,c.height);

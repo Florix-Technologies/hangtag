@@ -33,6 +33,7 @@ const FAKE_DB=`
       if(window.__fail&&window.__fail(q))return {data:null,error:{message:'simulated failure'}};return {data:[],error:null};})();return r.then.bind(r);}
     return (...a)=>{q.ops.push([k,a]);return p;};}});return p;};
   sbClient.from=mk;
+  sbClient.rpc=(fn,args)=>{const p=mk(fn==='hangtag_save_sales'?'hangtag_sales':'rpc:'+fn);return p.rpc(args);};
   window.__sess=true;
   sbClient.auth.getSession=async()=>({data:{session:window.__sess?{user:{id:'u1',email:'owner@example.com'},access_token:'t'}:null},error:null});
   authUser={id:'u1',email:'owner@example.com'};sbStatus='connected';mode='online';hideGate();
@@ -79,7 +80,7 @@ const FAKE_DB=`
     await run(A,`window.__fail=null;await sleep(700);await voidSale(lastSale.id);await flushSbQueue();`);
     check('upload works again: queue empties',(await run(A,'return sbOfflineQueue.length'))===0,await run(A,'return sbOfflineQueue'));
     const order=await run(A,`return __calls.filter(c=>c.t==='hangtag_sales').map(c=>c.ops[0][0])`);
-    check('bill uploaded before its cancel',order.lastIndexOf('upsert')<order.lastIndexOf('update'),order);
+    check('bill uploaded before its cancel',order.lastIndexOf('rpc')>-1&&order.lastIndexOf('rpc')<order.lastIndexOf('update'),order);
     // no session -> nothing sent, queue kept
     await run(A,`window.__calls=[];window.__sess=false;cart=[];addToLines(cart,'q1:M',1);await checkout('upi');await sleep(400);await flushSbQueue();`);
     check('no signed-in session: nothing sent to the cloud',(await run(A,'return __calls.length'))===0);

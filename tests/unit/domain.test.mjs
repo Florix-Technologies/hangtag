@@ -5,7 +5,7 @@ import { lineLabel, numOrNull, priceRange, vCost, vLabel, vPrice, variantsOf } f
 import { upgradeCatalog } from '../../src/domain/catalog/catalog-migration.js';
 import { checkQty } from '../../src/domain/sales/cart-rules.js';
 import { szRank } from '../../src/domain/catalog/sizes.js';
-import { computeBillTotals } from '../../src/domain/sales/bill-totals.js';
+import { computeCheckout } from '../../src/domain/sales/checkout-totals.js';
 import { formatInvoiceNo, pcsOf } from '../../src/domain/sales/sale.js';
 import { lowStockThreshold, stockLevel } from '../../src/domain/inventory/stock-levels.js';
 import { buildStockMoves } from '../../src/domain/inventory/stock-operation.js';
@@ -79,10 +79,13 @@ check('quantity: more than the stock is capped, with the reason', checkQty('9', 
 
 // ---------- bill totals, invoice numbers ----------
 const lines = [{ q: 2, price: 500 }, { q: 1, price: 250 }];
-check('no GST: total = subtotal − discount', eq(computeBillTotals(lines, 50, { taxOn: false }), { sub: 1250, disc: 50, tax: 0, total: 1200, rate: 0, incl: false }));
-check('GST included in prices: tax is taken out, total unchanged', eq(computeBillTotals(lines, 0, { taxOn: true, taxRate: 5, taxIncl: true }), { sub: 1250, disc: 0, tax: 60, total: 1250, rate: 5, incl: true }));
-check('GST added on top: total grows by the tax', eq(computeBillTotals(lines, 250, { taxOn: true, taxRate: 12, taxIncl: false }), { sub: 1250, disc: 250, tax: 120, total: 1120, rate: 12, incl: false }));
-check('a discount larger than the bill is capped at the subtotal', computeBillTotals(lines, 9999, { taxOn: false }).total === 0);
+// one GST rate for every line (the shop's setting) and a fixed bill discount — the full rules are in tests/unit/checkout.test.mjs
+const shopTotals = (ls, disc, s) => { const r = computeCheckout({ lines: ls.map((l) => ({ ...l, rate: s.taxRate })), billDisc: disc, gst: { mode: s.taxOn ? 'intra' : 'none', inclusive: !!s.taxIncl } });
+  return { sub: r.sub, disc: r.disc, tax: r.tax, total: r.total, rate: r.rate, incl: r.incl }; };
+check('no GST: total = subtotal − discount', eq(shopTotals(lines, 50, { taxOn: false }), { sub: 1250, disc: 50, tax: 0, total: 1200, rate: 0, incl: false }));
+check('GST included in prices: tax is taken out (to the paisa), total unchanged', eq(shopTotals(lines, 0, { taxOn: true, taxRate: 5, taxIncl: true }), { sub: 1250, disc: 0, tax: 59.52, total: 1250, rate: 5, incl: true }));
+check('GST added on top: total grows by the tax', eq(shopTotals(lines, 250, { taxOn: true, taxRate: 12, taxIncl: false }), { sub: 1250, disc: 250, tax: 120, total: 1120, rate: 12, incl: false }));
+check('a discount larger than the bill is capped at the subtotal', shopTotals(lines, 9999, { taxOn: false }).total === 0);
 check('invoice number: prefix + yymmdd + running number', formatInvoiceNo('INV-', new Date(2026, 8, 5, 10).getTime(), 7) === 'INV-260905-007' && formatInvoiceNo('', new Date(2026, 0, 1).getTime(), 123) === '260101-123');
 check('pieces on a bill', pcsOf({ items: [{ q: 2 }, { q: 3 }] }) === 5);
 

@@ -5,7 +5,9 @@ import { stockOf } from '../../inventory/services/stock.js';
 
 /* What was paid per piece on this bill line (discount and GST shared out proportionally) */
 
-export function unitValue(s,i){ const ratio=s.sub>0?s.total/s.sub:1; return Math.round(i.price*ratio*100)/100; }
+/* What one piece of a bill line was really paid: its share of the line after discounts and GST (lt, saved since
+   line discounts), or for older bills the price scaled by the bill total over the subtotal */
+export function unitValue(s,i){ if(i.lt!=null&&i.q) return Math.round(i.lt/i.q*100)/100; const ratio=s.sub>0?s.total/s.sub:1; return Math.round(i.price*ratio*100)/100; }
 export function returnable(s,i,k){ const ln=i.ln!=null?i.ln:k; return Math.max(0,i.q-(D().retLine[s.id+"|"+ln]||0)); }
 export function retValue(){ const s=D().saleById[store.retState.sid]; return s.items.reduce((a,i,k)=>{const ln=i.ln!=null?i.ln:k,q=store.retState.q[ln]||0;return a+Math.round(q*unitValue(s,i))},0); }
 export function exAvail(vid){ // stock for exchange items, counting what's being returned in this same exchange

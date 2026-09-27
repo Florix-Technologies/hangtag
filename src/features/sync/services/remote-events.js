@@ -22,6 +22,9 @@ export async function onRemoteSaleEvent(payload){
       renderAll();
       try{
         mergeRemoteItems(s.id, await use("cloud").fetchSaleLineRows(s.id));
+        // the bill, its lines and its payments are saved together, so they are all there by now
+        const pays = await use("cloud").fetchSalePayments(s.id);
+        if(pays.length){ saleObj.payments = pays; renderAll(); }
       }catch(e){ logger.warn("Could not fetch bill lines:", e); }
     }
   } else if(payload.eventType === "UPDATE"){

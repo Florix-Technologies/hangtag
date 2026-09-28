@@ -91,6 +91,7 @@ await A.click('#billPanel [data-pay="cash"]'); await sleep(200);
 await A.click('[data-paymode="split"]'); await sleep(100);
 await A.$eval('[data-payf="amt:cash"]', (e) => { e.value = ''; e.dispatchEvent(new Event('input', { bubbles: true })); }); await A.type('[data-payf="amt:cash"]', '1000');
 await A.click('[data-payrest="upi"]'); await sleep(100);
+await A.type('[data-payf="ref:upi"]', '412345678901'); await sleep(100);
 await A.click('#payDone'); await sleep(400);
 const sid = await run('return lastSale.id');
 check('payment confirmed: the sheet offers Print, Download and Send to customer (Email, WhatsApp, SMS)', await vis('#sheetHost [data-paid]') && !!(await A.$(`#sheetHost [data-print="${sid}"]`)) && !!(await A.$(`#sheetHost [data-dlreceipt="${sid}"]`))
@@ -174,6 +175,7 @@ check('walk-in + WhatsApp provider: WhatsApp opens on this device (nothing sent 
   && /Press Send there/.test(await text(`#sheetHost [data-sendstate="${wid}"]`)), { walkWa, calls: fnCalls.length - callsBefore });
 await run('channels=null');
 await A.click(`#sheetHost [data-undosale="${wid}"]`); await sleep(300);
+await A.click('#voidForm button[type="submit"]'); await sleep(300);   // cancelling asks why (the first reason is chosen)
 await run(`openBillView(${JSON.stringify(wid)},"a4")`); await sleep(200);
 check('cancelled bill: the invoice says CANCELLED — not a valid invoice, and it can\'t be sent', /CANCELLED — not a valid invoice/.test(await text('.rcpt-prev')) && /A cancelled bill can't be sent/.test(await text('.billview .sendbox'))
   && await A.$eval(`.billview [data-send="email:${wid}"]`, (b) => b.disabled));

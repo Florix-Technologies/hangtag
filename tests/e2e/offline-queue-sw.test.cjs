@@ -77,16 +77,16 @@ const FAKE_DB=`
     await run(A,`window.__fail=q=>q.t==='hangtag_sales';cart=[];addToLines(cart,'q1:M',1);await checkout('cash');await sleep(300);`);
     check('upload fails: bill stays queued',(await run(A,'return sbOfflineQueue.filter(x=>x.type==="sale").length'))===1);
     check('upload fails: bill still counted locally',(await run(A,'return stockOf("q1:M")'))===8);
-    await run(A,`window.__fail=null;await sleep(700);await voidSale(lastSale.id);await flushSbQueue();`);
+    await run(A,`window.__fail=null;await sleep(700);await voidSale(lastSale.id,"Duplicate bill");await flushSbQueue();`);
     check('upload works again: queue empties',(await run(A,'return sbOfflineQueue.length'))===0,await run(A,'return sbOfflineQueue'));
     const order=await run(A,`return __calls.filter(c=>c.t==='hangtag_sales').map(c=>c.ops[0][0])`);
     check('bill uploaded before its cancel',order.lastIndexOf('rpc')>-1&&order.lastIndexOf('rpc')<order.lastIndexOf('update'),order);
     // no session -> nothing sent, queue kept
-    await run(A,`window.__calls=[];window.__sess=false;cart=[];addToLines(cart,'q1:M',1);await checkout('upi');await sleep(400);await flushSbQueue();`);
+    await run(A,`window.__calls=[];window.__sess=false;cart=[];addToLines(cart,'q1:M',1);await checkout({method:'upi',ref:'412345678901'});await sleep(400);await flushSbQueue();`);
     check('no signed-in session: nothing sent to the cloud',(await run(A,'return __calls.length'))===0);
     check('no signed-in session: bill kept in queue',(await run(A,'return sbOfflineQueue.length'))===1);
     // bill added while an upload is running is not lost
-    await run(A,`window.__sess=true;await sleep(700);window.__delay=400;window.__calls=[];const p=flushSbQueue();await sleep(100);cart=[];addToLines(cart,'q1:M',2);await checkout('card');await p;await sleep(1500);`);
+    await run(A,`window.__sess=true;await sleep(700);window.__delay=400;window.__calls=[];const p=flushSbQueue();await sleep(100);cart=[];addToLines(cart,'q1:M',2);await checkout({method:'card',ref:'APPR1'});await p;await sleep(1500);`);
     check('bill added during an upload is not lost',(await run(A,'return sbOfflineQueue.length'))===0&&(await run(A,`return __calls.filter(c=>c.t==='hangtag_sales').length`))===2,await run(A,'return {q:sbOfflineQueue.length,calls:__calls.map(c=>c.t)}'));
     // pulls refuse to run without a session
     await run(A,`window.__sess=false;window.__calls=[];await pullFromSupabase(false);await pullCatalogFromSupabase(true);`);

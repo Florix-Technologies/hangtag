@@ -117,8 +117,8 @@ check("the customer's history shows the bill and how it was paid", await run(A, 
 
 // ---------- 3. the existing checkout(method) API still pays the whole bill in one method ----------
 await sleep(700);
-const api = await run(A, `addOne(${JSON.stringify(CAP)});const s=await checkout("upi");closeSheets();await flushSbQueue();return {pay:s.pay,payments:s.payments,total:s.total,cust:s.cust}`);
-check('checkout("upi") still works: one UPI payment for the total, walk-in', api.pay === 'upi' && api.payments.length === 1 && api.payments[0].amount === api.total && api.total === 525 && api.cust === null, api);
+const api = await run(A, `addOne(${JSON.stringify(CAP)});const s=await checkout({method:"upi",ref:"412345678901"});closeSheets();await flushSbQueue();return {pay:s.pay,payments:s.payments,total:s.total,cust:s.cust}`);
+check('checkout({ method: "upi", ref }) still pays the whole bill in one method: one UPI payment for the total, walk-in', api.pay === 'upi' && api.payments.length === 1 && api.payments[0].amount === api.total && api.total === 525 && api.cust === null, api);
 
 // ---------- 4. phone: bill sheet → UPI with reference; cash with a quick amount and change ----------
 await A.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true }); await sleep(1000);   // (reloads the page)
@@ -152,7 +152,7 @@ await until(A, 'sbStatus==="connected"');
 // ---------- 5. cancel and restore a bill ----------
 const st = async (id) => (await q(`SELECT (SELECT string_agg(DISTINCT status, ',') FROM public.hangtag_payments WHERE sale_id='${id}') p, (SELECT string_agg(DISTINCT status, ',') FROM public.hangtag_fin_txns WHERE sale_id='${id}') f,
   (SELECT string_agg(DISTINCT status, ',') FROM public.hangtag_bank_book WHERE sale_id='${id}') b`))[0];
-await run(A, `await voidSale(${JSON.stringify(s2.id)});await flushSbQueue()`);
+await run(A, `await voidSale(${JSON.stringify(s2.id)},"Wrong items or price");await flushSbQueue()`);
 check('cancelling a bill: its payment, transaction and bank entry are marked cancelled', JSON.stringify(await st(s2.id)) === JSON.stringify({ p: 'cancelled', f: 'cancelled', b: 'cancelled' }), await st(s2.id));
 check('…and the app leaves it out of the bank book too', await run(A, `const R=periodRange();return bankBookFor(R.from,R.to).entries.find(e=>e.saleId===${JSON.stringify(s2.id)}).status==="cancelled"`));
 await run(A, `await unvoid(${JSON.stringify(s2.id)});await flushSbQueue()`);

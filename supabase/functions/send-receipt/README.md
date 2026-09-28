@@ -31,7 +31,16 @@ function.
   requests can't slip past it, and if the log can't be written or counted nothing is sent (`503`). Deleting bills
   doesn't remove delivery records (their bill link is cleared).
 - **"Sent" means the provider accepted the message and returned its id.** Anything else is recorded as `failed` with
-  the provider's reason, and the app says it wasn't sent. Delivery to the phone or inbox isn't tracked (no webhooks).
+  the provider's reason, and the app says it wasn't sent. `{ action: "refresh", sale_id }` asks Twilio (SMS) and
+  Resend (email) what happened to the bill's sent messages and records `delivered` (or `failed` when the provider
+  couldn't deliver it). Meta WhatsApp reports delivery only through webhooks, so its messages stay `sent`.
+- **Automatic receipts** (`{ action: "send", ..., auto: true }`, sent by the phone when a bill completes and the shop
+  turned the channel on): at most one per bill and channel. A unique index on the `auto` rows makes a retry (or a
+  second phone) get the first attempt's answer (`already: true`) or `409 busy` while it is still being sent.
+- **Secure invoice links**: with `RECEIPT_URL` set, SMS and WhatsApp messages carry `RECEIPT_URL#<token>`, an
+  unguessable link (32 random bytes) to that one bill, kept 12 months in `hangtag_invoice_links` (the shop can revoke
+  it from the bill). `{ action: "link", sale_id }` returns the bill's link for sharing by hand. The page
+  (`receipt.html`) asks the `receipt` function for the bill; a wrong, revoked or expired token gets "not found".
 - A channel without its secrets answers `503 not_configured`. Nothing is recorded, and the app offers Download, Share or
   "Open WhatsApp" instead.
 
@@ -54,6 +63,15 @@ Set the secrets of the channels you want (`supabase secrets set NAME=value --pro
 | WhatsApp (Meta) | `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_TEMPLATE` (an approved template whose body has `{{1}}` customer name, `{{2}}` shop, `{{3}}` bill number, `{{4}}` amount), optional `WHATSAPP_TEMPLATE_LANG` (default `en`), `WHATSAPP_API_VERSION` (default `v21.0`) |
 | WhatsApp (Twilio) | `WHATSAPP_PROVIDER=twilio`, the Twilio secrets above, `TWILIO_WHATSAPP_FROM` (the WhatsApp sender, `+14155238886` or `whatsapp:+14155238886`), `TWILIO_WHATSAPP_CONTENT_SID` (an approved WhatsApp template in Twilio Content, variables `{{1}}`–`{{4}}` as above) |
 | Who may send (**required**) | `SEND_ALLOWED_USERS`: the accounts allowed to send, as user ids or sign-in emails, comma-separated, or `*` for every signed-in account. **Unset = nobody sends.** Sign-up is open and the messages go out from your provider accounts, so list your shops' accounts rather than using `*` |
+
+| Invoice links (optional) | `RECEIPT_URL`: the address of `receipt.html` on your site, e.g. `https://<you>.github.io/hangtag/receipt.html` (https, no query). With WhatsApp, `WHATSAPP_LINK_PARAM=on` when the approved template has a 5th value `{{5}}` for the link. |
+
+The invoice-link page needs the `receipt` function, deployed **without** JWT verification (it is called with the
+project's publishable key and the token is its only key):
+
+```bash
+supabase functions deploy receipt --no-verify-jwt --project-ref <your-project-ref>
+```
 
 WhatsApp counts as set up only with its template: WhatsApp accepts free text a business starts but doesn't deliver
 it, so the function never sends it. Without a WhatsApp provider the app opens WhatsApp on the device instead.

@@ -1,5 +1,6 @@
 // Keyboard shortcuts and barcode-scanner input.
 import { closeScanner } from '../../features/sales/components/camera-scan.js';
+import { payClosed } from '../../features/sales/components/payment-sheet.js';
 import { store } from '../../shared/state/store.js';
 import { edAddOption, edAddValues } from '../../features/products/components/product-editor.js';
 import { prod } from '../../features/products/services/catalog.js';
@@ -41,7 +42,7 @@ export function installKeyboard(){
     if(e.key==="Escape"){
       if(store.scan){closeScanner();e.preventDefault();return}
       if(!$("#acctMenu").hidden)return;
-      if($("#modalHost").innerHTML){if(store.editor||store.billImport)return; /* the product editor only closes with Cancel or ×, so work is never lost by accident */ store.payState=null;store.lineDisc=null;closeModal();e.preventDefault();return}
+      if($("#modalHost").innerHTML){if(store.editor||store.billImport)return; /* the product editor only closes with Cancel or ×, so work is never lost by accident */ if(store.payState)payClosed();store.payState=null;store.lineDisc=null;closeModal();e.preventDefault();return}
       if(store.pick&&store.pick.target==="exchange"){store.pick=null;renderReturnSheet();e.preventDefault();return}
       if(store.pick||store.billOpen||$("#sheetHost").innerHTML){store.retState=null;closeSheets();e.preventDefault()}hideTip();return;
     }

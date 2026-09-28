@@ -39,12 +39,17 @@ export async function initSupabaseOnce(){
     // Send queued offline work first (bills, stock, returns, product changes), then pull the latest
     await flushSbQueue();
     await pullFromSupabase(false);
+    connectedHooks.forEach(f => { try{ Promise.resolve(f()).catch(e => logger.warn("After connecting:", e)); }catch(e){ logger.warn("After connecting:", e); } });
     return true;
   }catch(e){
     logger.error("Failed to connect to Supabase:", e);
     store.sbStatus = "error"; store.sbErrorText = userMessage(e, "Unexpected error."); store.mode = "standalone"; renderSync(); return false;
   }
 }
+/* Work that needs the cloud and runs each time the app connects (registered by app/main.js): open provider payments,
+   hand-checked UPI to verify, receipts waiting to be sent */
+export const connectedHooks = [];
+export const onConnected = f => { connectedHooks.push(f); };
 /* Registered once at start-up (app/main.js): while connected, work still queued (e.g. waiting on another upload, or after
    a server error) is tried again every 30 seconds, without waiting for the next change */
 export function installSyncRetryTimer(){

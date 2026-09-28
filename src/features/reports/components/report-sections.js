@@ -6,12 +6,11 @@ import { STORE, sortEvents } from '../../../domain/events/event.js';
 import { store } from '../../../shared/state/store.js';
 import { D } from '../../inventory/services/ledger.js';
 import { dayBounds } from '../../finance/services/books-data.js';
-import { byRate, gstFor } from '../services/gst-data.js';
+import { exportGst, filingFor, filingTables, gstFor } from '../services/gst-data.js';
 import { ICON } from '../../../shared/constants/icons.js';
 import { $, esc } from '../../../shared/dom.js';
-import { dayKey } from '../../../shared/formatting/dates.js';
+import { dayKey, hhmm } from '../../../shared/formatting/dates.js';
 import { inrx } from '../../../shared/formatting/money.js';
-import { periodRange } from '../services/report-data.js';
 
 const row=(a,b,note)=>`<div class="row"><span>${a}${note?` <small class="note">${note}</small>`:""}</span><span class="tnum">${b}</span></div>`;
 /* The figures and what each one means (K: kstats) */
@@ -47,29 +46,30 @@ export function gstCardHTML(R){
   if(!G.invoices.length&&!G.creditNotes.length&&!G.cancelled.length) return `<p class="muted">No invoices in this period.</p>`;
   return `<div class="bookkpis"><div><span>Taxable value</span><b>${inrx(N.taxable)}</b></div><div><span>CGST + SGST</span><b>${inrx(N.cgst+N.sgst)}</b></div><div><span>IGST</span><b>${inrx(N.igst)}</b></div><div class="hl"><span>Total GST</span><b>${inrx(N.tax)}</b></div></div>
     <p class="note">${G.invoices.length} invoice${G.invoices.length===1?"":"s"} (B2B ${G.b2b.count}, B2C ${G.b2c.count}) · ${G.creditNotes.length} credit note${G.creditNotes.length===1?"":"s"}${G.cancelled.length?` · ${G.cancelled.length} cancelled (left out)`:""}${G.issues.length?` · <b>${G.issues.length} to check</b>`:""}</p>
-    <div class="setactions"><button class="btn xs" data-act="gstview">Open GST report</button><button class="btn xs" data-act="gstcsv">Download GST CSV</button></div>`;
+    <div class="setactions"><button class="btn xs" data-act="gstview">GST filing (month)</button><button class="btn xs" data-act="gstcsv">Download GST CSV</button></div>`;
 }
 const tbl=(hd,rows)=>`<div class="tw"><table class="tbl"><thead><tr>${hd.map(x=>`<th>${esc(x)}</th>`).join("")}</tr></thead><tbody>${rows.length?rows.map(r=>`<tr>${r.map(x=>`<td>${esc(x)}</td>`).join("")}</tr>`).join(""):`<tr><td colspan="${hd.length}">None</td></tr>`}</tbody></table></div>`;
-/* The full GST report for the period, in a sheet */
+/* GST filing preparation for a month, in a sheet: pick the month, check, then export (CSV, Excel, PDF, JSON) */
 export function openGstView(){
-  const R=periodRange(), G=gstFor(R.from,R.to), N=G.totals;
-  const t=o=>[inrx(o.taxable),inrx(o.cgst),inrx(o.sgst),inrx(o.igst),inrx(o.tax)];
-  const place=d=>d.pos?d.pos+" "+(d.posName||""):"—";
-  $("#modalHost").innerHTML=`<div class="scrim" data-modal-scrim><div class="sheet billview wide" role="dialog" aria-modal="true" aria-label="GST report">
-    <div class="sh-head"><div class="sh-t"><h3>GST report</h3><p>${esc(R.label)}</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
-    <p class="note">${esc(G.disclaimer)}</p>
-    ${G.issues.length?`<div class="setsec"><h4>Check before filing</h4>${G.issues.map(x=>`<p class="note">${ICON.warn} ${esc(x.text)}</p>`).join("")}</div>`:""}
-    <div class="setsec"><h4>Totals</h4>${tbl(["","Documents","Taxable","CGST","SGST","IGST","GST"],[["Invoices",G.invoices.length,...t(N.invoices)],["Credit notes",G.creditNotes.length,...t(N.creditNotes)],["Net","",...t(N.net)],["B2B (net)",G.b2b.count,...t(G.b2b)],["B2C (net)",G.b2c.count,...t(G.b2c)]])}</div>
-    <div class="setsec"><h4>By rate (net)</h4>${tbl(["Rate","Taxable","CGST","SGST","IGST","GST"],G.rates.map(r=>[r.rate+"%",...t(r)]))}</div>
-    <div class="setsec"><h4>HSN summary (net)</h4>${tbl(["HSN","Qty","Taxable","CGST","SGST","IGST","GST"],G.hsn.map(h=>[h.hsn||"(none)",h.q,...t(h)]))}</div>
-    <div class="setsec"><h4>B2B invoices</h4>${tbl(["Invoice","Date","Customer","GSTIN","Place of supply","Taxable","GST","Value"],G.invoices.filter(i=>i.b2b).map(i=>[i.no,dayKey(i.t),i.customer,i.gstin,place(i),inrx(i.taxable),inrx(i.tax),inrx(i.total)]))}</div>
-    <div class="setsec"><h4>B2C by place of supply and rate (net)</h4>${tbl(["Place of supply","Rate","Taxable","CGST","SGST","IGST"],G.b2cByPlace.map(p=>[place(p),p.rate+"%",inrx(p.taxable),inrx(p.cgst),inrx(p.sgst),inrx(p.igst)]))}</div>
-    <div class="setsec"><h4>Credit notes</h4>${tbl(["Credit note","Date","Invoice","Customer","Rates","Taxable","GST","Value"],G.creditNotes.map(c=>[c.no||"—",dayKey(c.t),c.invoiceNo,c.customer||"Walk-in",byRate(c.lines).map(l=>l.rate+"%").join(", "),inrx(c.taxable),inrx(c.tax),inrx(c.total)]))}</div>
-    <div class="setsec"><h4>Documents issued</h4>${tbl(["Document","From","To","Count","Cancelled"],[["Invoices",G.docs.invoices.first,G.docs.invoices.last,G.docs.invoices.count,G.docs.invoices.cancelled],["Credit notes",G.docs.creditNotes.first,G.docs.creditNotes.last,G.docs.creditNotes.count,0]])}</div>
-    ${G.cancelled.length?`<div class="setsec"><h4>Cancelled invoices (left out)</h4>${tbl(["Invoice","Date","Value"],G.cancelled.map(i=>[i.no,dayKey(i.t),inrx(i.total)]))}</div>`:""}
-    <div class="setactions"><button class="btn sm primary" data-act="gstcsv">Download GST CSV</button><button class="btn sm" data-modal-close>Close</button></div>
+  const X=filingFor(), {P,G,F,last}=X, N=G.totals, gstin=(store.profile||{}).gstin||"";
+  const tables=filingTables(X,{gstin}), fmt=v=>typeof v==="number"&&!Number.isInteger(v)?v.toFixed(2):v;
+  const exports=(store.settings.gstExports||[]).filter(x=>x.period===P.month).slice(0,5);
+  const scroll=$("#gstSheet")?$("#gstSheet").scrollTop:0;
+  $("#modalHost").innerHTML=`<div class="scrim" data-modal-scrim><div class="sheet billview wide" id="gstSheet" role="dialog" aria-modal="true" aria-label="GST filing preparation">
+    <div class="sh-head"><div class="sh-t"><h3>GST filing preparation</h3><p>${esc(P.label)}${gstin?" · GSTIN "+esc(gstin):" · add your GSTIN in Settings"}</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
+    <div class="setactions"><label class="f" style="margin:0"><span class="lab">Month</span><input type="month" id="gstMonth" value="${esc(P.month)}"></label></div>
+    <p class="note">${esc(G.disclaimer)} Invoices are counted by invoice date and credit notes by credit note date.</p>
+    <div class="bookkpis"><div><span>Taxable (net)</span><b>${inrx(N.net.taxable)}</b></div><div><span>CGST + SGST</span><b>${inrx(N.net.cgst+N.net.sgst)}</b></div><div><span>IGST</span><b>${inrx(N.net.igst)}</b></div><div class="hl"><span>Total GST</span><b>${inrx(N.net.tax)}</b></div></div>
+    <div class="setsec"><h4>${F.checks.length?`Check before filing (${F.checks.length})`:"Checks"}</h4>${F.checks.length?F.checks.map(x=>`<p class="note" data-gstcheck="${esc(x.kind)}">${ICON.warn} ${esc(x.text)}</p>`).join(""):`<p class="note">No problems found in ${esc(P.label)}.</p>`}</div>
+    ${tables.filter(t=>t.name!=="Checks").map(t=>`<div class="setsec"><h4>${esc(t.name)}</h4>${tbl(t.head,t.rows.map(r=>r.map(fmt)))}</div>`).join("")}
+    <div class="setsec"><h4>Exports of ${esc(P.label)}</h4>${exports.length?exports.map(x=>`<div class="retline">${esc(dayKey(x.t))} ${esc(hhmm(x.t))} · ${esc(x.format.toUpperCase())} · GST ${inrx(x.totals.tax)} on ${inrx(x.totals.taxable)}${x.digest!==F.digest?" · <b>changed since</b>":""}</div>`).join(""):`<p class="note">Not exported yet.</p>`}</div>
+    <div class="setactions"><button class="btn sm primary" data-gstexp="xlsx">Excel</button><button class="btn sm" data-gstexp="pdf">PDF</button><button class="btn sm" data-gstexp="csv">CSV</button><button class="btn sm" data-gstexp="json">JSON (GSTR-1 sections)</button><button class="btn sm" data-modal-close>Close</button></div>
+    ${last?`<p class="note">Last exported ${esc(dayKey(last.t))} ${esc(hhmm(last.t))} (${esc(last.format.toUpperCase())}).</p>`:""}
   </div></div>`;
+  const sh=$("#gstSheet"); if(sh&&scroll) sh.scrollTop=scroll;
 }
+export function gstMonthChosen(v){ if(!v) return; store.gstView={month:v}; openGstView(); }
+export async function gstExport(format){ if(await exportGst(format)) openGstView(); }
 /* Reports for everything, the store only, or one event */
 export function eventFilterHTML(){
   const evs=sortEvents(Object.values(store.events||{})); if(!evs.length) return "";

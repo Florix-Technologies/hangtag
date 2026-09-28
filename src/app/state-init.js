@@ -30,6 +30,16 @@ export function initState(){
   store.syncReview = storage.get("hangtag_sync_review",[]);    // uploads the database refused, kept for review (never dropped silently)
   if(!Array.isArray(store.syncReview)) store.syncReview=[];
   store.settings = Object.assign({},DEFAULT_SETTINGS,objOr(storage.get("rc_settings",{}),{}));
+  store.payPending = objOr(storage.get("hangtag_pay_pending",null),null);   // a provider payment (UPI QR / card link) still open when the app closed
+  store.payConfig = null;       // what the payment provider can take ({ upi, cardLink }), once asked
+  store.unmatched = null;       // money the provider received that isn't on a bill (loaded in Books)
+  store.deliveryQueue = storage.get("hangtag_delivery_queue",[]);   // receipts to send automatically (sent when online, retried)
+  if(!Array.isArray(store.deliveryQueue)) store.deliveryQueue=[];
+  store.cashMoves = objOr(storage.get("rc_cash_moves",{}),{});   // cash without a bill: opening float, cash in / out, expenses (by id)
+  store.dayCloses = objOr(storage.get("rc_day_closes",{}),{});   // day closes: expected, counted, difference (by id)
+  store.cashForm = null;        // the cash entry / day close sheet
+  store.voidForm = null;        // cancelling a bill: its reason
+  store.gstView = null;         // the GST filing view: { month } or { from, to }
   store.cartCust = storage.get("rc_cartcust",null);            // customer on the bill being rung up
   store.logo = storage.get("rc_logo","") || "";                // shop logo for receipts (small data URL; synced as hangtag_meta "logo")
   store.printer = printerOf(storage.get("rc_printer",null));    // this device's receipt printer (not synced: each till has its own)

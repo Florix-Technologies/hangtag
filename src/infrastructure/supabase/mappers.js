@@ -24,7 +24,7 @@ export const rowToItem = i => Object.assign({ p:i.product_id, v:i.variant_id||un
 export function rowToSale(s, items, payments){
   const sale = { id:s.id, no:s.bill_no||undefined, t:Number(s.timestamp), items:items||[], sub:s.subtotal, disc:numOr0(s.discount), total:s.total,
     tax:numOr0(s.tax_amount), taxRate:s.tax_rate==null?0:+s.tax_rate, taxIncl:s.tax_inclusive!==false, credit:s.credit||0,
-    kind:s.kind||"sale", ex:s.exchange_id||null, pay:s.payment_method, dev:s.device_id, void:s.is_void, ...(s.event_id ? { event:s.event_id } : {}),
+    kind:s.kind||"sale", ex:s.exchange_id||null, pay:s.payment_method, dev:s.device_id, void:s.is_void, ...(s.event_id ? { event:s.event_id } : {}), ...(s.is_void && s.void_reason ? { voidReason:s.void_reason } : {}),
     cust:s.customer_id||s.customer_name?Object.assign({id:s.customer_id||null,name:s.customer_name||"",phone:s.customer_phone||""},
       s.customer_gstin?{gstin:s.customer_gstin}:{}, s.customer_type==="business"?{type:"business"}:{}):null };
   if(s.gst_mode) Object.assign(sale, { itemDisc:numOr0(s.item_discount), billDiscAmt:numOr0(s.bill_discount),
@@ -50,9 +50,13 @@ export const saleItemRows = s => (s.items||[]).map((i,k)=>{ const d = normalizeD
   gst_rate:i.gst==null?null:i.gst, cgst_amount:i.cgst||0, sgst_amount:i.sgst||0, igst_amount:i.igst||0, line_total:i.lt==null?null:i.lt, hsn:i.hsn||null }; });
 /* A bill's payments (one row per method; bills from before split payments have one) */
 export const paymentRows = s => paymentsOf(s).map(p => ({ id:p.id, sale_id:s.id, method:p.method, amount:p.amount,
-  tendered:p.method==="cash" ? (p.received==null ? p.amount : p.received) : null, change_given:p.change||0, reference:p.ref||null, t:s.t, device_id:s.dev||store.dev }));
+  tendered:p.method==="cash" ? (p.received==null ? p.amount : p.received) : null, change_given:p.change||0, reference:p.ref||null, t:s.t, device_id:s.dev||store.dev,
+  verification:p.verification||"recorded", via:p.method==="cash" ? null : p.via||null, intent_id:p.intent||null, provider_payment_id:p.providerRef||null,
+  card_last4:p.method==="card" && p.last4 ? p.last4 : null }));
 export const rowToPayment = r => Object.assign({ id:r.id, method:r.method, amount:+r.amount },
-  r.method==="cash" ? { received:r.tendered==null ? +r.amount : +r.tendered, change:numOr0(r.change_given) } : {}, r.reference ? { ref:r.reference } : {});
+  r.method==="cash" ? { received:r.tendered==null ? +r.amount : +r.tendered, change:numOr0(r.change_given) } : {}, r.reference ? { ref:r.reference } : {},
+  r.verification ? { verification:r.verification } : {},
+  r.via ? { via:r.via } : {}, r.intent_id ? { intent:r.intent_id } : {}, r.provider_payment_id ? { providerRef:r.provider_payment_id } : {}, r.card_last4 ? { last4:r.card_last4 } : {});
 /* One bill for RPC hangtag_save_sales */
 export const billArgs = s => ({ sale:Object.assign(saleRow(s), { is_void:!!s.void }), items:saleItemRows(s), payments:paymentRows(s) });
 /* options column: { opts:[{name, values}], colors, sizes } — colors/sizes are copies for older app versions */
@@ -95,14 +99,23 @@ export const rowToReturnItem = i => Object.assign({ ln:i.sale_line_no, v:i.varia
   // the GST reversed on the line (returns saved since credit notes)
   i.taxable_value!=null ? { tx:num(i.taxable_value), gst:numOr0(i.gst_rate), cgst:numOr0(i.cgst_amount), sgst:numOr0(i.sgst_amount), igst:numOr0(i.igst_amount), hsn:i.hsn||"" } : {});
 export const rowToReturn = (r, items) => Object.assign({ id:r.id, sale:r.sale_id, t:Number(r.t), kind:r.kind||"return", ex:r.exchange_id||null, refund:numOr0(r.refund_amount),
-  pay:r.refund_method||"cash", value:numOr0(r.value), note:r.note||"", dev:r.device_id, items:items||[] }, r.credit_no ? { no:r.credit_no } : {}, +r.round_off ? { ro:+r.round_off } : {});
+  pay:r.refund_method||"cash", value:numOr0(r.value), note:r.note||"", dev:r.device_id, items:items||[] }, r.credit_no ? { no:r.credit_no } : {}, +r.round_off ? { ro:+r.round_off } : {},
+  r.provider_refund_id ? { providerRefund:r.provider_refund_id } : {});
 /* An event (Event Mode) */
+/* ---------- cash without a bill, and day closes ---------- */
+export const cashMoveRow = m => ({ id:m.id, type:m.type, amount:m.amount, reason:m.reason||"", category:m.category||null, reverses:m.reverses||null,
+  t:m.t, device_id:m.dev||store.dev, event_id:m.event||null });
+export const rowToCashMove = r => Object.assign({ id:r.id, type:r.type, amount:+r.amount, reason:r.reason||"", t:+r.t, dev:r.device_id||"" },
+  r.category ? { category:r.category } : {}, r.reverses ? { reverses:r.reverses } : {}, r.event_id ? { event:r.event_id } : {});
+export const dayCloseRow = c => ({ id:c.id, day:c.day, scope:c.scope, expected:c.expected, counted:c.counted, difference:c.diff, note:c.note||"", t:c.t, device_id:c.dev||store.dev });
+export const rowToDayClose = r => ({ id:r.id, day:String(r.day).slice(0,10), scope:r.scope, expected:+r.expected, counted:+r.counted, diff:+r.difference, note:r.note||"", t:+r.t, dev:r.device_id||"" });
 export const eventRow = e => ({ id:e.id, name:e.name, start_date:e.start, end_date:e.end, location:e.place||null, status:e.status==="closed"?"closed":"active",
   created_t:e.t||null, updated_at:new Date().toISOString() });
 export const rowToEvent = r => ({ id:r.id, name:r.name, start:String(r.start_date||"").slice(0,10), end:String(r.end_date||"").slice(0,10), place:r.location||"",
   status:r.status==="closed"?"closed":"active", t:Number(r.created_t)||Date.parse(r.created_at)||0 });
 /* A bill sent to its customer (hangtag_deliveries, written by the send-receipt Edge Function) */
-export const rowToDelivery = r => ({ id:r.id, saleId:r.sale_id, channel:r.channel, to:r.recipient, status:r.status, provider:r.provider||"", providerId:r.provider_message_id||"", error:r.error||"", t:Date.parse(r.created_at)||0 });
+export const rowToDelivery = r => ({ id:r.id, saleId:r.sale_id, channel:r.channel, to:r.recipient, status:r.status, provider:r.provider||"", providerId:r.provider_message_id||"", error:r.error||"",
+  mode:r.mode||"manual", t:Date.parse(r.created_at)||0, ...(r.delivered_at ? { deliveredAt:Date.parse(r.delivered_at) } : {}) });
 export const rowToCustomer = r => ({ id:r.id, name:r.name, phone:r.phone||"", email:r.email||"", gstin:r.gstin||"", type:r.customer_type==='business'?'business':'individual', t:Date.parse(r.created_at)||0 });
 
 /* ---------- supplier bill imports ---------- */

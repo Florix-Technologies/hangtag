@@ -4,8 +4,7 @@ import { makeSbClient } from './client.js';
 import { toAppError } from './errors.js';
 import { AppError, ERROR_CODES } from '../../shared/errors/app-error.js';
 import { sbFetchAll, sbOk } from './query.js';
-import { billArgs, custRow, eventRow, moveRow, productRow, returnArgs, rowToCustomer, rowToDelivery, rowToEvent, rowToItem, rowToMove, rowToPayment, rowToProduct,
-  rowToImport, rowToReturn, rowToReturnItem, rowToSale, rowToVariant, variantRows } from './mappers.js';
+import { billArgs, cashMoveRow, custRow, dayCloseRow, eventRow, moveRow, productRow, returnArgs, rowToCashMove, rowToCustomer, rowToDayClose, rowToDelivery, rowToEvent, rowToImport, rowToItem, rowToMove, rowToPayment, rowToProduct, rowToReturn, rowToReturnItem, rowToSale, rowToVariant, variantRows } from './mappers.js';
 
 export function createCloudGateway({ getClient, url, key, storageKey }){
   const db = () => getClient();
@@ -30,6 +29,28 @@ export function createCloudGateway({ getClient, url, key, storageKey }){
     },
   };
 
+  /* An Edge Function's answer, or an AppError the app can act on (the function's own refusal, or the platform's when the
+     function isn't deployed / the sign-in is refused) */
+  async function callFunction(name, body, what){
+    let r;
+    try{ r = await db().functions.invoke(name, { body }); }
+    catch(e){ throw toAppError(e); }
+    if(!r.error && r.data && r.data.ok !== false && !r.data.error) return r.data;
+    let info = null;
+    try{ info = r.error && r.error.context && typeof r.error.context.json === "function" ? await r.error.context.json() : (r.data || null); }catch{ info = null; }
+    const msg = info && info.message, code = info && info.error, status = r.error && r.error.context && r.error.context.status;
+    const E = (c, m) => new AppError(c, m, { cause: r.error, details: info });
+    if(code === "not_configured") throw E(ERROR_CODES.NOT_CONFIGURED, msg || `${what} isn't set up yet.`);
+    if(code === "unauthorized" || (!code && status === 401)) throw E(ERROR_CODES.AUTH, "Sign in again.");
+    if(code === "provider_error") throw E(ERROR_CODES.DELIVERY, msg || "The provider didn't accept the request.");
+    if(code === "conflict") throw E(ERROR_CODES.CONFLICT, msg || "That was already done.");
+    if(code === "not_found") throw E(ERROR_CODES.NOT_FOUND, msg || "It wasn't found.");
+    if(code === "server_error") throw E(ERROR_CODES.NETWORK, msg || "The server couldn't do it. Try again.");
+    if(code) throw E(ERROR_CODES.VALIDATION, msg || "The request was refused.");
+    if(r.error && (status === 404 || /relay|404|not found/i.test(String(r.error.message || "")))) throw E(ERROR_CODES.NOT_CONFIGURED, `${what} isn't set up yet.`);
+    if(r.error) throw toAppError(r.error);
+    throw E(ERROR_CODES.UNKNOWN, "The server's answer wasn't understood.");
+  }
   return {
     /* A new client for this app's project; supabase-js keeps the session under storageKey */
     createClient: () => makeSbClient({ url, key, storageKey }),
@@ -71,7 +92,8 @@ export function createCloudGateway({ getClient, url, key, storageKey }){
     /* A bill with its lines and payments, all or nothing (RPC hangtag_save_sales: the database refuses payments that
        don't add up to the amount due, and posts the financial transactions and cash / bank book entries itself) */
     async saveSale(sale){ sbOk(await db().rpc('hangtag_save_sales', { p_bills: [billArgs(Object.assign({}, sale, { void:false }))] })); },
-    async setSaleVoid(id, isVoid){ sbOk(await table('hangtag_sales').update({ is_void: isVoid }).eq('id', id)); },
+    /* Cancelling a bill needs a reason (kept with it); restoring clears it */
+    async setSaleVoid(id, isVoid, reason){ sbOk(await table('hangtag_sales').update({ is_void: isVoid, void_reason: isVoid ? String(reason || "").slice(0, 200) || null : null }).eq('id', id)); },
     /* index = the product's position in the list (its sort order) */
     async saveProduct(p, index){
       sbOk(await table('hangtag_products').upsert(productRow(p, index)));
@@ -96,6 +118,9 @@ export function createCloudGateway({ getClient, url, key, storageKey }){
     async saveEvent(e){ sbOk(await table('hangtag_events').upsert(eventRow(e))); },
     /* The database refuses deleting an event that has bills */
     async deleteEvent(id){ sbOk(await table('hangtag_events').delete().eq('id', id)); },
+    /* Cash entries are never changed: a repeat upload of the same entry does nothing */
+    async saveCashMove(m){ sbOk(await table('hangtag_cash_moves').upsert(cashMoveRow(m), { onConflict:'owner_id,id', ignoreDuplicates:true })); },
+    async saveDayClose(c){ sbOk(await table('hangtag_day_closes').upsert(dayCloseRow(c))); },
     async saveSettings(settings){ sbOk(await table('hangtag_meta').upsert({ key:'settings', value:settings, updated_at:new Date().toISOString() })); },
     /* The shop logo for receipts (a small data URL), or empty to remove it */
     async saveLogo(dataUrl){
@@ -127,6 +152,8 @@ export function createCloudGateway({ getClient, url, key, storageKey }){
     },
     fetchCustomers: async () => (await sbFetchAll(db(), 'hangtag_customers', ['created_at','id'])).map(rowToCustomer),
     fetchEvents: async () => (await sbFetchAll(db(), 'hangtag_events', ['start_date','id'])).map(rowToEvent),
+    fetchCashMoves: async () => (await sbFetchAll(db(), 'hangtag_cash_moves', ['t','id'])).map(rowToCashMove),
+    fetchDayCloses: async () => (await sbFetchAll(db(), 'hangtag_day_closes', ['day','id'])).map(rowToDayClose),
     /* The saved settings object, or null */
     async fetchSettings(){
       const { data } = sbOk(await table('hangtag_meta').select('value').eq('key','settings').maybeSingle());
@@ -177,6 +204,18 @@ export function createCloudGateway({ getClient, url, key, storageKey }){
       if(r.error) throw toAppError(r.error);
       return r.data;
     },
+    /* Edge Function payment-gateway (Razorpay UPI QR / card link intents; the keys stay in the function):
+       body { action, ... } → its answer. Throws an AppError: NOT_CONFIGURED, VALIDATION, CONFLICT, NOT_FOUND, AUTH,
+       DELIVERY (the provider refused), NETWORK. */
+    paymentIntent: body => callFunction("payment-gateway", body, "Verified payments"),
+    /* send-receipt: ask the providers what happened to a bill's messages (delivered / failed) → { updated } */
+    deliveryRefresh: saleId => callFunction("send-receipt", { action:"refresh", sale_id:saleId }, "Sending bills"),
+    /* send-receipt: the bill's secure invoice link (made once, kept 12 months) → { url, token, expiresAt } */
+    invoiceLink: saleId => callFunction("send-receipt", { action:"link", sale_id:saleId }, "Invoice links"),
+    /* Stops every invoice link of a bill from working */
+    async revokeInvoiceLinks(saleId){
+      sbOk(await table('hangtag_invoice_links').update({ revoked_at:new Date().toISOString() }).eq('sale_id', saleId).is('revoked_at', null));
+    },
     /* Earlier imports with the same file fingerprint or invoice number (newest first) */
     async findImports({ fileHash, invoiceNo }){
       const cols = "id,file_hash,file_name,supplier_name,supplier_gstin,invoice_no,invoice_date,units,created_at";
@@ -200,12 +239,12 @@ export function createCloudGateway({ getClient, url, key, storageKey }){
       let r;
       try{ r = await db().functions.invoke("send-receipt", { body: { action: "send", ...body } }); }
       catch(e){ throw toAppError(e); }
-      if(!r.error && r.data && r.data.status === "sent" && r.data.provider_message_id) return r.data;
+      if(!r.error && r.data && (r.data.status === "sent" || r.data.status === "delivered") && r.data.provider_message_id) return r.data;
       let info = null;
       try{ info = r.error && r.error.context && typeof r.error.context.json === "function" ? await r.error.context.json() : (r.data || null); }catch{ info = null; }
       const msg = info && info.message, status = r.error && r.error.context && r.error.context.status;
       if(info && info.error === "not_configured") throw new AppError(ERROR_CODES.NOT_CONFIGURED, msg || "Sending isn't set up yet.", { cause: r.error, details: info });
-      if(info && ["missing_contact","cancelled","rate_limited","not_found","bad_request","bad_channel","too_long"].includes(info.error)) throw new AppError(ERROR_CODES.VALIDATION, msg || "The bill couldn't be sent.", { cause: r.error, details: info });
+      if(info && ["missing_contact","cancelled","rate_limited","not_found","bad_request","bad_channel","too_long","busy"].includes(info.error)) throw new AppError(ERROR_CODES.VALIDATION, msg || "The bill couldn't be sent.", { cause: r.error, details: info });
       if(info && info.error === "unauthorized") throw new AppError(ERROR_CODES.AUTH, "Sign in again to send bills.", { cause: r.error, details: info });
       if(info && info.error === "provider_error") throw new AppError(ERROR_CODES.DELIVERY, msg || "The message wasn't accepted.", { cause: r.error, details: info });
       // not the function's own answer: the platform's (function not deployed, sign-in rejected)

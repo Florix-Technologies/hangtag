@@ -8,6 +8,7 @@ import { eventFilterHTML, gstCardHTML, movementHTML, profitHTML, summaryHTML } f
 import { eventsCardHTML } from '../../events/components/events-view.js';
 import { paymentSummary, profitSummary } from '../../../domain/reports/sales-report.js';
 import { bankCardHTML, cashCardHTML } from '../../finance/components/books-view.js';
+import { reconcileCardHTML } from '../../finance/components/reconcile-view.js';
 import { D } from '../../inventory/services/ledger.js';
 import { productLeft, stockOf } from '../../inventory/services/stock.js';
 import { thumb } from '../../products/components/thumb.js';
@@ -122,6 +123,7 @@ export function renderReport(){
     <div class="card span-4"><div class="card-h"><h3>How customers paid</h3></div>${payHTML(live,rets,R)}</div>
     <div class="card span-6"><div class="card-h"><h3>Cash book</h3><span class="note">Cash in and out, with the balance</span></div>${cashCardHTML(R)}</div>
     <div class="card span-6"><div class="card-h"><h3>Bank book</h3><span class="note">UPI and card payments</span></div>${bankCardHTML(R)}</div>
+    <div class="card span-12" id="reconcileCard"><div class="card-h"><h3>Reconciliation</h3><span class="note">UPI to verify and money received that isn't on a bill</span></div>${reconcileCardHTML(R)}</div>
     <div class="card span-7"><div class="card-h"><div><h3>Summary</h3><span class="note">What each figure means is next to it</span></div><button class="btn xs" data-act="sumcsv">Download summary CSV</button></div>${summaryHTML(K,PS)}</div>
     <div class="card span-5"><div class="card-h"><h3>GST</h3><span class="note">Invoices less credit notes</span></div>${gstCardHTML(R)}</div>
     <div class="card span-7"><div class="card-h"><h3>Gross profit</h3><span class="note">Sales minus the cost of the pieces sold</span></div>${profitHTML(lines)}</div>

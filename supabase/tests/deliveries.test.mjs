@@ -56,8 +56,10 @@ r = await ins(A, 's1', 'whatsapp', 'sent', null, { to: '+919845012345', provider
 check('"sent" without the provider\'s message id is refused (no false success)', /hangtag_deliveries_sent_check/.test(r.err || ''), r);
 r = await ins(A, 's1', 'fax', 'sent', 'x');
 check('only email, WhatsApp and SMS', /channel_check|violates check/.test(r.err || ''), r);
-r = await ins(A, 's1', 'email', 'delivered', 'x');
-check('only pending / sent / failed (delivery to the inbox is not claimed)', /status_check|violates check/.test(r.err || ''), r);
+r = await ins(A, 's1', 'email', 'read', 'x');
+check('only pending / sent / delivered / failed', /status_check|violates check/.test(r.err || ''), r);
+r = await ins(A, 's1', 'sms', 'delivered', null, { to: '+919845012345', provider: 'twilio' });
+check('"delivered" only with the provider message id (the provider reported it)', /hangtag_deliveries_sent_check/.test(r.err || ''), r);
 // the function's flow: take a place as "pending", then finish the row
 r = await asService(db, `INSERT INTO public.hangtag_deliveries (owner_id, sale_id, channel, recipient, status, provider) VALUES ($1,'s2','email','riya@mail.in','pending','resend') RETURNING id`, [A]);
 const pid = r.r && r.r.rows[0].id;

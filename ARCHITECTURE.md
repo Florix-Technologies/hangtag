@@ -186,6 +186,9 @@ export const archiveProduct = (pid, on) => productRepository().setArchived(pid, 
 | `inventoryImportService` | `infrastructure/repositories/local-first-stock-import.js` → RPC `hangtag_import_stock` | `features/inventory/use-cases/import-supplier-bill.js` |
 | `receiptPrinter` | `infrastructure/printing/epson-epos.js` (Epson ePOS-Print; logo via `raster.js`) | `features/printing/use-cases/print-receipt.js` |
 | `messageDelivery` | `infrastructure/messaging/delivery-client.js` → Edge Function `send-receipt` | `features/delivery/repositories/delivery-service.js` |
+| `returnRepository` / `eventRepository` | `infrastructure/repositories/local-first-return-repository.js` / `…-event-repository.js` | `features/returns`, `features/events` |
+| `paymentGateway` | `infrastructure/payments/payment-gateway-client.js` → Edge Function `payment-gateway` (Razorpay) | `features/sales/use-cases/provider-payment.js` |
+| `cashRepository` | `infrastructure/repositories/local-first-cash-repository.js` | `features/finance/repositories/cash-repository.js` |
 
 `app/main.js` calls `installContainer()` and `installNavigation()` before anything reads storage or renders. The
 rest of start-up keeps the original order.
@@ -261,19 +264,32 @@ subtotal (Σ q × price)
 ```text
 Cash / UPI / Card button (or C / U / K) → payment screen (features/sales/components/payment-sheet.js)
   shows subtotal, discount, taxable amount, GST, round off and grand total; Paid, Balance and Change
-  one method: cash with "amount received" (and quick amounts) → change; UPI or card with an optional reference
-  Split: an amount per method ("Rest" fills the balance), cash received for change, references
+  one method: cash with "amount received" (and quick amounts) → change;
+    UPI: verified QR through the provider (payment-gateway function) or checked by hand (shop UPI QR + UTR, required);
+    card: card machine (reference required, last 4 optional) or a verified card payment link
+  Split: an amount per method ("Rest" fills the balance), cash received for change, references or a QR / link per part
   → settlePayments(due, parts): each part a known method, once per method, ≥ 0, at most 2 decimals, together exactly
     what is due; only cash may be handed over in excess (the rest is change)
   → checkout(parts) → newSaleRecord → recordSale (this device first) → outbox → RPC hangtag_save_sales
 ```
 
-- `checkout(method)` still pays the whole amount due in one method (the keyboard path and the tests use it).
-- A bill's `payments` are `[{ id: "<bill id>:<method>", method, amount, received?, change?, ref? }]`. Its `pay` is the
-  method, or `"split"`.
+- `checkout(method | { method, ref, last4 })` pays the whole amount due in one method (the keyboard path and the tests).
+- A bill's `payments` are `[{ id: "<bill id>:<method>", method, amount, verification, via?, received?, change?, ref?,
+  last4?, intent?, providerRef? }]`. Its `pay` is the method, or `"split"`.
+- **Verification** (`domain/sales/payments.js`): `verified` (the provider confirmed a captured payment of exactly the
+  amount: `via` `qr` / `link`, with the intent id), `recorded` (cash; card machine with its reference) or `unverified`
+  (UPI checked by hand with its UTR). A reference that looks like a card number (13-19 digits passing Luhn) is refused;
+  only the last 4 digits of a card are ever kept. Bills saved before this count as `recorded`.
 - Bills saved before split payments have no `payments`: `paymentsOf(sale)` gives them one payment, in their method,
   for what was due (`total − credit`). An exchange covered by its credit has no payment.
-- There is no payment gateway: UPI and card payments are recorded, not charged.
+- **Provider payments** (`features/sales/use-cases/provider-payment.js`, port `paymentGateway` →
+  `infrastructure/payments/payment-gateway-client.js` → Edge Function `payment-gateway`, Razorpay): the bill id is fixed
+  when the first QR / link is made (`checkout(parts, { id })`), the payment screen polls the intent every 3 s and
+  completes the bill by itself once it is `verified`. Closing the screen cancels open intents (money that still arrives
+  becomes an **unmatched receipt**). An intent open when the app closes is kept (`hangtag_pay_pending`) and shown
+  again. `payment-webhook` records payments that arrive while no phone is watching. Hand-checked UPI is matched with
+  the provider's payments (same amount and bank reference) once its bill has uploaded: on connect and from Reports →
+  Reconciliation.
 
 ### Financial transactions, cash book and bank book
 
@@ -283,10 +299,11 @@ return with a refund ──1 financial transaction ──1 cash book entry (cash
 ```
 
 - `domain/finance/books.js` derives them:
-  - `financialTransactions(sales, returns)`: ids `ft:<payment id>` and `ft:<return id>`, each naming its bill;
+  - `financialTransactions(sales, returns, cashMoves)`: ids `ft:<payment id>`, `ft:<return id>` and `ft:<cash entry id>`;
   - `cashBook(txns, { from, to })`: the opening balance, entries with the balance after each, cash sales (what stays in
     the drawer), cash received, change given, refunds and the closing balance;
-  - `bankBook(txns, { from, to })`: UPI and card receipts, refunds and references;
+  - `bankBook(txns, { from, to })`: UPI and card receipts, refunds and references, with each receipt's verification and
+    the unverified UPI shown apart (`upiUnverified`);
   - `reconcileSale(sale, txns)`: whether a bill's receipts match what was due.
 - A cancelled bill keeps its entries, marked `cancelled`, and they leave every balance. Restoring it posts them again.
 - `features/finance/services/books-data.js` runs these over this device's bills and returns, so the books work
@@ -294,6 +311,17 @@ return with a refund ──1 financial transaction ──1 cash book entry (cash
   the full lists. The bill view lists a bill's payments and whether they match.
 - The database posts the very same entries with the same ids (below). `supabase/tests/payments.test.mjs` checks that
   the two agree.
+
+### Cash without a bill and closing the day (spec 007)
+
+- `domain/finance/cash-moves.js`: opening float, cash in, cash out, expense (category from the shop's editable list)
+  and reversal. Entries are never edited or deleted: a mistake gets one reversal for the whole entry, with a reason.
+- `features/finance/use-cases/cash-moves.js` (port `cashRepository` →
+  `infrastructure/repositories/local-first-cash-repository.js`): entries and day closes are kept on the device and
+  queued (`cashmove`, `dayclose`; a reversal waits for its entry). The cash book includes them next to cash sales and
+  refunds; expected closing cash = opening + cash sales − refunds + in − out − expenses (± reversals). A day is closed
+  for the shop or one device with the counted cash; an entry arriving later marks it **changed after close**.
+- Expenses made while selling at an event count in that event's summary (profit after expenses).
 
 ### Reconciliation
 
@@ -306,6 +334,10 @@ return with a refund ──1 financial transaction ──1 cash book entry (cash
   per transaction, so retries and re-uploads never duplicate anything.
 - **Checks:** `reconcileSale` in the app; rows 10–13 of the migration report in the database (every bill's payments
   match, every payment and refund is posted, every transaction is in a book).
+- **Reports → Reconciliation** lists UPI not verified yet (with "Check with the provider") and unmatched receipts from
+  the provider (refund through Razorpay, or mark paid back / allocated).
+- **Cancelling a bill** needs a reason (kept as `hangtag_sales.void_reason`); a month already exported for GST is
+  warned about.
 
 ### Database relationships (schema.sql section 3e)
 
@@ -327,6 +359,21 @@ Triggers:
 
 Every table has the "Own rows only" RLS policy. Indexes: `(owner_id, sale_id)` on transactions (reconciliation and
 cancelling) and `(owner_id, t)` on both books (read in date order).
+
+### Database relationships (schema.sql section 3h)
+
+| Table / column | Keys and rules | Written by |
+|---|---|---|
+| `hangtag_payment_intents` | `id`; unique `(owner_id, provider, provider_intent_id)`; status created / pending / verified / failed / cancelled / expired / unmatched; resolution of unmatched receipts | payment-gateway, payment-webhook only (the app can read) |
+| `hangtag_payments` + `verification`, `via`, `intent_id`, `provider_payment_id`, `card_last4` | `verified` only with a verified intent of the same shop, method and amount (trigger); one intent pays one part; never downgraded by `hangtag_save_sales` | the RPC |
+| `hangtag_bank_book.verification` | copied from the payment | trigger |
+| `hangtag_deliveries` + `mode` (manual / auto), `delivered`, `delivered_at` | one `auto` send per bill and channel (partial unique index) | send-receipt |
+| `hangtag_invoice_links` | `token` (32 random bytes); 12 months; `revoked_at` (the app may set only this) | send-receipt; read by `receipt` |
+| `hangtag_cash_moves` | `(owner_id, id)`; expense ⇔ category; reversal ⇔ `reverses`, once, for the whole entry (trigger) | the app (insert only: never changed) |
+| `hangtag_day_closes` | `(owner_id, id)`; unique `(owner_id, day, scope)`; difference = counted − expected | the app |
+| `hangtag_sales.void_reason` | only on a cancelled bill; kept when the phone uploads it again, cleared on restore | the app |
+
+Migration report rows 17–19 check verified payments, one automatic receipt per channel and reversals.
 
 ## Bills out: invoices, receipts, sending and printing
 
@@ -394,7 +441,17 @@ Send button → sendInvoice (features/delivery/use-cases/send-invoice.js)
   or too many messages is `VALIDATION`. Each is shown with its reason and nothing is marked sent.
 - **WhatsApp without a provider, or on a walk-in bill,** opens WhatsApp on this device with the bill typed in
   (`wa.me`); the person presses Send. It's shown as "WhatsApp opened", never as sent, and not recorded.
-- The bill view lists what was sent (`hangtag_deliveries`, read-only for the app) and the latest attempt.
+- The bill view lists what was sent (`hangtag_deliveries`, read-only for the app) and the latest attempt; "Check
+  delivery" asks Twilio / Resend whether it arrived (`delivered`). "Copy invoice link" / "Revoke links" manage the
+  bill's secure link.
+- **Sending by itself** (spec 009, `features/delivery/use-cases/auto-delivery.js`): Settings → Payments and receipts
+  turns WhatsApp, SMS and email on (off until the server can send them). At checkout ("Send the receipt", on by
+  default, can be turned off for one sale) `autoDeliveryPlan` picks WhatsApp (with SMS as its fallback) or SMS, and
+  email. Jobs wait on the device (`hangtag_delivery_queue`) until online and the bill has uploaded, go out with
+  `auto: true` (the server sends each bill once per channel), are retried after temporary failures (5 tries within
+  30 minutes) and show on the bill as queued / sending / sent / failed.
+- **Secure invoice links** (`RECEIPT_URL`): SMS and WhatsApp carry `receipt.html#<token>`; the page asks the public
+  `receipt` function for that one bill (figures as saved, logo, CANCELLED when voided).
 
 ### Printing on an Epson thermal printer
 
@@ -438,6 +495,20 @@ Print → printReceipt (features/printing/use-cases/print-receipt.js)
 bill sets its records' `sale_id` to null (`ON DELETE SET NULL (sale_id)`), so the log and the hourly count can't be
 erased that way; deleting the account removes everything. Indexes:
 `(owner_id, sale_id, created_at)` for a bill's history and `(owner_id, created_at)` for the hourly limit.
+
+## GST filing preparation (spec 013)
+
+- `domain/gst/gst-report.js` builds the GST report of a period from the tax **saved** on each bill line and return
+  line (never recalculated); `domain/gst/filing.js` turns a month of it into the sections of the monthly return:
+  B2B invoice-wise, B2C large (inter-state, no GSTIN, above `settings.b2clLimit`, default ₹1,00,000), B2C others by
+  place of supply and rate (net of their credit notes), credit notes to registered (CDNR) and unregistered (CDNUR)
+  buyers, nil-rated supplies, HSN by rate, documents issued per series (gaps, duplicates, out-of-order numbers), the
+  checks before filing, and `gstr1Json` (the same figures as a structured dataset).
+- Reports → GST card → **GST filing (month)** (`features/reports/components/report-sections.js` `openGstView`): pick
+  the month, check, export **Excel** (`shared/utils/xlsx.js`), **PDF** (`shared/utils/pdf.js`), **CSV** or **JSON**.
+  Each export is logged in the shop settings (`gstExports`: time, device, format, totals, a fingerprint of the month's
+  documents), so a later change to the month is flagged. Every screen and file says Hangtag prepares data for filing
+  and does not file returns.
 
 ## State
 
@@ -539,6 +610,11 @@ an `AppError`.
   The test hook is installed only under `test`. The module needs no `window`, so unit tests import it in Node.
 - **Never in the frontend:** the service-role key, OCR/extraction provider keys, or any other secret. Server-side
   secrets belong in Supabase Edge Function secrets, called through `infrastructure/supabase`.
+- Edge Function secrets by function: `extract-bill` (its README), `send-receipt` (email / SMS / WhatsApp providers,
+  `SEND_ALLOWED_USERS`, optional `RECEIPT_URL`, `WHATSAPP_LINK_PARAM`), `payment-gateway` / `payment-webhook`
+  (`RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `PAYMENT_ALLOWED_USERS`, `RAZORPAY_WEBHOOK_SECRET`, optional
+  `PAYMENT_CARD_LINK=off`). `receipt` and `payment-webhook` are deployed with `--no-verify-jwt` (a token / a signature
+  is their key); the others keep JWT verification on.
 
 ## Security
 
@@ -582,6 +658,7 @@ after changing any file under `src/`, and commit the updated `sw.js` with it.**
 | Database | `supabase/tests` | Schema, RLS isolation, triggers and migrations, on PGlite with Supabase stubs. `payments.test.mjs`: the 3e upgrade, the bill RPC, payment rules, posting, cancelling, refunds, isolation, and that the database and `domain/finance/books.js` give the same entries |
 | Integration (app ↔ cloud) | `tests/e2e/cloud-roundtrip.test.mjs` | Two devices sync through the real supabase-js against a stand-in PostgREST that rejects unknown columns |
 | Bills out | `tests/unit/billing-output.test.mjs`, `send-receipt.test.mjs`, `supabase/tests/deliveries.test.mjs`, `tests/e2e/billing-output.test.mjs` | The invoice model, thermal layout, messages, the Epson adapter against a fake printer, the send-receipt function and its providers against a fake fetch, the delivery records, and the whole flow in Chrome (logo, invoice, sending, printing, failures) |
+| Payments, receipts, cash, GST filing | `tests/unit/payments-delivery-cash.test.mjs`, `supabase/tests/payments-cash.test.mjs`, `tests/e2e/payments-cash-gst.test.mjs` | Verification rules and the card-number guard; the payment-gateway core (Razorpay states, idempotent confirmations, unmatched money, manual-UPI matching, webhook signature); automatic receipts (plan, retries, fallback, once per channel) and invoice links; cash entries, reversals and day close; GST filing sections, checks, xlsx / PDF / JSON; in the database: verified only with a verified intent, never downgraded, function-only tables, immutable cash entries; in Chrome: QR → verified → bill completes, hand-checked UPI then verified, card machine, automatic SMS, a pending QR after reload, provider refund, cash and day close, cancel with a reason, GST exports |
 | E2E | `tests/e2e` | Sign-in (Google, email, tabs), per-account data, offline queue and service worker, POS flows (variants, returns, exchanges, receipts), shop setup and settings. `checkout-payments.test.mjs`: discounts, GST (CGST + SGST and IGST), cash, UPI, card and split payments on desktop and phone against the real schema, the books, cancel and restore, returns, a second device |
 
 Commands:

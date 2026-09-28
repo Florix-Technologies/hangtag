@@ -40,7 +40,7 @@ if (newHook !== hook) {
 }
 
 // 2. Files the service worker saves (after step 1, so the cache version covers the final files) for offline use: the app shell plus every module and stylesheet.
-const STATIC = ['index.html', 'config.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
+const STATIC = ['index.html', 'receipt.html', 'receipt.js', 'config.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 const shellFiles = [...STATIC.map((f) => path.join(ROOT, f)), ...appFiles];
 const hash = createHash('sha256');
 for (const f of shellFiles) { hash.update(toUrl(f)); hash.update(readFileSync(f)); }

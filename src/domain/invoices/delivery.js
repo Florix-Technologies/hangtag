@@ -24,3 +24,27 @@ export function deliveryTarget(inv,channel){
   const m=mobileE164(inv.buyer.mobile);
   return m?{to:m}:{error:`${inv.buyer.name} has no mobile number${inv.buyer.mobile?" that can get messages":""} in Customers. Add one there to send by ${CHANNEL_LABELS[channel]}.`};
 }
+
+/* ---------- sending automatically when a bill completes ---------- */
+export const AUTO_OFF={whatsapp:false,sms:false,email:false};
+/* Which channels a completed bill goes out on by itself (shop settings `auto`, and `ready`: what the server can send, or
+   null when unknown): WhatsApp when on and the customer has a mobile — with SMS as its fallback when SMS is on too; SMS
+   when WhatsApp is off; email when on and the customer has an email. → [{ channel, fallback? }] */
+export function autoDeliveryPlan(inv,auto,ready){
+  if(!isValidInvoice(inv)||!inv.buyer) return [];
+  const on=c=>!!(auto&&auto[c])&&!(ready&&ready[c]===false), plan=[];
+  if(!deliveryTarget(inv,"sms").error){
+    if(on("whatsapp")) plan.push(on("sms")?{channel:"whatsapp",fallback:"sms"}:{channel:"whatsapp"});
+    else if(on("sms")) plan.push({channel:"sms"});
+  }
+  if(on("email")&&!deliveryTarget(inv,"email").error) plan.push({channel:"email"});
+  return plan;
+}
+/* Temporary failures are tried again: at most 5 attempts, within 30 minutes of the first. → when to try next, or null */
+export const RETRY_DELAYS=[60e3,2*60e3,5*60e3,10*60e3];
+export const MAX_ATTEMPTS=5, RETRY_WINDOW=30*60e3;
+export function nextAttemptAt(job,now){
+  if((job.attempts||0)>=MAX_ATTEMPTS) return null;
+  const at=now+RETRY_DELAYS[Math.min(Math.max(0,(job.attempts||1)-1),RETRY_DELAYS.length-1)];
+  return at-(job.first==null?now:job.first)>RETRY_WINDOW?null:at;
+}

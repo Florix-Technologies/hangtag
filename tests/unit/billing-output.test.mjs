@@ -36,14 +36,14 @@ const lines = () => [{ v: 'p1:M', p: 'p1', name: 'Kurta – Blue', c: '', s: 'M'
 const put = (s) => { store.localDays.today_d1_0.sales.push(s); store._d = null; return s; };
 // B2B customer in Karnataka: IGST; split payment
 store.cartCust = { id: 'c1', name: 'Blr Traders', phone: '98450 12345' };
-const due1 = (() => { const s = newSaleRecord(lines(), { type: 'fixed', value: 50 }, 'card'); return s.total; })();
+const due1 = (() => { const s = newSaleRecord(lines(), { type: 'fixed', value: 50 }, { method: 'card', ref: 'APPR1' }); return s.total; })();
 const b2b = put(newSaleRecord(lines(), { type: 'fixed', value: 50 }, [{ method: 'cash', amount: 1000, received: 1500 }, { method: 'upi', amount: due1 - 1000, ref: 'UTR998877' }]));
 // walk-in, same state (CGST + SGST), cash
 store.cartCust = null;
 const walk = put(newSaleRecord([{ v: 'p2:', p: 'p2', name: 'Cap', q: 1, price: 500 }], null, 'cash'));
 // no GST shop setting: a plain invoice
 store.settings.taxOn = false;
-const noGst = put(newSaleRecord([{ v: 'p2:', p: 'p2', name: 'Cap', q: 2, price: 500 }], null, 'upi'));
+const noGst = put(newSaleRecord([{ v: 'p2:', p: 'p2', name: 'Cap', q: 2, price: 500 }], null, { method: 'upi', ref: '412345678901' }));
 store.settings.taxOn = true;
 // a bill saved before line discounts / GST split (legacy shape)
 const legacy = { id: 'old1', no: 'INV-250101-001', t: Date.parse('2025-01-01T10:00:00Z'), items: [{ ln: 0, p: 'p2', n: 'Cap', c: '', s: '', q: 2, price: 525 }], sub: 1050, disc: 50, tax: 48, taxRate: 5, taxIncl: true, total: 1000, credit: 0, pay: 'cash', cust: null };
@@ -177,7 +177,7 @@ const gw = createCloudGateway({ getClient: () => fnClient, url: 'https://x.supab
 const dc = createDeliveryClient({ cloud: gw });
 invokeAnswer = { data: { ok: true, status: 'sent', recipient: 'a@b.in', provider: 'resend', provider_message_id: 're_1' }, error: null };
 const okSend = await dc.send({ channel: 'email', saleId: 's1' });
-check('sent: the provider\'s id comes back; the request names only the bill and channel (the server writes the message)', eq(okSend, { status: 'sent', to: 'a@b.in', provider: 'resend', id: 're_1' }) && eq(fnCalls[0], { name: 'send-receipt', body: { action: 'send', channel: 'email', sale_id: 's1' } }));
+check('sent: the provider\'s id comes back; the request names only the bill and channel (the server writes the message)', eq(okSend, { status: 'sent', to: 'a@b.in', provider: 'resend', id: 're_1', again: false }) && eq(fnCalls[0], { name: 'send-receipt', body: { action: 'send', channel: 'email', sale_id: 's1' } }));
 const sendErr = async () => { try { await dc.send({ channel: 'sms', saleId: 's1' }); return null; } catch (e) { return e; } };
 invokeAnswer = { data: { ok: true, status: 'sent' }, error: null };
 check('an answer without a message id is not a send', (await sendErr()).code === C.DELIVERY);

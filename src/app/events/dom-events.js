@@ -22,7 +22,7 @@ import { photoFromFile } from '../../features/products/use-cases/product-photo.j
 import { openBillView } from '../../features/receipts/components/bill-view.js';
 import { downloadReceipt, shareReceipt, whatsappReceipt } from '../../features/receipts/services/receipt-output.js';
 import { onPrint } from '../../features/printing/components/print-actions.js';
-import { onSend } from '../../features/delivery/components/send-actions.js';
+import { onDeliveryRefresh, onInvoiceLink, onRevokeLinks, onSend } from '../../features/delivery/components/send-actions.js';
 import { renderReport, showTable } from '../../features/reports/pages/report-page.js';
 import { exportCsv } from '../../features/reports/services/csv-export.js';
 import { openReturn, renderReturnSheet, saveReturn } from '../../features/returns/components/return-sheet.js';
@@ -31,15 +31,18 @@ import { closeSheets, renderBill, renderBillSheet, updateBillTotals } from '../.
 import { addPicked, openPicker, renderPicker, setPickQty } from '../../features/sales/components/variant-picker.js';
 import { renderGrid } from '../../features/sales/pages/sell-page.js';
 import { addOne, availOf, removeLine, setLineQty } from '../../features/sales/services/cart.js';
-import { unvoid, voidSale } from '../../features/sales/use-cases/checkout.js';
+import { unvoid } from '../../features/sales/use-cases/checkout.js';
+import { openVoidForm, submitVoidForm, voidFormChange } from '../../features/sales/components/void-form.js';
 import { setBillDiscount } from '../../features/sales/use-cases/discounts.js';
 import { applyLineDiscount, lineDiscountInput, lineDiscountType, openLineDiscount } from '../../features/sales/components/discount-sheet.js';
-import { completePayment, openPayment, payInput, payMode, payQuick, payRest } from '../../features/sales/components/payment-sheet.js';
+import { cashFormChange, openCashForm, submitCashForm } from '../../features/finance/components/cash-form.js';
+import { checkUnverified, loadUnmatched, resolveUnmatched } from '../../features/finance/components/reconcile-view.js';
+import { completePayment, openPayment, payClosed, payInput, payIntent, payMode, payQuick, payRest, paySend, payVia } from '../../features/sales/components/payment-sheet.js';
 import { openBook } from '../../features/finance/components/books-view.js';
 import { enqueue, flushSbQueue } from '../../features/sync/services/outbox.js';
 import { openSyncPanel, syncDiscard, syncNow, syncRetry } from '../../features/sync/components/sync-panel.js';
 import { chooseSellingAt, deleteEventAction, eventStatusAction, openEventForm, openEventSummary, submitEventForm } from '../../features/events/components/events-view.js';
-import { openGstView } from '../../features/reports/components/report-sections.js';
+import { gstExport, gstMonthChosen, openGstView } from '../../features/reports/components/report-sections.js';
 import { exportGstCsv } from '../../features/reports/services/gst-data.js';
 import { exportSummaryCsv } from '../../features/reports/services/summary-export.js';
 import { closeModal } from '../../shared/components/modal.js';
@@ -67,7 +70,7 @@ export function installDomEvents(){
     const addv=t.closest("[data-addv]");if(addv){addOne(addv.dataset.addv);store.sellQuery="";const si=$("#sellSearch");if(si)si.value="";renderGrid();return}
     if(t.matches("[data-scrim]")){if(t.matches("[data-paid]")){closeSheets();return}if(store.pick&&store.pick.target==="exchange"){store.pick=null;renderReturnSheet();return}store.retState=null;closeSheets();return}
     if(store.billImport&&t.closest("[data-billimp]")&&billImportClick(t))return;
-    if(t.matches("[data-modal-scrim]")||t.closest("[data-modal-close]")){if(t.matches("[data-editor]")&&store.editor)return;if(t.matches("[data-billimp]")&&store.billImport)return;store.payState=null;store.lineDisc=null;store.syncOpen=false;store.evForm=null;closeModal();return}
+    if(t.matches("[data-modal-scrim]")||t.closest("[data-modal-close]")){if(t.matches("[data-editor]")&&store.editor)return;if(t.matches("[data-billimp]")&&store.billImport)return;if(store.payState)payClosed();store.payState=null;store.lineDisc=null;store.syncOpen=false;store.evForm=null;store.cashForm=null;store.voidForm=null;closeModal();return}
     // sync panel
     const sr=t.closest("[data-syncretry]");if(sr){syncRetry(+sr.dataset.syncretry);return}
     const sd=t.closest("[data-syncdiscard]");if(sd){if(sd.dataset.confirm){syncDiscard(+sd.dataset.syncdiscard)}else{sd.dataset.confirm="1";sd.textContent="Tap again to discard"}return}
@@ -77,6 +80,11 @@ export function installDomEvents(){
     const pm=t.closest("[data-paymode]");if(pm&&store.payState){payMode(pm.dataset.paymode);return}
     const prs=t.closest("[data-payrest]");if(prs&&store.payState){payRest(prs.dataset.payrest);return}
     const pq=t.closest("[data-payquick]");if(pq&&store.payState){payQuick(pq.dataset.payquick);return}
+    const cf=t.closest("[data-cashform]");if(cf){openCashForm(cf.dataset.cashform);return}
+    const ge=t.closest("[data-gstexp]");if(ge){gstExport(ge.dataset.gstexp);return}
+    const um=t.closest("[data-unm]");if(um){resolveUnmatched(um.dataset.unm);return}
+    const pvia=t.closest("[data-payvia]");if(pvia&&store.payState){payVia(pvia.dataset.payvia);return}
+    const pi=t.closest("[data-payintent]");if(pi&&!pi.disabled&&store.payState){payIntent(pi.dataset.payintent);return}
     const ld=t.closest("[data-linedisc]");if(ld){openLineDiscount(+ld.dataset.linedisc);return}
     const ldt=t.closest("[data-ldtype]");if(ldt&&store.lineDisc){lineDiscountType(ldt.dataset.ldtype);return}
     const dty=t.closest("[data-disctype]");if(dty&&!dty.disabled){const d=store.disc||{value:""};setBillDiscount({type:dty.dataset.disctype,value:d.value});const w=dty.closest(".bp-foot"),id=w&&w.querySelector("[data-disc]")&&w.querySelector("[data-disc]").id;renderAll();if(store.billOpen)renderBillSheet();const i=id&&document.getElementById(id);if(i)i.focus();return}
@@ -93,11 +101,14 @@ export function installDomEvents(){
     const pr=t.closest("[data-print]");if(pr){onPrint(pr.dataset.print);return}
     const pb=t.closest("[data-printbrowser]");if(pb){onPrint(pb.dataset.printbrowser,{browser:true});return}
     const dl=t.closest("[data-dlreceipt]");if(dl){downloadReceipt(dl.dataset.dlreceipt);return}
+    const il=t.closest("[data-invlink]");if(il){onInvoiceLink(il.dataset.invlink);return}
+    const ir=t.closest("[data-invrevoke]");if(ir){onRevokeLinks(ir.dataset.invrevoke);return}
+    const dr=t.closest("[data-dlrefresh]");if(dr){onDeliveryRefresh(dr.dataset.dlrefresh);return}
     const snd=t.closest("[data-send]");if(snd&&!snd.disabled){const i=snd.dataset.send.indexOf(":");onSend(snd.dataset.send.slice(i+1),snd.dataset.send.slice(0,i));return}
     const sh=t.closest("[data-share]");if(sh){shareReceipt(sh.dataset.share);return}
     const wa=t.closest("[data-wa]");if(wa){whatsappReceipt(wa.dataset.wa);return}
-    const us=t.closest("[data-undosale]");if(us){closeSheets();voidSale(us.dataset.undosale);return}
-    const v=t.closest("[data-void]");if(v){if(v.dataset.confirm){closeModal();voidSale(v.dataset.void)}else{v.dataset.confirm="1";v.textContent="Tap again to cancel the bill";setTimeout(()=>{if(v.isConnected){delete v.dataset.confirm;v.textContent="Cancel bill"}},3000)}return}
+    const us=t.closest("[data-undosale]");if(us){closeSheets();openVoidForm(us.dataset.undosale);return}
+    const v=t.closest("[data-void]");if(v){openVoidForm(v.dataset.void);return}
     const uv=t.closest("[data-unvoid]");if(uv){closeModal();unvoid(uv.dataset.unvoid);return}
     const rt=t.closest("[data-return]");if(rt){openReturn(rt.dataset.return);return}
     // returns / exchanges
@@ -177,6 +188,8 @@ export function installDomEvents(){
       case "evnew":openEventForm(null);break;
       case "gstview":openGstView();break;
       case "gstcsv":exportGstCsv();break;
+      case "verifyupi":checkUnverified(false);break;
+      case "unmatched":loadUnmatched();break;
       case "sumcsv":exportSummaryCsv();break;
       case "syncnow":syncNow();break;
       case "exadd":openProductChooser("exchange");break;
@@ -207,6 +220,8 @@ export function installDomEvents(){
     if(e.target.id==="custForm"){e.preventDefault();saveCustomerForm(e.target);return}
     if(e.target.id==="edForm"){e.preventDefault();return}
     if(e.target.id==="evForm"){e.preventDefault();submitEventForm(e.target);return}
+    if(e.target.id==="cashForm"){e.preventDefault();submitCashForm(e.target);return}
+    if(e.target.id==="voidForm"){e.preventDefault();submitVoidForm(e.target);return}
   });
   document.addEventListener("change",async e=>{
     const t=e.target;
@@ -218,6 +233,13 @@ export function installDomEvents(){
     if(t.id==="rtReason"&&store.retState){store.retState.reason=t.value;return}
     if(t.matches("[data-rtnfr]")&&store.retState){store.retState.nfr[t.dataset.rtnfr]=t.checked;renderReturnSheet();return}
     if(t.matches("[data-rtkeep]")&&store.retState){store.retState.keepDisc=t.checked;renderReturnSheet();return}
+    if(t.matches("[data-rtprov]")&&store.retState){store.retState.provRefund=t.checked;return}
+    if(t.matches("[data-paysend]")&&store.payState){paySend(t.checked);return}
+    if(t.id==="gstMonth"){gstMonthChosen(t.value);return}
+    if(t.closest&&t.closest("#voidForm")&&t.name==="reason"){voidFormChange(t.form);return}
+    if(t.closest&&t.closest("#cashForm")&&(t.name==="day"||t.name==="scope")){cashFormChange(t.form);return}
+    if(t.id==="rtRef"&&store.retState){store.retState.collectRef=t.value;return}
+    if(t.id==="rtLast4"&&store.retState){store.retState.collectLast4=t.value.replace(/\D/g,"").slice(0,4);return}
     if(t.id==="soReason"&&store.stockOp){store.stockOp.reason=t.value;return}
     if(t.id==="soNote"&&store.stockOp){store.stockOp.note=t.value;return}
     if(t.id==="soCost"&&store.stockOp){store.stockOp.cost=t.value;return}

@@ -61,3 +61,30 @@
   .discwrap input{width:72px;font-size:16px}
   .bk-b{min-width:0}
 }
+
+/* ---------- verified payments: UPI QR / card link, their state; split parts; send the receipt ---------- */
+.payvia{margin:10px 0 8px}
+.pi-box{border:1px solid var(--line);border-radius:14px;padding:12px;margin:8px 0;background:var(--bg);text-align:center}
+.pi-box.ok{border-color:var(--good-ink);background:var(--wash)}
+.pi-box.bad{border-color:var(--warn);background:var(--warn-soft)}
+.pi-qr{display:flex;justify-content:center;margin:4px auto 8px}
+.pi-qr img,.pi-qr svg{width:240px;height:240px;max-width:70vw;max-height:70vw;image-rendering:pixelated;background:#fff;border-radius:8px}
+.pi-qr.small img,.pi-qr.small svg{width:180px;height:180px}
+.pi-st{margin:4px 0;font-weight:700}
+.pi-chip{display:inline-block;font-size:12px;font-weight:700;border-radius:999px;padding:2px 10px;background:var(--warn-soft);color:var(--warn-ink)}
+.pi-acts{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:8px}
+.pi-acts .btn{min-height:40px}
+.pi-off{margin:8px 0}
+.splitpart{margin:0 0 10px 0;padding-left:8px;border-left:3px solid var(--line)}
+.pgrid2{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:10px}
+@media (max-width:420px){.pgrid2{grid-template-columns:1fr}}
+.paysend{margin:10px 0 4px}
+.err.wait{color:var(--warn-ink)}
+.btag.warn{background:var(--warn-soft);color:var(--warn-ink)}
+.btag.ok{background:var(--wash-2);color:var(--good-ink)}
+.bookkpis .warn b{color:var(--warn-ink)}
+.subh{margin:14px 0 6px;font-size:14px}
+.bkrow.um{grid-template-columns:minmax(0,1fr) auto}
+.um-acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.rt-prov{margin:6px 0 0}
+.warnline{color:var(--warn-ink);background:var(--warn-soft);border-radius:10px;padding:8px 10px}

@@ -29,7 +29,7 @@ export function buildInvoice(sale,ctx={}){
   const credit=sale.credit||0, due=Math.max(0,round2(sale.total-credit)), roundOff=sale.roundOff||0;
   const itemDiscount=sale.itemDisc||0, billDisc=normalizeDiscount(sale.billDisc);
   const pays=paymentsOf(sale).map(p=>({method:p.method,label:PAY_LABELS[p.method]||p.method,amount:p.amount,ref:p.ref||"",
-    received:p.method==="cash"?(p.received==null?p.amount:p.received):null,change:p.change||0}));
+    received:p.method==="cash"?(p.received==null?p.amount:p.received):null,change:p.change||0,verification:p.verification||"recorded",last4:p.last4||""}));
   const paid=toRupees(sumP(pays.map(p=>toPaise(p.amount))));
   const rets=(ctx.returns||[]).map(r=>({id:r.id,kind:r.kind||"return",t:r.t,value:r.value||0,refund:r.refund||0,method:r.pay||"",
     label:PAY_LABELS[r.pay]||r.pay||"",items:(r.items||[]).map(i=>({name:i.n,variant:lineLabel(i),qty:i.q}))}));

@@ -1,7 +1,7 @@
 // Profile & shop settings dialog.
 import { store } from '../../../shared/state/store.js';
 import { avatarHTML, closeAcctMenu, methodNames, renderAccount } from './account-menu.js';
-import { billingFormHTML } from './billing-settings.js';
+import { billingFormHTML, refreshPaymentsForm } from './billing-settings.js';
 import { profileFieldsHTML, readProfileForm } from './profile-form.js';
 import { saveShopProfile } from '../use-cases/save-shop-profile.js';
 import { toast } from '../../../shared/components/toast.js';
@@ -32,6 +32,7 @@ export function openSettings(){
   $("#kvId").textContent = store.authUser ? store.authUser.id.slice(0, 8) : "—";
   if(!store.authUser || !navigator.onLine){ const e = $("#profileErr"); e.textContent = "You're offline. Changes can be saved once you're back online."; e.hidden = false; }
   host.querySelector("#ps_full_name").focus({ preventScroll: true });
+  refreshPaymentsForm();   // which channels and payments the server can take, once known
 }
 export function closeSettings(){ $("#modalHost").innerHTML = ""; }
 export async function onProfileSubmit(form){

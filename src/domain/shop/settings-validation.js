@@ -1,4 +1,5 @@
 // Billing and stock settings rules.
+import { checkVpa } from '../sales/upi.js';
 
 /* input: { lowStock, taxOn, taxRate, taxIncl, prefix, paper, footer } as read from the form.
    Returns { error } or { patch } (the settings values to save). */
@@ -8,4 +9,24 @@ export function checkBillingSettings(input){
   if(input.taxOn&&(isNaN(rate)||rate<0||rate>40))return {error:"Enter a GST rate between 0 and 40."};
   const prefix=String(input.prefix||"").trim();if(prefix&&!/^[A-Za-z0-9/_-]{1,10}$/.test(prefix))return {error:"Bill number prefix can use letters, numbers, - / _ only."};
   return {patch:{lowStock:low,prefix,taxOn:!!input.taxOn,taxRate:isNaN(rate)?0:Math.round(rate*100)/100,taxIncl:!!input.taxIncl,paper:input.paper==="a4"?"a4":"80mm",footer:String(input.footer||"").trim()}};
+}
+
+/* input: { upiId, payExpiry, whatsapp, sms, email } as read from the form; ready: which channels the server can send
+   ({ whatsapp, sms, email } or null when unknown). A channel can't be turned on while the server can't send it. */
+export function checkPaymentSettings(input,ready){
+  const v=checkVpa(input.upiId); if(v) return {error:v.error};
+  const exp=Math.round(+input.payExpiry);
+  if(!Number.isFinite(exp)||exp<2||exp>30) return {error:"A QR can stay open from 2 to 30 minutes."};
+  const autoSend={};
+  for(const c of ["whatsapp","sms","email"]){
+    autoSend[c]=!!input[c];
+    if(autoSend[c]&&ready&&ready[c]===false) return {error:`${c==="sms"?"SMS":c==="email"?"Email":"WhatsApp"} isn't set up on the server yet, so it can't be turned on.`};
+  }
+  return {patch:{upiId:String(input.upiId||"").trim(),payExpiry:exp,autoSend}};
+}
+/* input: { b2clLimit } — the invoice value above which an inter-state B2C invoice is "B2C large" */
+export function checkGstSettings(input){
+  const n=+input.b2clLimit;
+  if(!Number.isFinite(n)||n<0||n>100000000) return {error:"Enter the B2C large limit in rupees."};
+  return {patch:{b2clLimit:Math.round(n)}};
 }

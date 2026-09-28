@@ -8,11 +8,17 @@
 // - Each attempt first takes a place in hangtag_deliveries ("pending"), which is what the hourly limit counts; if the
 //   log can't be written or counted, nothing is sent.
 // - "sent" is recorded and returned only when the provider accepted the message and returned its id.
+// - auto: true (the phone sending by itself when the bill completed) goes at most once per bill and channel: a unique index
+//   on the "auto" rows makes a retry or a second phone get the first attempt's answer instead of a second message.
+// - SMS and WhatsApp carry the bill's secure invoice link when RECEIPT_URL is set (hangtag_invoice_links, 12 months).
+// - "refresh" asks Twilio / Resend what happened to the bill's messages (delivered / failed); "link" returns the link.
 // Deploy with JWT verification on (the default).
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { CHANNEL_LABELS, ITEM_COLUMNS, MAX_PER_HOUR, PAYMENT_COLUMNS, PROFILE_COLUMNS, SALE_COLUMNS, allowedToSend, billMessage, configuredChannels,
-  deliveryOutcome, fromName, providerConfig, recipientFor, reservationRow, validateRequest } from "./core.js";
+  deliveryOutcome, fromName, linkRow, linkUrl, liveLink, newToken, providerConfig, providerStatus, receiptBase, recipientFor, reservationRow,
+  validateRequest } from "./core.js";
 import { deliver } from "./providers/index.js";
+import { fetchStatus } from "./providers/status.js";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -42,6 +48,41 @@ Deno.serve(async (req) => {
   const allowed = allowedToSend(user, env());
   if (r.action === "channels") return reply(200, { ok: true, channels: configuredChannels(allowed ? env() : {}) });
   if (!allowed) return reply(503, { ok: false, error: "not_configured", message: "Sending bills isn't turned on for this account." });
+  const admin = createClient(url, service, { auth: { persistSession: false } });
+
+  // the bill's secure link: reused while it works, otherwise a new one (written by this function only)
+  const billLink = async (saleId: string) => {
+    const base = receiptBase(env());
+    if (!base) return "";
+    const { data: rows } = await admin.from("hangtag_invoice_links").select("token,revoked_at,expires_at").eq("owner_id", user.id).eq("sale_id", saleId)
+      .is("revoked_at", null).order("created_at", { ascending: false }).limit(1);
+    const cur = (rows || [])[0];
+    if (cur && liveLink(cur) && Date.parse(cur.expires_at) - Date.now() > 30 * 864e5) return linkUrl(base, cur.token);
+    const row = linkRow({ ownerId: user.id, saleId, token: newToken() });
+    const { error } = await admin.from("hangtag_invoice_links").insert(row);
+    if (error) { console.error("send-receipt: couldn't save the invoice link:", error.message); return ""; }
+    return linkUrl(base, row.token);
+  };
+  if (r.action === "link") {
+    const { data: s } = await db.from("hangtag_sales").select("id").eq("id", r.saleId).maybeSingle();   // the caller's own bill
+    if (!s) return reply(404, { ok: false, error: "not_found", message: "That bill isn't in the cloud yet. Try again once it has uploaded." });
+    const link = await billLink(r.saleId);
+    if (!link) return reply(503, { ok: false, error: "not_configured", message: "Invoice links aren't set up yet (RECEIPT_URL)." });
+    return reply(200, { ok: true, url: link });
+  }
+  if (r.action === "refresh") {
+    const { data: rows } = await db.from("hangtag_deliveries").select("id,channel,provider,provider_message_id,status").eq("sale_id", r.saleId).eq("status", "sent").limit(20);
+    let updated = 0;
+    for (const row of rows || []) {
+      const cfg = providerConfig(row.channel, env());
+      const st = providerStatus(row.provider, await fetchStatus(cfg, row, fetch));
+      const now = new Date().toISOString();
+      const patch = st === "delivered" ? { status: "delivered", delivered_at: now, checked_at: now } : st === "failed" ? { status: "failed", error: "The provider couldn't deliver it.", checked_at: now } : { checked_at: now };
+      const { error } = await admin.from("hangtag_deliveries").update(patch).eq("owner_id", user.id).eq("id", row.id).eq("status", "sent");
+      if (!error && st) updated++;
+    }
+    return reply(200, { ok: true, updated });
+  }
 
   // the bill and its customer, as this user may see them (row security)
   const { data: sale, error: saleErr } = await db.from("hangtag_sales").select(SALE_COLUMNS).eq("id", r.saleId).maybeSingle();
@@ -64,12 +105,22 @@ Deno.serve(async (req) => {
     db.from("hangtag_profiles").select(PROFILE_COLUMNS).eq("id", user.id).maybeSingle(),
   ]);
   if (items.error || payments.error || profile.error) { console.error("send-receipt: couldn't read the bill:", (items.error || payments.error || profile.error)!.message); return unavailable(); }
-  const message = billMessage(r.channel, { sale, items: items.data || [], payments: payments.data || [], shop: profile.data || {}, customer });
+  // sent by itself when the bill completed: once per bill and channel — a repeat gets the first attempt's answer
+  if (r.auto) {
+    const { data: prev } = await admin.from("hangtag_deliveries").select("status,recipient,provider,provider_message_id").eq("owner_id", user.id)
+      .eq("sale_id", sale.id).eq("channel", r.channel).eq("mode", "auto").in("status", ["pending", "sent", "delivered"]).limit(1);
+    const p = (prev || [])[0];
+    if (p && p.status !== "pending") return reply(200, { ok: true, status: p.status, already: true, channel: r.channel, recipient: p.recipient, provider: p.provider, provider_message_id: p.provider_message_id });
+    if (p) return reply(409, { ok: false, error: "busy", message: "This receipt is being sent already." });
+  }
+  const link = r.channel === "email" ? "" : await billLink(sale.id);
+  const message = billMessage(r.channel, { sale, items: items.data || [], payments: payments.data || [], shop: profile.data || {}, customer, link,
+    linkParam: String(Deno.env.get("WHATSAPP_LINK_PARAM") || "").toLowerCase() === "on" });
 
   // written by the function only (the app can read these rows, not write them). Take a place first, then count: if two
   // requests race, both see each other's row, so the limit can't be passed; if the log fails, nothing is sent.
-  const admin = createClient(url, service, { auth: { persistSession: false } });
-  const held = await admin.from("hangtag_deliveries").insert(reservationRow({ ownerId: user.id, saleId: sale.id, channel: r.channel, to: to.to, provider: cfg.name })).select("id").single();
+  const held = await admin.from("hangtag_deliveries").insert(reservationRow({ ownerId: user.id, saleId: sale.id, channel: r.channel, to: to.to, provider: cfg.name, auto: r.auto })).select("id").single();
+  if (held.error && r.auto && /duplicate|unique/i.test(held.error.message || "")) return reply(409, { ok: false, error: "busy", message: "This receipt is being sent already." });
   if (held.error || !held.data) { console.error("send-receipt: couldn't write the delivery log:", held.error && held.error.message); return unavailable(); }
   const heldId: string = held.data.id;
   const release = () => admin.from("hangtag_deliveries").delete().eq("owner_id", user.id).eq("id", heldId);

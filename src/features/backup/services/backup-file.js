@@ -17,7 +17,7 @@ import { toast } from '../../../shared/components/toast.js';
 import { use } from '../../../shared/di/services.js';
 import { $ } from '../../../shared/dom.js';
 import { dayKey } from '../../../shared/formatting/dates.js';
-import { persistLocal, saveCatalog, saveCustomers, saveEvents, saveImgs, saveLogo, saveMoves, saveReturns, storage } from '../../../shared/state/persistence.js';
+import { persistLocal, saveCashMoves, saveCatalog, saveCustomers, saveDayCloses, saveEvents, saveImgs, saveLogo, saveMoves, saveReturns, storage } from '../../../shared/state/persistence.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { objOr } from '../../../shared/utils/objects.js';
 import { logger } from '../../../shared/logging/logger.js';
@@ -35,12 +35,12 @@ const hashOf=text=>use("files").sha256Hex(new Blob([text]));
 export async function buildBackup(){
   const days=Object.assign({},store.remoteDays,store.localDays);
   const data={profile:withoutSecrets(store.profile||null),settings:withoutSecrets(store.settings),catalog:store.catalog,images:store.imgs,days,moves:store.moves,
-    returns:store.returnsMap,customers:store.customers,events:store.events||{},logo:store.logo||""};
+    returns:store.returnsMap,customers:store.customers,events:store.events||{},cashMoves:store.cashMoves||{},dayCloses:store.dayCloses||{},logo:store.logo||""};
   const body=JSON.stringify(data);
   return {app:"hangtag",version:BACKUP_VERSION,exportedAt:new Date().toISOString(),
     shop:{owner:store.authUser&&store.authUser.id||"",name:store.profile&&store.profile.shop_name||""},
     counts:{products:products().length,bills:D().sales.length,returns:Object.keys(store.returnsMap).length,moves:Object.keys(store.moves).length,
-      customers:Object.keys(store.customers).length,events:Object.keys(store.events||{}).length},
+      customers:Object.keys(store.customers).length,events:Object.keys(store.events||{}).length,cashMoves:Object.keys(store.cashMoves||{}).length},
     integrity:{alg:"SHA-256",hash:await hashOf(body)},data};
 }
 export async function downloadBackup(label){
@@ -80,15 +80,16 @@ export function inspectBackup(data,file){
   const keep=(o,ok)=>{const r={};Object.entries(objOr(o,{})).forEach(([k,x])=>{if(ok(x))r[k]=x;else skipped++});return r};
   const moves=keep(bm,m=>m&&m.v), br=keep(data.returns,x=>x&&x.sale&&Array.isArray(x.items)), bc=keep(data.customers,c=>c&&c.name);
   const be=keep(data.events,e=>e&&e.id&&e.name&&e.start&&e.end);
-  return {ok:true,data,file:f,cat:mig.cat,moves,returns:br,customers:bc,events:be,
+  const bcm=keep(data.cashMoves,m=>m&&m.id&&m.type&&+m.amount>0), bdc=keep(data.dayCloses,c=>c&&c.id&&c.day);
+  return {ok:true,data,file:f,cat:mig.cat,moves,returns:br,customers:bc,events:be,cashMoves:bcm,dayCloses:bdc,
     summary:{products:bprods.length,newProducts:bprods.filter(p=>!have.has(p.id)).length,variants:bprods.reduce((a,p)=>a+p.variants.length,0),
       bills,newBills,moves:Object.keys(moves).length,newMoves:Object.keys(moves).filter(k=>!store.moves[k]).length,
       returns:Object.keys(br).length,newReturns:Object.keys(br).filter(k=>!store.returnsMap[k]).length,
       customers:Object.keys(bc).length,newCustomers:Object.keys(bc).filter(k=>!store.customers[k]).length,
-      events:Object.keys(be).length,newEvents:Object.keys(be).filter(k=>!(store.events||{})[k]).length,skipped,
+      events:Object.keys(be).length,newEvents:Object.keys(be).filter(k=>!(store.events||{})[k]).length,cashMoves:Object.keys(bcm).length,newCashMoves:Object.keys(bcm).filter(k=>!(store.cashMoves||{})[k]).length,skipped,
       exportedAt:f.exportedAt||data.exportedAt||"",shop:f.shop&&f.shop.name||"",version:+f.version||0,fromOtherShop:!!(owner&&me&&owner!==me)}};
 }
-const SLICES=["catalog","imgs","moves","returnsMap","customers","events","localDays","logo"];
+const SLICES=["catalog","imgs","moves","returnsMap","customers","events","cashMoves","dayCloses","localDays","logo"];
 /* Every slice as it is now (a deep copy), to go back to if the restore fails */
 const snapshot=()=>JSON.parse(JSON.stringify(Object.fromEntries(SLICES.map(k=>[k,store[k]]).concat([["dirty",[...store.dirty]]]))));
 function putBack(s){
@@ -97,7 +98,7 @@ function putBack(s){
 }
 /* Save every restored slice; false when this device's storage refused one */
 function saveAll(){
-  const r=[saveCatalog(),saveImgs(),saveMoves(),saveReturns(),saveCustomers(),saveEvents(),saveLogo(),persistLocal()];
+  const r=[saveCatalog(),saveImgs(),saveMoves(),saveReturns(),saveCustomers(),saveEvents(),saveCashMoves(),saveDayCloses(),saveLogo(),persistLocal()];
   return r.every(x=>x!==false);
 }
 /* Add the backup's records this device doesn't have (replace: also products on both). Throws on a broken record. */
@@ -111,6 +112,10 @@ function mergeBackup(r,replace){
   Object.entries(r.customers).forEach(([k,c])=>{if(!store.customers[k])store.customers[k]=c});
   if(!store.events) store.events={};
   Object.entries(r.events).forEach(([k,e])=>{if(!store.events[k])store.events[k]=e});
+  if(!store.cashMoves) store.cashMoves={};
+  Object.entries(r.cashMoves||{}).forEach(([k,m])=>{if(!store.cashMoves[k])store.cashMoves[k]=m});
+  if(!store.dayCloses) store.dayCloses={};
+  Object.entries(r.dayCloses||{}).forEach(([k,c])=>{if(!store.dayCloses[k])store.dayCloses[k]=c});
   if(!store.logo&&typeof data.logo==="string"&&data.logo.indexOf("data:image/")===0) store.logo=data.logo;
   let added=0;
   Object.keys(data.days||{}).forEach(id=>{

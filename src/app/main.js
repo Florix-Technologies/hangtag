@@ -19,6 +19,11 @@ import { installPwa } from './pwa.js';
 import { store } from '../shared/state/store.js';
 import { renderAll } from '../shared/ui/render.js';
 import { bootAuth } from '../features/auth/services/session.js';
+import { onConnected } from '../features/sync/services/connection.js';
+import { loadPayConfig } from '../features/sales/use-cases/provider-payment.js';
+import { resumePayment } from '../features/sales/components/payment-sheet.js';
+import { checkUnverified } from '../features/finance/components/reconcile-view.js';
+import { installAutoDelivery, processDeliveryQueue } from '../features/delivery/use-cases/auto-delivery.js';
 import { applyCatalogMigration } from '../features/products/services/catalog.js';
 import { initSupabase } from '../features/sync/services/connection.js';
 import { flushSbQueue } from '../features/sync/services/outbox.js';
@@ -40,6 +45,11 @@ installKeyboard();
 installWindowEvents();
 installBillingSettingsEvents();
 installPwa();
+installAutoDelivery();
+// Each time the cloud connects: a provider payment left open is shown again, hand-checked UPI is matched with the
+// provider, and receipts waiting to go out are sent
+onConnected(async()=>{ await loadPayConfig(true); resumePayment(); await checkUnverified(true); });
+onConnected(()=>processDeliveryQueue());
 renderAll();
 // Sign in, then connect to the cloud database
 

@@ -72,6 +72,8 @@ export function openEventSummary(id){
     <div class="rt-sum">${row("Total sales",inrx(K.total),K.returns?"after "+inrx(K.returns)+" returns":"")}${row("Bills",K.bills)}${row("Pieces",K.pieces)}${row("Net sales (without GST)",inrx(K.netSales))}${row("GST",inrx(S.gst.tax),"CGST "+inrx(S.gst.cgst)+" · SGST "+inrx(S.gst.sgst)+" · IGST "+inrx(S.gst.igst))}
       ${["cash","upi","card"].map(k=>row(PAY_LABELS[k],inrx(S.pay.methods[k].net),S.pay.methods[k].refunds?inrx(S.pay.methods[k].refunds)+" refunded":"")).join("")}
       ${row("Gross profit",P.covered?inrx(P.grossProfit):"—",P.complete?(P.margin==null?"":"margin "+P.margin+"%"):`cost known for ${Math.round(P.coverage*100)}% of sales`)}
+      ${S.expenses.total?row("Expenses paid in cash",inrx(S.expenses.total),S.expenses.byCategory.map(x=>`${x.category} ${inrx(x.amount)}`).join(" · ")):""}
+      ${S.expenses.total&&P.covered?row("Profit after expenses",inrx(P.grossProfit-S.expenses.total),P.complete?"":"gross profit covers only the pieces with a cost"):""}
       ${S.postEventReturns?row("Returns after the event",S.postEventReturns):""}${S.cancelled?row("Cancelled bills (left out)",S.cancelled):""}</div>
     <div class="setsec"><h4>Top products</h4><div class="rt-sum">${list(S.products,x=>x.first.name)}</div></div>
     <div class="setsec"><h4>Top variants</h4><div class="rt-sum">${list(S.variants,x=>x.first.name+(x.first.vl?" · "+x.first.vl:""))}</div></div>

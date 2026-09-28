@@ -73,15 +73,16 @@ check('the order is: subtotal → discount → taxable → GST → round off →
   return P(r.sub) - P(r.disc) === P(r.taxable) && P(r.taxable) + P(r.tax) === P(r.exact) && P(r.exact) + P(r.roundOff) === P(r.total) && r.total % 1 === 0; })());
 
 // ---------- payments ----------
-check('cash, exact: received = amount, no change', eq(settlePayments(1049, [{ method: 'cash', amount: 1049 }]), { ok: true, payments: [{ method: 'cash', amount: 1049, received: 1049, change: 0 }], paid: 1049, received: 1049, change: 0 }));
+check('cash, exact: received = amount, no change', eq(settlePayments(1049, [{ method: 'cash', amount: 1049 }]), { ok: true, payments: [{ method: 'cash', amount: 1049, received: 1049, change: 0, verification: 'recorded' }], paid: 1049, received: 1049, change: 0 }));
 check('cash with ₹2,000 handed over: change ₹951', settlePayments(1049, [{ method: 'cash', amount: 1049, received: 2000 }]).change === 951);
 check('cash handed over is less than the amount → refused', settlePayments(1049, [{ method: 'cash', amount: 1049, received: 1000 }]).error === 'Cash received is less than the cash amount.');
-check('UPI with its reference (no change)', eq(settlePayments(500, [{ method: 'upi', amount: 500, ref: ' 412345678901 ' }]).payments, [{ method: 'upi', amount: 500, ref: '412345678901' }]));
-check('card (reference optional)', eq(settlePayments(500, [{ method: 'card', amount: 500 }]).payments, [{ method: 'card', amount: 500 }]));
-check('a wrong amount: short or over the bill', settlePayments(1000, [{ method: 'upi', amount: 900 }]).error === '₹100 still to pay.' && settlePayments(1000, [{ method: 'upi', amount: 1100 }]).error === "That's ₹100 more than the bill.");
+check('UPI checked by hand, with its reference (no change): unverified', eq(settlePayments(500, [{ method: 'upi', amount: 500, ref: ' 412345678901 ' }]).payments, [{ method: 'upi', amount: 500, via: 'manual', verification: 'unverified', ref: '412345678901' }]));
+check('card on a card machine: its reference is required (spec 006 FR-015), then recorded', settlePayments(500, [{ method: 'card', amount: 500 }]).field === 'ref' && eq(settlePayments(500, [{ method: 'card', amount: 500, ref: 'A1' }]).payments, [{ method: 'card', amount: 500, via: 'terminal', verification: 'recorded', ref: 'A1' }]));
+check('a wrong amount: short or over the bill', settlePayments(1000, [{ method: 'upi', amount: 900, ref: 'U1' }]).error === '₹100 still to pay.' && settlePayments(1000, [{ method: 'upi', amount: 1100, ref: 'U1' }]).error === "That's ₹100 more than the bill.");
 check('a bad reference is refused', !!checkReference('x'.repeat(41)) && !!checkReference('<script>') && checkReference('UTR-12/34') === null && settlePayments(10, [{ method: 'upi', amount: 10, ref: '<b>' }]).field === 'ref');
 // split payments
-const split = (list, due = 1000) => settlePayments(due, list);
+// UPI and card parts carry their references (required for UPI checked by hand and the card machine)
+const split = (list, due = 1000) => settlePayments(due, list.map((a) => (a.method === 'upi' || a.method === 'card') && a.ref === undefined ? { ...a, ref: 'R' + a.method } : a));
 check('split: cash + UPI', split([{ method: 'cash', amount: 400 }, { method: 'upi', amount: 600 }]).ok);
 check('split: cash + card', split([{ method: 'cash', amount: 250.5 }, { method: 'card', amount: 749.5 }]).ok);
 check('split: UPI + card', split([{ method: 'upi', amount: 1 }, { method: 'card', amount: 999 }]).ok);
@@ -144,7 +145,7 @@ check('bill discount: kept as typed; a bad one blocks payment with its reason', 
 check('…and a bill with a bad discount cannot be completed', newSaleRecord(store.cart, store.disc, 'cash').error === "Bill discount: A discount can't be more than 100%.");
 setBillDiscount({ type: 'percent', value: 5 });
 const walkIn = newSaleRecord(store.cart, store.disc, 'cash');
-check('walk-in cash sale: totals, one cash payment for the total, CGST + SGST', walkIn.cust === null && walkIn.pay === 'cash' && eq(walkIn.payments, [{ id: walkIn.id + ':cash', method: 'cash', amount: walkIn.total, received: walkIn.total, change: 0 }])
+check('walk-in cash sale: totals, one cash payment for the total, CGST + SGST', walkIn.cust === null && walkIn.pay === 'cash' && eq(walkIn.payments, [{ id: walkIn.id + ':cash', method: 'cash', amount: walkIn.total, received: walkIn.total, change: 0, verification: 'recorded' }])
   && walkIn.gst.mode === 'intra' && walkIn.igst === 0 && walkIn.itemDisc === 198 && walkIn.billDisc.value === 5 && walkIn.items[0].disc.value === 198 && walkIn.items[0].hsn === '6109' && walkIn.items[0].gst === 12, walkIn);
 check('the saved bill adds up: subtotal − discount = taxable; + GST + round off = total; lines add up', P(walkIn.sub) - P(walkIn.disc) === P(walkIn.taxable) && P(walkIn.taxable) + P(walkIn.tax) + P(walkIn.roundOff) === P(walkIn.total)
   && walkIn.items.reduce((a, i) => a + P(i.lt), 0) === P(walkIn.total) - P(walkIn.roundOff));
@@ -156,9 +157,9 @@ const due = billTotals(store.cart, store.disc).total;
 const sale2 = newSaleRecord(store.cart, store.disc, [{ method: 'upi', amount: 1000, ref: 'U77' }, { method: 'cash', amount: due - 1000, received: due - 900 }]);
 check('customer from another state with a GSTIN: IGST, the customer GSTIN kept on the bill, split UPI + cash with change', sale2.gst.mode === 'inter' && sale2.gst.pos === '29' && sale2.gst.b2b && sale2.cgst === 0 && sale2.igst > 0
   && sale2.cust.gstin === '29ABCDE1234F1Z5' && sale2.cust.type === 'business' && sale2.pay === 'split' && sale2.payments.length === 2 && sale2.payments[1].change === 100, sale2);
-check('an incorrect split total never makes a bill', newSaleRecord(store.cart, store.disc, [{ method: 'upi', amount: 1 }]).error === `₹${(due - 1).toLocaleString('en-IN')} still to pay.`);
+check('an incorrect split total never makes a bill', newSaleRecord(store.cart, store.disc, [{ method: 'upi', amount: 1, ref: 'U1' }]).error === `₹${(due - 1).toLocaleString('en-IN')} still to pay.`);
 store.settings.taxOn = false;
-check('GST off: a non-GST bill (no tax, taxable = amount after discounts)', (() => { const s = newSaleRecord(store.cart, store.disc, 'card'); return s.gst.mode === 'none' && s.tax === 0 && s.taxable === s.sub - s.disc && s.payments[0].method === 'card'; })());
+check('GST off: a non-GST bill (no tax, taxable = amount after discounts)', (() => { const s = newSaleRecord(store.cart, store.disc, { method: 'card', ref: 'A1' }); return s.gst.mode === 'none' && s.tax === 0 && s.taxable === s.sub - s.disc && s.payments[0].method === 'card'; })());
 const ex = newSaleRecord([{ v: 'p2:', p: 'p2', name: 'Cap', q: 1, price: 500 }], null, 'cash', { kind: 'exchange', ex: 'x1', credit: 500, cust: null });
 check('an exchange covered by its credit: nothing to pay, no payment rows', ex.kind === 'exchange' && ex.credit === 500 && eq(ex.payments, []) && ex.pay === 'cash');
 

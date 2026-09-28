@@ -17,9 +17,9 @@ const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 // ---------- requests ----------
 check('channels request', eq(validateRequest({ action: 'channels' }), { ok: true, action: 'channels' }));
-check('a send names only the bill and the channel', eq(validateRequest({ action: 'send', channel: 'email', sale_id: ' s1 ' }), { ok: true, action: 'send', channel: 'email', saleId: 's1' }));
+check('a send names only the bill and the channel', eq(validateRequest({ action: 'send', channel: 'email', sale_id: ' s1 ' }), { ok: true, action: 'send', channel: 'email', saleId: 's1', auto: false }));
 check('message text, HTML, subject or a recipient in a request are ignored (the function writes the message; the customer record is the recipient)',
-  eq(validateRequest({ action: 'send', channel: 'email', sale_id: 's1', to: 'x@evil.in', message: { subject: 'Account locked', html: '<a href="https://phish">', text: 'click' } }), { ok: true, action: 'send', channel: 'email', saleId: 's1' }));
+  eq(validateRequest({ action: 'send', channel: 'email', sale_id: 's1', to: 'x@evil.in', message: { subject: 'Account locked', html: '<a href="https://phish">', text: 'click' } }), { ok: true, action: 'send', channel: 'email', saleId: 's1', auto: false }));
 check('bad requests refused', validateRequest(null).status === 400 && validateRequest({ action: 'send', channel: 'fax', sale_id: 's' }).error === 'bad_channel'
   && validateRequest({ action: 'send', channel: 'sms' }).status === 400 && validateRequest({ action: 'send', channel: 'sms', sale_id: 'x'.repeat(LIMITS.saleId + 1) }).status === 400 && validateRequest({ action: 'nope' }).status === 400);
 
@@ -81,10 +81,10 @@ check('cancelled payments are left out; a huge bill lists the first 200 items an
 
 // ---------- the delivery record: never "sent" without the provider's id ----------
 check('an attempt is first recorded as pending (it counts toward the hourly limit before anything is sent)', eq(reservationRow({ ownerId: 'u', saleId: 's', channel: 'sms', to: '+91', provider: 'twilio' }),
-  { owner_id: 'u', sale_id: 's', channel: 'sms', recipient: '+91', status: 'pending', provider: 'twilio' }));
+  { owner_id: 'u', sale_id: 's', channel: 'sms', recipient: '+91', status: 'pending', provider: 'twilio', mode: 'manual' }));
 check('…and finished as sent only with the provider\'s id', eq(deliveryOutcome({ ok: true, id: 'SM1' }), { status: 'sent', provider_message_id: 'SM1', error: null }) && deliveryOutcome({ ok: true }).status === 'failed' && deliveryOutcome(null).status === 'failed');
 check('sent with the provider id', eq(deliveryRow({ ownerId: 'u', saleId: 's', channel: 'sms', to: '+91', provider: 'twilio', result: { ok: true, id: 'SM1' } }),
-  { owner_id: 'u', sale_id: 's', channel: 'sms', recipient: '+91', status: 'sent', provider: 'twilio', provider_message_id: 'SM1', error: null }));
+  { owner_id: 'u', sale_id: 's', channel: 'sms', recipient: '+91', status: 'sent', provider: 'twilio', mode: 'manual', provider_message_id: 'SM1', error: null }));
 check('ok without an id is recorded as failed', deliveryRow({ ownerId: 'u', saleId: 's', channel: 'sms', to: '+91', provider: 'twilio', result: { ok: true } }).status === 'failed');
 check('failure keeps the provider\'s reason (cut to 300)', (() => { const r = deliveryRow({ ownerId: 'u', saleId: 's', channel: 'email', to: 'a@b.in', provider: 'resend', result: { ok: false, message: 'x'.repeat(400) } }); return r.status === 'failed' && r.error.length === 300 && r.provider_message_id === null; })());
 
@@ -141,7 +141,8 @@ const walk = (d) => fs.readdirSync(d).flatMap((f) => { const p = path.join(d, f)
 const app = [...walk(path.join(ROOT, 'src')), path.join(ROOT, 'index.html'), path.join(ROOT, 'config.js')].map((f) => fs.readFileSync(f, 'utf8')).join('\n');
 check('the app never talks to a messaging provider directly or holds its keys', !/api\.resend\.com|api\.twilio\.com|graph\.facebook\.com|RESEND_API_KEY|TWILIO_AUTH_TOKEN|WHATSAPP_TOKEN/.test(app));
 check('the app never writes the message: the send request carries no text, HTML or subject', !/message:\s*messageFor|message-templates/.test(app)
-  && /send\(\{\s*channel,\s*saleId\s*\}\)/.test(fs.readFileSync(path.join(ROOT, 'src/infrastructure/messaging/delivery-client.js'), 'utf8')));
+  && /send\(\{\s*channel,\s*saleId,\s*auto\s*\}\)/.test(fs.readFileSync(path.join(ROOT, 'src/infrastructure/messaging/delivery-client.js'), 'utf8'))
+  && /sendReceipt\(\{ channel, sale_id: saleId, \.\.\.\(auto \? \{ auto: true \} : \{\}\) \}\)/.test(fs.readFileSync(path.join(ROOT, 'src/infrastructure/messaging/delivery-client.js'), 'utf8')));
 const fn = fs.readFileSync(path.join(ROOT, 'supabase/functions/send-receipt/index.ts'), 'utf8');
 check('the function takes a place under the limit before sending, counts it, and fails closed', fn.indexOf('reservationRow(') < fn.indexOf('count: "exact"') && fn.indexOf('count: "exact"') < fn.indexOf('await deliver(')
   && /countErr \|\| count == null/.test(fn) && /saleErr\) \{[^}]*unavailable\(\)/.test(fn) && /custErr\) \{[^}]*unavailable\(\)/.test(fn) && /count > MAX_PER_HOUR/.test(fn) && /billMessage\(r\.channel/.test(fn) && !/body\.message|\.\.\.r\.message/.test(fn));

@@ -52,3 +52,24 @@ export async function sendInvoice(sid,channel){
     return {error:msg,code:e&&e.code};
   }
 }
+
+/* Asks the providers what happened to the bill's messages (email / SMS say "delivered"), then reloads the history */
+export async function refreshDeliveryStatus(sid){
+  if(!online()) return {error:"You're offline."};
+  try{ await messageDelivery().refresh(sid); }catch(e){ logger.warn("Delivery status:",e); return {error:userMessage(e,"Couldn't check with the providers.")}; }
+  await loadDeliveryHistory(sid);
+  return {ok:true};
+}
+/* The bill's secure invoice link (unguessable, shows only this bill, 12 months) → { url } or { error } */
+export async function invoiceLink(sid){
+  if(!online()) return {error:"You're offline. Invoice links need the internet."};
+  if(store.sbOfflineQueue.some(q=>q.type==="sale"&&q.sale&&q.sale.id===sid)) return {error:"This bill is still uploading. Try again in a moment."};
+  try{ const r=await messageDelivery().link(sid); return r&&r.url?{url:r.url}:{error:"Invoice links aren't set up yet (RECEIPT_URL on the server)."}; }
+  catch(e){ return {error:userMessage(e,"Couldn't make the link.")}; }
+}
+/* Stops every invoice link of the bill from working */
+export async function revokeInvoiceLinks(sid){
+  if(!online()) return {error:"You're offline."};
+  try{ await messageDelivery().revokeLinks(sid); return {ok:true}; }
+  catch(e){ return {error:userMessage(e,"Couldn't revoke the links.")}; }
+}

@@ -913,6 +913,8 @@ CREATE TABLE IF NOT EXISTS public.hangtag_bank_book (
     CONSTRAINT hangtag_bank_book_txn_fkey FOREIGN KEY (owner_id, fin_txn_id) REFERENCES public.hangtag_fin_txns (owner_id, id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_hangtag_bank_book_time ON public.hangtag_bank_book (owner_id, t);
+-- whether a UPI receipt was verified by the payment provider (section 3h), copied from the payment
+ALTER TABLE public.hangtag_bank_book ADD COLUMN IF NOT EXISTS verification TEXT;
 
 -- A bill's payments never add up to more than was due (the total less any exchange credit)
 CREATE OR REPLACE FUNCTION public.hangtag_payments_check()
@@ -959,10 +961,10 @@ BEGIN
             change_given = EXCLUDED.change_given, status = EXCLUDED.status, t = EXCLUDED.t;
     ELSE
         DELETE FROM public.hangtag_cash_book WHERE owner_id = NEW.owner_id AND fin_txn_id = ft;
-        INSERT INTO public.hangtag_bank_book (owner_id, id, fin_txn_id, sale_id, method, entry_type, reference, amount_in, status, t)
-        VALUES (NEW.owner_id, 'bb:' || ft, ft, NEW.sale_id, NEW.method, 'receipt', NEW.reference, NEW.amount, st, NEW.t)
+        INSERT INTO public.hangtag_bank_book (owner_id, id, fin_txn_id, sale_id, method, entry_type, reference, amount_in, status, t, verification)
+        VALUES (NEW.owner_id, 'bb:' || ft, ft, NEW.sale_id, NEW.method, 'receipt', NEW.reference, NEW.amount, st, NEW.t, to_jsonb(NEW) ->> 'verification')
         ON CONFLICT (owner_id, id) DO UPDATE SET method = EXCLUDED.method, reference = EXCLUDED.reference, amount_in = EXCLUDED.amount_in,
-            status = EXCLUDED.status, t = EXCLUDED.t;
+            status = EXCLUDED.status, t = EXCLUDED.t, verification = EXCLUDED.verification;
     END IF;
     RETURN NULL;
 END $$;
@@ -1073,7 +1075,7 @@ BEGIN
             COALESCE(s.cgst_amount, 0), COALESCE(s.sgst_amount, 0), COALESCE(s.igst_amount, 0), COALESCE(s.round_off, 0),
             s.gst_mode, s.place_of_supply, s.customer_gstin, s.customer_type, s.event_id)
         ON CONFLICT (owner_id, id) DO UPDATE SET timestamp = EXCLUDED.timestamp, subtotal = EXCLUDED.subtotal, discount = EXCLUDED.discount,
-            total = EXCLUDED.total, payment_method = EXCLUDED.payment_method, device_id = EXCLUDED.device_id, is_void = EXCLUDED.is_void,
+            total = EXCLUDED.total, payment_method = EXCLUDED.payment_method, device_id = EXCLUDED.device_id, is_void = EXCLUDED.is_void, void_reason = CASE WHEN EXCLUDED.is_void THEN hangtag_sales.void_reason END,
             bill_no = EXCLUDED.bill_no, customer_id = EXCLUDED.customer_id, customer_name = EXCLUDED.customer_name,
             customer_phone = EXCLUDED.customer_phone, tax_rate = EXCLUDED.tax_rate, tax_amount = EXCLUDED.tax_amount,
             tax_inclusive = EXCLUDED.tax_inclusive, kind = EXCLUDED.kind, exchange_id = EXCLUDED.exchange_id, credit = EXCLUDED.credit,
@@ -1100,13 +1102,19 @@ BEGIN
         SELECT x.is_void, GREATEST(x.total - x.credit, 0) INTO voided, due FROM public.hangtag_sales x WHERE x.owner_id = uid AND x.id = s.id;
         DELETE FROM public.hangtag_payments p WHERE p.owner_id = uid AND p.sale_id = s.id
            AND p.id NOT IN (SELECT y ->> 'id' FROM jsonb_array_elements(COALESCE(b -> 'payments', '[]'::jsonb)) y);
-        INSERT INTO public.hangtag_payments (id, sale_id, method, amount, tendered, change_given, reference, status, t, device_id)
+        INSERT INTO public.hangtag_payments (id, sale_id, method, amount, tendered, change_given, reference, status, t, device_id,
+            verification, via, intent_id, provider_payment_id, card_last4)
         SELECT p.id, s.id, p.method, p.amount, p.tendered, COALESCE(p.change_given, 0), NULLIF(btrim(p.reference), ''),
-            CASE WHEN voided THEN 'cancelled' ELSE 'completed' END, COALESCE(p.t, s.timestamp), p.device_id
+            CASE WHEN voided THEN 'cancelled' ELSE 'completed' END, COALESCE(p.t, s.timestamp), p.device_id,
+            COALESCE(p.verification, 'recorded'), p.via, p.intent_id, p.provider_payment_id, NULLIF(btrim(p.card_last4), '')
         FROM jsonb_populate_recordset(NULL::public.hangtag_payments, COALESCE(b -> 'payments', '[]'::jsonb)) p
         ON CONFLICT (owner_id, id) DO UPDATE SET method = EXCLUDED.method, amount = EXCLUDED.amount, tendered = EXCLUDED.tendered,
             change_given = EXCLUDED.change_given, reference = EXCLUDED.reference, status = EXCLUDED.status, t = EXCLUDED.t,
-            device_id = EXCLUDED.device_id;
+            device_id = EXCLUDED.device_id, via = EXCLUDED.via, card_last4 = EXCLUDED.card_last4,
+            -- a payment the provider verified (section 3h) stays verified when the phone uploads the bill again
+            verification = CASE WHEN hangtag_payments.verification = 'verified' THEN 'verified' ELSE EXCLUDED.verification END,
+            intent_id = COALESCE(EXCLUDED.intent_id, hangtag_payments.intent_id),
+            provider_payment_id = COALESCE(EXCLUDED.provider_payment_id, hangtag_payments.provider_payment_id);
         SELECT COALESCE(SUM(amount), 0) INTO paid FROM public.hangtag_payments WHERE owner_id = uid AND sale_id = s.id;
         IF paid <> due THEN
             RAISE EXCEPTION 'The payments on bill % come to % but % is due', COALESCE(s.bill_no, s.id), paid, due USING ERRCODE = 'check_violation';
@@ -1279,6 +1287,185 @@ CREATE TRIGGER hangtag_event_delete_check BEFORE DELETE ON public.hangtag_events
     FOR EACH ROW EXECUTE FUNCTION public.hangtag_event_delete_check();
 REVOKE EXECUTE ON FUNCTION public.hangtag_event_delete_check() FROM PUBLIC, anon;
 
+-- ------------------------------------------------------------------------------
+-- 3h. Verified payments, unmatched receipts, automatic receipt delivery, invoice links
+-- ------------------------------------------------------------------------------
+-- Payment intents at the provider: a single-use UPI QR or a card payment link for an exact amount. Written only by the
+-- payment-gateway and payment-webhook Edge Functions (read-only for the app). A QR being shown is never a payment:
+-- "verified" means the provider confirmed a captured payment of exactly the amount; money for a cancelled or expired
+-- intent, or of another amount, is "unmatched" until the shop refunds or allocates it. kind 'match' records a UPI
+-- payment checked by hand that was later matched to the provider's payment.
+CREATE TABLE IF NOT EXISTS public.hangtag_payment_intents (
+    id UUID PRIMARY KEY,
+    owner_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    client_sale_id TEXT,
+    amount NUMERIC(12,2) NOT NULL CHECK (amount > 0),
+    method TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    provider_intent_id TEXT NOT NULL,
+    provider_payment_id TEXT,
+    reference TEXT NOT NULL,
+    status TEXT NOT NULL,
+    qr_url TEXT,
+    expires_at TIMESTAMPTZ,
+    checked_at TIMESTAMPTZ,
+    provider_response JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (owner_id, provider, provider_intent_id)
+);
+ALTER TABLE public.hangtag_payment_intents ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'qr';
+ALTER TABLE public.hangtag_payment_intents ADD COLUMN IF NOT EXISTS link_url TEXT;
+ALTER TABLE public.hangtag_payment_intents ADD COLUMN IF NOT EXISTS paid_amount NUMERIC(12,2);
+ALTER TABLE public.hangtag_payment_intents ADD COLUMN IF NOT EXISTS resolution TEXT NOT NULL DEFAULT 'open';
+ALTER TABLE public.hangtag_payment_intents ADD COLUMN IF NOT EXISTS resolution_note TEXT;
+ALTER TABLE public.hangtag_payment_intents ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
+ALTER TABLE public.hangtag_payment_intents ADD COLUMN IF NOT EXISTS refund_id TEXT;
+ALTER TABLE public.hangtag_payment_intents ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE public.hangtag_payment_intents DROP CONSTRAINT IF EXISTS hangtag_payment_intents_status_check;
+ALTER TABLE public.hangtag_payment_intents DROP CONSTRAINT IF EXISTS hangtag_payment_intents_method_check;
+ALTER TABLE public.hangtag_payment_intents DROP CONSTRAINT IF EXISTS hangtag_payment_intents_provider_check;
+ALTER TABLE public.hangtag_payment_intents DROP CONSTRAINT IF EXISTS hangtag_payment_intents_state_check;
+ALTER TABLE public.hangtag_payment_intents ADD CONSTRAINT hangtag_payment_intents_state_check CHECK (
+    status IN ('created','pending','verified','failed','cancelled','expired','unmatched')
+    AND method IN ('upi','card') AND provider IN ('razorpay') AND kind IN ('qr','link','match')
+    AND resolution IN ('open','refunded','allocated')
+    AND (status NOT IN ('verified','unmatched') OR paid_amount IS NOT NULL)
+    AND (resolution = 'open' OR status = 'unmatched')
+    AND char_length(reference) <= 64 AND (client_sale_id IS NULL OR char_length(client_sale_id) <= 64)
+    AND (resolution_note IS NULL OR char_length(resolution_note) <= 200));
+-- the webhook finds an intent by the provider's id
+CREATE INDEX IF NOT EXISTS idx_hangtag_payment_intents_provider ON public.hangtag_payment_intents (provider, provider_intent_id);
+CREATE INDEX IF NOT EXISTS idx_hangtag_payment_intents_owner_created ON public.hangtag_payment_intents (owner_id, created_at DESC);
+
+-- How each payment part was confirmed: verified (by the provider), recorded (cash; card machine with its reference) or
+-- unverified (UPI checked by hand, with the UTR). Never a card number: at most the last 4 digits.
+ALTER TABLE public.hangtag_payments ADD COLUMN IF NOT EXISTS verification TEXT NOT NULL DEFAULT 'recorded';
+ALTER TABLE public.hangtag_payments ADD COLUMN IF NOT EXISTS via TEXT;
+ALTER TABLE public.hangtag_payments ADD COLUMN IF NOT EXISTS intent_id UUID;
+ALTER TABLE public.hangtag_payments ADD COLUMN IF NOT EXISTS provider_payment_id TEXT;
+ALTER TABLE public.hangtag_payments ADD COLUMN IF NOT EXISTS card_last4 TEXT;
+ALTER TABLE public.hangtag_payments DROP CONSTRAINT IF EXISTS hangtag_payments_verification_check;
+ALTER TABLE public.hangtag_payments ADD CONSTRAINT hangtag_payments_verification_check CHECK (
+    verification IN ('verified','recorded','unverified')
+    AND (via IS NULL OR (method = 'upi' AND via IN ('manual','qr')) OR (method = 'card' AND via IN ('terminal','link')))
+    AND (method <> 'cash' OR (via IS NULL AND verification = 'recorded'))
+    AND (verification <> 'unverified' OR method = 'upi')
+    AND (verification <> 'verified' OR intent_id IS NOT NULL)
+    AND (card_last4 IS NULL OR (method = 'card' AND card_last4 ~ '^[0-9]{4}$'))
+    AND (provider_payment_id IS NULL OR char_length(provider_payment_id) <= 64)) NOT VALID;
+-- one provider payment pays one bill part, once
+CREATE UNIQUE INDEX IF NOT EXISTS hangtag_payments_intent_key ON public.hangtag_payments (owner_id, intent_id) WHERE intent_id IS NOT NULL;
+-- "verified" only with a verified intent of this shop for the same method and amount: the app can't make it up
+CREATE OR REPLACE FUNCTION public.hangtag_payment_verified_check()
+RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
+BEGIN
+    IF NEW.verification = 'verified' AND NOT EXISTS (
+        SELECT 1 FROM public.hangtag_payment_intents i
+         WHERE i.owner_id = NEW.owner_id AND i.id = NEW.intent_id AND i.status = 'verified' AND i.method = NEW.method AND i.amount = NEW.amount) THEN
+        RAISE EXCEPTION 'Payment % is marked verified but the payment provider has not confirmed it', NEW.id USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_payment_verified_check ON public.hangtag_payments;
+CREATE TRIGGER hangtag_payment_verified_check BEFORE INSERT OR UPDATE ON public.hangtag_payments
+    FOR EACH ROW EXECUTE FUNCTION public.hangtag_payment_verified_check();
+REVOKE EXECUTE ON FUNCTION public.hangtag_payment_verified_check() FROM PUBLIC, anon;
+
+-- Receipts sent automatically when a bill completes go once per bill and channel, however often the phone retries
+ALTER TABLE public.hangtag_deliveries ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'manual';
+ALTER TABLE public.hangtag_deliveries ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
+ALTER TABLE public.hangtag_deliveries ADD COLUMN IF NOT EXISTS checked_at TIMESTAMPTZ;
+ALTER TABLE public.hangtag_deliveries DROP CONSTRAINT IF EXISTS hangtag_deliveries_status_check;
+ALTER TABLE public.hangtag_deliveries ADD CONSTRAINT hangtag_deliveries_status_check CHECK (status IN ('pending','sent','delivered','failed'));
+ALTER TABLE public.hangtag_deliveries DROP CONSTRAINT IF EXISTS hangtag_deliveries_sent_check;
+ALTER TABLE public.hangtag_deliveries ADD CONSTRAINT hangtag_deliveries_sent_check CHECK (status NOT IN ('sent','delivered') OR provider_message_id IS NOT NULL);
+ALTER TABLE public.hangtag_deliveries DROP CONSTRAINT IF EXISTS hangtag_deliveries_mode_check;
+ALTER TABLE public.hangtag_deliveries ADD CONSTRAINT hangtag_deliveries_mode_check CHECK (mode IN ('manual','auto'));
+CREATE UNIQUE INDEX IF NOT EXISTS hangtag_deliveries_auto_once ON public.hangtag_deliveries (owner_id, sale_id, channel)
+    WHERE mode = 'auto' AND status IN ('pending','sent','delivered');
+
+-- Secure invoice links (in SMS and WhatsApp receipts): an unguessable token shows that one bill only, for 12 months,
+-- until the shop revokes it. Written by the send-receipt function and read by the receipt function; the app may read
+-- its own links and revoke them.
+CREATE TABLE IF NOT EXISTS public.hangtag_invoice_links (
+    token TEXT PRIMARY KEY CHECK (token ~ '^[A-Za-z0-9_-]{32,64}$'),
+    owner_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    sale_id TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    views INTEGER NOT NULL DEFAULT 0,
+    last_viewed_at TIMESTAMPTZ,
+    CONSTRAINT hangtag_invoice_links_sale_fkey FOREIGN KEY (owner_id, sale_id) REFERENCES public.hangtag_sales (owner_id, id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_hangtag_invoice_links_sale ON public.hangtag_invoice_links (owner_id, sale_id);
+
+-- A return refunded through the payment provider keeps the provider's refund id (written by payment-gateway only;
+-- RPC hangtag_save_return leaves it alone), so the same refund is never sent twice
+ALTER TABLE public.hangtag_returns ADD COLUMN IF NOT EXISTS provider_refund_id TEXT;
+
+-- A cancelled bill keeps why it was cancelled (spec 006: a reason is required); restoring the bill clears it
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS void_reason TEXT;
+ALTER TABLE public.hangtag_sales DROP CONSTRAINT IF EXISTS hangtag_sales_void_reason_check;
+ALTER TABLE public.hangtag_sales ADD CONSTRAINT hangtag_sales_void_reason_check CHECK (void_reason IS NULL OR (is_void AND char_length(void_reason) <= 200)) NOT VALID;
+
+-- Cash without a bill (spec 007): opening float, cash in, cash out, expenses and reversals. Entries are never changed or
+-- deleted (the app may only add them); a mistake is put right by one reversal entry that names it. The app adds these
+-- to its cash book next to the cash sales and refunds of section 3e.
+CREATE TABLE IF NOT EXISTS public.hangtag_cash_moves (
+    owner_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    id TEXT NOT NULL CHECK (char_length(id) BETWEEN 1 AND 64),
+    type TEXT NOT NULL CHECK (type IN ('opening','in','out','expense','reversal')),
+    amount NUMERIC(12,2) NOT NULL CHECK (amount > 0 AND amount <= 1000000),
+    reason TEXT NOT NULL CHECK (char_length(reason) BETWEEN 3 AND 200),
+    category TEXT CHECK (category IS NULL OR char_length(category) BETWEEN 1 AND 40),
+    reverses TEXT,
+    t BIGINT NOT NULL,
+    device_id TEXT,
+    event_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (owner_id, id),
+    CONSTRAINT hangtag_cash_moves_kind_check CHECK ((type = 'expense') = (category IS NOT NULL) AND (type = 'reversal') = (reverses IS NOT NULL)),
+    CONSTRAINT hangtag_cash_moves_reverses_fkey FOREIGN KEY (owner_id, reverses) REFERENCES public.hangtag_cash_moves (owner_id, id) ON DELETE CASCADE
+);
+-- an entry is reversed at most once
+CREATE UNIQUE INDEX IF NOT EXISTS hangtag_cash_moves_reversed_once ON public.hangtag_cash_moves (owner_id, reverses) WHERE reverses IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_hangtag_cash_moves_time ON public.hangtag_cash_moves (owner_id, t);
+-- a reversal is for the same amount as its entry, and never of another reversal
+CREATE OR REPLACE FUNCTION public.hangtag_cash_move_check()
+RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
+DECLARE o RECORD;
+BEGIN
+    IF NEW.type = 'reversal' THEN
+        SELECT type, amount INTO o FROM public.hangtag_cash_moves WHERE owner_id = NEW.owner_id AND id = NEW.reverses;
+        IF o.type IS NULL THEN RAISE EXCEPTION 'Cash entry % was not found', NEW.reverses USING ERRCODE = 'foreign_key_violation'; END IF;
+        IF o.type = 'reversal' OR o.amount <> NEW.amount THEN
+            RAISE EXCEPTION 'A reversal must be for the whole of an entry that is not itself a reversal' USING ERRCODE = 'check_violation';
+        END IF;
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_cash_move_check ON public.hangtag_cash_moves;
+CREATE TRIGGER hangtag_cash_move_check BEFORE INSERT ON public.hangtag_cash_moves FOR EACH ROW EXECUTE FUNCTION public.hangtag_cash_move_check();
+REVOKE EXECUTE ON FUNCTION public.hangtag_cash_move_check() FROM PUBLIC, anon;
+-- Day closes: what the drawer should hold, what was counted, the difference (per day, for the shop or one device)
+CREATE TABLE IF NOT EXISTS public.hangtag_day_closes (
+    owner_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    id TEXT NOT NULL CHECK (char_length(id) BETWEEN 1 AND 80),
+    day DATE NOT NULL,
+    scope TEXT NOT NULL CHECK (char_length(scope) BETWEEN 1 AND 40),
+    expected NUMERIC(12,2) NOT NULL,
+    counted NUMERIC(12,2) NOT NULL CHECK (counted >= 0),
+    difference NUMERIC(12,2) NOT NULL,
+    note TEXT CHECK (note IS NULL OR char_length(note) <= 200),
+    t BIGINT NOT NULL,
+    device_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (owner_id, id),
+    CONSTRAINT hangtag_day_closes_diff_check CHECK (difference = counted - expected),
+    CONSTRAINT hangtag_day_closes_one UNIQUE (owner_id, day, scope)
+);
+
 -- ==============================================================================
 -- 4. Indexes for reports
 -- ==============================================================================
@@ -1296,7 +1483,8 @@ DO $$
 DECLARE t TEXT;
 BEGIN
     FOREACH t IN ARRAY ARRAY['hangtag_products','hangtag_sizes','hangtag_images','hangtag_sales','hangtag_sale_items','hangtag_meta','hangtag_variants','hangtag_stock_moves','hangtag_customers','hangtag_returns','hangtag_return_items','hangtag_stock_imports',
-                     'hangtag_payments','hangtag_fin_txns','hangtag_cash_book','hangtag_bank_book','hangtag_deliveries','hangtag_events'] LOOP
+                     'hangtag_payments','hangtag_fin_txns','hangtag_cash_book','hangtag_bank_book','hangtag_deliveries','hangtag_events','hangtag_payment_intents','hangtag_invoice_links',
+                     'hangtag_cash_moves','hangtag_day_closes'] LOOP
         EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
         EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 'Public access to ' || t, t);
         EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 'Approved staff access to ' || t, t);
@@ -1326,15 +1514,23 @@ REVOKE ALL ON TABLE public.hangtag_products, public.hangtag_sizes, public.hangta
     public.hangtag_variants, public.hangtag_stock_moves, public.hangtag_customers,
     public.hangtag_returns, public.hangtag_return_items, public.hangtag_stock_imports,
     public.hangtag_payments, public.hangtag_fin_txns, public.hangtag_cash_book, public.hangtag_bank_book, public.hangtag_deliveries,
-    public.hangtag_events FROM anon;
+    public.hangtag_events, public.hangtag_payment_intents, public.hangtag_invoice_links, public.hangtag_cash_moves, public.hangtag_day_closes FROM anon;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.hangtag_products, public.hangtag_sizes, public.hangtag_images,
     public.hangtag_sales, public.hangtag_sale_items, public.hangtag_meta,
     public.hangtag_variants, public.hangtag_stock_moves, public.hangtag_customers,
     public.hangtag_returns, public.hangtag_return_items, public.hangtag_stock_imports, public.hangtag_payments, public.hangtag_events TO authenticated;
 -- Financial transactions and the cash and bank books are written only by the database (section 3e), and delivery
 -- records only by the send-receipt Edge Function (section 3f): read-only here
-REVOKE ALL ON TABLE public.hangtag_fin_txns, public.hangtag_cash_book, public.hangtag_bank_book, public.hangtag_deliveries FROM authenticated;
-GRANT SELECT ON TABLE public.hangtag_fin_txns, public.hangtag_cash_book, public.hangtag_bank_book, public.hangtag_deliveries TO authenticated;
+REVOKE ALL ON TABLE public.hangtag_fin_txns, public.hangtag_cash_book, public.hangtag_bank_book, public.hangtag_deliveries, public.hangtag_payment_intents FROM authenticated;
+GRANT SELECT ON TABLE public.hangtag_fin_txns, public.hangtag_cash_book, public.hangtag_bank_book, public.hangtag_deliveries, public.hangtag_payment_intents TO authenticated;
+-- invoice links (section 3h): written by the send-receipt function; the shop can read its own and revoke them
+REVOKE ALL ON TABLE public.hangtag_invoice_links FROM authenticated;
+GRANT SELECT ON TABLE public.hangtag_invoice_links TO authenticated;
+GRANT UPDATE (revoked_at) ON TABLE public.hangtag_invoice_links TO authenticated;
+-- cash entries (section 3h) are added, never changed; day closes can be made again
+REVOKE ALL ON TABLE public.hangtag_cash_moves FROM authenticated;
+GRANT SELECT, INSERT ON TABLE public.hangtag_cash_moves TO authenticated;
+GRANT SELECT, INSERT, UPDATE ON TABLE public.hangtag_day_closes TO authenticated;
 REVOKE EXECUTE ON FUNCTION public.hangtag_check_return_qty() FROM PUBLIC, anon;
 GRANT SELECT, INSERT, UPDATE ON TABLE public.hangtag_profiles TO authenticated;
 
@@ -1346,7 +1542,7 @@ DECLARE t TEXT;
 BEGIN
     FOREACH t IN ARRAY ARRAY['hangtag_products','hangtag_sizes','hangtag_images','hangtag_sales','hangtag_sale_items',
                              'hangtag_variants','hangtag_stock_moves','hangtag_customers','hangtag_returns','hangtag_return_items','hangtag_meta','hangtag_stock_imports',
-                             'hangtag_events'] LOOP
+                             'hangtag_events','hangtag_payment_intents','hangtag_cash_moves','hangtag_day_closes'] LOOP
         BEGIN
             EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I', t);
         EXCEPTION WHEN OTHERS THEN
@@ -1430,4 +1626,18 @@ SELECT check_name, value, expected, value = expected AS ok FROM (
     SELECT 16, 'Bills made at an event that exists',
            (SELECT count(*) FROM public.hangtag_sales s WHERE s.event_id IS NOT NULL AND EXISTS (SELECT 1 FROM public.hangtag_events e WHERE e.owner_id = s.owner_id AND e.id = s.event_id))::bigint,
            (SELECT count(*) FROM public.hangtag_sales s WHERE s.event_id IS NOT NULL)::bigint
+    UNION ALL
+    SELECT 17, 'Verified payments confirmed by the payment provider',
+           (SELECT count(*) FROM public.hangtag_payments p WHERE p.verification = 'verified' AND EXISTS (SELECT 1 FROM public.hangtag_payment_intents i
+              WHERE i.owner_id = p.owner_id AND i.id = p.intent_id AND i.status = 'verified' AND i.amount = p.amount))::bigint,
+           (SELECT count(*) FROM public.hangtag_payments p WHERE p.verification = 'verified')::bigint
+    UNION ALL
+    SELECT 18, 'Automatic receipts sent once per bill and channel',
+           (SELECT count(DISTINCT (d.owner_id, d.sale_id, d.channel)) FROM public.hangtag_deliveries d WHERE d.mode = 'auto' AND d.status IN ('pending','sent','delivered'))::bigint,
+           (SELECT count(*) FROM public.hangtag_deliveries d WHERE d.mode = 'auto' AND d.status IN ('pending','sent','delivered'))::bigint
+    UNION ALL
+    SELECT 19, 'Cash reversals for the whole of their entry',
+           (SELECT count(*) FROM public.hangtag_cash_moves r JOIN public.hangtag_cash_moves o ON o.owner_id = r.owner_id AND o.id = r.reverses
+             WHERE r.type = 'reversal' AND o.type <> 'reversal' AND o.amount = r.amount)::bigint,
+           (SELECT count(*) FROM public.hangtag_cash_moves r WHERE r.type = 'reversal')::bigint
 ) r ORDER BY n;

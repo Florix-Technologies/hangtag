@@ -9,7 +9,7 @@ import { enqueue, flushSbQueue, markSynced } from './outbox.js';
 import { use } from '../../../shared/di/services.js';
 import { toast } from '../../../shared/components/toast.js';
 import { dayKey } from '../../../shared/formatting/dates.js';
-import { saveCatalog, saveCustomers, saveEvents, saveImgs, saveLogo, saveMoves, saveReturns, saveSettings } from '../../../shared/state/persistence.js';
+import { saveCashMoves, saveCatalog, saveCustomers, saveDayCloses, saveEvents, saveImgs, saveLogo, saveMoves, saveReturns, saveSettings } from '../../../shared/state/persistence.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { logger } from '../../../shared/logging/logger.js';
 
@@ -65,6 +65,15 @@ export async function pullCustomers(){
   store.customers = next; saveCustomers();
 }
 /* Events: the cloud's list, except events changed or deleted on this device and not uploaded yet */
+/* Cash entries and day closes from every device of the shop (entries waiting to upload stay as they are) */
+export async function pullCash(){
+  const cloud = use("cloud");
+  const [moves, closes] = await Promise.all([cloud.fetchCashMoves(), cloud.fetchDayCloses()]);
+  const pm = pendingIds("cashmove"), pc = pendingIds("dayclose"), M = {}, C = {};
+  moves.forEach(m => { M[m.id] = m; }); Object.values(store.cashMoves || {}).forEach(m => { if(pm.has(m.id) || !M[m.id]) M[m.id] = m; });
+  closes.forEach(c => { C[c.id] = c; }); Object.values(store.dayCloses || {}).forEach(c => { if(pc.has(c.id)) C[c.id] = c; });
+  store.cashMoves = M; saveCashMoves(); store.dayCloses = C; saveDayCloses();
+}
 export async function pullEvents(){
   const list = await use("cloud").fetchEvents();
   const pending = pendingIds("event"), deleted = pendingIds("eventdel"), next = {};
@@ -94,6 +103,7 @@ export async function pullFromSupabase(showToast = true){
     await pullReturns();
     await pullCustomers();
     await pullEvents();
+    await pullCash();
     await pullSettings();
     const sales = await use("cloud").fetchSales();
     const newRemoteDays = {};
@@ -122,6 +132,8 @@ export async function pushLocalToSupabase(){
   Object.values(store.events || {}).forEach(e => enqueue({ type:"event", id:e.id, ev:e }));
   enqueue({ type:"allsales" });
   Object.values(store.returnsMap).forEach(r => enqueue({ type:"return", id:r.id, ret:r }));
+  Object.values(store.cashMoves || {}).sort((x, y) => (x.type === "reversal") - (y.type === "reversal")).forEach(m => enqueue({ type:"cashmove", id:m.id, move:m }));
+  Object.values(store.dayCloses || {}).forEach(c => enqueue({ type:"dayclose", id:c.id, close:c }));
   enqueue({ type:"settings" });
   if(store.logo) enqueue({ type:"logo" });
   renderSync();

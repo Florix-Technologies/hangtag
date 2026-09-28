@@ -10,7 +10,7 @@
 //     by the database's rules won't fix itself by retrying: the item goes to the review list with the reason. Nothing is
 //     ever dropped silently; review items can be sent again, and all but bills can be discarded after review.
 export const ORDERED_TYPES=["sale","prod","allsales","event"];
-const ONE_PER_RECORD=["sale","return","cust","move","event","eventdel","void"];
+const ONE_PER_RECORD=["sale","return","cust","move","event","eventdel","void","cashmove","dayclose"];
 const REVIEW_NOW=["VALIDATION","CONFLICT"];
 export const REVIEW_AFTER_TRIES=3;   // NOT_FOUND: something it needs may still be on its way from another device
 
@@ -32,6 +32,7 @@ export function dependsOn(item){
   if(item.type==="return"&&item.ret) return ["sale:"+item.ret.sale];
   if(item.type==="void") return ["sale:"+item.id];
   if(item.type==="move"&&item.move&&item.move.p) return ["prod:"+item.move.p];
+  if(item.type==="cashmove"&&item.move&&item.move.reverses) return ["cashmove:"+item.move.reverses];
   return [];
 }
 /* The record an item stands for when others wait on it (products too, which merge instead of being replaced) */

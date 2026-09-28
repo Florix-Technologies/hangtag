@@ -8,10 +8,15 @@ export function createDeliveryClient({ cloud }){
     /* { email, whatsapp, sms }: which channels have a provider on the server; null when that can't be known (offline) */
     channels: () => cloud.deliveryChannels(),
     /* → { status: "sent", to, provider, id } once the provider accepted it; throws an AppError otherwise */
-    async send({ channel, saleId }){
-      const r = await cloud.sendReceipt({ channel, sale_id: saleId });
-      return { status: "sent", to: r.recipient, provider: r.provider, id: r.provider_message_id };
+    async send({ channel, saleId, auto }){
+      const r = await cloud.sendReceipt({ channel, sale_id: saleId, ...(auto ? { auto: true } : {}) });
+      return { status: r.status === "delivered" ? "delivered" : "sent", to: r.recipient, provider: r.provider, id: r.provider_message_id, again: !!r.already };
     },
+    /* Asks the providers whether the bill's messages arrived (email / SMS); the history then shows "delivered" */
+    refresh: saleId => cloud.deliveryRefresh(saleId),
+    /* The bill's secure invoice link { url, token, expiresAt } */
+    link: saleId => cloud.invoiceLink(saleId),
+    revokeLinks: saleId => cloud.revokeInvoiceLinks(saleId),
     /* The bill's messages as recorded by the server, newest first */
     history: saleId => cloud.fetchDeliveries(saleId),
   };

@@ -39,7 +39,7 @@ export async function sendItem(item){
   if(item.type === "sale"){
     await cloud.saveSale(item.sale);
   } else if(item.type === "void"){
-    await cloud.setSaleVoid(item.id, item.isVoid);
+    await cloud.setSaleVoid(item.id, item.isVoid, item.reason);
   } else if(item.type === "prod"){
     const i = products().findIndex(p=>p.id===item.id);
     if(i > -1) await cloud.saveProduct(products()[i], i);
@@ -59,6 +59,10 @@ export async function sendItem(item){
     await cloud.saveEvent(item.ev);
   } else if(item.type === "eventdel"){
     await cloud.deleteEvent(item.id);
+  } else if(item.type === "cashmove"){
+    await cloud.saveCashMove(item.move);
+  } else if(item.type === "dayclose"){
+    await cloud.saveDayClose(item.close);
   } else if(item.type === "settings"){
     await cloud.saveSettings(store.settings);
   } else if(item.type === "logo"){

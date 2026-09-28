@@ -9,7 +9,7 @@ import { $, esc } from '../../../shared/dom.js';
 import { agoText, dtLong } from '../../../shared/formatting/dates.js';
 import { inrx } from '../../../shared/formatting/money.js';
 
-const TYPE={sale:"Bill",void:"Cancel / restore bill",return:"Return",prod:"Product",proddel:"Product removed",img:"Photo",move:"Stock change",cust:"Customer",
+const TYPE={cashmove:"Cash entry",dayclose:"Day close",sale:"Bill",void:"Cancel / restore bill",return:"Return",prod:"Product",proddel:"Product removed",img:"Photo",move:"Stock change",cust:"Customer",
   event:"Event",eventdel:"Event removed",settings:"Settings",logo:"Receipt logo",allsales:"All bills (full upload)"};
 /* What a queued item is, in words */
 export function itemLabel(q){
@@ -19,6 +19,8 @@ export function itemLabel(q){
   if(q.type==="cust"&&q.cust) return `${what} ${q.cust.name}`;
   if(q.type==="event"&&q.ev) return `${what} ${q.ev.name}`;
   if(q.type==="prod"){ const p=products().find(x=>x.id===q.id); return `${what} ${p?p.name:q.id}`; }
+  if(q.type==="cashmove"&&q.move) return `${what} ${inrx(q.move.amount)} · ${q.move.reason||""}`;
+  if(q.type==="dayclose"&&q.close) return `${what} ${q.close.day} · counted ${inrx(q.close.counted)}`;
   if(q.type==="move"&&q.move) return `${what} ${q.move.q>0?"+":""}${q.move.q}`;
   return what;
 }

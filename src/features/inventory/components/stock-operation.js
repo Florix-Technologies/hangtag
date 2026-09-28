@@ -10,6 +10,7 @@ import { flushSbQueue } from '../../sync/services/outbox.js';
 import { closeModal } from '../../../shared/components/modal.js';
 import { toast } from '../../../shared/components/toast.js';
 import { ICON } from '../../../shared/constants/icons.js';
+import { dayKey } from '../../../shared/formatting/dates.js';
 import { $, $$, esc } from '../../../shared/dom.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { recordStockOperation } from '../use-cases/record-stock-operation.js';
@@ -33,7 +34,7 @@ export function renderStockOp(){
     <div class="sh-head">${thumb(p,"md")}<div class="sh-t"><h3>${adj?"Adjust stock":"Stock in"} · ${esc(p.name)}</h3><p>${adj?"Type the pieces you actually counted. Only changed variants are recorded.":"Type how many pieces arrived for each variant."}</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
     <div class="tw"><table class="soe"><thead><tr><th>${esc(names.row)}</th>${sizes.map(s=>`<th>${esc(s||(adj?"Counted":"Pieces"))}</th>`).join("")}</tr></thead><tbody>${colors.map(c=>`<tr><th>${hasC?`${sw(c).replace("<i ",'<i class="sw2" ')}${esc(c)}`:""}</th>${sizes.map(s=>cell(find(c,s))).join("")}</tr>`).join("")}</tbody></table></div>
     ${adj?`<div class="pgrid" style="margin-top:12px"><label class="f">Reason<select id="soReason">${["Physical count correction","Damaged","Lost or stolen","Sent back to supplier","Other"].map(r=>`<option${r===store.stockOp.reason?" selected":""}>${r}</option>`).join("")}</select></label><label class="f">Note<input id="soNote" value="${esc(store.stockOp.note)}" maxlength="120" placeholder="Optional"></label></div>`
-      :`<div class="pgrid" style="margin-top:12px"><label class="f">Cost per piece ₹<input id="soCost" type="number" inputmode="numeric" min="0" value="${esc(store.stockOp.cost)}" placeholder="Optional"></label><label class="f">Note<input id="soNote" value="${esc(store.stockOp.note)}" maxlength="120" placeholder="Optional, e.g. supplier or invoice"></label>
+      :`<div class="pgrid" style="margin-top:12px"><label class="f">Supplier <small>(optional)</small><input id="soSupplier" maxlength="60" autocomplete="off"></label><label class="f">Supplier bill / reference <small>(optional)</small><input id="soRef" maxlength="40" autocomplete="off"></label><label class="f">Date received<input id="soReceived" type="date" value="${esc(dayKey(Date.now()))}" max="${esc(dayKey(Date.now()))}"></label></div><div class="pgrid" style="margin-top:8px"><label class="f">Cost per piece ₹<input id="soCost" type="number" inputmode="numeric" min="0" value="${esc(store.stockOp.cost)}" placeholder="Optional"></label><label class="f">Note<input id="soNote" value="${esc(store.stockOp.note)}" maxlength="120" placeholder="Optional, e.g. supplier or invoice"></label>
         <label class="chk full"><input type="checkbox" id="soSetCost"${store.stockOp.setCost?" checked":""}> Use this as the cost price for these variants</label></div>`}
     <p id="soErr" class="autherr" hidden></p>
     <div class="sh-foot"><span class="pk-sum" id="soSum">${T.txt}</span><div class="sh-acts"><button class="btn sm" data-modal-close>Cancel</button><button class="btn sm primary" data-act="sosave" id="soSave"${T.n?"":" disabled"}>${adj?"Save adjustment":"Add stock"}</button></div></div>
@@ -54,7 +55,8 @@ export function saveStockOp(){
   const adj=store.stockOp.kind==="adjust", err=$("#soErr"), bad=m=>{err.textContent=m;err.hidden=false};
   const r=recordStockOperation({kind:store.stockOp.kind,productId:p.id,values:store.stockOp.val,
     costRaw:adj?"":String(($("#soCost")||{}).value||""),setCost:!!($("#soSetCost")||{}).checked,
-    reason:adj?(($("#soReason")||{}).value||"Physical count correction"):"",note:String(($("#soNote")||{}).value||"").trim()});
+    reason:adj?(($("#soReason")||{}).value||"Physical count correction"):"",note:String(($("#soNote")||{}).value||"").trim(),
+    supplier:String(($("#soSupplier")||{}).value||""),ref:String(($("#soRef")||{}).value||""),received:String(($("#soReceived")||{}).value||"")});
   if(r.error) return bad(r.error);
   renderSync(); flushSbQueue();
   const pcs=r.pieces;

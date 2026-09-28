@@ -108,8 +108,8 @@ check('the whole bill is now back: the return that finished it brought the bill 
 check('over-return refused, nothing saved', recordReturn({ sid: s1.id, picks: { 0: 1 }, mode: 'return', pay: 'cash' }).error === 'Only 0 of Tee can still be returned.' && Object.keys(store.returnsMap).length === 3);
 check('choose at least one item', recordReturn({ sid: s1.id, picks: {}, mode: 'return', pay: 'cash' }).error === 'Choose at least one item coming back.');
 // exchange for something dearer, and for something cheaper
-const s2 = newSaleRecord([line('p2:', 'p2', 'Cap', 1, 500)], null, 'upi', { cust: null }); recordSale(s2);
-r = recordReturn({ sid: s2.id, picks: { 0: 1 }, mode: 'exchange', pay: 'cash', collect: 'card', newItems: [line('p1:M', 'p1', 'Tee', 1, 999)] });
+const s2 = newSaleRecord([line('p2:', 'p2', 'Cap', 1, 500)], null, { method: 'upi', ref: '412345678901' }, { cust: null }); recordSale(s2);
+r = recordReturn({ sid: s2.id, picks: { 0: 1 }, mode: 'exchange', pay: 'cash', collect: { method: 'card', ref: 'APPR3' }, newItems: [line('p1:M', 'p1', 'Tee', 1, 999)] });
 check('walk-in exchange for a dearer item: the customer pays the difference by card (a payment on the new bill, bank book)', !r.error && r.collect === Math.round((r.sale.total - r.ret.value) * 100) / 100 && r.sale.payments[0].method === 'card' && r.sale.payments[0].amount === r.collect && r.sale.cust === null);
 const s3 = newSaleRecord([line('p1:L', 'p1', 'Tee', 1, 999)], null, 'cash', { cust: null }); recordSale(s3);
 r = recordReturn({ sid: s3.id, picks: { 0: 1 }, mode: 'exchange', pay: 'upi', collect: 'cash', newItems: [line('p2:', 'p2', 'Cap', 1, 500)] });

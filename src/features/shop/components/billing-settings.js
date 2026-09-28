@@ -7,7 +7,10 @@ import { removeReceiptLogo, setReceiptLogo } from '../use-cases/receipt-logo.js'
 import { toast } from '../../../shared/components/toast.js';
 import { $, esc } from '../../../shared/dom.js';
 import { renderAll } from '../../../shared/ui/render.js';
-import { saveBillingSettings } from '../use-cases/save-billing-settings.js';
+import { saveBillingSettings, saveGstSettings, savePaymentSettings } from '../use-cases/save-billing-settings.js';
+import { loadChannels } from '../../delivery/use-cases/send-invoice.js';
+import { loadPayConfig } from '../../sales/use-cases/provider-payment.js';
+import { expenseCats, saveExpenseCats } from '../../finance/use-cases/cash-moves.js';
 
 /* ---------- Billing and stock settings (in Profile & shop settings; saved on this device, synced when online) ---------- */
 
@@ -22,7 +25,32 @@ export function billingFormHTML(){
     <label class="f"><span class="lab">Receipt paper</span><select name="paper"><option value="80mm"${s.paper!=="a4"?" selected":""}>80 mm receipt printer</option><option value="a4"${s.paper==="a4"?" selected":""}>A4 invoice</option></select></label>
     <label class="f"><span class="lab">Receipt footer</span><input name="footer" maxlength="120" value="${esc(s.footer||"")}"></label>
   </div><p class="note" style="margin:0">GST is worked out from these settings for your bills. Check the rules that apply to your business with your accountant.</p>
-  <p id="billErr" class="autherr" hidden></p><div class="setactions"><button class="btn sm primary" type="submit">Save billing settings</button></div></form></div>`+receiptSetupHTML();
+  <p id="billErr" class="autherr" hidden></p><div class="setactions"><button class="btn sm primary" type="submit">Save billing settings</button></div></form></div>`+paymentsFormHTML()+receiptSetupHTML();
+}
+/* Payments (UPI ID, verified QR) and receipts sent by themselves; GST filing preparation */
+export function paymentsFormHTML(){
+  const s=store.settings, a=Object.assign({whatsapp:false,sms:false,email:false},s.autoSend||{}), ch=store.channels, pc=store.payConfig;
+  const box=(k,label)=>{const off=ch&&ch[k]===false;return `<label class="chk"><input type="checkbox" name="${k}"${a[k]?" checked":""}${off&&!a[k]?" disabled":""}> ${label}${off?` <small class="muted">(not set up on the server yet)</small>`:""}</label>`};
+  return `<div class="setsec" id="paySetup"><h4>Payments and receipts</h4><form id="paymentsForm" class="authform" novalidate><div class="pgrid">
+    <label class="f"><span class="lab">Shop UPI ID</span><input name="upiId" value="${esc(s.upiId||"")}" placeholder="myshop@okaxis" autocomplete="off" autocapitalize="off" spellcheck="false"><span class="fhint">Shown as a QR with the amount when UPI is checked by hand</span></label>
+    <label class="f"><span class="lab">Verified QR stays open for</span><input name="payExpiry" type="number" inputmode="numeric" min="2" max="30" value="${esc(s.payExpiry||5)}"><span class="fhint">minutes (2 to 30)</span></label>
+  </div>
+  <p class="note" data-payprovider>${pc==null?"Verified UPI and card links: checking with the server…":pc.upi?`Verified UPI QR${pc.cardLink?" and card payment links are":" is"} on (${esc(pc.provider||"payment provider")}). A payment counts only when the provider confirms it.`:"Verified UPI isn't set up on the server (payment-gateway secrets). UPI is checked by hand with its reference and shown as Unverified."}</p>
+  <p class="lab" style="margin:8px 0 2px">Send the receipt by itself when a bill completes</p>
+  <div class="pgrid">${box("whatsapp","WhatsApp")}${box("sms","SMS (and when WhatsApp fails)")}${box("email","Email")}</div>
+  <p class="note" style="margin:0">Goes to the bill's customer as saved in Customers. It can be turned off for one sale on the payment screen. Offline, it waits and goes once the bill has uploaded.</p>
+  <p id="payErr2" class="autherr" hidden></p><div class="setactions"><button class="btn sm primary" type="submit">Save payments and receipts</button></div></form>
+  <form id="gstSetForm" class="authform" novalidate><h4 class="subh">GST filing preparation</h4><div class="pgrid">
+    <label class="f"><span class="lab">B2C large above (₹)</span><input name="b2clLimit" type="number" inputmode="numeric" min="0" value="${esc(s.b2clLimit==null?100000:s.b2clLimit)}"><span class="fhint">Invoices to another state, without GSTIN, above this value are listed one by one</span></label>
+  </div><p id="gstErr" class="autherr" hidden></p><div class="setactions"><button class="btn sm" type="submit">Save GST setting</button></div></form>
+  <form id="expCatForm" class="authform" novalidate><h4 class="subh">Expense categories</h4>
+    <label class="f full"><span class="lab">One per line</span><textarea name="cats" rows="4">${esc(expenseCats().join("\n"))}</textarea><span class="fhint">Used when cash is spent from the drawer (Reports → Cash book → Expense)</span></label>
+    <p id="expCatErr" class="autherr" hidden></p><div class="setactions"><button class="btn sm" type="submit">Save categories</button></div></form></div>`;
+}
+/* The server's answers arrive after the form is drawn: redraw it once they're known */
+export async function refreshPaymentsForm(){
+  await Promise.all([loadChannels(),loadPayConfig()]);
+  const el=$("#paySetup"); if(el) el.outerHTML=paymentsFormHTML();
 }
 /* Receipts: the logo (every device of the shop) and the printer of this device */
 export function receiptSetupHTML(){
@@ -56,6 +84,12 @@ const redrawReceiptSetup=()=>{const s=$("#receiptSetup");if(s)s.outerHTML=receip
 export function installBillingSettingsEvents(){
   document.addEventListener("submit",e=>{
     if(e.target.id==="billingForm"){e.preventDefault();saveBillingForm(e.target);return}
+    if(e.target.id==="paymentsForm"){e.preventDefault();const f=new FormData(e.target),err=$("#payErr2");const r=savePaymentSettings({upiId:f.get("upiId"),payExpiry:f.get("payExpiry"),whatsapp:f.get("whatsapp"),sms:f.get("sms"),email:f.get("email")});
+      if(r.error){err.textContent=r.error;err.hidden=false;return}err.hidden=true;renderSync();flushSbQueue();toast("Payments and receipts saved.");return}
+    if(e.target.id==="expCatForm"){e.preventDefault();const f=new FormData(e.target),err=$("#expCatErr");const r=saveExpenseCats(String(f.get("cats")||"").split(/[\n,]/));
+      if(r.error){err.textContent=r.error;err.hidden=false;return}err.hidden=true;toast("Expense categories saved.");return}
+    if(e.target.id==="gstSetForm"){e.preventDefault();const f=new FormData(e.target),err=$("#gstErr");const r=saveGstSettings({b2clLimit:f.get("b2clLimit")});
+      if(r.error){err.textContent=r.error;err.hidden=false;return}err.hidden=true;renderSync();flushSbQueue();toast("GST setting saved.");return}
     if(e.target.id==="printerForm"){e.preventDefault();const r=savePrinterSettings(printerInput(e.target));if(r.error){printerMsg(r.error);return}printerMsg("Printer saved on this device.",true);toast("Printer saved.")}
   });
   document.addEventListener("change",async e=>{

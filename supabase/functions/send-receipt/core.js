@@ -21,16 +21,22 @@ export const PROFILE_COLUMNS = "shop_name,address,city,state,phone,gstin";
 const fail = (status, error, message) => ({ ok: false, status, error, message });
 const str = (v) => (typeof v === "string" ? v : "");
 
-/* body: { action: "channels" } or { action: "send", channel, sale_id }. Anything else in the body is ignored. */
+/* body: { action: "channels" } · { action: "send", channel, sale_id, auto? } · { action: "refresh" | "link", sale_id }.
+   Anything else in the body is ignored. auto: sent by itself when the bill completed — at most once per bill and channel. */
 export function validateRequest(body) {
   if (!body || typeof body !== "object") return fail(400, "bad_request", "Send the request as JSON.");
   if (body.action === "channels") return { ok: true, action: "channels" };
+  if (body.action === "refresh" || body.action === "link") {
+    const saleId = str(body.sale_id).trim();
+    if (!saleId || saleId.length > LIMITS.saleId) return fail(400, "bad_request", "Which bill? The bill id is missing.");
+    return { ok: true, action: body.action, saleId };
+  }
   if (body.action !== "send") return fail(400, "bad_request", "Unknown action.");
   const channel = body.channel;
   if (!CHANNELS.includes(channel)) return fail(400, "bad_channel", "Choose email, WhatsApp or SMS.");
   const saleId = str(body.sale_id).trim();
   if (!saleId || saleId.length > LIMITS.saleId) return fail(400, "bad_request", "Which bill? The bill id is missing.");
-  return { ok: true, action: "send", channel, saleId };
+  return { ok: true, action: "send", channel, saleId, auto: body.auto === true };
 }
 
 /* Which provider serves each channel, from the function's secrets (env: an object of strings). null = not set up.
@@ -135,13 +141,18 @@ const lineText = (l) => `${l.name}${l.detail ? " (" + l.detail + ")" : ""} × ${
    {{1}} customer, {{2}} shop, {{3}} bill number, {{4}} amount) */
 export function billMessage(channel, data) {
   const B = billView(data), more = B.more ? [`… and ${B.more} more items`] : [];
+  const link = data && data.link ? String(data.link) : "";
   if (channel === "sms") {
-    const t = `${B.shop}: Bill ${B.number} for ${B.total}, ${B.paid}. Thank you for shopping with us!`;
-    return { text: t.length > LIMITS.sms ? t.slice(0, LIMITS.sms - 1) + "…" : t };
+    // one message where possible: the link is kept whole; the words before it are shortened when space is short
+    const head = `${B.shop}: Bill ${B.number} for ${B.total}, ${B.paid}.`, tail = link ? ` Invoice: ${link}` : " Thank you for shopping with us!";
+    const t = head + tail;
+    return { text: t.length <= LIMITS.sms ? t : link ? head.slice(0, LIMITS.sms - tail.length - 1) + "…" + tail : t.slice(0, LIMITS.sms - 1) + "…" };
   }
   if (channel === "whatsapp") {
-    const text = [`*${B.shop}*`, `${B.title} ${B.number} · ${B.date}`, "", ...B.lines.map(lineText), ...more, "", ...B.rows.map(([l, v, b]) => (b ? `*${l}: ${v}*` : `${l}: ${v}`))].join("\n");
-    return { text: text.slice(0, LIMITS.whatsapp), params: [B.customer || "Customer", B.shop, B.number, B.total].map((x) => x.slice(0, 200)) };
+    const text = [`*${B.shop}*`, `${B.title} ${B.number} · ${B.date}`, "", ...B.lines.map(lineText), ...more, "", ...B.rows.map(([l, v, b]) => (b ? `*${l}: ${v}*` : `${l}: ${v}`)), ...(link ? ["", `Invoice: ${link}`] : [])].join("\n");
+    // the approved template has {{1}}..{{4}}; a template with a 5th value for the link is used when WHATSAPP_LINK_PARAM=on
+    const params = [B.customer || "Customer", B.shop, B.number, B.total, ...(link && data.linkParam ? [link] : [])];
+    return { text: text.slice(0, LIMITS.whatsapp), params: params.map((x) => x.slice(0, 200)) };
   }
   const subject = `Your bill ${B.number} from ${B.shop} — ${B.total}`.slice(0, 200);
   const td = 'style="padding:6px 0;border-bottom:1px solid #eee;font-size:14px;color:#222"', tdr = 'style="padding:6px 0;border-bottom:1px solid #eee;font-size:14px;color:#222;text-align:right;white-space:nowrap"';
@@ -167,8 +178,8 @@ ${B.contact.length ? `<tr><td style="font-size:13px;color:#666;padding-top:2px">
 /* ---------- the delivery record ----------
    A row is written as "pending" before the provider is called (it holds the attempt's place under the hourly limit),
    then finished as "sent" (only with the provider's message id) or "failed". */
-export const reservationRow = ({ ownerId, saleId, channel, to, provider }) =>
-  ({ owner_id: ownerId, sale_id: saleId, channel, recipient: String(to).slice(0, 200), status: "pending", provider: provider || null });
+export const reservationRow = ({ ownerId, saleId, channel, to, provider, auto }) =>
+  ({ owner_id: ownerId, sale_id: saleId, channel, recipient: String(to).slice(0, 200), status: "pending", provider: provider || null, mode: auto ? "auto" : "manual" });
 /* result: a provider's { ok, id, message } → the columns that finish the row */
 export function deliveryOutcome(result) {
   const sent = !!(result && result.ok && result.id);
@@ -177,3 +188,42 @@ export function deliveryOutcome(result) {
 }
 /* The finished row for one attempt */
 export const deliveryRow = ({ result, ...r }) => ({ ...reservationRow(r), ...deliveryOutcome(result) });
+
+/* ---------- secure invoice links ---------- */
+export const LINK_DAYS = 366;
+/* An unguessable token: 32 random bytes, base64url (43 characters) */
+export function newToken() {
+  const b = new Uint8Array(32);
+  crypto.getRandomValues(b);
+  return btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+/* The public page that shows one bill, from RECEIPT_URL (e.g. https://shop.example/receipt.html); the token goes after
+   "#", so it never reaches a server log. "" when RECEIPT_URL isn't set (messages then go without a link). */
+export function receiptBase(env) {
+  const u = str(env.RECEIPT_URL).trim();
+  return /^https:\/\/[^\s#?]+$/.test(u) ? u : "";
+}
+export const linkUrl = (base, token) => (base && token ? base + "#" + token : "");
+export const linkRow = ({ ownerId, saleId, token, now = Date.now() }) =>
+  ({ token, owner_id: ownerId, sale_id: saleId, expires_at: new Date(now + LINK_DAYS * 864e5).toISOString() });
+/* A link that still works: not revoked, not expired */
+export const liveLink = (row, now = Date.now()) => !!row && !row.revoked_at && Date.parse(row.expires_at) > now;
+
+/* ---------- delivery status from the providers ---------- */
+/* A provider's report on one message → "delivered" | "failed" | null (nothing new) */
+export function providerStatus(provider, json) {
+  if (!json || typeof json !== "object") return null;
+  if (provider === "twilio") {
+    const st = str(json.status);
+    if (st === "delivered" || st === "read") return "delivered";
+    if (st === "undelivered" || st === "failed") return "failed";
+    return null;
+  }
+  if (provider === "resend") {
+    const ev = str(json.last_event);
+    if (ev === "delivered" || ev === "opened" || ev === "clicked") return "delivered";
+    if (ev === "bounced") return "failed";
+    return null;
+  }
+  return null;
+}

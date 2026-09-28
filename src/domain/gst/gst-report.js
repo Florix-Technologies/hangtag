@@ -20,14 +20,14 @@ const rateOf=(sale,i)=>i&&i.gst!=null?+i.gst:+(sale&&sale.taxRate)||0;
 /* A bill as an invoice for GST: its lines' saved taxable value and tax (paise inside, rupees out) */
 export function gstInvoice(sale){
   const lines=sale.items.map(i=>{const f=savedLine(sale,i);return {rate:rateOf(sale,i),hsn:i.hsn||"",q:i.q,taxable:f.tx,cgst:f.cgst,sgst:f.sgst,igst:f.igst,total:f.lt}});
-  return doc({id:sale.id,no:sale.no||"",t:sale.t,cancelled:!!sale.void,sale,lines,total:toPaise(sale.total),roundOff:toPaise(sale.roundOff||0)});
+  return {...doc({id:sale.id,no:sale.no||"",t:sale.t,cancelled:!!sale.void,sale,lines,total:toPaise(sale.total),roundOff:toPaise(sale.roundOff||0)}),discount:R(toPaise(sale.disc||0))};
 }
 /* A return as a credit note: its lines' GST as saved on the return (or their share of the bill line's), with the bill's details */
 export function gstCreditNote(ret,sale){
   const lines=(ret.items||[]).map(i=>{const m=returnLineMoney(sale,i),sl=lineOf(sale,i.ln);
     return {rate:i.gst!=null?+i.gst:rateOf(sale,sl),hsn:i.hsn||(sl&&sl.hsn)||"",q:i.q,taxable:-toPaise(m.rev),cgst:-toPaise(m.cgst),sgst:-toPaise(m.sgst),igst:-toPaise(m.igst),total:toPaise(i.value)}});
   const d=doc({id:ret.id,no:ret.no||"",t:ret.t,cancelled:false,sale,lines,total:toPaise(ret.value),roundOff:toPaise(ret.ro||0)});
-  return {...d,invoiceNo:sale&&sale.no||"",invoiceT:sale&&sale.t||null,kind:ret.kind||"return"};
+  return {...d,invoiceNo:sale&&sale.no||"",invoiceT:sale&&sale.t||null,invoiceValue:sale?R(toPaise(sale.total)):0,saleId:sale&&sale.id||"",kind:ret.kind||"return"};
 }
 function doc({id,no,t,cancelled,sale,lines,total,roundOff}){
   const s=sale||{}, sum=k=>lines.reduce((a,l)=>a+l[k],0), pos=s.gst&&s.gst.pos||"";
@@ -61,7 +61,8 @@ export function gstReport({sales,returns,saleById}){
   const docs={invoices:{count:all.length,cancelled:cancelled.length,first:nums(all)[0]||"",last:nums(all).slice(-1)[0]||""},
     creditNotes:{count:notes.length,first:nums(notes)[0]||"",last:nums(notes).slice(-1)[0]||""}};
   return {invoices,cancelled,creditNotes:notes,
-    totals:{invoices:out(T.inv),creditNotes:out(T.cn),net:out(net),invoiceValue:R(invTotal),creditValue:R(cnTotal),netValue:R(invTotal-cnTotal)},
+    totals:{invoices:out(T.inv),creditNotes:out(T.cn),net:out(net),invoiceValue:R(invTotal),creditValue:R(cnTotal),netValue:R(invTotal-cnTotal),
+      discounts:R(invoices.reduce((a,d)=>a+toPaise(d.discount),0))},
     b2b:out(b2b),b2c:out(b2c),rates:Object.values(rates).sort((a,b)=>a.rate-b.rate).map(out),
     hsn:Object.values(hsn).sort((a,b)=>numOrder(a.hsn,b.hsn)).map(out),b2cByPlace:Object.values(pos).sort((a,b)=>numOrder(a.pos,b.pos)||a.rate-b.rate).map(out),
     nilRated:{taxable:R(nil.taxable),lines:nil.count},docs,issues,disclaimer:DISCLAIMER};

@@ -15,7 +15,8 @@ export function invoiceFor(s){
 }
 /* How it was paid → [{ label, amount, note }] ("Cash", ₹400, "received ₹500 · change ₹100") */
 export function payLines(inv){
-  return inv.payments.map(p=>({label:p.label,amount:p.amount,note:p.method==="cash"&&p.change?`received ${inrx(p.received)} · change ${inrx(p.change)}`:p.ref?"ref "+p.ref:""}));
+  return inv.payments.map(p=>({label:p.label,amount:p.amount,note:[p.method==="cash"&&p.change?`received ${inrx(p.received)} · change ${inrx(p.change)}`:p.ref?"ref "+p.ref:"",
+    p.last4?"card ••"+p.last4:"",p.verification==="verified"?"verified":p.verification==="unverified"?"unverified":""].filter(Boolean).join(" · ")}));
 }
 /* Plain-text bill for WhatsApp / sharing / SMS-length summaries */
 export function receiptText(s){

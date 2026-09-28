@@ -1,29 +1,60 @@
-// Payments on a bill: cash, UPI or card, or a split over any of them. The shop records how the customer paid and an
-// optional reference (UPI transaction id, card slip number) — there is no payment gateway. The parts must add up to
-// the amount due exactly before a sale can complete; cash may be handed over in excess, and the rest is change.
-// Pure; amounts in rupees in and out, compared in paise.
+// Payments on a bill: cash, UPI or card, or a split over any of them. The parts must add up to the amount due exactly
+// before a sale can complete; cash may be handed over in excess, and the rest is change.
+// How each part was confirmed is kept with it (its verification):
+//   verified   — the payment provider confirmed the money (a UPI QR or a card payment link paid through the provider);
+//   recorded   — cash, or a card paid on a separate card machine with the machine's reference;
+//   unverified — UPI checked by eye on the customer's phone, with the transaction reference (UTR) typed in.
+// Showing a QR never pays anything: a provider part counts only once its payment intent says "verified".
+// No card number, CVV or PIN is ever taken: at most the last 4 digits, and a reference that looks like a card number is
+// refused. Pure; amounts in rupees in and out, compared in paise.
 import { sumP, toPaise, toRupees, tooPrecise } from './paise.js';
 import { inrx } from '../../shared/formatting/money.js';
 
 export const PAY_METHODS=["cash","upi","card"];
 export const PAY_LABELS={cash:"Cash",upi:"UPI",card:"Card"};
+/* How a UPI or card part is taken: by hand, or through the payment provider */
+export const PAY_VIA={upi:["manual","qr"],card:["terminal","link"]};
+export const VIA_LABELS={manual:"UPI (checked by hand)",qr:"UPI QR (verified)",terminal:"Card machine",link:"Card link (verified)"};
+export const PROVIDER_VIA=["qr","link"];
+export const VERIFY_LABELS={verified:"Verified",recorded:"Recorded",unverified:"Unverified"};
+/* A payment intent at the provider (a QR or a payment link) */
+export const INTENT_STATES=["pending","verified","failed","cancelled","expired","unmatched"];
+export const INTENT_LABELS={pending:"Payment pending",verified:"Payment received",failed:"Payment failed",cancelled:"Cancelled",expired:"Expired",unmatched:"Received, not matched to this bill"};
 
 /* One payment id per bill and method: the same bill never gets the same method twice, and uploads never duplicate it */
 export const paymentId=(saleId,method)=>`${saleId}:${method}`;
 
-/* An optional reference: up to 40 letters, digits and - / . # */
+/* 13-19 digits that pass the Luhn check: a card number, which must never be typed in or kept */
+export function looksLikeCardNumber(v){
+  const d=String(v==null?"":v).replace(/[\s-]/g,"");
+  if(!/^\d{13,19}$/.test(d)) return false;
+  let sum=0;
+  for(let i=0;i<d.length;i++){ let n=+d[d.length-1-i]; if(i%2){ n*=2; if(n>9) n-=9; } sum+=n; }
+  return sum%10===0;
+}
+/* An optional reference: up to 40 letters, digits and - / . # — never a card number */
 export function checkReference(ref){
   const r=String(ref==null?"":ref).trim();
   if(!r) return null;
   if(r.length>40) return {error:"A reference can be at most 40 characters."};
   if(!/^[A-Za-z0-9][A-Za-z0-9 ./#-]*$/.test(r)) return {error:"Use letters, digits, spaces and - / . # in the reference."};
+  if(looksLikeCardNumber(r)) return {error:"That looks like a card number. Never type card numbers: use the approval code on the card machine slip."};
   return null;
 }
+/* The last 4 digits of a card (optional): exactly 4 digits, nothing more */
+export function checkLast4(v){
+  const d=String(v==null?"":v).trim();
+  if(!d) return null;
+  return /^\d{4}$/.test(d)?null:{error:"Enter only the last 4 digits of the card."};
+}
 const amountOf=v=>v==null||String(v).trim()===""?0:+v;
+export const viaOf=a=>a.via||(a.method==="upi"?"manual":a.method==="card"?"terminal":undefined);
+const REF_NEEDED={upi:"Enter the UPI transaction reference (UTR) from the customer's payment screen.",card:"Enter the approval or transaction reference from the card machine."};
 
 /* Checks the parts of a payment against the amount due (rupees).
-   allocations: [{ method, amount, received? (cash handed over), ref? }] — empty or zero amounts are left out.
-   → { ok: true, payments: [{ method, amount, received?, change?, ref? }], paid, received, change }
+   allocations: [{ method, amount, received? (cash handed over), ref?, via?, last4? (card), intent? ({ id, status, amount, paymentId }) }]
+   — empty or zero amounts are left out.
+   → { ok: true, payments: [{ method, amount, verification, received?, change?, ref?, via?, last4?, intent?, providerRef? }], paid, received, change }
    or { error, method?, field?, paid, balance } (nothing is recorded) */
 export function settlePayments(due,allocations){
   const D=toPaise(due), list=(allocations||[]).filter(a=>a&&amountOf(a.amount)!==0), seen=new Set();
@@ -37,21 +68,44 @@ export function settlePayments(due,allocations){
     if(!Number.isFinite(v)) return fail(`Enter the ${PAY_LABELS[a.method]} amount as a number.`,a,"amount");
     if(v<0) return fail("A payment can't be negative.",a,"amount");
     if(tooPrecise(v)) return fail("Use at most 2 decimal places.",a,"amount");
-    const r=checkReference(a.ref); if(r) return fail(r.error,a,"ref");
+    if(a.method!=="cash"&&!PAY_VIA[a.method].includes(viaOf(a))) return fail(`Choose how the ${PAY_LABELS[a.method]} payment is taken.`,a,"via");
     paid+=toPaise(v);
   }
+  // the amounts first (they're typed first), then how each part was confirmed
   if(paid<D) return fail(`${inrx(toRupees(D-paid))} still to pay.`,null,"amount");
   if(paid>D) return fail(`That's ${inrx(toRupees(paid-D))} more than the bill.`,null,"amount");
+  for(const a of list){
+    const v=amountOf(a.amount);
+    if(PROVIDER_VIA.includes(viaOf(a))){
+      const I=a.intent;
+      if(!I||I.status!=="verified") return fail(`Waiting for the ${PAY_LABELS[a.method]} payment to be confirmed by the payment provider.`,a,"intent");
+      if(toPaise(I.amount)!==toPaise(v)) return fail(`The ${PAY_LABELS[a.method]} payment received was ${inrx(I.amount)}, not ${inrx(v)}.`,a,"intent");
+    }else{
+      const r=checkReference(a.ref); if(r) return fail(r.error,a,"ref");
+      if(REF_NEEDED[a.method]&&!String(a.ref==null?"":a.ref).trim()) return fail(REF_NEEDED[a.method],a,"ref");
+    }
+    if(a.method==="card"){ const l=checkLast4(a.last4); if(l) return fail(l.error,a,"last4"); }
+  }
   const payments=[];let received=0,change=0;
   for(const a of list){
-    const p={method:a.method,amount:+(+a.amount).toFixed(2)};
+    const via=viaOf(a), p={method:a.method,amount:+(+a.amount).toFixed(2)};
     if(a.method==="cash"){
       const got=amountOf(a.received)===0?toPaise(p.amount):toPaise(a.received);
       if(!Number.isFinite(got)||got<toPaise(p.amount)) return fail("Cash received is less than the cash amount.",a,"received");
       p.received=toRupees(got); p.change=toRupees(got-toPaise(p.amount));
       received+=got; change+=got-toPaise(p.amount);
-    }else received+=toPaise(p.amount);
-    const ref=String(a.ref==null?"":a.ref).trim(); if(ref&&a.method!=="cash") p.ref=ref;
+      p.verification="recorded";
+    }else{
+      received+=toPaise(p.amount); p.via=via;
+      if(PROVIDER_VIA.includes(via)){
+        p.verification="verified"; p.intent=a.intent.id; p.providerRef=String(a.intent.paymentId||a.intent.reference||"").slice(0,40);
+        if(p.providerRef) p.ref=p.providerRef;
+      }else{
+        p.verification=a.method==="upi"?"unverified":"recorded";
+        p.ref=String(a.ref).trim();
+      }
+      if(a.method==="card"&&String(a.last4||"").trim()) p.last4=String(a.last4).trim();
+    }
     payments.push(p);
   }
   return {ok:true,payments,paid:toRupees(paid),received:toRupees(received),change:toRupees(change)};
@@ -69,6 +123,11 @@ export function paymentsOf(sale){
   const due=Math.max(0,toPaise(sale.total)-toPaise(sale.credit));
   return due>0&&PAY_METHODS.includes(sale.pay)?[{id:paymentId(sale.id,sale.pay),method:sale.pay,amount:toRupees(due)}]:[];
 }
+/* How a payment was confirmed. Payments saved before verification was kept count as recorded. */
+export const verificationOf=p=>p&&p.verification||"recorded";
+/* The bill's UPI parts still checked only by hand (a bill with any is labelled "Unverified") */
+export const unverifiedPayments=sale=>paymentsOf(sale).filter(p=>verificationOf(p)==="unverified");
+export const isUnverified=sale=>!sale.void&&unverifiedPayments(sale).length>0;
 /* "Cash", "UPI + Card" … */
 export function payLabel(sale){
   const ps=paymentsOf(sale);

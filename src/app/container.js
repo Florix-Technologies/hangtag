@@ -9,7 +9,7 @@ import { store } from '../shared/state/store.js';
 import { createLocalFirstProductRepository } from '../infrastructure/repositories/local-first-product-repository.js';
 import { createLocalFirstStockRepository } from '../infrastructure/repositories/local-first-stock-repository.js';
 import { dropQueued, enqueue, flushSbQueue } from '../features/sync/services/outbox.js';
-import { saveCatalog, saveCustomers, saveEvents, saveImgs, saveMoves, saveReturns, saveSbQueue } from '../shared/state/persistence.js';
+import { saveCashMoves, saveDayCloses, saveCatalog, saveCustomers, saveEvents, saveImgs, saveMoves, saveReturns, saveSbQueue } from '../shared/state/persistence.js';
 import { enterApp, signOut } from '../features/auth/services/session.js';
 import { barcodeSVG } from '../infrastructure/codes/barcode-svg.js';
 import { qrSVG } from '../infrastructure/codes/qr-svg.js';
@@ -25,6 +25,8 @@ import { invalidate } from '../features/inventory/services/ledger.js';
 import { createEpsonPrinter } from '../infrastructure/printing/epson-epos.js';
 import { rasterizeLogo } from '../infrastructure/printing/raster.js';
 import { createDeliveryClient } from '../infrastructure/messaging/delivery-client.js';
+import { createPaymentGatewayClient } from '../infrastructure/payments/payment-gateway-client.js';
+import { createLocalFirstCashRepository } from '../infrastructure/repositories/local-first-cash-repository.js';
 
 /* Called first at start-up (app/main.js), before the state is restored from storage */
 export function installContainer(){
@@ -50,5 +52,7 @@ export function installContainer(){
   // Bills out: an Epson thermal printer on the shop's network, and email / WhatsApp / SMS through the send-receipt function
   provide("receiptPrinter", createEpsonPrinter({ rasterize: rasterizeLogo }));
   provide("messageDelivery", createDeliveryClient({ cloud: cloudGateway }));
+  provide("paymentGateway", createPaymentGatewayClient({ cloud: cloudGateway }));
+  provide("cashRepository", createLocalFirstCashRepository({ store, persist: { saveCashMoves, saveDayCloses }, outbox: { enqueue } }));
   provide("inventoryImportService", createLocalFirstStockImport({ store, cloud: cloudGateway, persist: { saveCatalog, saveMoves }, outbox: { flush: flushSbQueue }, invalidate }));
 }

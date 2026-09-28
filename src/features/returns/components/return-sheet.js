@@ -1,5 +1,7 @@
 // Return / exchange sheet: choose what comes back (and whether it can be sold again), what the customer takes instead,
 // and how money changes hands. Saving goes through the RecordReturn use case.
+import { canRefundThroughProvider, refundThroughProvider } from '../use-cases/provider-refund.js';
+import { queueAutoDelivery } from '../../delivery/use-cases/auto-delivery.js';
 import { lineLabel } from '../../../domain/catalog/options.js';
 import { store } from '../../../shared/state/store.js';
 import { billTotals } from '../../sales/services/totals.js';
@@ -51,19 +53,33 @@ export function renderReturnSheet(){
     <div class="seg rt-mode" role="group" aria-label="Return or exchange"><button data-rtmode="return" aria-pressed="${!ex}">Return for refund</button><button data-rtmode="exchange" aria-pressed="${ex}">Exchange</button></div>
     <div class="setsec" style="margin-top:12px;border-top:0;padding-top:0"><h4>Items coming back</h4>${lines}</div>
     ${exHTML}
-    ${!ex&&val?`<div class="rt-sum">${Q.tax||Q.roundOff?back:""}<div class="row tot"><span>Refund</span><span class="grand">${inrx(val)}</span></div></div>${payRow("Refund by","pay")}`:""}
-    ${ex&&diff>0?payRow("Customer pays by","collect"):""}${ex&&diff<0?payRow("Refund by","pay"):""}
+    ${!ex&&val?`<div class="rt-sum">${Q.tax||Q.roundOff?back:""}<div class="row tot"><span>Refund</span><span class="grand">${inrx(val)}</span></div></div>${payRow("Refund by","pay")}${provRefundHTML(R,s)}`:""}
+    ${ex&&diff>0?payRow("Customer pays by","collect")+collectRefHTML(R):""}${ex&&diff<0?payRow("Refund by","pay")+provRefundHTML(R,s):""}
     <label class="f" style="margin-top:12px">Reason<select id="rtReason">${RETURN_REASONS.map(r=>`<option${r===R.reason?" selected":""}>${r}</option>`).join("")}</select></label>
     <p id="rtErr" class="autherr" hidden></p>
     <div class="sh-foot"><span class="note">A credit note is made for the return. Stock goes back on the shelf unless marked not for resale.</span><div class="sh-acts"><button class="btn sm" data-act="closesheet">Cancel</button><button class="btn sm primary" data-act="rtsave"${val?"":" disabled"}>${label}</button></div></div>
   </div></div>`;
 }
+/* A UPI / card refund on a bill the provider verified can go back through the provider (on by default) */
+function provRefundHTML(R,s){
+  if(!canRefundThroughProvider(s,R.pay)) return "";
+  return `<label class="chk rt-prov"><input type="checkbox" data-rtprov${R.provRefund!==false?" checked":""}> Send the refund back to the customer's ${PAY_LABELS[R.pay]} through the payment provider</label>`;
+}
+/* UPI or card collected on an exchange: the transaction / card machine reference (never a card number) */
+function collectRefHTML(R){
+  if(R.collect==="cash") return "";
+  return `<div class="pgrid2"><label class="f"><span class="lab">${R.collect==="upi"?"UPI reference (UTR)":"Card machine reference"}</span><input id="rtRef" value="${esc(R.collectRef||"")}" maxlength="40" autocomplete="off"></label>`+
+    (R.collect==="card"?`<label class="f"><span class="lab">Last 4 digits <small>(optional)</small></span><input id="rtLast4" value="${esc(R.collectLast4||"")}" inputmode="numeric" maxlength="4" autocomplete="off"></label>`:"")+`</div>`;
+}
 export function saveReturn(){
   const R=store.retState; if(!R) return;
   const reason=($("#rtReason")||{}).value||R.reason;
-  const r=recordReturn({sid:R.sid,picks:R.q,mode:R.mode,pay:R.pay,collect:R.collect,reason,notForResale:R.nfr,newItems:R.newItems,keepDiscount:R.keepDisc!==false});
+  const r=recordReturn({sid:R.sid,picks:R.q,mode:R.mode,pay:R.pay,collect:R.collect==="cash"?"cash":{method:R.collect,ref:R.collectRef||"",last4:R.collectLast4||""},reason,notForResale:R.nfr,newItems:R.newItems,keepDiscount:R.keepDisc!==false});
   if(r.error){const err=$("#rtErr");if(err){err.textContent=r.error;err.hidden=false}return}
+  const s=D().saleById[R.sid], viaProvider=r.refund>0&&R.provRefund!==false&&canRefundThroughProvider(s,r.ret.pay);
   store.retState=null; closeSheets(); renderAll();
-  if(r.sale) showPaid(r.sale);
+  if(viaProvider) refundThroughProvider(r.ret).then(x=>toast(x.error||`Refund of ${inrx(r.refund)} sent back through the payment provider (${x.refundId}).`));
+  // the exchange's new bill goes to the customer by the same rules as any bill
+  if(r.sale){ queueAutoDelivery(r.sale); showPaid(r.sale); }
   else toast(`Return saved · credit note ${r.ret.no} · refund ${inrx(r.refund)} by ${PAY_LABELS[r.ret.pay]}. ${r.ret.items.every(i=>i.restock)?"Stock is back on the shelf.":"Items not for resale stay off the shelf."}`);
 }

@@ -186,4 +186,25 @@
  *   Resolves only when the provider accepted the message and returned its id. Otherwise throws an AppError:
  *   NOT_CONFIGURED (no provider), VALIDATION (no contact, cancelled, too many), DELIVERY (the provider refused), NETWORK.
  * @property {(saleId: string) => Promise<Object[]>} history  What was sent from a bill (hangtag_deliveries), newest first.
+ * @property {(saleId: string) => Promise<Object>} refresh  Asks the providers whether the bill's messages were delivered.
+ * @property {(saleId: string) => Promise<{url: string}>} link  The bill's secure invoice link (made once, 12 months).
+ * @property {(saleId: string) => Promise<void>} revokeLinks  Stops the bill's invoice links working.
+ */
+
+/**
+ * "paymentGateway": verified UPI (single-use QR for an exact amount) and card (payment link) payments. Implementation:
+ * infrastructure/payments/payment-gateway-client.js → Edge Function payment-gateway (Razorpay keys live there; only the
+ * provider's own record of a captured payment makes an intent "verified"). Reach it through
+ * features/sales/use-cases/provider-payment.js.
+ * @typedef {Object} PaymentGatewayPort
+ * @property {() => Promise<{provider: (string|null), upi: boolean, cardLink: boolean}>} config
+ * @property {(req: {method: "upi"|"card", amount: number, saleId: string, note?: string, expiryMin?: number}) => Promise<Object>} create
+ *   → the intent { id, status: "pending", qrUrl | linkUrl, reference, expiresAt }.
+ * @property {(id: string) => Promise<Object>} status  The intent as the provider sees it now.
+ * @property {(id: string) => Promise<Object>} cancel  Closes it ("verified" instead when the money arrived first).
+ * @property {(req: {saleId: string, reference: string}) => Promise<{status: string}>} verify  Matches a UPI payment checked by hand.
+ * @property {(returnId: string) => Promise<{refundId: string}>} refundReturn  A return's refund back onto its bill's verified payment.
+ * @property {() => Promise<Object[]>} unmatched  Money received that isn't on any bill.
+ * @property {(req: {id: string, resolution: "refund"|"refunded"|"allocated", note?: string}) => Promise<Object>} resolve
+ *   Every call throws an AppError when it can't be done: NOT_CONFIGURED, VALIDATION, CONFLICT, NOT_FOUND, AUTH, DELIVERY, NETWORK.
  */

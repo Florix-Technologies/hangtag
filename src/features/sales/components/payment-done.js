@@ -10,13 +10,14 @@ import { inr, inrx } from '../../../shared/formatting/money.js';
 
 export function showPaid(sale){
   const ps=paymentsOf(sale), change=ps.reduce((a,p)=>a+(p.change||0),0);
-  const how=ps.length?ps.map(p=>`${PAY_LABELS[p.method]||p.method}${ps.length>1?" "+inrx(p.amount):""}${p.ref?" · ref "+p.ref:""}`).join(" + "):"Nothing to collect";
+  const how=ps.length?ps.map(p=>`${PAY_LABELS[p.method]||p.method}${ps.length>1?" "+inrx(p.amount):""}${p.ref?" · ref "+p.ref:""}${p.last4?" · card ••"+p.last4:""}${p.verification==="verified"?" · verified":p.verification==="unverified"?" · unverified":""}`).join(" + "):"Nothing to collect";
   document.body.style.overflow="hidden";
   $("#sheetHost").innerHTML=`<div class="scrim" data-scrim data-paid><div class="sheet paid" role="dialog" aria-modal="true" aria-labelledby="paidT">
     <div class="paid-ic">${ICON.ok}</div>
-    <h3 id="paidT">Payment successful</h3>
+    <h3 id="paidT">${ps.some(p=>p.verification==="unverified")?"Sale completed":"Payment successful"}</h3>
     <div class="paid-amt">${inr(sale.total-(sale.credit||0))}</div>
     <p class="paid-sub">${esc(how)} · Bill ${esc(sale.no)}${sale.cust?" · "+esc(sale.cust.name):""}</p>
+    ${ps.some(p=>p.verification==="unverified")?`<p class="paid-change" data-unverified>UPI checked by hand: <b>Unverified</b> until it's matched with your UPI provider.</p>`:""}
     ${change>0?`<p class="paid-change" data-change>Give change <b>${inrx(change)}</b> <span>(received ${inrx(ps.find(p=>p.method==="cash").received)})</span></p>`:""}
     <div class="paid-acts"><button class="btn" data-print="${esc(sale.id)}">Print</button><button class="btn" data-dlreceipt="${esc(sale.id)}">Download</button>${navigator.share?`<button class="btn" data-share="${esc(sale.id)}">Share</button>`:""}</div>
     ${printStateHTML(sale.id)}

@@ -20,7 +20,9 @@ import { loadExamples } from '../../features/products/services/examples.js';
 import { deleteProduct, setArchived } from '../../features/products/components/product-actions.js';
 import { photoFromFile } from '../../features/products/use-cases/product-photo.js';
 import { openBillView } from '../../features/receipts/components/bill-view.js';
-import { printSale, shareReceipt, whatsappReceipt } from '../../features/receipts/services/receipt-output.js';
+import { downloadReceipt, shareReceipt, whatsappReceipt } from '../../features/receipts/services/receipt-output.js';
+import { onPrint } from '../../features/printing/components/print-actions.js';
+import { onSend } from '../../features/delivery/components/send-actions.js';
 import { renderReport, showTable } from '../../features/reports/pages/report-page.js';
 import { exportCsv } from '../../features/reports/services/csv-export.js';
 import { openReturn, renderReturnSheet, saveReturn } from '../../features/returns/components/return-sheet.js';
@@ -78,7 +80,11 @@ export function installDomEvents(){
     const tb=t.closest("[data-table]");if(tb){showTable[tb.dataset.table]=!showTable[tb.dataset.table];renderReport();return}
     // bills
     const bv=t.closest("[data-billview]");if(bv){closeSheets();openBillView(bv.dataset.billview);return}
-    const pr=t.closest("[data-print]");if(pr){printSale(pr.dataset.print);return}
+    const bp=t.closest("[data-billpaper]");if(bp){const i=bp.dataset.billpaper.indexOf(":");openBillView(bp.dataset.billpaper.slice(i+1),bp.dataset.billpaper.slice(0,i));return}
+    const pr=t.closest("[data-print]");if(pr){onPrint(pr.dataset.print);return}
+    const pb=t.closest("[data-printbrowser]");if(pb){onPrint(pb.dataset.printbrowser,{browser:true});return}
+    const dl=t.closest("[data-dlreceipt]");if(dl){downloadReceipt(dl.dataset.dlreceipt);return}
+    const snd=t.closest("[data-send]");if(snd&&!snd.disabled){const i=snd.dataset.send.indexOf(":");onSend(snd.dataset.send.slice(i+1),snd.dataset.send.slice(0,i));return}
     const sh=t.closest("[data-share]");if(sh){shareReceipt(sh.dataset.share);return}
     const wa=t.closest("[data-wa]");if(wa){whatsappReceipt(wa.dataset.wa);return}
     const us=t.closest("[data-undosale]");if(us){closeSheets();voidSale(us.dataset.undosale);return}

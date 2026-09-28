@@ -20,6 +20,9 @@ import { createCameraScanner } from '../infrastructure/scanner/camera-scanner.js
 import { createLocalFirstStockImport } from '../infrastructure/repositories/local-first-stock-import.js';
 import { createLocalFirstCustomerRepository } from '../infrastructure/repositories/local-first-customer-repository.js';
 import { invalidate } from '../features/inventory/services/ledger.js';
+import { createEpsonPrinter } from '../infrastructure/printing/epson-epos.js';
+import { rasterizeLogo } from '../infrastructure/printing/raster.js';
+import { createDeliveryClient } from '../infrastructure/messaging/delivery-client.js';
 
 /* Called first at start-up (app/main.js), before the state is restored from storage */
 export function installContainer(){
@@ -40,5 +43,8 @@ export function installContainer(){
   provide("stockRepository", createLocalFirstStockRepository({ store, persist: { saveMoves, saveCatalog }, outbox }));
   provide("customerRepository", createLocalFirstCustomerRepository({ store, persist: { saveCustomers }, outbox }));
   provide("documentExtractionService", createBillExtractor({ cloud: cloudGateway, files }));
+  // Bills out: an Epson thermal printer on the shop's network, and email / WhatsApp / SMS through the send-receipt function
+  provide("receiptPrinter", createEpsonPrinter({ rasterize: rasterizeLogo }));
+  provide("messageDelivery", createDeliveryClient({ cloud: cloudGateway }));
   provide("inventoryImportService", createLocalFirstStockImport({ store, cloud: cloudGateway, persist: { saveCatalog, saveMoves }, outbox: { flush: flushSbQueue }, invalidate }));
 }

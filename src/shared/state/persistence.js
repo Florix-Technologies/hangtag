@@ -29,5 +29,7 @@ export const saveMoves=()=>storage.set("rc_moves",store.moves);
 export const saveReturns=()=>storage.set("rc_returns",store.returnsMap);
 export const saveCustomers=()=>storage.set("rc_customers",store.customers);
 export const saveSettings=()=>storage.set("rc_settings",store.settings);
+export const saveLogo=()=>storage.set("rc_logo",store.logo||"");
+export const savePrinter=()=>storage.set("rc_printer",store.printer);
 export const saveProfile=()=>storage.set("hangtag_profile",store.profile);
 export const saveLastSync=()=>storage.set("hangtag_last_sync",store.lastSyncAt);

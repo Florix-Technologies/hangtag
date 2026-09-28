@@ -181,7 +181,7 @@ const vid=(c,s)=>`const p=products().find(x=>x.name==="Street Tee");return p.var
     check('receipt shows shop, bill number, colour / size and payment',/Bill/.test(prev)&&/Black \/ L/.test(prev)&&/Paid/.test(prev),prev.slice(0,120));
     await A.click(`.billview [data-print="${sid}"]`);await sleep(400);
     check('Print makes a print-only page (no app UI in it)',await A.evaluate(()=>{const f=[...document.querySelectorAll('iframe')].pop();return !!(f&&f.contentDocument.querySelector('.rcpt')&&!f.contentDocument.querySelector('.appbar'))}));
-    const waUrl=await A.evaluate(()=>{let u=null;const o=window.open;window.open=x=>{u=x;return {}};document.querySelector('.billview [data-wa]').click();window.open=o;return u});
+    const waUrl=await A.evaluate(()=>{let u=null;const o=window.open;window.open=x=>{u=x;return {}};document.querySelector('.billview [data-send^="whatsapp:"]').click();window.open=o;return u});
     check('WhatsApp opens wa.me with the bill text',/^https:\/\/wa\.me\/\?text=/.test(waUrl||'')&&decodeURIComponent(waUrl).includes('Street Tee (Black / L) × 2 = ₹1,198'),waUrl&&waUrl.slice(0,60));
     await run(A,'closeModal()');
     // ---------------- customers ----------------

@@ -2,6 +2,7 @@
 import { store } from '../shared/state/store.js';
 import { DEFAULT_SETTINGS } from '../domain/shop/settings.js';
 import { discountInput } from '../domain/sales/discounts.js';
+import { printerOf } from '../domain/shop/printer-settings.js';
 import { storage } from '../shared/state/persistence.js';
 import { objOr } from '../shared/utils/objects.js';
 
@@ -27,6 +28,11 @@ export function initState(){
   store.customers = objOr(storage.get("rc_customers",{}),{});  // customers (by id)
   store.settings = Object.assign({},DEFAULT_SETTINGS,objOr(storage.get("rc_settings",{}),{}));
   store.cartCust = storage.get("rc_cartcust",null);            // customer on the bill being rung up
+  store.logo = storage.get("rc_logo","") || "";                // shop logo for receipts (small data URL; synced as hangtag_meta "logo")
+  store.printer = printerOf(storage.get("rc_printer",null));    // this device's receipt printer (not synced: each till has its own)
+  store.printState = null;      // the last print from a bill: { sid, status: "printing"|"done"|"error", message }
+  store.deliveries = {};        // bills sent to customers, by bill id (this session's sends and what the server recorded)
+  store.channels = null;        // which of email / WhatsApp / SMS the server can send ({ email, whatsapp, sms }), once asked
   store.prefs = Object.assign({tab:"sell",density:"photos",period:"today",day:"",from:"",to:""},storage.get("rc_prefs",{}));
   if(!["sell","stock","report","products","customers"].includes(store.prefs.tab))store.prefs.tab="sell";
   store.pick = null;            // variant picker: {pid, color, qty:{vid:n}, last, target:"cart"|"exchange"}

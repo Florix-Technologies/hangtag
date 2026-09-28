@@ -13,7 +13,7 @@ import { objOr } from '../../../shared/utils/objects.js';
    The app works on the plain keys below. When a different account signs in, the current data is put away
    under its owner and that account's own data (or a fresh start) is brought back. */
 
-export const USER_KEYS = ["hangtag_sb_queue", "rc_local", "rc_dirty", "rc_moves", "rc_returns", "rc_customers", "rc_settings", "rc_pend", "rc_cart", "rc_disc", "rc_cartcust", "rc_catalog", "rc_imgs", "hangtag_profile"];
+export const USER_KEYS = ["hangtag_sb_queue", "rc_local", "rc_dirty", "rc_moves", "rc_returns", "rc_customers", "rc_settings", "rc_pend", "rc_cart", "rc_disc", "rc_cartcust", "rc_catalog", "rc_imgs", "hangtag_profile", "rc_logo"];
 export const MUST_KEEP = ["hangtag_sb_queue", "rc_local", "rc_dirty", "rc_moves", "rc_returns", "rc_customers"];   // unsent work: never drop these
 export const DATA_OWNER = "hangtag_data_owner";
 export const stashKey = (owner, k) => "hangtag_u_" + owner + "_" + k;
@@ -30,6 +30,14 @@ export function switchLocalDataTo(userId){
     }catch(e){
       // Storage full. Products and photos can be pulled from the cloud again; unsent work can't.
       if(MUST_KEEP.includes(k)) throw new Error("This device's storage is full, so the other account's unsent bills can't be put away safely. Sign in as that account and let it sync first.");
+      // Settings, the logo or photos couldn't be put away: their queued uploads send whatever the app holds when they run,
+      // which would then be empty and wipe the shop's copy in the cloud. Drop those uploads; the cloud copy comes back
+      // down when the account returns.
+      const type = { rc_settings: "settings", rc_logo: "logo", rc_imgs: "img" }[k];
+      if(type) try{
+        const qk = stashKey(owner, "hangtag_sb_queue"), q = JSON.parse(storage.getRaw(qk) || "[]");
+        if(Array.isArray(q)) storage.setRaw(qk, JSON.stringify(q.filter(x => !x || x.type !== type)));
+      }catch{ /* the queue itself was put away above; leaving it as it is only risks these, not unsent bills */ }
     }
   });
   // Bring back this account's own data, or start empty
@@ -59,6 +67,7 @@ export function loadUserState(){
   store.settings = Object.assign({}, DEFAULT_SETTINGS, objOr(storage.get("rc_settings", {}), {}));
   store.sbOfflineQueue = storage.get("hangtag_sb_queue", []); if(!Array.isArray(store.sbOfflineQueue)) store.sbOfflineQueue = [];
   store.profile = storage.get("hangtag_profile", null);
+  store.logo = storage.get("rc_logo", "") || ""; store.deliveries = {}; store.channels = null; store.printState = null;
   applyCatalogMigration();
   store.editor = null; store.lastSale = null; store.retState = null; store.stockOp = null; store.showAllBills = false;
   closeSheets(); closeModal();

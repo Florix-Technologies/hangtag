@@ -59,8 +59,10 @@
  *   deleteVariants, deleteProduct, saveImage, saveMove, saveReturn, saveCustomer, saveSettings, saveAllSales.
  *   Used by the outbox (features/sync/services/outbox.js) only.
  * @property {Function} fetchProducts  Also: fetchVariants, fetchImages, fetchMoves, fetchReturns, fetchCustomers, fetchSettings,
- *   fetchSales (bills with lines and payments), fetchSaleLineRows, fetchSalePayments. Used by downloads
+ *   fetchSales (bills with lines and payments), fetchSaleLineRows, fetchSalePayments, fetchLogo, fetchDeliveries. Used by downloads
  *   (features/sync/services/pull.js, remote-events.js).
+ * @property {Function} saveLogo  The receipt logo (hangtag_meta "logo"; queue item "logo"). Also: sendReceipt(body) and
+ *   deliveryChannels() (Edge Function send-receipt), used through the "messageDelivery" port only.
  * @property {Function} getProfile  Also: createProfile, updateProfile, saveProfile (the hangtag_profiles row of the signed-in user).
  */
 
@@ -140,4 +142,27 @@
  * @property {() => Object[]} list
  * @property {(id: string) => (Object|null)} get
  * @property {(c: {id, name, phone, email, gstin, type, t}) => Object} save
+ */
+
+/**
+ * "receiptPrinter": a thermal receipt printer. Implementation: infrastructure/printing/epson-epos.js (Epson printers on
+ * the shop's network, through their ePOS-Print web service), provided by app/container.js. Used by
+ * features/printing/use-cases/print-receipt.js with the printer settings of this device (store.printer).
+ * @typedef {Object} ReceiptPrinterPort
+ * @property {(doc: {cols: number, logo: string, lines: {text, align, bold, big}[]}, cfg: {host, https, devid, cols}) => Promise<{ok: true}>} print
+ *   Resolves only when the printer confirmed the print (ePOS success="true"). Otherwise throws an AppError with code
+ *   PRINTER and a message a person can act on (unreachable, cover open, out of paper, timeout …); details.retry is true.
+ * @property {(cfg: Object) => Promise<{ok: true}>} test   A short test receipt, same rules.
+ */
+
+/**
+ * "messageDelivery": sends a finished bill to its customer by email, WhatsApp or SMS. Implementation:
+ * infrastructure/messaging/delivery-client.js → Edge Function send-receipt (provider keys live there; the recipient comes
+ * from the bill's saved customer). Reach it through features/delivery/repositories/delivery-service.js.
+ * @typedef {Object} MessageDeliveryPort
+ * @property {() => Promise<({email: boolean, whatsapp: boolean, sms: boolean}|null)>} channels  Which channels have a provider.
+ * @property {(req: {channel: string, saleId: string, message: {subject?, html?, text, params?}}) => Promise<{status: "sent", to, provider, id}>} send
+ *   Resolves only when the provider accepted the message and returned its id. Otherwise throws an AppError:
+ *   NOT_CONFIGURED (no provider), VALIDATION (no contact, cancelled, too many), DELIVERY (the provider refused), NETWORK.
+ * @property {(saleId: string) => Promise<Object[]>} history  What was sent from a bill (hangtag_deliveries), newest first.
  */

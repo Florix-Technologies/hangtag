@@ -9,7 +9,7 @@ import { enqueue, flushSbQueue, markSynced } from './outbox.js';
 import { use } from '../../../shared/di/services.js';
 import { toast } from '../../../shared/components/toast.js';
 import { dayKey } from '../../../shared/formatting/dates.js';
-import { saveCatalog, saveCustomers, saveImgs, saveMoves, saveReturns, saveSettings } from '../../../shared/state/persistence.js';
+import { saveCatalog, saveCustomers, saveImgs, saveLogo, saveMoves, saveReturns, saveSettings } from '../../../shared/state/persistence.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { logger } from '../../../shared/logging/logger.js';
 
@@ -64,10 +64,18 @@ export async function pullCustomers(){
   Object.values(store.customers).forEach(c => { if(pending.has(c.id)) next[c.id] = c; });
   store.customers = next; saveCustomers();
 }
+/* Settings and the receipt logo (both kept in hangtag_meta; a change still waiting to upload wins — also one made while
+   the download was on its way) */
 export async function pullSettings(){
-  if(store.sbOfflineQueue.some(q=>q.type==="settings")) return;
-  const value = await use("cloud").fetchSettings();
-  if(value && typeof value === "object"){ store.settings = Object.assign({}, DEFAULT_SETTINGS, value); saveSettings(); }
+  const waiting = type => store.sbOfflineQueue.some(q=>q.type===type);
+  if(!waiting("settings")){
+    const value = await use("cloud").fetchSettings();
+    if(value && typeof value === "object" && !waiting("settings")){ store.settings = Object.assign({}, DEFAULT_SETTINGS, value); saveSettings(); }
+  }
+  if(!waiting("logo")){
+    const logo = await use("cloud").fetchLogo();
+    if(!waiting("logo")){ store.logo = logo; saveLogo(); }
+  }
 }
 export async function pullFromSupabase(showToast = true){
   if(!store.sbClient || store.sbStatus !== "connected" || !(await sbSessionOk())) return;
@@ -105,6 +113,7 @@ export async function pushLocalToSupabase(){
   enqueue({ type:"allsales" });
   Object.values(store.returnsMap).forEach(r => enqueue({ type:"return", id:r.id, ret:r }));
   enqueue({ type:"settings" });
+  if(store.logo) enqueue({ type:"logo" });
   renderSync();
   if(!store.sbClient || store.sbStatus !== "connected" || !(await sbSessionOk())){ toast("Saved on this device. It will upload when you're online."); return false; }
   await flushSbQueue();

@@ -88,6 +88,8 @@ export const rowToReturnItem = i => ({ ln:i.sale_line_no, v:i.variant_id||undefi
   c:i.color||"", s:i.size, vl:i.variant_label||"", ov:rowToOv(i.options), sku:i.sku||"", q:i.quantity, price:i.unit_price, value:i.value||0, cost:i.cost_price==null?null:i.cost_price });
 export const rowToReturn = (r, items) => ({ id:r.id, sale:r.sale_id, t:Number(r.t), kind:r.kind||"return", ex:r.exchange_id||null, refund:r.refund_amount||0,
   pay:r.refund_method||"cash", value:r.value||0, note:r.note||"", dev:r.device_id, items:items||[] });
+/* A bill sent to its customer (hangtag_deliveries, written by the send-receipt Edge Function) */
+export const rowToDelivery = r => ({ id:r.id, saleId:r.sale_id, channel:r.channel, to:r.recipient, status:r.status, provider:r.provider||"", providerId:r.provider_message_id||"", error:r.error||"", t:Date.parse(r.created_at)||0 });
 export const rowToCustomer = r => ({ id:r.id, name:r.name, phone:r.phone||"", email:r.email||"", gstin:r.gstin||"", type:r.customer_type==='business'?'business':'individual', t:Date.parse(r.created_at)||0 });
 
 /* ---------- supplier bill imports ---------- */

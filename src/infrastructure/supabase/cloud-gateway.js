@@ -4,7 +4,7 @@ import { makeSbClient } from './client.js';
 import { toAppError } from './errors.js';
 import { AppError, ERROR_CODES } from '../../shared/errors/app-error.js';
 import { sbFetchAll, sbOk } from './query.js';
-import { billArgs, custRow, moveRow, productRow, returnItemRows, returnRow, rowToCustomer, rowToItem, rowToMove, rowToPayment, rowToProduct,
+import { billArgs, custRow, moveRow, productRow, returnItemRows, returnRow, rowToCustomer, rowToDelivery, rowToItem, rowToMove, rowToPayment, rowToProduct,
   rowToImport, rowToReturn, rowToReturnItem, rowToSale, rowToVariant, variantRows } from './mappers.js';
 
 export function createCloudGateway({ getClient, url, key, storageKey }){
@@ -103,6 +103,11 @@ export function createCloudGateway({ getClient, url, key, storageKey }){
     },
     async saveCustomer(c){ sbOk(await table('hangtag_customers').upsert(custRow(c))); },
     async saveSettings(settings){ sbOk(await table('hangtag_meta').upsert({ key:'settings', value:settings, updated_at:new Date().toISOString() })); },
+    /* The shop logo for receipts (a small data URL), or empty to remove it */
+    async saveLogo(dataUrl){
+      if(dataUrl) sbOk(await table('hangtag_meta').upsert({ key:'logo', value:{ data:dataUrl }, updated_at:new Date().toISOString() }));
+      else sbOk(await table('hangtag_meta').delete().eq('key','logo'));
+    },
     /* Every bill (with its cancelled flag, lines and payments), 100 bills per call */
     async saveAllSales(sales){
       for(let i = 0; i < sales.length; i += 100) sbOk(await db().rpc('hangtag_save_sales', { p_bills: sales.slice(i, i + 100).map(billArgs) }));
@@ -132,6 +137,17 @@ export function createCloudGateway({ getClient, url, key, storageKey }){
       const { data } = sbOk(await table('hangtag_meta').select('value').eq('key','settings').maybeSingle());
       return data ? data.value : null;
     },
+    /* The shop logo (data URL), "" when there is none */
+    async fetchLogo(){
+      const { data } = sbOk(await table('hangtag_meta').select('value').eq('key','logo').maybeSingle());
+      return data && data.value && typeof data.value.data === 'string' ? data.value.data : "";
+    },
+    /* A bill's messages to its customer, newest first */
+    async fetchDeliveries(saleId){
+      const { data } = sbOk(await table('hangtag_deliveries').select('*').eq('sale_id', saleId).order('created_at', { ascending:false }));
+      return (data || []).map(rowToDelivery);
+    },
+
     /* Every bill with its lines and payments */
     async fetchSales(){
       const sales = await sbFetchAll(db(), 'hangtag_sales', ['timestamp','id']);
@@ -174,6 +190,35 @@ export function createCloudGateway({ getClient, url, key, storageKey }){
       if(invoiceNo) out.push(...sbOk(await table("hangtag_stock_imports").select(cols).ilike("invoice_no", String(invoiceNo).trim().replace(/[\\%_]/g, m => "\\" + m)).order("created_at", { ascending: false }).limit(5)).data || []);
       const seen = new Set();
       return out.filter(r => !seen.has(r.id) && seen.add(r.id)).map(rowToImport);
+    },
+    /* ---------- sending bills to customers (Edge Function send-receipt; provider keys live there) ---------- */
+    /* Which channels the shop's server has a provider for: { email, whatsapp, sms } (null when it can't be asked) */
+    async deliveryChannels(){
+      try{
+        const r = await db().functions.invoke("send-receipt", { body: { action: "channels" } });
+        return !r.error && r.data && r.data.channels ? r.data.channels : null;
+      }catch{ return null; }
+    },
+    /* body: { channel, sale_id } → { status: "sent", recipient, provider, provider_message_id }. Throws an AppError when it
+       wasn't sent: NOT_CONFIGURED, VALIDATION (no contact, cancelled, too many), AUTH, DELIVERY (the provider refused) */
+    async sendReceipt(body){
+      let r;
+      try{ r = await db().functions.invoke("send-receipt", { body: { action: "send", ...body } }); }
+      catch(e){ throw toAppError(e); }
+      if(!r.error && r.data && r.data.status === "sent" && r.data.provider_message_id) return r.data;
+      let info = null;
+      try{ info = r.error && r.error.context && typeof r.error.context.json === "function" ? await r.error.context.json() : (r.data || null); }catch{ info = null; }
+      const msg = info && info.message, status = r.error && r.error.context && r.error.context.status;
+      if(info && info.error === "not_configured") throw new AppError(ERROR_CODES.NOT_CONFIGURED, msg || "Sending isn't set up yet.", { cause: r.error, details: info });
+      if(info && ["missing_contact","cancelled","rate_limited","not_found","bad_request","bad_channel","too_long"].includes(info.error)) throw new AppError(ERROR_CODES.VALIDATION, msg || "The bill couldn't be sent.", { cause: r.error, details: info });
+      if(info && info.error === "unauthorized") throw new AppError(ERROR_CODES.AUTH, "Sign in again to send bills.", { cause: r.error, details: info });
+      if(info && info.error === "provider_error") throw new AppError(ERROR_CODES.DELIVERY, msg || "The message wasn't accepted.", { cause: r.error, details: info });
+      // not the function's own answer: the platform's (function not deployed, sign-in rejected)
+      if(r.error && !(info && info.error) && (status === 404 || /relay|404|not found/i.test(String(r.error.message || "") + " " + String(info && (info.message || info.msg) || ""))))
+        throw new AppError(ERROR_CODES.NOT_CONFIGURED, "Sending bills isn't set up yet.", { cause: r.error, details: info });
+      if(r.error && !(info && info.error) && status === 401) throw new AppError(ERROR_CODES.AUTH, "Sign in again to send bills.", { cause: r.error, details: info });
+      if(r.error) throw toAppError(r.error);
+      throw new AppError(ERROR_CODES.DELIVERY, "The message wasn't confirmed as sent.", { details: info });
     },
     /* Supabase Edge Function extract-bill: { file_name, mime_type, data (base64), file_hash } → the extraction */
     async extractBill(body){

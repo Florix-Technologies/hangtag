@@ -38,7 +38,9 @@ src/
 │   ├── sales/           checkout-totals.js (the one bill calculation), discounts.js, gst.js, payments.js, paise.js,
 │   │                    cart-rules.js, scan-rules.js, sale.js (pieces, invoice numbers)
 │   ├── finance/         books.js (financial transactions, cash book, bank book, reconciliation)
-│   └── shop/            profile.js + profile-validation.js, settings.js + settings-validation.js
+│   ├── invoices/        invoice.js (the finalized bill as a document), amount-words.js, delivery.js (who a bill can go to)
+│   ├── receipts/        thermal.js (a receipt as fixed-width lines for a thermal printer)
+│   └── shop/            profile.js + profile-validation.js, settings.js + settings-validation.js, printer-settings.js
 ├── infrastructure/      Everything that talks to the outside world
 │   ├── supabase/        client.js (makeSbClient), cloud-gateway.js (the "cloud" port), mappers.js (row ↔ record),
 │   │                    query.js (sbOk, paging), errors.js (→ AppError)
@@ -46,6 +48,8 @@ src/
 │   │                    local-first-stock-import.js (supplier bills: one RPC, then applied locally)
 │   ├── codes/           barcode-svg.js (EAN-13/UPC-A/EAN-8/Code 128), qr-svg.js (+ vendor/qrcode-generator.js, MIT), png.js
 │   ├── extraction/      bill-extractor.js (calls the extract-bill Edge Function)
+│   ├── printing/        epson-epos.js (Epson ePOS-Print over the network: the "receiptPrinter" port), raster.js (logo → mono dots)
+│   ├── messaging/       delivery-client.js (the "messageDelivery" port → the send-receipt Edge Function)
 │   ├── scanner/         camera-scanner.js (rear camera; BarcodeDetector, else vendor/zxing-decode.js, Apache-2.0)
 │   ├── storage/         local-storage.js (the "storage" port)
 │   └── browser/         files.js: download/share, photo → thumbnail, SHA-256, photo downscale, base64 (the "files" port)
@@ -62,11 +66,12 @@ src/
 │   ├── constants/       Icons
 │   ├── utils/           Ids, text, colours, objects
 │   └── dom.js           $ / $$ queries, HTML escaping (esc), keyed list patching
-└── styles/              CSS in cascade order (00-base … 90-checkout-books)
+└── styles/              CSS in cascade order (00-base … 95-billing-output)
 supabase/
 ├── schema.sql           Database of the live app (hangtag_* tables, RLS, triggers). Run in the SQL Editor; safe to re-run
 ├── migrations/          Next-generation database foundation (Phase 1: shops, members, RLS). Not applied to the live project
-├── functions/           extract-bill: Edge Function that reads supplier bills (Claude; key as a function secret; README inside)
+├── functions/           extract-bill: reads supplier bills (Claude; key as a function secret). send-receipt: sends bills by
+│                        email / WhatsApp / SMS (provider keys as function secrets). README in each
 ├── README.md            How the database files are organised and applied
 └── tests/               Database tests (PGlite): schema, RLS isolation, triggers, migrations
 tests/
@@ -84,12 +89,14 @@ eslint.config.js         Lint rules for src/ (undefined names, unused variables)
 | Feature | What it owns | Use cases today |
 |---|---|---|
 | `auth` | Sign-in screen, Google/email/other providers, password reset, session lifecycle, per-account local data | (session services) |
-| `shop` | Shop profile (setup and settings), account menu, billing/stock settings | `saveShopProfile`, `saveBillingSettings` |
+| `shop` | Shop profile (setup and settings), account menu, billing/stock settings, receipt logo | `saveShopProfile`, `saveBillingSettings`, `setReceiptLogo` |
 | `products` | Product list, product editor (optional options/variants with any names, per-variant SKU/barcode/price/cost, HSN/GST), barcode/QR codes, stickers, colour grouping, examples, archive/delete, photos | `saveProduct`, `archiveProduct`, `removeProduct`, `photoFromFile` |
 | `inventory` | Stock page, stock in, stock adjustment, supplier bill import (upload → review → confirm), the stock ledger read model | `recordStockOperation`, `readSupplierBill`, `planSupplierBill`, `confirmSupplierBill` |
 | `sales` | Sell screen, search, variant picker, cart, line and bill discounts, GST on the bill, payment screen (cash / UPI / card / split), checkout, cancelling bills | `checkout`, `setLineDiscount`, `setBillDiscount`, `voidSale`, `unvoid` |
 | `finance` | Financial transactions, cash book and bank book (read models over bills and returns), their views on Reports, a bill's payments in the bill view | – |
-| `receipts` | Receipt model, receipt layouts, print/image/share/WhatsApp, bill view | – |
+| `receipts` | The invoice of a bill (`invoiceFor`), the 80 mm receipt and A4 invoice, picture, browser print, share, "open WhatsApp", bill view | – |
+| `printing` | Printing a bill on this device's thermal printer (Epson), printer settings of the device, print status | `printReceipt`, `savePrinterSettings`, `testPrinter` |
+| `delivery` | Sending a bill to its customer by email / WhatsApp / SMS (the server writes the message), what was sent | `sendInvoice` |
 | `customers` | Customers page (search by name/mobile), customer picker on the bill, add/edit (individual or business, GSTIN), purchase history | `saveCustomer`, `setBillCustomer` |
 | `returns` | Returns and exchanges | – |
 | `reports` | Reports page, periods, CSV export | – |
@@ -177,6 +184,8 @@ export const archiveProduct = (pid, on) => productRepository().setArchived(pid, 
 | `customerRepository` | `infrastructure/repositories/local-first-customer-repository.js` | `features/customers/repositories/customer-repository.js` |
 | `barcodeScanner` | `infrastructure/scanner/camera-scanner.js` | `features/sales/components/camera-scan.js` (Sell → Scan), rules in `domain/sales/scan-rules.js`, `use-cases/scan-to-cart.js` |
 | `inventoryImportService` | `infrastructure/repositories/local-first-stock-import.js` → RPC `hangtag_import_stock` | `features/inventory/use-cases/import-supplier-bill.js` |
+| `receiptPrinter` | `infrastructure/printing/epson-epos.js` (Epson ePOS-Print; logo via `raster.js`) | `features/printing/use-cases/print-receipt.js` |
+| `messageDelivery` | `infrastructure/messaging/delivery-client.js` → Edge Function `send-receipt` | `features/delivery/repositories/delivery-service.js` |
 
 `app/main.js` calls `installContainer()` and `installNavigation()` before anything reads storage or renders. The
 rest of start-up keeps the original order.
@@ -319,6 +328,117 @@ Triggers:
 Every table has the "Own rows only" RLS policy. Indexes: `(owner_id, sale_id)` on transactions (reconciliation and
 cancelling) and `(owner_id, t)` on both books (read in date order).
 
+## Bills out: invoices, receipts, sending and printing
+
+Everything that leaves the till starts from the **finalized bill** — the figures saved at checkout (see
+[Money](#money-discounts-gst-payments-and-the-books)). Nothing downstream recalculates a discount, GST or payment.
+
+```text
+SALE → CHECKOUT TOTALS → GST → PAYMENT → FINANCIAL TRANSACTION          (Phases 9-12, saved with the bill)
+                    ↓
+FINALIZED SALE → INVOICE (domain/invoices/invoice.js buildInvoice)
+                    ├─ 80 mm receipt · A4 invoice (features/receipts/components/receipt-view.js)
+                    ├─ picture / share / browser print / "open WhatsApp" (features/receipts/services/receipt-output.js)
+                    ├─ Send (bill id + channel) → send-receipt, which writes the email / WhatsApp / SMS from the saved rows
+                    └─ thermal lines (domain/receipts/thermal.js) → "receiptPrinter" port → Epson printer
+```
+
+### Invoice flow
+
+- `features/receipts/services/receipt-model.js` `invoiceFor(sale)` gathers the shop profile, the customer's saved
+  record (email and mobile, where the bill can be sent), the bill's returns, the footer and the logo, and calls
+  `buildInvoice` (pure). The buyer's GSTIN and type are the ones saved on the bill: editing a customer later never
+  changes an invoice.
+- The invoice holds: seller (name, address, phone, GSTIN, state code), buyer (or walk-in), place of supply, the title
+  (**Tax Invoice** when GST was charged, else **Invoice**), lines (variant, SKU, HSN, qty, rate, line discount, bill
+  discount share, taxable value, GST rate, CGST / SGST / IGST, line total), GST by rate (the saved lines added up),
+  totals (subtotal, item and bill discounts, taxable amount, CGST, SGST, IGST, round off, total, exchange credit,
+  amount due), payments (each part, cash received and change, references), paid, balance, returns, refunds and the
+  amount in words.
+- Bills saved before line GST was kept show their saved totals, with the GST as CGST + SGST halves (`saleGstSplit`).
+- A cancelled bill's invoice has `status: "cancelled"`: it prints marked CANCELLED and can't be sent.
+- The invoice number is the bill number; no separate invoice record is stored.
+
+### Receipt flow and the logo
+
+- One invoice drives every layout: the 80 mm receipt (bill view, print dialog), the A4 invoice (Billing settings →
+  Receipt paper, or the bill view's **A4 invoice** switch), the PNG picture, the WhatsApp / share text and the thermal
+  print. The shop profile controls the business details on all of them; the footer comes from Billing settings.
+- **Logo:** Settings → Receipts and printer → Add logo. `features/shop/use-cases/receipt-logo.js` shrinks the picture
+  (at most 360 px, JPEG on white, ≤ 300 KB) and keeps it in `store.logo` (this device, per account: `rc_logo`). The
+  upload queue sends it to `hangtag_meta` under the key `logo` (queue item `logo`); `pullSettings` downloads it. Row
+  security keeps it to the shop, and a database check limits its size. The thermal printer gets it as a mono raster.
+
+### Sending bills: email, WhatsApp, SMS
+
+```text
+Send button → sendInvoice (features/delivery/use-cases/send-invoice.js)
+   checks: a valid (not cancelled) invoice · a customer with an email / mobile (domain/invoices/delivery.js) · online ·
+   the bill and its customer have uploaded
+   → "messageDelivery" port → Edge Function send-receipt (supabase/functions/send-receipt) with { sale_id, channel } only
+        signed-in user listed in SEND_ALLOWED_USERS (unset = sending is off) · reads the bill, its lines, payments and
+        customer with the user's own session (row security) · refuses cancelled bills · recipient = the customer as
+        saved in Customers (never the request, never the copy on the bill) · a read error is 503, never "not found"
+        → core.js billMessage: email { subject, html, text } · SMS text · WhatsApp template values, from the saved rows
+        → hangtag_deliveries row "pending" (service role), then the hourly count (60) — fails closed
+        → provider adapter (providers/resend.js email · twilio.js SMS / WhatsApp · meta-whatsapp.js WhatsApp)
+        → the row finished as "sent" (only with the provider's message id) or "failed"
+```
+
+- Providers are chosen by the function's secrets (`EMAIL_PROVIDER`, `SMS_PROVIDER`, `WHATSAPP_PROVIDER` and their
+  keys; see `supabase/functions/send-receipt/README.md`). A new provider is a file in `providers/` and a case in
+  `providers/index.js` / `core.js`; the app doesn't change. WhatsApp counts as set up only with an approved template
+  (Meta `WHATSAPP_TEMPLATE`, Twilio `TWILIO_WHATSAPP_CONTENT_SID`): free text a business starts isn't delivered.
+- **No false success:** the app shows "✓ Emailed to …" only when the function answered `status: "sent"` with the
+  provider's id. A provider refusal is `DELIVERY`; no provider is `NOT_CONFIGURED`; a missing contact, a cancelled bill
+  or too many messages is `VALIDATION`. Each is shown with its reason and nothing is marked sent.
+- **WhatsApp without a provider, or on a walk-in bill,** opens WhatsApp on this device with the bill typed in
+  (`wa.me`); the person presses Send. It's shown as "WhatsApp opened", never as sent, and not recorded.
+- The bill view lists what was sent (`hangtag_deliveries`, read-only for the app) and the latest attempt.
+
+### Printing on an Epson thermal printer
+
+```text
+Print → printReceipt (features/printing/use-cases/print-receipt.js)
+   store.printer (this device only: rc_printer) · kind "browser" → the print dialog (80 mm or A4 page)
+   kind "epson" → invoiceFor → thermalReceipt(inv, { cols: 48 | 42 | 32 }) → "receiptPrinter".print(doc, cfg)
+     → infrastructure/printing/epson-epos.js: ePOS-Print XML (text lines, logo image, feed, cut)
+       POST https://<printer>/cgi-bin/epos/service.cgi?devid=local_printer → <response success="true" …/>
+```
+
+- Epson specifics live in `epson-epos.js` only; `thermal.js` is printer-neutral (lines with alignment, bold, big), so
+  another printer brand is another adapter for the same port.
+- **No false success:** "✓ Printed" only when the printer answers `success="true"`. Unreachable (network, certificate),
+  HTTP errors, an answer that isn't ePOS, and printer codes (cover open, out of paper, cutter, timeout, device not
+  found …) are `PRINTER` errors with a plain message, **Try again**, and **Use the print dialog** as a fallback.
+- Printer settings (Settings → Receipts and printer) are kept per device, because each till has its own printer; **Test
+  print** checks the connection before saving. With Hangtag on https, the printer must be reached over https (open
+  `https://<printer IP>` once and accept its certificate).
+
+### Security boundaries
+
+- Provider keys (Resend, Twilio, Meta) and the service-role key exist only in the send-receipt function's secrets.
+  `tests/unit/send-receipt.test.mjs` checks the app contains no provider hosts or keys.
+- The app can read `hangtag_deliveries` but not write, change or delete it; only the function writes it, with the
+  owner taken from the verified session.
+- The app sends only the bill id and the channel. The function writes the message from the saved bill, never takes a
+  recipient or text from the request, and reads the bill with the caller's session, so a shop can only send its own
+  bills, as recorded, to its own saved customers. Sending is off until `SEND_ALLOWED_USERS` names the accounts that may
+  send (sign-up is open), and each account is limited to 60 messages an hour, counted before sending.
+- The printer is called directly from the browser on the shop's network; no printer data leaves the device otherwise.
+
+### Database relationships (schema.sql section 3f)
+
+| Table | Keys | Points at | Written by |
+|---|---|---|---|
+| `hangtag_deliveries` (channel, recipient, status pending / sent / failed, provider, provider message id, error) | `(owner_id, id)` | bill (link cleared if the bill is deleted; the record stays) | the send-receipt function only (the app reads) |
+| `hangtag_meta` key `logo` (`{ data: <data URL> }`, size-checked) | `(owner_id, key)` | – | the app, through the upload queue |
+
+`hangtag_deliveries` has "Own rows only" RLS and a check that a `sent` row has the provider's message id. Deleting a
+bill sets its records' `sale_id` to null (`ON DELETE SET NULL (sale_id)`), so the log and the hourly count can't be
+erased that way; deleting the account removes everything. Indexes:
+`(owner_id, sale_id, created_at)` for a bill's history and `(owner_id, created_at)` for the hourly limit.
+
 ## State
 
 One store object (`shared/state/store.js`) holds the app's state. `app/state-init.js` restores it at start-up.
@@ -398,6 +518,8 @@ an `AppError`.
   | Missing table, column or function (`PGRST202`, `PGRST205`) | `OUTDATED_DATABASE` |
   | `23514` / `P0001` (rules in `schema.sql`) | `VALIDATION` |
   | `23503` | `NOT_FOUND` |
+  | The receipt printer didn't confirm (unreachable, cover open, out of paper, timeout …) | `PRINTER` (made by `epson-epos.js`) |
+  | The email / WhatsApp / SMS provider didn't accept a message | `DELIVERY` (made by the gateway's `sendReceipt`) |
   | Anything else | `UNKNOWN` |
 
   Database rules keep their own human message. Every other code gets a plain message: constraint names and
@@ -459,6 +581,7 @@ after changing any file under `src/`, and commit the updated `sw.js` with it.**
 | Unit | `tests/unit` | `domain.test.mjs`: domain rules. `checkout.test.mjs`: discounts, GST, totals, payments, split payments, the books and the checkout use cases. `use-cases.test.mjs`: use cases with fake ports. `infrastructure.test.mjs`: the gateway against a fake client, mappers, error mapping, repositories. `ports.test.mjs`: the ports registry, render bus and persistence. `architecture.test.mjs`: layer rules, no cycles, test API. `build.test.mjs`: `npm run check` (offline list, bundle, lint) |
 | Database | `supabase/tests` | Schema, RLS isolation, triggers and migrations, on PGlite with Supabase stubs. `payments.test.mjs`: the 3e upgrade, the bill RPC, payment rules, posting, cancelling, refunds, isolation, and that the database and `domain/finance/books.js` give the same entries |
 | Integration (app ↔ cloud) | `tests/e2e/cloud-roundtrip.test.mjs` | Two devices sync through the real supabase-js against a stand-in PostgREST that rejects unknown columns |
+| Bills out | `tests/unit/billing-output.test.mjs`, `send-receipt.test.mjs`, `supabase/tests/deliveries.test.mjs`, `tests/e2e/billing-output.test.mjs` | The invoice model, thermal layout, messages, the Epson adapter against a fake printer, the send-receipt function and its providers against a fake fetch, the delivery records, and the whole flow in Chrome (logo, invoice, sending, printing, failures) |
 | E2E | `tests/e2e` | Sign-in (Google, email, tabs), per-account data, offline queue and service worker, POS flows (variants, returns, exchanges, receipts), shop setup and settings. `checkout-payments.test.mjs`: discounts, GST (CGST + SGST and IGST), cash, UPI, card and split payments on desktop and phone against the real schema, the books, cancel and restore, returns, a second device |
 
 Commands:
@@ -502,6 +625,11 @@ Phase 3 and 4 were added this way:
 - **Supplier bills:** planning in `domain/inventory/bill-import.js`; reading behind `documentExtractionService` (an Edge
   Function holds the provider key); saving behind `inventoryImportService` (one database transaction). A different OCR
   provider only needs a new provider file in `supabase/functions/extract-bill/providers/`.
+
+Phases 13–16 (invoices, receipts with the logo, sending bills, Epson printing) followed the same pattern: the invoice
+model and the thermal layout in `domain/`, use cases in `features/printing` and `features/delivery`, two new ports
+(`receiptPrinter`, `messageDelivery`) with their adapters in `infrastructure/`, and the provider keys behind an Edge
+Function (see [Bills out](#bills-out-invoices-receipts-sending-and-printing)).
 
 Phases 9–12 (discounts, GST, payments, split payments, cash and bank books) were added the same way: rules in
 `domain/sales/` and `domain/finance/`, use cases in `features/sales/use-cases/`, read models in

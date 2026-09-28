@@ -15,7 +15,9 @@ export function enqueue(item){
     const ex=store.sbOfflineQueue.find(q=>q.type==="prod"&&q.id===item.id&&!q.tries);
     if(ex){ex.delV=[...new Set([...(ex.delV||[]),...(item.delV||[])])];saveSbQueue();return}
   }
-  if(item.type==="settings"&&store.sbOfflineQueue.some(q=>q.type==="settings"&&!q.tries)){return}
+  // one waiting upload of the settings / logo is enough (it sends the latest value) — but not one already uploading:
+  // that one may have read the old value, so a change made meanwhile gets its own upload
+  if((item.type==="settings"||item.type==="logo")&&store.sbOfflineQueue.some(q=>q.type===item.type&&!q.tries&&!q.sending)){return}
   store.sbOfflineQueue.push(item);saveSbQueue();
 }
 /* Take queued changes out before they upload (e.g. a product deleted before its changes were sent) */
@@ -52,6 +54,8 @@ export async function sendItem(item){
     await cloud.saveCustomer(item.cust);
   } else if(item.type === "settings"){
     await cloud.saveSettings(store.settings);
+  } else if(item.type === "logo"){
+    await cloud.saveLogo(store.logo || "");
   } else if(item.type === "allsales"){
     await cloud.saveAllSales(D().sales);
   } else if(item.type === "catdel"){
@@ -69,12 +73,14 @@ export async function flushSbQueueOnce(){
   store.syncing = true; renderSync();
   const queue = [...store.sbOfflineQueue], done = new Set();
   for(const item of queue){
+    item.sending = true;
     try{ await sendItem(item); done.add(item); }
     catch(err){
       logger.warn("Queue sync item failed:", item.type, err);
       item.tries = (item.tries||0) + 1; item.err = err && (err.message || err.code) || String(err);
       if(ORDERED.has(item.type)) break;
     }
+    finally{ delete item.sending; }
   }
   store.sbOfflineQueue = store.sbOfflineQueue.filter(x => !done.has(x));
   saveSbQueue();

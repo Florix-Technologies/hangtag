@@ -10,6 +10,8 @@ export const ERROR_CODES = Object.freeze({
   OUTDATED_DATABASE: "OUTDATED_DATABASE", // the database needs the latest schema.sql
   STORAGE_FULL: "STORAGE_FULL",           // this device's storage is full
   NOT_CONFIGURED: "NOT_CONFIGURED",       // a server feature isn't set up (e.g. reading bills needs an API key on the server)
+  PRINTER: "PRINTER",                     // the receipt printer couldn't be reached or didn't confirm the print
+  DELIVERY: "DELIVERY",                   // the email / WhatsApp / SMS service didn't accept the message
   UNKNOWN: "UNKNOWN",
 });
 

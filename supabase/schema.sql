@@ -5,7 +5,7 @@
 --
 -- Every account has its own shop: its own profile, products, variants (any options: colour, size, storage...),
 -- stock history, supplier bills, bills (with their discounts, GST and payments), cash and bank books, returns,
--- customers and settings. Nobody can see or change another account's data.
+-- customers, bills sent to customers, logo and settings. Nobody can see or change another account's data.
 -- The first run of the variant upgrade keeps a copy of the old product, size and bill tables
 -- (hangtag_backup_v2_*), the first run of the options upgrade keeps a copy of products and variants
 -- (hangtag_backup_v3_*), and the script ends with a migration report you can check.
@@ -1133,6 +1133,37 @@ UPDATE public.hangtag_returns r SET refund_amount = r.refund_amount
  WHERE r.refund_amount > 0 AND NOT EXISTS (SELECT 1 FROM public.hangtag_fin_txns f WHERE f.owner_id = r.owner_id AND f.return_id = r.id);
 
 -- ==============================================================================
+-- 3f. Bills sent to customers, and the shop logo
+--   Every email, WhatsApp or SMS sent from a bill is one row, written only by the send-receipt Edge Function (the app
+--   can read them). The function writes it as "pending" before calling the provider (the hourly limit counts these
+--   rows), then "sent" (always with the provider's message id: nothing is recorded as sent without it) or "failed".
+--   Deleting a bill keeps its delivery records (sale_id is cleared), so the log and the limit can't be erased that way.
+--   The shop logo printed on receipts is kept in hangtag_meta under the key 'logo' (a small picture, size-limited).
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.hangtag_deliveries (
+    owner_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    id UUID NOT NULL DEFAULT gen_random_uuid(),
+    sale_id TEXT,
+    channel TEXT NOT NULL CHECK (channel IN ('email','whatsapp','sms')),
+    recipient TEXT NOT NULL CHECK (char_length(recipient) BETWEEN 3 AND 200),
+    status TEXT NOT NULL CHECK (status IN ('pending','sent','failed')),
+    provider TEXT CHECK (provider IS NULL OR char_length(provider) <= 40),
+    provider_message_id TEXT CHECK (provider_message_id IS NULL OR char_length(provider_message_id) <= 200),
+    error TEXT CHECK (error IS NULL OR char_length(error) <= 300),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (owner_id, id),
+    CONSTRAINT hangtag_deliveries_sent_check CHECK (status <> 'sent' OR provider_message_id IS NOT NULL),
+    CONSTRAINT hangtag_deliveries_sale_fkey FOREIGN KEY (owner_id, sale_id) REFERENCES public.hangtag_sales (owner_id, id) ON DELETE SET NULL (sale_id)
+);
+-- a bill's messages, newest first (the bill view)
+CREATE INDEX IF NOT EXISTS idx_hangtag_deliveries_sale ON public.hangtag_deliveries (owner_id, sale_id, created_at DESC);
+-- the function's limit of messages per shop per hour
+CREATE INDEX IF NOT EXISTS idx_hangtag_deliveries_time ON public.hangtag_deliveries (owner_id, created_at DESC);
+-- the logo is a small picture: at most about 300 KB
+ALTER TABLE public.hangtag_meta DROP CONSTRAINT IF EXISTS hangtag_meta_logo_size_check;
+ALTER TABLE public.hangtag_meta ADD CONSTRAINT hangtag_meta_logo_size_check CHECK (key <> 'logo' OR octet_length(value::text) <= 400000) NOT VALID;
+
+-- ==============================================================================
 -- 4. Indexes for reports
 -- ==============================================================================
 DROP INDEX IF EXISTS public.idx_hangtag_sizes_prod;
@@ -1149,7 +1180,7 @@ DO $$
 DECLARE t TEXT;
 BEGIN
     FOREACH t IN ARRAY ARRAY['hangtag_products','hangtag_sizes','hangtag_images','hangtag_sales','hangtag_sale_items','hangtag_meta','hangtag_variants','hangtag_stock_moves','hangtag_customers','hangtag_returns','hangtag_return_items','hangtag_stock_imports',
-                     'hangtag_payments','hangtag_fin_txns','hangtag_cash_book','hangtag_bank_book'] LOOP
+                     'hangtag_payments','hangtag_fin_txns','hangtag_cash_book','hangtag_bank_book','hangtag_deliveries'] LOOP
         EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
         EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 'Public access to ' || t, t);
         EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 'Approved staff access to ' || t, t);
@@ -1178,14 +1209,15 @@ REVOKE ALL ON TABLE public.hangtag_products, public.hangtag_sizes, public.hangta
     public.hangtag_sales, public.hangtag_sale_items, public.hangtag_meta, public.hangtag_profiles,
     public.hangtag_variants, public.hangtag_stock_moves, public.hangtag_customers,
     public.hangtag_returns, public.hangtag_return_items, public.hangtag_stock_imports,
-    public.hangtag_payments, public.hangtag_fin_txns, public.hangtag_cash_book, public.hangtag_bank_book FROM anon;
+    public.hangtag_payments, public.hangtag_fin_txns, public.hangtag_cash_book, public.hangtag_bank_book, public.hangtag_deliveries FROM anon;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.hangtag_products, public.hangtag_sizes, public.hangtag_images,
     public.hangtag_sales, public.hangtag_sale_items, public.hangtag_meta,
     public.hangtag_variants, public.hangtag_stock_moves, public.hangtag_customers,
     public.hangtag_returns, public.hangtag_return_items, public.hangtag_stock_imports, public.hangtag_payments TO authenticated;
--- Financial transactions and the cash and bank books are written only by the database (section 3e): read-only here
-REVOKE ALL ON TABLE public.hangtag_fin_txns, public.hangtag_cash_book, public.hangtag_bank_book FROM authenticated;
-GRANT SELECT ON TABLE public.hangtag_fin_txns, public.hangtag_cash_book, public.hangtag_bank_book TO authenticated;
+-- Financial transactions and the cash and bank books are written only by the database (section 3e), and delivery
+-- records only by the send-receipt Edge Function (section 3f): read-only here
+REVOKE ALL ON TABLE public.hangtag_fin_txns, public.hangtag_cash_book, public.hangtag_bank_book, public.hangtag_deliveries FROM authenticated;
+GRANT SELECT ON TABLE public.hangtag_fin_txns, public.hangtag_cash_book, public.hangtag_bank_book, public.hangtag_deliveries TO authenticated;
 REVOKE EXECUTE ON FUNCTION public.hangtag_check_return_qty() FROM PUBLIC, anon;
 GRANT SELECT, INSERT, UPDATE ON TABLE public.hangtag_profiles TO authenticated;
 

@@ -1,0 +1,29 @@
+/* ---------- receipt / invoice preview (the printed page uses RECEIPT_CSS in receipt-view.js) ---------- */
+.rcpt .r-shop{align-items:center}.rcpt .r-logo{max-width:150px;max-height:72px;object-fit:contain;margin-bottom:4px}
+.rcpt .r-title{display:block;font-size:14px;margin:2px 0 4px}.rcpt .r-row small{color:var(--ink-3);font-size:.85em}.rcpt.void .r-items,.rcpt.void .r-tot{opacity:.55}
+.rcpt-prev.a4prev .rcpt{max-width:none;font-size:12px}
+.rcpt.a4 .i-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;border-bottom:2px solid #000;padding-bottom:8px;margin-bottom:8px;flex-wrap:wrap}
+.rcpt.a4 .r-shop{align-items:flex-start;text-align:left}.rcpt.a4 .r-shop b{font-size:17px}.rcpt.a4 .r-title{font-size:15px;text-transform:uppercase;letter-spacing:.04em}
+.rcpt.a4 .i-meta{min-width:180px;flex:1}.rcpt .i-party{display:flex;flex-direction:column;gap:1px;margin:6px 0 8px}
+.rcpt .i-lab{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-3);margin-bottom:2px}
+.rcpt .i-table th,.rcpt .i-table td{padding:3px 4px}.rcpt .i-table th:nth-child(2),.rcpt .i-table td:nth-child(2){text-align:left}
+.rcpt .i-foot{display:flex;gap:14px;justify-content:space-between;align-items:flex-start;margin-top:8px;flex-wrap:wrap}.rcpt .i-left{flex:1;min-width:200px;display:flex;flex-direction:column;gap:8px}
+.rcpt.a4 .r-tot{min-width:200px;flex:1}.rcpt .i-tax{border-collapse:collapse;font-size:11px}.rcpt .i-tax th,.rcpt .i-tax td{border:1px solid #ccc;padding:2px 6px;text-align:right}
+.rcpt .i-words,.rcpt .i-note,.rcpt .i-gen{margin:0;font-size:11px}.rcpt .i-rets{display:flex;flex-direction:column;gap:2px;font-size:11px}.rcpt .i-gen{margin-top:8px;color:var(--ink-3);text-align:center}
+.rcpt-prev.a4prev{overflow-x:auto}.sheet.billview.wide{max-width:860px}
+.billpaper.seg{background:var(--wash);display:flex;width:max-content;margin:0 0 10px}.billpaper.seg button{min-height:34px;text-align:center}
+
+/* ---------- print status and "Send to customer" ---------- */
+.printstate,.sendstate{margin:6px 0 0;font-size:13px;min-height:0}.printstate:empty,.sendstate:empty{display:none}
+.dl-ok{color:var(--good-ink);font-weight:600}.dl-err{color:var(--crit);font-weight:600}.dl-busy{color:var(--ink-2)}.dl-note{color:var(--ink-2)}
+.sendbox{width:100%;margin:10px 0 4px;padding:10px 12px;border:1px solid var(--line);border-radius:14px;text-align:left}
+.sendh{display:block;font-size:12px;font-weight:700;color:var(--ink-3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+.sendacts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.sendacts .btn{min-height:42px;justify-content:center}
+.sendbox .note{margin:6px 0 0}.dlhist .retline{font-size:13px}
+
+/* ---------- receipt settings: logo and printer ---------- */
+.logoedit{display:flex;gap:12px;align-items:flex-start;margin-bottom:12px}
+.logoprev{flex:none;width:96px;height:64px;border:1px dashed var(--line-2);border-radius:10px;display:flex;align-items:center;justify-content:center;background:#fff;overflow:hidden}
+.logoprev img{max-width:100%;max-height:100%;object-fit:contain}.logoedit .btn input[type=file]{display:none}
+#printerMsg.okmsg{background:var(--accent-soft);color:var(--good-ink)}
+@media (max-width:699px){.sendacts .btn{min-height:46px}.logoedit{flex-direction:column}}

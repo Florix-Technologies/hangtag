@@ -11,7 +11,7 @@ import { store } from '../../../shared/state/store.js';
 import { ICON } from '../../../shared/constants/icons.js';
 import { $, esc } from '../../../shared/dom.js';
 import { dtLong } from '../../../shared/formatting/dates.js';
-import { inr, inrx } from '../../../shared/formatting/money.js';
+import { inrx } from '../../../shared/formatting/money.js';
 
 /* ================= bill view (from Reports, the last bill, customers) ================= */
 
@@ -32,7 +32,13 @@ export function openBillView(sid,paper){
     ${sendBoxHTML(s)}
     <div data-dlhist="${esc(s.id)}">${historyHTML(s.id)}</div>
     ${money}
-    ${rets.length?`<div class="setsec"><h4>Returns and exchanges</h4>${rets.map(r=>`<div class="retline"><b>${r.kind==="exchange"?"Exchange":"Return"}</b> · ${esc(dtLong(r.t))}<br>${r.items.map(i=>esc(i.n+(lineLabel(i)?" "+lineLabel(i):""))+" × "+i.q).join(", ")} · ${inr(r.value)}${r.refund?" · refunded "+inr(r.refund)+" ("+(PAY_LABELS[r.pay]||r.pay)+")":""}</div>`).join("")}</div>`:""}
+    ${rets.length?`<div class="setsec"><h4>Returns and exchanges</h4>${retLinesHTML(s)}${rets.map(r=>{const tax=(r.items||[]).reduce((a,i)=>a+(i.cgst||0)+(i.sgst||0)+(i.igst||0),0),ex=r.ex&&D().sales.find(x=>x.ex===r.ex&&x.kind==="exchange");
+      return `<div class="retline" data-ret="${esc(r.id)}"><b>${r.kind==="exchange"?"Exchange":"Return"}${r.no?" · credit note "+esc(r.no):""}</b> · ${esc(dtLong(r.t))}<br>${r.items.map(i=>esc(i.n+(lineLabel(i)?" "+lineLabel(i):""))+" × "+i.q+(i.restock===false?" (not for resale)":"")).join(", ")} · ${inrx(r.value)}${tax?" incl. GST "+inrx(tax):""}${r.ro?" · round off "+inrx(r.ro):""}${r.refund?" · refunded "+inrx(r.refund)+" ("+(PAY_LABELS[r.pay]||r.pay)+")":""}${ex?` · new bill <button class="link" data-billview="${esc(ex.id)}">${esc(ex.no)}</button>`:""}${r.note?`<br><span class="note">${esc(r.note)}</span>`:""}</div>`}).join("")}</div>`:""}
   </div></div>`;
   refreshHistory(sid);
+}
+/* Each line of the bill with how much of it came back ("1 of 2 returned") */
+function retLinesHTML(s){
+  const L=s.items.map((i,k)=>{const n=D().retLine[s.id+"|"+(i.ln!=null?i.ln:k)]||0;return n?`${esc(i.n+(lineLabel(i)?" "+lineLabel(i):""))}: ${n} of ${i.q} returned`:""}).filter(Boolean);
+  return L.length?`<p class="note">${L.join(" · ")}</p>`:"";
 }

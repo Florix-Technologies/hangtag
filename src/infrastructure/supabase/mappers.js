@@ -24,7 +24,7 @@ export const rowToItem = i => Object.assign({ p:i.product_id, v:i.variant_id||un
 export function rowToSale(s, items, payments){
   const sale = { id:s.id, no:s.bill_no||undefined, t:Number(s.timestamp), items:items||[], sub:s.subtotal, disc:numOr0(s.discount), total:s.total,
     tax:numOr0(s.tax_amount), taxRate:s.tax_rate==null?0:+s.tax_rate, taxIncl:s.tax_inclusive!==false, credit:s.credit||0,
-    kind:s.kind||"sale", ex:s.exchange_id||null, pay:s.payment_method, dev:s.device_id, void:s.is_void,
+    kind:s.kind||"sale", ex:s.exchange_id||null, pay:s.payment_method, dev:s.device_id, void:s.is_void, ...(s.event_id ? { event:s.event_id } : {}),
     cust:s.customer_id||s.customer_name?Object.assign({id:s.customer_id||null,name:s.customer_name||"",phone:s.customer_phone||""},
       s.customer_gstin?{gstin:s.customer_gstin}:{}, s.customer_type==="business"?{type:"business"}:{}):null };
   if(s.gst_mode) Object.assign(sale, { itemDisc:numOr0(s.item_discount), billDiscAmt:numOr0(s.bill_discount),
@@ -42,7 +42,7 @@ export function saleRow(s){
     item_discount:itemDisc, bill_discount:s.billDiscAmt!=null ? s.billDiscAmt : round2((s.disc||0)-itemDisc), bill_discount_type:bd?bd.type:null, bill_discount_value:bd?bd.value:null,
     taxable_amount:s.taxable!=null ? s.taxable : round2(s.total-(s.tax||0)-(s.roundOff||0)), cgst_amount:g.cgst, sgst_amount:g.sgst, igst_amount:g.igst,
     round_off:s.roundOff||0, gst_mode:g.mode, place_of_supply:s.gst&&s.gst.pos||null,
-    customer_gstin:s.cust&&s.cust.gstin||null, customer_type:s.cust?(s.cust.type==="business"?"business":"individual"):null };
+    customer_gstin:s.cust&&s.cust.gstin||null, customer_type:s.cust?(s.cust.type==="business"?"business":"individual"):null, event_id:s.event||null };
 }
 export const saleItemRows = s => (s.items||[]).map((i,k)=>{ const d = normalizeDiscount(i.disc); return { sale_id:s.id, line_no:i.ln!=null?i.ln:k, product_id:i.p, variant_id:i.v||null, product_name:i.n,
   color:i.c||"", size:i.s==null?"":i.s, variant_label:i.vl||null, options:ovToRow(i.ov), sku:i.sku||null, quantity:i.q, unit_price:i.price, cost_price:i.cost==null?null:i.cost,
@@ -68,9 +68,14 @@ export const variantRows = p => variantsOf(p,true).map((v,k)=>({ id:v.id, produc
   price:v.price==null?null:v.price, cost_price:v.cost==null?null:v.cost, active:v.active!==false, sort_order:k, updated_at:new Date().toISOString() }));
 export const moveRow = m => ({ id:m.id, variant_id:m.v, product_id:m.p, type:m.type, qty:Math.round(+m.q)||0, cost_price:m.cost==null?null:m.cost, note:m.note||null, t:m.t, device_id:m.dev||store.dev, import_id:m.imp||null });
 export const rowToMove = r => ({ id:r.id, v:r.variant_id, p:r.product_id, type:r.type, q:r.qty, cost:r.cost_price, note:r.note||"", t:Number(r.t), dev:r.device_id, ...(r.import_id ? { imp:r.import_id } : {}) });
-export const returnRow = r => ({ id:r.id, sale_id:r.sale, t:r.t, kind:r.kind||"return", exchange_id:r.ex||null, refund_amount:r.refund||0, refund_method:r.pay||null, value:r.value||0, note:r.note||null, device_id:r.dev||store.dev });
+/* A return (credit note) and its lines; amounts have paise. Lines keep the GST reversed and whether the piece went back on the shelf. */
+export const returnRow = r => ({ id:r.id, sale_id:r.sale, t:r.t, kind:r.kind||"return", exchange_id:r.ex||null, refund_amount:r.refund||0, refund_method:r.pay||null,
+  value:r.value||0, round_off:r.ro||0, credit_no:r.no||null, note:r.note||null, device_id:r.dev||store.dev });
 export const returnItemRows = r => r.items.map((i,k)=>({ return_id:r.id, line_no:k, sale_id:r.sale, sale_line_no:i.ln, variant_id:i.v||null, product_id:i.p, product_name:i.n,
-  color:i.c||"", size:i.s==null?"":i.s, variant_label:i.vl||null, options:ovToRow(i.ov), sku:i.sku||null, quantity:i.q, unit_price:i.price, value:i.value||0, cost_price:i.cost==null?null:i.cost }));
+  color:i.c||"", size:i.s==null?"":i.s, variant_label:i.vl||null, options:ovToRow(i.ov), sku:i.sku||null, quantity:i.q, unit_price:i.price, value:i.value||0, cost_price:i.cost==null?null:i.cost,
+  restock:i.restock!==false, taxable_value:i.tx==null?null:i.tx, gst_rate:i.gst==null?null:i.gst, cgst_amount:i.cgst||0, sgst_amount:i.sgst||0, igst_amount:i.igst||0, hsn:i.hsn||null }));
+/* One return for RPC hangtag_save_return */
+export const returnArgs = r => ({ p_return:returnRow(r), p_items:returnItemRows(r) });
 export const custRow = c => ({ id:c.id, name:c.name, phone:c.phone||null, email:c.email||null, gstin:c.gstin||null, customer_type:c.type==='business'?'business':'individual', created_at:new Date(c.t||Date.now()).toISOString(), updated_at:new Date().toISOString() });
 /* Downloads: product, variant, return, return line and customer rows to app records */
 export function rowToProduct(p){
@@ -84,10 +89,18 @@ export function rowToProduct(p){
 }
 export const rowToVariant = v => ({ id:v.id, o:Array.isArray(v.option_values)?v.option_values.map(String):[], c:v.color||"", s:v.size||"", sku:v.sku||"", bc:v.barcode||"",
   price:v.price==null?null:v.price, cost:v.cost_price==null?null:v.cost_price, active:v.active!==false });
-export const rowToReturnItem = i => ({ ln:i.sale_line_no, v:i.variant_id||undefined, p:i.product_id, n:i.product_name,
-  c:i.color||"", s:i.size, vl:i.variant_label||"", ov:rowToOv(i.options), sku:i.sku||"", q:i.quantity, price:i.unit_price, value:i.value||0, cost:i.cost_price==null?null:i.cost_price });
-export const rowToReturn = (r, items) => ({ id:r.id, sale:r.sale_id, t:Number(r.t), kind:r.kind||"return", ex:r.exchange_id||null, refund:r.refund_amount||0,
-  pay:r.refund_method||"cash", value:r.value||0, note:r.note||"", dev:r.device_id, items:items||[] });
+export const rowToReturnItem = i => Object.assign({ ln:i.sale_line_no, v:i.variant_id||undefined, p:i.product_id, n:i.product_name,
+  c:i.color||"", s:i.size, vl:i.variant_label||"", ov:rowToOv(i.options), sku:i.sku||"", q:i.quantity, price:numOr0(i.unit_price), value:numOr0(i.value), cost:i.cost_price==null?null:i.cost_price },
+  i.restock===false ? { restock:false } : {},
+  // the GST reversed on the line (returns saved since credit notes)
+  i.taxable_value!=null ? { tx:num(i.taxable_value), gst:numOr0(i.gst_rate), cgst:numOr0(i.cgst_amount), sgst:numOr0(i.sgst_amount), igst:numOr0(i.igst_amount), hsn:i.hsn||"" } : {});
+export const rowToReturn = (r, items) => Object.assign({ id:r.id, sale:r.sale_id, t:Number(r.t), kind:r.kind||"return", ex:r.exchange_id||null, refund:numOr0(r.refund_amount),
+  pay:r.refund_method||"cash", value:numOr0(r.value), note:r.note||"", dev:r.device_id, items:items||[] }, r.credit_no ? { no:r.credit_no } : {}, +r.round_off ? { ro:+r.round_off } : {});
+/* An event (Event Mode) */
+export const eventRow = e => ({ id:e.id, name:e.name, start_date:e.start, end_date:e.end, location:e.place||null, status:e.status==="closed"?"closed":"active",
+  created_t:e.t||null, updated_at:new Date().toISOString() });
+export const rowToEvent = r => ({ id:r.id, name:r.name, start:String(r.start_date||"").slice(0,10), end:String(r.end_date||"").slice(0,10), place:r.location||"",
+  status:r.status==="closed"?"closed":"active", t:Number(r.created_t)||Date.parse(r.created_at)||0 });
 /* A bill sent to its customer (hangtag_deliveries, written by the send-receipt Edge Function) */
 export const rowToDelivery = r => ({ id:r.id, saleId:r.sale_id, channel:r.channel, to:r.recipient, status:r.status, provider:r.provider||"", providerId:r.provider_message_id||"", error:r.error||"", t:Date.parse(r.created_at)||0 });
 export const rowToCustomer = r => ({ id:r.id, name:r.name, phone:r.phone||"", email:r.email||"", gstin:r.gstin||"", type:r.customer_type==='business'?'business':'individual', t:Date.parse(r.created_at)||0 });

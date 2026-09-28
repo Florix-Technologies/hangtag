@@ -4,7 +4,7 @@ import { makeSbClient } from './client.js';
 import { toAppError } from './errors.js';
 import { AppError, ERROR_CODES } from '../../shared/errors/app-error.js';
 import { sbFetchAll, sbOk } from './query.js';
-import { billArgs, custRow, moveRow, productRow, returnItemRows, returnRow, rowToCustomer, rowToDelivery, rowToItem, rowToMove, rowToPayment, rowToProduct,
+import { billArgs, custRow, eventRow, moveRow, productRow, returnArgs, rowToCustomer, rowToDelivery, rowToEvent, rowToItem, rowToMove, rowToPayment, rowToProduct,
   rowToImport, rowToReturn, rowToReturnItem, rowToSale, rowToVariant, variantRows } from './mappers.js';
 
 export function createCloudGateway({ getClient, url, key, storageKey }){
@@ -36,12 +36,12 @@ export function createCloudGateway({ getClient, url, key, storageKey }){
     auth,
     /* How an email signs in today: resolves the raw { data, error } of the RPC */
     signInMethods: email => db().rpc("hangtag_sign_in_methods", { p_email: email }),
-    /* Quick check that the database has the current tables (schema.sql has been run; the payments table is the newest).
+    /* Quick check that the database has the current tables (schema.sql has been run; the events table is the newest).
        Resolves { error: null } or { error: AppError } — OUTDATED_DATABASE when the tables are missing. */
     async checkSchema(){
-      const { error } = await table('hangtag_payments').select('id', { head: true, count: 'exact' });
+      const { error } = await table('hangtag_events').select('id', { head: true, count: 'exact' });
       if(!error) return { error: null };
-      const missing = /hangtag_payments|hangtag_stock_imports|hangtag_variants|PGRST205|42P01|does not exist|schema cache/i.test((error.code||"")+" "+(error.message||""));
+      const missing = /hangtag_events|hangtag_payments|hangtag_stock_imports|hangtag_variants|PGRST205|42P01|does not exist|schema cache/i.test((error.code||"")+" "+(error.message||""));
       return { error: missing ? new AppError(ERROR_CODES.OUTDATED_DATABASE, "The database needs the latest update (schema.sql).", { cause: error }) : toAppError(error) };
     },
 
@@ -60,6 +60,7 @@ export function createCloudGateway({ getClient, url, key, storageKey }){
       ch = on(ch, '*', 'hangtag_return_items', h.returns);
       ch = on(ch, '*', 'hangtag_customers', h.customers);
       ch = on(ch, '*', 'hangtag_meta', h.settings);
+      if(h.events) ch = on(ch, '*', 'hangtag_events', h.events);
       return ch.subscribe(onStatus);
     },
     removeChannel: ch => db().removeChannel(ch),
@@ -88,20 +89,13 @@ export function createCloudGateway({ getClient, url, key, storageKey }){
       else sbOk(await table('hangtag_images').delete().eq('product_id', productId));
     },
     async saveMove(m){ sbOk(await table('hangtag_stock_moves').upsert(moveRow(m))); },
-    async saveReturn(ret){
-      sbOk(await table('hangtag_returns').upsert(returnRow(ret)));
-      const rows = returnItemRows(ret);
-      if(rows.length){
-        const res = await table('hangtag_return_items').upsert(rows, { onConflict:'owner_id,return_id,line_no' });
-        if(res.error){
-          // Refused (e.g. those pieces were already returned on another device): don't leave a return with no lines in the cloud
-          const { data } = await table('hangtag_return_items').select('line_no').eq('return_id', ret.id).limit(1);
-          if(Array.isArray(data) && !data.length) await table('hangtag_returns').delete().eq('id', ret.id);
-          sbOk(res);
-        }
-      }
-    },
+    /* A return with its lines, all or nothing (RPC hangtag_save_return: the database refuses a return on a cancelled bill, or of
+       more pieces than a bill line has left — also when another device returned them first). Saving it again is a safe retry. */
+    async saveReturn(ret){ sbOk(await db().rpc('hangtag_save_return', returnArgs(ret))); },
     async saveCustomer(c){ sbOk(await table('hangtag_customers').upsert(custRow(c))); },
+    async saveEvent(e){ sbOk(await table('hangtag_events').upsert(eventRow(e))); },
+    /* The database refuses deleting an event that has bills */
+    async deleteEvent(id){ sbOk(await table('hangtag_events').delete().eq('id', id)); },
     async saveSettings(settings){ sbOk(await table('hangtag_meta').upsert({ key:'settings', value:settings, updated_at:new Date().toISOString() })); },
     /* The shop logo for receipts (a small data URL), or empty to remove it */
     async saveLogo(dataUrl){
@@ -132,6 +126,7 @@ export function createCloudGateway({ getClient, url, key, storageKey }){
       return rows.map(r => rowToReturn(r, byRet[r.id] || []));
     },
     fetchCustomers: async () => (await sbFetchAll(db(), 'hangtag_customers', ['created_at','id'])).map(rowToCustomer),
+    fetchEvents: async () => (await sbFetchAll(db(), 'hangtag_events', ['start_date','id'])).map(rowToEvent),
     /* The saved settings object, or null */
     async fetchSettings(){
       const { data } = sbOk(await table('hangtag_meta').select('value').eq('key','settings').maybeSingle());

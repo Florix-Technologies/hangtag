@@ -1,7 +1,8 @@
 // Report periods and figures.
 import { legacyCS, lineLabel, vLabel } from '../../../domain/catalog/options.js';
 import { store } from '../../../shared/state/store.js';
-import { pcsOf } from '../../../domain/sales/sale.js';
+import { inFilter } from '../../../domain/events/event.js';
+import { returnLineMoney, saleLineMoney, salesSummary } from '../../../domain/reports/sales-report.js';
 import { D } from '../../inventory/services/ledger.js';
 import { esc } from '../../../shared/dom.js';
 import { addDays, dayKey, dayLab, dayLong, daysBetween, hourLab, pad, parseDay } from '../../../shared/formatting/dates.js';
@@ -26,11 +27,13 @@ export function periodRange(){
   return {from,to,label,prev,vs};
 }
 export const inDays=(t,a,b)=>{const k=dayKey(t);return k>=a&&k<=b};
-/* Bills and returns in a period. Cancelled bills (and returns against them) don't count. */
+/* Bills and returns in a period. Cancelled bills (and returns against them) don't count. filter: "" everything, "store",
+   or an event id (default: the Reports page's event filter); a return follows its original bill. */
 
-export function periodData(from,to){
-  const d=D(), all=d.sales.filter(s=>inDays(s.t,from,to)).reverse(), live=all.filter(s=>!s.void);
-  const rets=d.rets.filter(r=>inDays(r.t,from,to)&&!(d.saleById[r.sale]||{}).void);
+export function periodData(from,to,filter){
+  const d=D(), f=filter===undefined?(store.prefs.repEvent||""):filter;
+  const all=d.sales.filter(s=>inDays(s.t,from,to)&&inFilter(s,f)).reverse(), live=all.filter(s=>!s.void);
+  const rets=d.rets.filter(r=>{const s=d.saleById[r.sale]||{};return inDays(r.t,from,to)&&!s.void&&inFilter(s,f)});
   return {all,live,rets};
 }
 /* Every piece sold (+) and returned (−), resolved to its variant and parent product.
@@ -40,22 +43,19 @@ export function periodData(from,to){
 export function netLines(live,rets){
   const d=D(), out=[];
   const who=i=>{const vid=d.resolve(i),r=vid&&d.vIdx[vid],cs=r?legacyCS(r.p.opts,r.v.o):{c:i.c||"",s:i.s||""};return {vid:vid||(i.p+":"+(i.s||"")),pid:r?r.p.id:i.p,name:r?r.p.name:i.n,c:cs.c,s:cs.s,vl:r?vLabel(r.v):lineLabel(i)}};
-  live.forEach(s=>{const ratio=s.sub>0?s.total/s.sub:1,exTax=s.total?(s.total-(s.tax||0))/s.total:1;
-    s.items.forEach(i=>{const amt=i.lt!=null?i.lt:i.q*i.price*ratio;out.push(Object.assign(who(i),{q:i.q,amt,rev:i.tx!=null?i.tx:amt*exTax,cost:i.cost==null?null:i.cost*i.q,t:s.t}))})});
-  rets.forEach(r=>{const s=d.saleById[r.sale],exTax=s&&s.total?(s.total-(s.tax||0))/s.total:1;
-    r.items.forEach(i=>{const sl=s&&s.items.find(x=>x.ln===i.ln),ex=sl&&sl.lt?sl.tx/sl.lt:exTax;out.push(Object.assign(who(i),{q:-i.q,amt:-(i.value||0),rev:-(i.value||0)*ex,cost:i.cost==null?null:-i.cost*i.q,t:r.t}))})});
+  live.forEach(s=>s.items.forEach(i=>out.push(Object.assign(who(i),saleLineMoney(s,i),{t:s.t,cust:s.cust&&s.cust.id||null}))));
+  rets.forEach(r=>{const s=d.saleById[r.sale];r.items.forEach(i=>out.push(Object.assign(who(i),returnLineMoney(s,i),{t:r.t,cust:s&&s.cust&&s.cust.id||null})))});
   return out;
 }
+/* The period's headline figures (domain/reports/sales-report.js), with the names the page has always used:
+   rev (total sales, net of returns), gross, retVal (returns), pcsRet, bills, pcs, dsc (discounts), avg, refunds */
 export function kstats(live,rets){
-  const bills=live.filter(s=>(s.kind||"sale")!=="exchange");
-  const gross=live.reduce((a,s)=>a+s.total,0), retVal=rets.reduce((a,r)=>a+(r.value||0),0);
-  const pcsSold=live.reduce((a,s)=>a+pcsOf(s),0), pcsRet=rets.reduce((a,r)=>a+r.items.reduce((b,i)=>b+i.q,0),0);
-  const rev=gross-retVal, billRev=bills.reduce((a,s)=>a+s.total,0);
-  return {rev,gross,retVal,pcsRet,bills:bills.length,pcs:pcsSold-pcsRet,dsc:live.reduce((a,s)=>a+(s.disc||0),0),avg:bills.length?billRev/bills.length:0,refunds:rets.reduce((a,r)=>a+(r.refund||0),0)};
+  const S=salesSummary(live,rets,D().saleById);
+  return {...S,rev:S.total,retVal:S.returns,pcsRet:S.piecesReturned,pcs:S.pieces,dsc:S.discounts,avg:S.avgBill};
 }
 export function delta(c,p,vs){if(p==null||!vs||p===0)return "";const d=(c-p)/p,pct=Math.round(Math.abs(d)*100);if(pct===0)return `<span class="delta flat">Same ${esc(vs.replace(/^vs /,"as "))}</span>`;return `<span class="delta ${d>0?"up":"down"}">${d>0?"▲":"▼"} ${pct}% <span>${esc(vs)}</span></span>`}
 export function timeSeries(live,rets,R){
-  const ev=[];live.forEach(s=>ev.push({t:s.t,v:s.total,n:(s.kind||"sale")!=="exchange"?1:0,p:pcsOf(s)}));rets.forEach(r=>ev.push({t:r.t,v:-(r.value||0),n:0,p:-r.items.reduce((a,i)=>a+i.q,0)}));
+  const ev=[];live.forEach(s=>ev.push({t:s.t,v:s.total,n:(s.kind||"sale")!=="exchange"?1:0,p:s.items.reduce((a,i)=>a+i.q,0)}));rets.forEach(r=>ev.push({t:r.t,v:-(r.value||0),n:0,p:-r.items.reduce((a,i)=>a+i.q,0)}));
   const rows=[],add=(by,k,e)=>{const o=by[k]||(by[k]={v:0,n:0,p:0});o.v+=e.v;o.n+=e.n;o.p+=e.p};
   if(R.from===R.to){
     const by={};ev.forEach(e=>add(by,new Date(e.t).getHours(),e));

@@ -37,6 +37,11 @@ import { applyLineDiscount, lineDiscountInput, lineDiscountType, openLineDiscoun
 import { completePayment, openPayment, payInput, payMode, payQuick, payRest } from '../../features/sales/components/payment-sheet.js';
 import { openBook } from '../../features/finance/components/books-view.js';
 import { enqueue, flushSbQueue } from '../../features/sync/services/outbox.js';
+import { openSyncPanel, syncDiscard, syncNow, syncRetry } from '../../features/sync/components/sync-panel.js';
+import { chooseSellingAt, deleteEventAction, eventStatusAction, openEventForm, openEventSummary, submitEventForm } from '../../features/events/components/events-view.js';
+import { openGstView } from '../../features/reports/components/report-sections.js';
+import { exportGstCsv } from '../../features/reports/services/gst-data.js';
+import { exportSummaryCsv } from '../../features/reports/services/summary-export.js';
 import { closeModal } from '../../shared/components/modal.js';
 import { toast } from '../../shared/components/toast.js';
 import { $, $$ } from '../../shared/dom.js';
@@ -52,6 +57,7 @@ export function installDomEvents(){
   document.addEventListener("click",async e=>{
     const t=e.target;if(!t.closest)return;
     const sc=t.closest("[data-scan]");if(sc&&store.scan){scanAction(sc.dataset.scan);return}
+    const re=t.closest("[data-repevent]");if(re){store.prefs.repEvent=re.dataset.repevent;store.showAllBills=false;savePrefs();closeModal();if(re.dataset.tab)setTab(re.dataset.tab);else renderReport();return}
     const tab=t.closest("[data-tab]");if(tab){closeModal();setTab(tab.dataset.tab);return}
     const tile=t.closest(".tile");if(tile){openPicker(tile.dataset.pid);return}
     // variant picker
@@ -61,7 +67,10 @@ export function installDomEvents(){
     const addv=t.closest("[data-addv]");if(addv){addOne(addv.dataset.addv);store.sellQuery="";const si=$("#sellSearch");if(si)si.value="";renderGrid();return}
     if(t.matches("[data-scrim]")){if(t.matches("[data-paid]")){closeSheets();return}if(store.pick&&store.pick.target==="exchange"){store.pick=null;renderReturnSheet();return}store.retState=null;closeSheets();return}
     if(store.billImport&&t.closest("[data-billimp]")&&billImportClick(t))return;
-    if(t.matches("[data-modal-scrim]")||t.closest("[data-modal-close]")){if(t.matches("[data-editor]")&&store.editor)return;if(t.matches("[data-billimp]")&&store.billImport)return;store.payState=null;store.lineDisc=null;closeModal();return}
+    if(t.matches("[data-modal-scrim]")||t.closest("[data-modal-close]")){if(t.matches("[data-editor]")&&store.editor)return;if(t.matches("[data-billimp]")&&store.billImport)return;store.payState=null;store.lineDisc=null;store.syncOpen=false;store.evForm=null;closeModal();return}
+    // sync panel
+    const sr=t.closest("[data-syncretry]");if(sr){syncRetry(+sr.dataset.syncretry);return}
+    const sd=t.closest("[data-syncdiscard]");if(sd){if(sd.dataset.confirm){syncDiscard(+sd.dataset.syncdiscard)}else{sd.dataset.confirm="1";sd.textContent="Tap again to discard"}return}
     if(t.closest("[data-edclose]")){store.editor=null;closeModal();return}
     // discounts and payment
     const pay=t.closest("[data-pay]");if(pay&&!pay.disabled){openPayment(pay.dataset.pay);return}
@@ -98,6 +107,13 @@ export function installDomEvents(){
     const rpy=t.closest("[data-rtpay]");if(rpy&&store.retState){const [k,val]=rpy.dataset.rtpay.split(":");store.retState[k]=val;renderReturnSheet();return}
     const exm=t.closest("[data-exm]");if(exm&&store.retState){const i=+exm.dataset.exm,c=store.retState.newItems[i];if(c){c.q--;if(c.q<=0)store.retState.newItems.splice(i,1)}renderReturnSheet();return}
     const exp=t.closest("[data-exp]");if(exp&&store.retState){const c=store.retState.newItems[+exp.dataset.exp];if(c&&exAvail(c.v)>0)c.q++;renderReturnSheet();return}
+    // events
+    const evs=t.closest("[data-evsum]");if(evs){openEventSummary(evs.dataset.evsum);return}
+    const eve=t.closest("[data-evedit]");if(eve){openEventForm(eve.dataset.evedit);return}
+    const evc=t.closest("[data-evclose]");if(evc){eventStatusAction(evc.dataset.evclose,"closed");return}
+    const evo=t.closest("[data-evopen]");if(evo){eventStatusAction(evo.dataset.evopen,"active");return}
+    const evd=t.closest("[data-evdel]");if(evd){if(evd.dataset.confirm)deleteEventAction(evd.dataset.evdel);else{evd.dataset.confirm="1";evd.textContent="Tap again to delete"}return}
+    const sat=t.closest("[data-sellat]");if(sat){chooseSellingAt(sat.dataset.sellat);return}
     // customers
     const cpk=t.closest("[data-custpick]");if(cpk){pickCustomer(cpk.dataset.custpick);return}
     const ch=t.closest("[data-custhist]");if(ch){openCustHistory(ch.dataset.custhist);return}
@@ -156,6 +172,13 @@ export function installDomEvents(){
       case "scan":openScanner();break;
       case "sosave":saveStockOp();break;
       case "rtsave":saveReturn();break;
+      case "syncpanel":openSyncPanel();break;
+      case "stockmore":store.stockHist.n+=50;renderStock();break;
+      case "evnew":openEventForm(null);break;
+      case "gstview":openGstView();break;
+      case "gstcsv":exportGstCsv();break;
+      case "sumcsv":exportSummaryCsv();break;
+      case "syncnow":syncNow();break;
       case "exadd":openProductChooser("exchange");break;
       case "addp":openEditor(null);break;
       case "edsave":saveEditor();break;
@@ -183,13 +206,18 @@ export function installDomEvents(){
   document.addEventListener("submit",e=>{
     if(e.target.id==="custForm"){e.preventDefault();saveCustomerForm(e.target);return}
     if(e.target.id==="edForm"){e.preventDefault();return}
+    if(e.target.id==="evForm"){e.preventDefault();submitEventForm(e.target);return}
   });
   document.addEventListener("change",async e=>{
     const t=e.target;
     if(t.id==="repFrom"||t.id==="repTo"){if(t.value){store.prefs[t.id==="repFrom"?"from":"to"]=t.value;store.prefs.period="custom";savePrefs();renderReport()}return}
     if(t.id==="sellCat"){store.sellCat=t.value;renderGrid();return}
+    if(t.id==="sellAt"){chooseSellingAt(t.value);return}
+    if(t.id==="shProd"||t.id==="shVar"||t.id==="shType"){const F=store.stockHist;if(F){if(t.id==="shProd"){F.pid=t.value;F.vid=""}else if(t.id==="shVar")F.vid=t.value;else F.type=t.value;F.n=30}renderStock();return}
     if(t.id==="prodCat"){store.prodCat=t.value;renderProducts();return}
     if(t.id==="rtReason"&&store.retState){store.retState.reason=t.value;return}
+    if(t.matches("[data-rtnfr]")&&store.retState){store.retState.nfr[t.dataset.rtnfr]=t.checked;renderReturnSheet();return}
+    if(t.matches("[data-rtkeep]")&&store.retState){store.retState.keepDisc=t.checked;renderReturnSheet();return}
     if(t.id==="soReason"&&store.stockOp){store.stockOp.reason=t.value;return}
     if(t.id==="soNote"&&store.stockOp){store.stockOp.note=t.value;return}
     if(t.id==="soCost"&&store.stockOp){store.stockOp.cost=t.value;return}

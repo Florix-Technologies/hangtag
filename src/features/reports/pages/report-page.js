@@ -3,7 +3,10 @@ import { lineLabel } from '../../../domain/catalog/options.js';
 import { store } from '../../../shared/state/store.js';
 import { vLabel, variantsOf } from '../../../domain/catalog/variants.js';
 import { levelOf } from '../../inventory/services/stock-levels.js';
-import { payLabel, paymentsOf } from '../../../domain/sales/payments.js';
+import { payLabel } from '../../../domain/sales/payments.js';
+import { eventFilterHTML, gstCardHTML, movementHTML, profitHTML, summaryHTML } from '../components/report-sections.js';
+import { eventsCardHTML } from '../../events/components/events-view.js';
+import { paymentSummary, profitSummary } from '../../../domain/reports/sales-report.js';
 import { bankCardHTML, cashCardHTML } from '../../finance/components/books-view.js';
 import { D } from '../../inventory/services/ledger.js';
 import { productLeft, stockOf } from '../../inventory/services/stock.js';
@@ -15,7 +18,7 @@ import { kpi } from '../../../shared/components/kpi.js';
 import { ICON } from '../../../shared/constants/icons.js';
 import { $, $$, esc } from '../../../shared/dom.js';
 import { dayKey, dayLong, hhmm } from '../../../shared/formatting/dates.js';
-import { inr, inrShort } from '../../../shared/formatting/money.js';
+import { inr, inrShort, inrx } from '../../../shared/formatting/money.js';
 import { initials } from '../../../shared/utils/text.js';
 
 export const showTable={time:false,size:false};
@@ -35,15 +38,16 @@ export function drawSizes(lines){
   colChart(host,order.map(s=>({short:s,v:m[s]||0,tv:(m[s]||0)+" pcs",tl:"Size "+s,tm:Math.round((m[s]||0)/tot*100)+"% of pieces sold"})),{axis:v=>String(v),peak:v=>v+" pcs",int:true,labelW:24,aria:"Pieces sold by size"});
 }
 export function payHTML(live,rets,R){
-  // each payment counts under its own method, so a split bill adds to more than one
-  const paid=(s,k)=>paymentsOf(s).filter(p=>p.method===k).reduce((a,p)=>a+p.amount,0);
-  const segs=[["upi","UPI"],["cash","Cash"],["card","Card"]].map(([k,l])=>{const ss=live.filter(s=>paid(s,k)>0),rf=rets.filter(r=>r.pay===k&&r.refund);return{k,l,v:ss.reduce((a,s)=>a+paid(s,k),0)-rf.reduce((a,r)=>a+r.refund,0),n:ss.length,rf:rf.reduce((a,r)=>a+r.refund,0)}});
+  // each payment counts under its own method, so a split bill adds to more than one (domain/reports/sales-report.js)
+  const PM=paymentSummary(live,rets);
+  const segs=[["upi","UPI"],["cash","Cash"],["card","Card"]].map(([k,l])=>({k,l,v:PM.methods[k].net,n:PM.methods[k].bills,rf:PM.methods[k].refunds}));
   const tot=segs.reduce((a,s)=>a+Math.max(0,s.v),0);if(!tot&&!segs.some(s=>s.v))return `<p class="muted">No payments in this period.</p>`;
   const pct=v=>tot?Math.round(Math.max(0,v)/tot*100):0;
   let h=`<div class="stack" role="img" aria-label="${esc(segs.map(s=>s.l+" "+pct(s.v)+"%").join(", "))}">${segs.filter(s=>s.v>0).map(s=>`<span class="seg c-${s.k}" style="flex-grow:${s.v}" tabindex="0" data-tipv="${esc(inr(s.v))}" data-tipl="${esc(s.l+" · "+pct(s.v)+"%")}" data-tipm="${esc(s.n+" bill"+(s.n===1?"":"s"))}"></span>`).join("")}</div>`;
-  h+=`<div class="lgd">${segs.map(s=>`<div class="lgr"><span class="sw c-${s.k}"></span><span class="ln">${s.l}<small>${s.n} bill${s.n===1?"":"s"}${s.rf?" · "+inr(s.rf)+" refunded":""}</small></span><span class="lv">${inr(s.v)}</span><span class="lp">${pct(s.v)}%</span></div>`).join("")}</div>`;
+  h+=`<div class="lgd">${segs.map(s=>`<div class="lgr"><span class="sw c-${s.k}"></span><span class="ln">${s.l}<small>${s.n} bill${s.n===1?"":"s"}${s.rf?" · "+inrx(s.rf)+" refunded":""}</small></span><span class="lv">${inrx(s.v)}</span><span class="lp">${pct(s.v)}%</span></div>`).join("")}</div>`;
+  if(PM.split.bills)h+=`<p class="note">${PM.split.bills} split-payment bill${PM.split.bills===1?"":"s"} · ${inrx(PM.split.value)}</p>`;
   const cash=segs.find(s=>s.k==="cash").v;
-  if(R.from===R.to&&cash>0)h+=`<p class="cashnote">${ICON.cash}<span>Cash that should be in the box: <b>${inr(cash)}</b></span></p>`;
+  if(R.from===R.to&&cash>0)h+=`<p class="cashnote">${ICON.cash}<span>Cash that should be in the box: <b>${inrx(cash)}</b></span></p>`;
   return h;
 }
 export function bestHTML(lines){
@@ -71,13 +75,6 @@ export function heatHTML(lines){
   const colT={};let all=0,allA=0;
   const body=rows.map(p=>{const r=m[p.id]||{};const cells=sizes.map(s=>{const v=r[s]||0;colT[s]=(colT[s]||0)+v;if(v<=0)return `<td class="h0">${v<0?v:"·"}</td>`;return `<td class="h${Math.max(1,Math.ceil(v/max*6))}">${v}</td>`}).join("");const t=tot(p.id);all+=t;allA+=amt[p.id]||0;return `<tr><td class="pn"><span class="who">${thumb(p,"xs")}<span class="nmx">${esc(p.name)}</span></span></td>${cells}<td class="sum">${t}</td><td class="am">${inr(amt[p.id]||0)}</td></tr>`}).join("");
   return `<div class="tw"><table class="hm"><thead><tr><th>Product</th>${sizes.map(s=>`<th>${esc(s)}</th>`).join("")}<th>Pieces</th><th style="text-align:right">Amount</th></tr></thead><tbody>${body}</tbody><tfoot><tr><td class="pn">All products</td>${sizes.map(s=>`<td>${colT[s]||0}</td>`).join("")}<td class="sum">${all}</td><td class="am">${inr(allA)}</td></tr></tfoot></table></div><div class="hmleg"><span>Fewer</span>${[1,2,3,4,5,6].map(i=>`<i class="h${i}"></i>`).join("")}<span>More pieces · all colours together</span></div>`;
-}
-export function profitHTML(lines){
-  let rev=0,cost=0,miss=0,revAll=0;
-  lines.forEach(l=>{revAll+=l.rev;if(l.cost==null){if(l.q)miss+=l.q;return}rev+=l.rev;cost+=l.cost});
-  if(!revAll)return `<p class="muted">No sales in this period.</p>`;
-  const gp=rev-cost,mg=rev?Math.round(gp/rev*1000)/10:0;
-  return `<div class="gp"><div><span>Sales${store.settings.taxOn?" (without GST)":""}</span><b>${inr(rev)}</b></div><div><span>Cost of goods</span><b>${inr(cost)}</b></div><div><span>Gross profit</span><b class="${gp<0?"neg":""}">${inr(gp)}</b></div><div><span>Gross margin</span><b>${rev?mg+"%":"—"}</b></div></div>${miss>0?`<p class="note" style="margin:10px 0 0">Leaves out ${miss} piece${miss===1?"":"s"} sold without a cost price (${inr(revAll-rev)} of sales). Add cost prices in Products for a full picture.</p>`:`<p class="note" style="margin:10px 0 0">Uses the cost price saved on each bill, so it doesn't change if you edit costs later.</p>`}`;
 }
 export function slowHTML(lines,R){
   const sold=byProduct(lines);
@@ -113,18 +110,22 @@ export function renderReport(){
   const rc=$("#repCustom");if(rc){rc.hidden=store.prefs.period!=="custom";const f=$("#repFrom"),t=$("#repTo"),mx=dayKey(Date.now());f.max=t.max=mx;if(document.activeElement!==f)f.value=R.from;if(document.activeElement!==t)t.value=R.to}
   $("#repSub").textContent=R.label;
   const {all,live,rets}=periodData(R.from,R.to);
-  const host=$("#repBody");
-  if(!all.length&&!rets.length){host.innerHTML=`<div class="empty"><b>No sales ${store.prefs.period==="today"?"yet today":"in this period"}</b><p>Bills you ring up on the Sell tab show up here straight away.</p></div>`;return}
+  const host=$("#repBody"), evCard=`<div class="card span-12"><div class="card-h"><h3>Events</h3><span class="note">Pop-ups, fairs and exhibitions: their bills are tagged and reported apart</span></div>${eventsCardHTML()}</div>`;
+  if(!all.length&&!rets.length){host.innerHTML=`${eventFilterHTML()}<div class="empty"><b>No sales ${store.prefs.period==="today"?"yet today":"in this period"}</b><p>Bills you ring up on the Sell tab show up here straight away.</p></div><div class="dash">${evCard}</div>`;return}
   const lines=netLines(live,rets);
   const K=kstats(live,rets),PD=R.prev?periodData(R.prev.from,R.prev.to):null,P=PD?kstats(PD.live,PD.rets):null,TS=timeSeries(live,rets,R);
-  let h=`<div class="kpis five"><div class="kpi hero"><div class="lab">Total sales</div><div class="val">${inr(K.rev)}</div><div class="kps">${delta(K.rev,P&&P.rev,R.vs)}${K.retVal?` <span class="delta flat">after ${inr(K.retVal)} returns</span>`:""}</div></div>`;
+  const PS=profitSummary(lines);
+  let h=eventFilterHTML()+`<div class="kpis five"><div class="kpi hero"><div class="lab">Total sales</div><div class="val">${inr(K.rev)}</div><div class="kps">${delta(K.rev,P&&P.rev,R.vs)}${K.retVal?` <span class="delta flat">after ${inr(K.retVal)} returns</span>`:""}</div></div>`;
   h+=kpi("Bills",String(K.bills),delta(K.bills,P&&P.bills,R.vs))+kpi("Pieces sold",String(K.pcs),K.pcsRet?`${K.pcsRet} returned · `+delta(K.pcs,P&&P.pcs,R.vs):delta(K.pcs,P&&P.pcs,R.vs))+kpi("Average bill",inr(K.avg),delta(K.avg,P&&P.avg,R.vs))+kpi("Discounts given",inr(K.dsc),K.dsc?Math.round(K.dsc/(K.gross+K.dsc)*100)+"% off full price":"none")+`</div>`;
   h+=`<div class="dash">
     <div class="card span-8"><div class="card-h"><h3>${TS.title}</h3><button class="btn xs" data-table="time" aria-pressed="${showTable.time}">${showTable.time?"Show chart":"Show table"}</button></div><div id="chTime" class="chart"></div></div>
     <div class="card span-4"><div class="card-h"><h3>How customers paid</h3></div>${payHTML(live,rets,R)}</div>
     <div class="card span-6"><div class="card-h"><h3>Cash book</h3><span class="note">Cash in and out, with the balance</span></div>${cashCardHTML(R)}</div>
     <div class="card span-6"><div class="card-h"><h3>Bank book</h3><span class="note">UPI and card payments</span></div>${bankCardHTML(R)}</div>
-    <div class="card span-12"><div class="card-h"><h3>Gross profit</h3><span class="note">Sales minus the cost of the pieces sold</span></div>${profitHTML(lines)}</div>
+    <div class="card span-7"><div class="card-h"><div><h3>Summary</h3><span class="note">What each figure means is next to it</span></div><button class="btn xs" data-act="sumcsv">Download summary CSV</button></div>${summaryHTML(K,PS)}</div>
+    <div class="card span-5"><div class="card-h"><h3>GST</h3><span class="note">Invoices less credit notes</span></div>${gstCardHTML(R)}</div>
+    <div class="card span-7"><div class="card-h"><h3>Gross profit</h3><span class="note">Sales minus the cost of the pieces sold</span></div>${profitHTML(lines)}</div>
+    <div class="card span-5"><div class="card-h"><h3>Stock movement</h3><span class="note">In and out in this period</span></div>${movementHTML(R)}</div>
     <div class="card span-7"><div class="card-h"><h3>Best sellers</h3><span class="note">Pieces sold · amount</span></div>${bestHTML(lines)}</div>
     <div class="card span-5"><div class="card-h"><h3>Sizes that sold</h3><button class="btn xs" data-table="size" aria-pressed="${showTable.size}">${showTable.size?"Show chart":"Show table"}</button></div><div id="chSize" class="chart"></div></div>
     <div class="card span-7"><div class="card-h"><h3>Top variants</h3><span class="note">Colour and size · pieces sold</span></div>${variantPerfHTML(lines)}</div>
@@ -132,6 +133,7 @@ export function renderReport(){
     <div class="card span-7"><div class="card-h"><h3>Running low now</h3><span class="note">Tap to add stock</span></div>${lowStockHTML()}</div>
     <div class="card span-5"><div class="card-h"><h3>Top customers</h3></div>${custTopHTML(live,rets)}</div>
     <div class="card span-12"><div class="card-h"><h3>Product × size</h3><span class="note">Pieces sold · darker = more</span></div>${heatHTML(lines)}</div>
+    ${evCard}
     <div class="card span-12"><div class="card-h"><div><h3>Bills</h3><span class="note">Open a bill to print, share, return, exchange or cancel it</span></div><button class="btn xs" data-act="export">Download CSV</button></div>${billsHTML(all,R)}</div>
   </div>`;
   host.innerHTML=h;drawTime(TS);drawSizes(lines);

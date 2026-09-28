@@ -1,11 +1,13 @@
-// Upload queue: ordered, retried, never loses work.
+// Upload queue: ordered, retried, never loses work. The rules (one upload per record, order, dependencies, which failures
+// go to review) are in domain/sync/queue-rules.js.
 import { store } from '../../../shared/state/store.js';
+import { canDiscard, failureAction, isBlocked, mergeIntoQueue, ORDERED_TYPES, recordKey, waitingKeys } from '../../../domain/sync/queue-rules.js';
 import { sbSessionOk } from '../../auth/services/auth-settings.js';
-import { D } from '../../inventory/services/ledger.js';
+import { D, invalidate } from '../../inventory/services/ledger.js';
 import { products } from '../../products/services/catalog.js';
 import { renderSync } from '../components/sync-status.js';
 import { use } from '../../../shared/di/services.js';
-import { saveLastSync, saveSbQueue } from '../../../shared/state/persistence.js';
+import { saveLastSync, saveReturns, saveSbQueue, saveSyncReview } from '../../../shared/state/persistence.js';
 import { logger } from '../../../shared/logging/logger.js';
 
 /* Add work for the cloud; identical product uploads are merged so the queue stays short */
@@ -18,7 +20,8 @@ export function enqueue(item){
   // one waiting upload of the settings / logo is enough (it sends the latest value) — but not one already uploading:
   // that one may have read the old value, so a change made meanwhile gets its own upload
   if((item.type==="settings"||item.type==="logo")&&store.sbOfflineQueue.some(q=>q.type===item.type&&!q.tries&&!q.sending)){return}
-  store.sbOfflineQueue.push(item);saveSbQueue();
+  // one waiting upload per record (a bill, return, customer, move, event…): a later change replaces it where it stands
+  store.sbOfflineQueue=mergeIntoQueue(store.sbOfflineQueue,item);saveSbQueue();
 }
 /* Take queued changes out before they upload (e.g. a product deleted before its changes were sent) */
 export function dropQueued(pred){ store.sbOfflineQueue=store.sbOfflineQueue.filter(q=>!pred(q)); saveSbQueue(); }
@@ -52,6 +55,10 @@ export async function sendItem(item){
     await cloud.saveReturn(item.ret);
   } else if(item.type === "cust"){
     await cloud.saveCustomer(item.cust);
+  } else if(item.type === "event"){
+    await cloud.saveEvent(item.ev);
+  } else if(item.type === "eventdel"){
+    await cloud.deleteEvent(item.id);
   } else if(item.type === "settings"){
     await cloud.saveSettings(store.settings);
   } else if(item.type === "logo"){
@@ -62,29 +69,61 @@ export async function sendItem(item){
     // left over from the old size-only version: nothing to do with the new tables
   }
 }
-// Items that later work depends on: stop at the first failure so order is kept.
-// A return isn't here: nothing depends on it, so one the database refuses (already returned on
-// another device) waits with its error while later bills keep uploading.
+// Items that later work depends on: stop at the first failure so order is kept (domain/sync/queue-rules.js).
+export const ORDERED = new Set(ORDERED_TYPES);
 
-export const ORDERED = new Set(["sale","prod","allsales"]);
+/* A refused upload goes to the review list with its reason. A refused return is taken off this device's stock and books
+   until it is sent again (the database didn't accept it); a refused bill stays: a completed sale is never undone. */
+function toReview(item, err){
+  store.syncReview = [...(store.syncReview||[]), { item, err: item.err, code: err && err.code || "", t: Date.now() }];
+  saveSyncReview();
+  if(item.type === "return" && item.ret && store.returnsMap[item.ret.id]){ delete store.returnsMap[item.ret.id]; saveReturns(); invalidate(); }
+}
+/* One pass over the queue; passes repeat while an upload unblocks items waiting for it */
 export async function flushSbQueueOnce(){
   if(!store.sbClient || store.sbStatus !== "connected" || !store.sbOfflineQueue.length) return;
   if(!(await sbSessionOk())) return;   // keep everything queued until signed in again
   store.syncing = true; renderSync();
-  const queue = [...store.sbOfflineQueue], done = new Set();
-  for(const item of queue){
-    item.sending = true;
-    try{ await sendItem(item); done.add(item); }
-    catch(err){
-      logger.warn("Queue sync item failed:", item.type, err);
-      item.tries = (item.tries||0) + 1; item.err = err && (err.message || err.code) || String(err);
-      if(ORDERED.has(item.type)) break;
+  const done = new Set(), review = new Set();
+  let again = true, stopped = false;
+  while(again && !stopped){
+    again = false;
+    let skipped = 0, sentNow = 0;
+    const waiting = waitingKeys(store.sbOfflineQueue, store.syncReview, new Set([...done, ...review]));
+    for(const item of [...store.sbOfflineQueue]){
+      if(done.has(item) || review.has(item)) continue;
+      if(isBlocked(item, waiting)){ skipped++; continue; }   // its bill / product is still on its way (or under review)
+      item.sending = true;
+      try{ await sendItem(item); done.add(item); sentNow++; const k = recordKey(item); if(k) waiting.delete(k); }
+      catch(err){
+        logger.warn("Queue sync item failed:", item.type, err);
+        item.tries = (item.tries||0) + 1; item.err = err && (err.message || err.code) || String(err);
+        if(failureAction(err && err.code, item.tries) === "review"){ review.add(item); toReview(item, err); continue; }
+        if(ORDERED.has(item.type)){ stopped = true; break; }
+      }
+      finally{ delete item.sending; }
     }
-    finally{ delete item.sending; }
+    again = skipped > 0 && sentNow > 0;
   }
-  store.sbOfflineQueue = store.sbOfflineQueue.filter(x => !done.has(x));
+  store.sbOfflineQueue = store.sbOfflineQueue.filter(x => !done.has(x) && !review.has(x));
   saveSbQueue();
   store.syncing = false;
   markSynced();
   renderSync();
+}
+/* Review list: send a refused upload again (it goes to the end of the queue; a return comes back onto this device) */
+export function retryReview(index){
+  const r = (store.syncReview||[])[index]; if(!r) return false;
+  store.syncReview = store.syncReview.filter((_, i) => i !== index); saveSyncReview();
+  const item = { ...r.item, tries: 0 }; delete item.err;
+  if(item.type === "return" && item.ret){ store.returnsMap[item.ret.id] = item.ret; saveReturns(); invalidate(); }
+  enqueue(item); renderSync(); flushSbQueue();
+  return true;
+}
+/* Review list: give up on a refused upload (never a bill). The record stays out of this device's data. */
+export function discardReview(index){
+  const r = (store.syncReview||[])[index]; if(!r || !canDiscard(r.item)) return false;
+  store.syncReview = store.syncReview.filter((_, i) => i !== index); saveSyncReview();
+  renderSync();
+  return true;
 }

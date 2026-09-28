@@ -3,12 +3,16 @@
 import { bankBook, cashBook, financialTransactions, reconcileSale } from '../../../domain/finance/books.js';
 import { D } from '../../inventory/services/ledger.js';
 import { parseDay } from '../../../shared/formatting/dates.js';
+import { inFilter } from '../../../domain/events/event.js';
+import { store } from '../../../shared/state/store.js';
 
-export const shopTransactions=()=>{const d=D();return financialTransactions(d.sales,d.rets)};
+/* filter: "" every bill, "store", or an event id (returns follow their bill) */
+export const shopTransactions=(filter="")=>{const d=D(),ok=s=>inFilter(s||{},filter);return financialTransactions(d.sales.filter(ok),d.rets.filter(r=>ok(d.saleById[r.sale])))};
 /* Days "yyyy-mm-dd" → { from, to } in ms (the whole of both days) */
 export const dayBounds=(from,to)=>({from:parseDay(from).getTime(),to:parseDay(to).getTime()+864e5-1});
-export const cashBookFor=(from,to)=>cashBook(shopTransactions(),dayBounds(from,to));
-export const bankBookFor=(from,to)=>bankBook(shopTransactions(),dayBounds(from,to));
+/* The books for the Reports page's period and event filter */
+export const cashBookFor=(from,to)=>cashBook(shopTransactions(store.prefs.repEvent||""),dayBounds(from,to));
+export const bankBookFor=(from,to)=>bankBook(shopTransactions(store.prefs.repEvent||""),dayBounds(from,to));
 /* One bill's money: its payments and refunds, and whether receipts match what was due */
 export function billMoney(sale){
   const tx=shopTransactions().filter(x=>x.saleId===sale.id);

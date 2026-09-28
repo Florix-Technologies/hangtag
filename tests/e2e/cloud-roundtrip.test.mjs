@@ -57,6 +57,19 @@ function handle(r) {
       if (Math.round(paid * 100) !== Math.round(due * 100)) return r.respond({ status: 400, contentType: 'application/json', headers: CORS, body: JSON.stringify({ code: '23514', message: `payments ${paid} but ${due} is due` }) });
       [['hangtag_sales', [b.sale]], ['hangtag_sale_items', b.items], ['hangtag_payments', b.payments]].forEach(([tt, rs]) => { rs.forEach(x => Object.keys(x).forEach(c => { if (cols[tt] && !cols[tt].has(c)) badCols.push(tt + '.' + c); })); upsert(tt, rs); writes.push({ t: tt, m: 'RPC', n: rs.length }); });
     }
+    // hangtag_save_return: a return and its lines, all or nothing (same rules as the RPC: never more than a line has left)
+    if (t === 'hangtag_save_return') {
+      const R = body.p_return, rows = body.p_items;
+      [['hangtag_returns', [R]], ['hangtag_return_items', rows]].forEach(([tt, rs]) => rs.forEach(x => Object.keys(x).forEach(c => { if (cols[tt] && !cols[tt].has(c)) badCols.push(tt + '.' + c); })));
+      for (const x of rows) {
+        const bought = (tbl('hangtag_sale_items').find(i => i.sale_id === x.sale_id && i.line_no === x.sale_line_no) || {}).quantity;
+        const already = tbl('hangtag_return_items').filter(i => i.sale_id === x.sale_id && i.sale_line_no === x.sale_line_no && i.return_id !== x.return_id).reduce((a, i) => a + i.quantity, 0);
+        if (bought == null || already + x.quantity > bought) return r.respond({ status: 400, contentType: 'application/json', headers: CORS, body: JSON.stringify({ code: '23514', message: `Can't return ${x.quantity} piece(s): ${bought} bought, ${already} already returned` }) });
+      }
+      const lines = Math.round(rows.reduce((a, x) => a + x.value, 0) * 100) + Math.round((R.round_off || 0) * 100);
+      if (lines !== Math.round(R.value * 100)) return r.respond({ status: 400, contentType: 'application/json', headers: CORS, body: JSON.stringify({ code: '23514', message: `Return worth ${R.value} but its lines come to ${lines / 100}` }) });
+      upsert('hangtag_returns', [R]); upsert('hangtag_return_items', rows); writes.push({ t: 'hangtag_returns', m: 'RPC', n: 1 });
+    }
     return r.respond({ status: 200, contentType: 'application/json', headers: CORS, body: '[]' });
   }
   if (m === 'HEAD') return r.respond({ status: 200, headers: Object.assign({ 'content-range': '*/' + tbl(t).length }, CORS) });
@@ -142,10 +155,16 @@ try {
   await run(A, `const s=D().sales.find(s=>s.kind==="sale");openReturn(s.id);retState.q[0]=1;saveReturn();await flushSbQueue();`);
   const retsBefore = tbl('hangtag_returns').length;
   const bRet = await run(B, `const s=D().sales.find(s=>s.kind==="sale");openReturn(s.id);const left=returnable(s,s.items[0],0);retState.q[0]=1;saveReturn();
+    const rid=Object.values(returnsMap).sort((a,b)=>b.t-a.t)[0].id;
     addToLines(cart,prod("p3").variants[0].id,1);await checkout("cash");await flushSbQueue();
-    return {left,q:sbOfflineQueue.map(i=>i.type+":"+(i.err||""))}`);
+    return {left,rid,q:sbOfflineQueue.map(i=>i.type+":"+(i.err||"")),review:syncReview.map(x=>x.item.type+":"+x.err),kept:!!returnsMap[rid],pill:$("#sync").textContent}`);
   check('device 2 thought 1 was still returnable (offline view)', bRet.left === 1, bRet);
   check('database refuses the second return: no header left behind in the cloud', tbl('hangtag_returns').length === retsBefore && tbl('hangtag_return_items').filter(i => i.sale_line_no === 0).reduce((a, i) => a + i.quantity, 0) === 2);
-  check('refused return waits with its reason; the later bill still uploads', bRet.q.length === 1 && /already returned/.test(bRet.q[0]) && tbl('hangtag_sales').length === 3, bRet.q);
+  check('refused return goes to the review list with its reason (not applied on device 2); the later bill still uploads', bRet.q.length === 0 && bRet.review.length === 1 && /already returned/.test(bRet.review[0]) && !bRet.kept && tbl('hangtag_sales').length === 3, bRet);
+  check('the sync status says there is something to review', /Sync problem/.test(bRet.pill), bRet.pill);
+  const panel = await run(B, 'openSyncPanel();return $("#modalHost").textContent');
+  check('the sync panel lists it with the reason and a Discard button', /Needs review \(1\)/.test(panel) && /already returned/.test(panel) && /Discard/.test(panel), panel.slice(0, 300));
+  const bothStock = await run(B, `await pullFromSupabase(false);const s=D().sales.find(s=>s.kind==="sale");return D().retLine[s.id+"|0"]`);
+  check('device 2 counts only the return the database accepted', bothStock === 2, bothStock);
 } finally { await browser.close(); }
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED'); process.exit(fails ? 1 : 0);

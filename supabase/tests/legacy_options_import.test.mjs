@@ -73,7 +73,7 @@ console.log('=== upgrade from the colour + size version ===');
     && (await db.query(`SELECT sum(qty)::int AS q FROM public.hangtag_stock_moves WHERE variant_id='t1'`)).rows[0].q === 5);
   check('a safety copy of products and variants was made', (await db.query(`SELECT count(*)::int AS n FROM public.hangtag_backup_v3_variants`)).rows[0].n === 7);
   const rep = await report(db);
-  check('migration report: every row ok', rep.length === 13 && rep.every((r) => r.ok), rep.map((r) => `${r.check_name}: ${r.value}/${r.expected}`));
+  check('migration report: every row ok', rep.length === 16 && rep.every((r) => r.ok), rep.map((r) => `${r.check_name}: ${r.value}/${r.expected}`));
   await db.exec(NEW);
   const again = (await db.query(`SELECT id, option_values, active FROM public.hangtag_variants ORDER BY id`)).rows;
   check('running the script again changes nothing', JSON.stringify(again.map((r) => [r.id, r.option_values, r.active])) === JSON.stringify(Object.values(v).sort((a, b) => a.id.localeCompare(b.id)).map((r) => [r.id, r.option_values, r.active])));

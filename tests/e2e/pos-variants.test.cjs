@@ -98,10 +98,10 @@ const vid=(c,s)=>`const p=products().find(x=>x.name==="Street Tee");return p.var
     await A.click(`[data-cellplus="${ids.BXL}"]`);await A.click('#addPickBtn');await sleep(150);
     check('TEST 6: exchange shows Even exchange ₹0',/Even exchange/.test(await txt(A,'.retsheet .rt-sum')||''),await txt(A,'.retsheet .rt-sum'));
     await A.screenshot({path:SHOT+'t12_exchange.png'});
-    await A.click('[data-act="rtsave"]');await sleep(300);
+    await A.$eval('[data-act="rtsave"]',b=>b.click());await sleep(300);
     const L1=await run(A,`return stockOf(${JSON.stringify(ids.BL)})`),XL1=await run(A,`return stockOf(${JSON.stringify(ids.BXL)})`);
     check('TEST 6: Black/L +1, Black/XL −1',L1===L0+1&&XL1===XL0-1,{L0,L1,XL0,XL1});
-    const ex=await run(A,'const r=Object.values(returnsMap).find(r=>r.kind==="exchange");const s=D().sales.find(s=>s.ex===r.ex);return {r:!!r,s:!!s,credit:s&&s.credit,refund:r&&r.refund,link:r&&r.sale}');
+    const ex=await run(A,'const r=Object.values(returnsMap).find(r=>r.kind==="exchange");const s=r&&D().sales.find(s=>s.ex===r.ex);return {r:!!r,s:!!s,credit:s&&s.credit,refund:r&&r.refund,link:r&&r.sale}');
     check('TEST 6: exchange recorded as a return + new bill linked to the original (not delete-and-recreate)',ex.r&&ex.s&&ex.credit===599&&ex.refund===0&&ex.link===sid,ex);
     await run(A,'closeSheets()');
     // exchange to a pricier item collects the difference

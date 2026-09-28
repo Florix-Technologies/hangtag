@@ -26,6 +26,9 @@ export function initState(){
   store.moves = objOr(storage.get("rc_moves",{}),{});          // stock history: opening, stock in, adjustments (by id)
   store.returnsMap = objOr(storage.get("rc_returns",{}),{});   // returns and exchanges (by id)
   store.customers = objOr(storage.get("rc_customers",{}),{});  // customers (by id)
+  store.events = objOr(storage.get("rc_events",{}),{});        // events: pop-ups, exhibitions (by id); what this device sells at is prefs.event
+  store.syncReview = storage.get("hangtag_sync_review",[]);    // uploads the database refused, kept for review (never dropped silently)
+  if(!Array.isArray(store.syncReview)) store.syncReview=[];
   store.settings = Object.assign({},DEFAULT_SETTINGS,objOr(storage.get("rc_settings",{}),{}));
   store.cartCust = storage.get("rc_cartcust",null);            // customer on the bill being rung up
   store.logo = storage.get("rc_logo","") || "";                // shop logo for receipts (small data URL; synced as hangtag_meta "logo")

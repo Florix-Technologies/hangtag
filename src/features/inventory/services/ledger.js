@@ -3,6 +3,8 @@ import { store } from '../../../shared/state/store.js';
 import { invoiceNo } from '../../sales/services/totals.js';
 import { products } from '../../products/services/catalog.js';
 import { dayKey } from '../../../shared/formatting/dates.js';
+import { ledgerEntries } from '../../../domain/inventory/stock-ledger.js';
+import { restocks } from '../../../domain/returns/return-value.js';
 
 export const invalidate=()=>{store._d=null};
 export function D(){
@@ -29,11 +31,16 @@ export function D(){
   const returned={},retLine={},retBySale={};
   rets.forEach(r=>{
     (retBySale[r.sale]=retBySale[r.sale]||[]).push(r);
-    r.items.forEach(it=>{const vid=resolve(it);if(vid)returned[vid]=(returned[vid]||0)+it.q;const k=r.sale+"|"+it.ln;retLine[k]=(retLine[k]||0)+it.q});
+    r.items.forEach(it=>{const vid=resolve(it);if(vid&&restocks(it))returned[vid]=(returned[vid]||0)+it.q;const k=r.sale+"|"+it.ln;retLine[k]=(retLine[k]||0)+it.q});
   });
   const moved={};
   Object.values(store.moves).forEach(m=>{if(m&&m.v)moved[m.v]=(moved[m.v]||0)+(Math.round(+m.q)||0)});
-  store._d={sales,saleById,vIdx,resolve,sold,returned,retLine,retBySale,rets,moved};
+  // returns against a cancelled bill don't count (a bill with returns can't be cancelled; this keeps stock right if one arrives)
+  rets.forEach(r=>{const s=saleById[r.sale];if(s&&s.void)r.items.forEach(it=>{const vid=resolve(it);if(vid&&restocks(it))returned[vid]-=it.q})});
+  let ledger=null;
+  store._d={sales,saleById,vIdx,resolve,sold,returned,retLine,retBySale,rets,moved,
+    /* every stock change, oldest first (domain/inventory/stock-ledger.js), built when first asked for */
+    get ledger(){return ledger||(ledger=ledgerEntries({moves:store.moves,sales,returns:rets,resolve}))}};
   return store._d;
 }
 /* The variant record { v, p } for a variant id, and whether it was ever sold or returned */

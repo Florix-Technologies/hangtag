@@ -9,6 +9,7 @@ import { installSignInEvents } from '../features/auth/components/sign-in-form.js
 import { installSetupEvents } from '../features/shop/components/setup-gate.js';
 import { installAccountMenuEvents } from '../features/shop/components/account-events.js';
 import { installSyncStatusTimer } from '../features/sync/components/sync-status.js';
+import { installSyncRetryTimer } from '../features/sync/services/connection.js';
 import { installTooltips } from '../shared/components/tooltip.js';
 import { installDomEvents } from './events/dom-events.js';
 import { installKeyboard } from './events/keyboard.js';
@@ -32,6 +33,7 @@ installSignInEvents();
 installSetupEvents();
 installAccountMenuEvents();
 installSyncStatusTimer();
+installSyncRetryTimer();
 installTooltips();
 installDomEvents();
 installKeyboard();

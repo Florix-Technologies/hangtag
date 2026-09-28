@@ -45,6 +45,11 @@ export async function initSupabaseOnce(){
     store.sbStatus = "error"; store.sbErrorText = userMessage(e, "Unexpected error."); store.mode = "standalone"; renderSync(); return false;
   }
 }
+/* Registered once at start-up (app/main.js): while connected, work still queued (e.g. waiting on another upload, or after
+   a server error) is tried again every 30 seconds, without waiting for the next change */
+export function installSyncRetryTimer(){
+  setInterval(()=>{ if(store.sbStatus==="connected" && store.sbOfflineQueue.length && !store.sbFlushP) flushSbQueue(); }, 30000);
+}
 export function setupSupabaseRealtime(){
   if(!store.sbClient) return;
   try{
@@ -59,6 +64,7 @@ export function setupSupabaseRealtime(){
       returns: ()=>debouncePull("returns"),
       customers: ()=>debouncePull("customers"),
       settings: ()=>debouncePull("settings"),
+      events: ()=>debouncePull("events"),
     }, (status)=>{ if(status === "SUBSCRIBED" && store.sbStatus !== "update"){ store.sbStatus = "connected"; renderSync(); } });
   }catch(e){ logger.warn("Realtime subscription notice:", e); }
 }

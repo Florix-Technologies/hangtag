@@ -18,6 +18,7 @@ export const persistLocal=()=>{
   const ok=storage.set("rc_local",store.localDays);
   storage.set("rc_dirty",[...store.dirty]);
   if(!ok&&!store.warnedFull){store.warnedFull=true;setTimeout(()=>toast("Browser storage is full. Download a backup from Products now."),50)}
+  return ok;
 };
 export const savePend=()=>storage.set("rc_pend",store.pend);
 export const saveCart=()=>{storage.set("rc_cart",store.cart);storage.set("rc_disc",store.disc);storage.set("rc_cartcust",store.cartCust)};
@@ -28,6 +29,8 @@ export const saveImgs=()=>storage.set("rc_imgs",store.imgs);
 export const saveMoves=()=>storage.set("rc_moves",store.moves);
 export const saveReturns=()=>storage.set("rc_returns",store.returnsMap);
 export const saveCustomers=()=>storage.set("rc_customers",store.customers);
+export const saveEvents=()=>storage.set("rc_events",store.events);
+export const saveSyncReview=()=>storage.set("hangtag_sync_review",store.syncReview);
 export const saveSettings=()=>storage.set("rc_settings",store.settings);
 export const saveLogo=()=>storage.set("rc_logo",store.logo||"");
 export const savePrinter=()=>storage.set("rc_printer",store.printer);

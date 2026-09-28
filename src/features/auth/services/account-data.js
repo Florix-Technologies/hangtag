@@ -13,8 +13,8 @@ import { objOr } from '../../../shared/utils/objects.js';
    The app works on the plain keys below. When a different account signs in, the current data is put away
    under its owner and that account's own data (or a fresh start) is brought back. */
 
-export const USER_KEYS = ["hangtag_sb_queue", "rc_local", "rc_dirty", "rc_moves", "rc_returns", "rc_customers", "rc_settings", "rc_pend", "rc_cart", "rc_disc", "rc_cartcust", "rc_catalog", "rc_imgs", "hangtag_profile", "rc_logo"];
-export const MUST_KEEP = ["hangtag_sb_queue", "rc_local", "rc_dirty", "rc_moves", "rc_returns", "rc_customers"];   // unsent work: never drop these
+export const USER_KEYS = ["hangtag_sb_queue", "hangtag_sync_review", "rc_local", "rc_dirty", "rc_moves", "rc_returns", "rc_customers", "rc_events", "rc_settings", "rc_pend", "rc_cart", "rc_disc", "rc_cartcust", "rc_catalog", "rc_imgs", "hangtag_profile", "rc_logo"];
+export const MUST_KEEP = ["hangtag_sb_queue", "hangtag_sync_review", "rc_local", "rc_dirty", "rc_moves", "rc_returns", "rc_customers", "rc_events"];   // unsent work: never drop these
 export const DATA_OWNER = "hangtag_data_owner";
 export const stashKey = (owner, k) => "hangtag_u_" + owner + "_" + k;
 export function switchLocalDataTo(userId){
@@ -64,6 +64,8 @@ export function loadUserState(){
   store.moves = objOr(storage.get("rc_moves", {}), {});
   store.returnsMap = objOr(storage.get("rc_returns", {}), {});
   store.customers = objOr(storage.get("rc_customers", {}), {});
+  store.events = objOr(storage.get("rc_events", {}), {});
+  store.syncReview = storage.get("hangtag_sync_review", []); if(!Array.isArray(store.syncReview)) store.syncReview = [];
   store.settings = Object.assign({}, DEFAULT_SETTINGS, objOr(storage.get("rc_settings", {}), {}));
   store.sbOfflineQueue = storage.get("hangtag_sb_queue", []); if(!Array.isArray(store.sbOfflineQueue)) store.sbOfflineQueue = [];
   store.profile = storage.get("hangtag_profile", null);

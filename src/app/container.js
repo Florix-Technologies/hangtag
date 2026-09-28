@@ -9,7 +9,7 @@ import { store } from '../shared/state/store.js';
 import { createLocalFirstProductRepository } from '../infrastructure/repositories/local-first-product-repository.js';
 import { createLocalFirstStockRepository } from '../infrastructure/repositories/local-first-stock-repository.js';
 import { dropQueued, enqueue, flushSbQueue } from '../features/sync/services/outbox.js';
-import { saveCatalog, saveCustomers, saveImgs, saveMoves, saveSbQueue } from '../shared/state/persistence.js';
+import { saveCatalog, saveCustomers, saveEvents, saveImgs, saveMoves, saveReturns, saveSbQueue } from '../shared/state/persistence.js';
 import { enterApp, signOut } from '../features/auth/services/session.js';
 import { barcodeSVG } from '../infrastructure/codes/barcode-svg.js';
 import { qrSVG } from '../infrastructure/codes/qr-svg.js';
@@ -19,6 +19,8 @@ import { createBillExtractor } from '../infrastructure/extraction/bill-extractor
 import { createCameraScanner } from '../infrastructure/scanner/camera-scanner.js';
 import { createLocalFirstStockImport } from '../infrastructure/repositories/local-first-stock-import.js';
 import { createLocalFirstCustomerRepository } from '../infrastructure/repositories/local-first-customer-repository.js';
+import { createLocalFirstReturnRepository } from '../infrastructure/repositories/local-first-return-repository.js';
+import { createLocalFirstEventRepository } from '../infrastructure/repositories/local-first-event-repository.js';
 import { invalidate } from '../features/inventory/services/ledger.js';
 import { createEpsonPrinter } from '../infrastructure/printing/epson-epos.js';
 import { rasterizeLogo } from '../infrastructure/printing/raster.js';
@@ -42,6 +44,8 @@ export function installContainer(){
   provide("productRepository", createLocalFirstProductRepository({ store, persist: { saveCatalog, saveMoves, saveImgs, saveSbQueue }, outbox }));
   provide("stockRepository", createLocalFirstStockRepository({ store, persist: { saveMoves, saveCatalog }, outbox }));
   provide("customerRepository", createLocalFirstCustomerRepository({ store, persist: { saveCustomers }, outbox }));
+  provide("returnRepository", createLocalFirstReturnRepository({ store, persist: { saveReturns }, outbox, invalidate }));
+  provide("eventRepository", createLocalFirstEventRepository({ store, persist: { saveEvents }, outbox }));
   provide("documentExtractionService", createBillExtractor({ cloud: cloudGateway, files }));
   // Bills out: an Epson thermal printer on the shop's network, and email / WhatsApp / SMS through the send-receipt function
   provide("receiptPrinter", createEpsonPrinter({ rasterize: rasterizeLogo }));

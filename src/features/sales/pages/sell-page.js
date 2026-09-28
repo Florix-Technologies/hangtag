@@ -12,6 +12,7 @@ import { $, esc, patchList } from '../../../shared/dom.js';
 import { inr } from '../../../shared/formatting/money.js';
 import { isLight, okColor, swatchOf } from '../../../shared/utils/colors.js';
 import { initials } from '../../../shared/utils/text.js';
+import { sellingBannerHTML } from '../../events/components/events-view.js';
 
 export function tileHTML(p,i){
   const left=productLeft(p)-cartQtyP(p.id), st=left<=0?"out":left<=lowAt()?"low":"", q=cartQtyP(p.id);
@@ -37,7 +38,7 @@ export function renderGrid(){
     ban.innerHTML=`<div class="empty"><b>No products yet</b><p>Add products you'll sell, with their colours, sizes and stock — or start with example products.</p><div class="row c"><button class="btn primary" data-act="examples">Load example products</button><button class="btn" data-act="gosetup">Add my own</button></div></div>`;
     return;
   }
-  ban.innerHTML=store.catalog&&store.catalog.example?`<div class="banner"><span><b>These are example products.</b> Rename them, add photos and set your real stock before the sale.</span><button class="btn sm" data-act="gosetup">Edit products</button></div>`:"";
+  ban.innerHTML=sellingBannerHTML()+(store.catalog&&store.catalog.example?`<div class="banner"><span><b>These are example products.</b> Rename them, add photos and set your real stock before the sale.</span><button class="btn sm" data-act="gosetup">Edit products</button></div>`:"");
   const vh=variantHits();
   hits.innerHTML=vh.length?`<div class="hits" aria-label="Matching sizes and colours">${vh.map(hitHTML).join("")}</div>`:"";
   const ps=sellProducts();

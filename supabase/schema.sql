@@ -5,7 +5,7 @@
 --
 -- Every account has its own shop: its own profile, products, variants (any options: colour, size, storage...),
 -- stock history, supplier bills, bills (with their discounts, GST and payments), cash and bank books, returns,
--- customers, bills sent to customers, logo and settings. Nobody can see or change another account's data.
+-- customers, bills sent to customers, events, logo and settings. Nobody can see or change another account's data.
 -- The first run of the variant upgrade keeps a copy of the old product, size and bill tables
 -- (hangtag_backup_v2_*), the first run of the options upgrade keeps a copy of products and variants
 -- (hangtag_backup_v3_*), and the script ends with a migration report you can check.
@@ -1065,13 +1065,13 @@ BEGIN
         INSERT INTO public.hangtag_sales (id, timestamp, subtotal, discount, total, payment_method, device_id, is_void, bill_no,
             customer_id, customer_name, customer_phone, tax_rate, tax_amount, tax_inclusive, kind, exchange_id, credit,
             item_discount, bill_discount, bill_discount_type, bill_discount_value, taxable_amount, cgst_amount, sgst_amount, igst_amount,
-            round_off, gst_mode, place_of_supply, customer_gstin, customer_type)
+            round_off, gst_mode, place_of_supply, customer_gstin, customer_type, event_id)
         VALUES (s.id, s.timestamp, COALESCE(s.subtotal, 0), COALESCE(s.discount, 0), COALESCE(s.total, 0), s.payment_method, s.device_id,
             COALESCE(s.is_void, FALSE), s.bill_no, s.customer_id, s.customer_name, s.customer_phone, COALESCE(s.tax_rate, 0),
             COALESCE(s.tax_amount, 0), COALESCE(s.tax_inclusive, TRUE), COALESCE(s.kind, 'sale'), s.exchange_id, COALESCE(s.credit, 0),
             COALESCE(s.item_discount, 0), COALESCE(s.bill_discount, 0), s.bill_discount_type, s.bill_discount_value, s.taxable_amount,
             COALESCE(s.cgst_amount, 0), COALESCE(s.sgst_amount, 0), COALESCE(s.igst_amount, 0), COALESCE(s.round_off, 0),
-            s.gst_mode, s.place_of_supply, s.customer_gstin, s.customer_type)
+            s.gst_mode, s.place_of_supply, s.customer_gstin, s.customer_type, s.event_id)
         ON CONFLICT (owner_id, id) DO UPDATE SET timestamp = EXCLUDED.timestamp, subtotal = EXCLUDED.subtotal, discount = EXCLUDED.discount,
             total = EXCLUDED.total, payment_method = EXCLUDED.payment_method, device_id = EXCLUDED.device_id, is_void = EXCLUDED.is_void,
             bill_no = EXCLUDED.bill_no, customer_id = EXCLUDED.customer_id, customer_name = EXCLUDED.customer_name,
@@ -1080,7 +1080,8 @@ BEGIN
             item_discount = EXCLUDED.item_discount, bill_discount = EXCLUDED.bill_discount, bill_discount_type = EXCLUDED.bill_discount_type,
             bill_discount_value = EXCLUDED.bill_discount_value, taxable_amount = EXCLUDED.taxable_amount, cgst_amount = EXCLUDED.cgst_amount,
             sgst_amount = EXCLUDED.sgst_amount, igst_amount = EXCLUDED.igst_amount, round_off = EXCLUDED.round_off, gst_mode = EXCLUDED.gst_mode,
-            place_of_supply = EXCLUDED.place_of_supply, customer_gstin = EXCLUDED.customer_gstin, customer_type = EXCLUDED.customer_type;
+            place_of_supply = EXCLUDED.place_of_supply, customer_gstin = EXCLUDED.customer_gstin, customer_type = EXCLUDED.customer_type,
+            event_id = EXCLUDED.event_id;
         INSERT INTO public.hangtag_sale_items (sale_id, line_no, product_id, product_name, size, quantity, unit_price, variant_id, color, sku,
             cost_price, variant_label, options, discount_type, discount_value, discount_amount, bill_discount_share, taxable_value, gst_rate,
             cgst_amount, sgst_amount, igst_amount, line_total, hsn)
@@ -1164,6 +1165,121 @@ ALTER TABLE public.hangtag_meta DROP CONSTRAINT IF EXISTS hangtag_meta_logo_size
 ALTER TABLE public.hangtag_meta ADD CONSTRAINT hangtag_meta_logo_size_check CHECK (key <> 'logo' OR octet_length(value::text) <= 400000) NOT VALID;
 
 -- ==============================================================================
+-- 3g. Returns with credit notes, and events (Phases 17-22)
+--   Returns keep paise (their refund and value were whole rupees), their credit note number, and the round off given back
+--   when a whole bill is returned. Return lines keep the GST reversed (taxable value, rate, CGST / SGST / IGST, HSN) and
+--   whether the piece went back on the shelf (restock false: "not for resale", recorded without adding stock).
+--   A return is saved with its lines in one step (RPC hangtag_save_return): never on a cancelled bill, never more pieces
+--   than a bill line has left (the trigger above), and its value is always its lines plus its round off.
+--   Events (Event Mode): a named, dated selling occasion. Bills made at one carry its id (hangtag_sales.event_id); returns
+--   follow their bill. An event with bills can't be deleted, only closed.
+-- ==============================================================================
+ALTER TABLE public.hangtag_returns ALTER COLUMN refund_amount TYPE NUMERIC(12,2);
+ALTER TABLE public.hangtag_returns ALTER COLUMN value TYPE NUMERIC(12,2);
+ALTER TABLE public.hangtag_returns ADD COLUMN IF NOT EXISTS round_off NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE public.hangtag_returns ADD COLUMN IF NOT EXISTS credit_no TEXT;
+ALTER TABLE public.hangtag_returns DROP CONSTRAINT IF EXISTS hangtag_returns_money_check;
+ALTER TABLE public.hangtag_returns ADD CONSTRAINT hangtag_returns_money_check CHECK (refund_amount <= value AND round_off BETWEEN -1 AND 1
+    AND (credit_no IS NULL OR char_length(credit_no) <= 40) AND (refund_method IS NULL OR refund_method IN ('cash','upi','card'))) NOT VALID;
+ALTER TABLE public.hangtag_return_items ALTER COLUMN value TYPE NUMERIC(12,2);
+ALTER TABLE public.hangtag_return_items ADD COLUMN IF NOT EXISTS restock BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE public.hangtag_return_items ADD COLUMN IF NOT EXISTS taxable_value NUMERIC(12,2);
+ALTER TABLE public.hangtag_return_items ADD COLUMN IF NOT EXISTS gst_rate NUMERIC(5,2);
+ALTER TABLE public.hangtag_return_items ADD COLUMN IF NOT EXISTS cgst_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE public.hangtag_return_items ADD COLUMN IF NOT EXISTS sgst_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE public.hangtag_return_items ADD COLUMN IF NOT EXISTS igst_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE public.hangtag_return_items ADD COLUMN IF NOT EXISTS hsn TEXT;
+ALTER TABLE public.hangtag_return_items DROP CONSTRAINT IF EXISTS hangtag_return_items_money_check;
+ALTER TABLE public.hangtag_return_items ADD CONSTRAINT hangtag_return_items_money_check CHECK (value >= 0 AND cgst_amount >= 0 AND sgst_amount >= 0
+    AND igst_amount >= 0 AND (gst_rate IS NULL OR gst_rate BETWEEN 0 AND 100)) NOT VALID;
+
+-- Saves a return with its lines, all or nothing. Runs with the caller's own rights (row security applies).
+-- p_return: {hangtag_returns columns} · p_items: [{hangtag_return_items columns}]
+-- Saving the same return again updates it (a safe retry); lines no longer on it are removed.
+CREATE OR REPLACE FUNCTION public.hangtag_save_return(p_return JSONB, p_items JSONB)
+RETURNS JSONB LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+DECLARE
+    uid UUID := auth.uid();
+    r public.hangtag_returns;
+    voided BOOLEAN;
+    lines_value NUMERIC;
+    n INT;
+BEGIN
+    IF uid IS NULL THEN RAISE EXCEPTION 'Sign in to save returns.' USING ERRCODE = '42501'; END IF;
+    r := jsonb_populate_record(NULL::public.hangtag_returns, p_return);
+    IF COALESCE(r.id, '') = '' THEN RAISE EXCEPTION 'A return has no id.' USING ERRCODE = '22023'; END IF;
+    SELECT is_void INTO voided FROM public.hangtag_sales WHERE owner_id = uid AND id = r.sale_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Bill % was not found', r.sale_id USING ERRCODE = 'foreign_key_violation';
+    END IF;
+    IF voided THEN
+        RAISE EXCEPTION 'That bill is cancelled, so it can''t have a return' USING ERRCODE = 'check_violation';
+    END IF;
+    INSERT INTO public.hangtag_returns (id, sale_id, t, kind, exchange_id, refund_amount, refund_method, value, round_off, credit_no, note, device_id)
+    VALUES (r.id, r.sale_id, r.t, COALESCE(r.kind, 'return'), r.exchange_id, COALESCE(r.refund_amount, 0), r.refund_method, COALESCE(r.value, 0),
+        COALESCE(r.round_off, 0), r.credit_no, r.note, r.device_id)
+    ON CONFLICT (owner_id, id) DO UPDATE SET sale_id = EXCLUDED.sale_id, t = EXCLUDED.t, kind = EXCLUDED.kind, exchange_id = EXCLUDED.exchange_id,
+        refund_amount = EXCLUDED.refund_amount, refund_method = EXCLUDED.refund_method, value = EXCLUDED.value, round_off = EXCLUDED.round_off,
+        credit_no = EXCLUDED.credit_no, note = EXCLUDED.note, device_id = EXCLUDED.device_id;
+    DELETE FROM public.hangtag_return_items i WHERE i.owner_id = uid AND i.return_id = r.id
+       AND i.line_no NOT IN (SELECT (y ->> 'line_no')::int FROM jsonb_array_elements(COALESCE(p_items, '[]'::jsonb)) y);
+    INSERT INTO public.hangtag_return_items (return_id, line_no, sale_id, sale_line_no, variant_id, product_id, product_name, color, size, sku,
+        quantity, unit_price, value, cost_price, variant_label, options, restock, taxable_value, gst_rate, cgst_amount, sgst_amount, igst_amount, hsn)
+    SELECT r.id, i.line_no, r.sale_id, i.sale_line_no, i.variant_id, i.product_id, i.product_name, COALESCE(i.color, ''), COALESCE(i.size, ''), i.sku,
+        i.quantity, COALESCE(i.unit_price, 0), COALESCE(i.value, 0), i.cost_price, i.variant_label, i.options, COALESCE(i.restock, TRUE), i.taxable_value,
+        i.gst_rate, COALESCE(i.cgst_amount, 0), COALESCE(i.sgst_amount, 0), COALESCE(i.igst_amount, 0), i.hsn
+    FROM jsonb_populate_recordset(NULL::public.hangtag_return_items, COALESCE(p_items, '[]'::jsonb)) i
+    ON CONFLICT (owner_id, return_id, line_no) DO UPDATE SET sale_id = EXCLUDED.sale_id, sale_line_no = EXCLUDED.sale_line_no,
+        variant_id = EXCLUDED.variant_id, product_id = EXCLUDED.product_id, product_name = EXCLUDED.product_name, color = EXCLUDED.color,
+        size = EXCLUDED.size, sku = EXCLUDED.sku, quantity = EXCLUDED.quantity, unit_price = EXCLUDED.unit_price, value = EXCLUDED.value,
+        cost_price = EXCLUDED.cost_price, variant_label = EXCLUDED.variant_label, options = EXCLUDED.options, restock = EXCLUDED.restock,
+        taxable_value = EXCLUDED.taxable_value, gst_rate = EXCLUDED.gst_rate, cgst_amount = EXCLUDED.cgst_amount, sgst_amount = EXCLUDED.sgst_amount,
+        igst_amount = EXCLUDED.igst_amount, hsn = EXCLUDED.hsn;
+    SELECT count(*), COALESCE(SUM(value), 0) INTO n, lines_value FROM public.hangtag_return_items WHERE owner_id = uid AND return_id = r.id;
+    IF n = 0 THEN RAISE EXCEPTION 'A return needs at least one line' USING ERRCODE = 'check_violation'; END IF;
+    IF COALESCE(r.value, 0) <> lines_value + COALESCE(r.round_off, 0) THEN
+        RAISE EXCEPTION 'Return % is worth % but its lines come to %', COALESCE(r.credit_no, r.id), r.value, lines_value + COALESCE(r.round_off, 0)
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN jsonb_build_object('status', 'saved', 'return', r.id, 'lines', n);
+END $$;
+REVOKE ALL ON FUNCTION public.hangtag_save_return(JSONB, JSONB) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.hangtag_save_return(JSONB, JSONB) TO authenticated;
+
+-- Events and the bills made at them
+CREATE TABLE IF NOT EXISTS public.hangtag_events (
+    owner_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    id TEXT NOT NULL,
+    name TEXT NOT NULL CHECK (char_length(btrim(name)) BETWEEN 1 AND 80),
+    start_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    location TEXT CHECK (location IS NULL OR char_length(location) <= 120),
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','closed')),
+    created_t BIGINT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (owner_id, id),
+    CONSTRAINT hangtag_events_dates_check CHECK (end_date >= start_date)
+);
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS event_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_hangtag_sales_event ON public.hangtag_sales (owner_id, event_id) WHERE event_id IS NOT NULL;
+-- An event with bills can't be deleted (close it instead). Deleting the whole account still removes everything: the check
+-- only applies while the account exists.
+CREATE OR REPLACE FUNCTION public.hangtag_event_delete_check()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM auth.users u WHERE u.id = OLD.owner_id)
+       AND EXISTS (SELECT 1 FROM public.hangtag_sales s WHERE s.owner_id = OLD.owner_id AND s.event_id = OLD.id) THEN
+        RAISE EXCEPTION 'The event "%" has bills, so it can''t be deleted. Close it instead.', OLD.name USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN OLD;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_event_delete_check ON public.hangtag_events;
+CREATE TRIGGER hangtag_event_delete_check BEFORE DELETE ON public.hangtag_events
+    FOR EACH ROW EXECUTE FUNCTION public.hangtag_event_delete_check();
+REVOKE EXECUTE ON FUNCTION public.hangtag_event_delete_check() FROM PUBLIC, anon;
+
+-- ==============================================================================
 -- 4. Indexes for reports
 -- ==============================================================================
 DROP INDEX IF EXISTS public.idx_hangtag_sizes_prod;
@@ -1180,7 +1296,7 @@ DO $$
 DECLARE t TEXT;
 BEGIN
     FOREACH t IN ARRAY ARRAY['hangtag_products','hangtag_sizes','hangtag_images','hangtag_sales','hangtag_sale_items','hangtag_meta','hangtag_variants','hangtag_stock_moves','hangtag_customers','hangtag_returns','hangtag_return_items','hangtag_stock_imports',
-                     'hangtag_payments','hangtag_fin_txns','hangtag_cash_book','hangtag_bank_book','hangtag_deliveries'] LOOP
+                     'hangtag_payments','hangtag_fin_txns','hangtag_cash_book','hangtag_bank_book','hangtag_deliveries','hangtag_events'] LOOP
         EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
         EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 'Public access to ' || t, t);
         EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 'Approved staff access to ' || t, t);
@@ -1209,11 +1325,12 @@ REVOKE ALL ON TABLE public.hangtag_products, public.hangtag_sizes, public.hangta
     public.hangtag_sales, public.hangtag_sale_items, public.hangtag_meta, public.hangtag_profiles,
     public.hangtag_variants, public.hangtag_stock_moves, public.hangtag_customers,
     public.hangtag_returns, public.hangtag_return_items, public.hangtag_stock_imports,
-    public.hangtag_payments, public.hangtag_fin_txns, public.hangtag_cash_book, public.hangtag_bank_book, public.hangtag_deliveries FROM anon;
+    public.hangtag_payments, public.hangtag_fin_txns, public.hangtag_cash_book, public.hangtag_bank_book, public.hangtag_deliveries,
+    public.hangtag_events FROM anon;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.hangtag_products, public.hangtag_sizes, public.hangtag_images,
     public.hangtag_sales, public.hangtag_sale_items, public.hangtag_meta,
     public.hangtag_variants, public.hangtag_stock_moves, public.hangtag_customers,
-    public.hangtag_returns, public.hangtag_return_items, public.hangtag_stock_imports, public.hangtag_payments TO authenticated;
+    public.hangtag_returns, public.hangtag_return_items, public.hangtag_stock_imports, public.hangtag_payments, public.hangtag_events TO authenticated;
 -- Financial transactions and the cash and bank books are written only by the database (section 3e), and delivery
 -- records only by the send-receipt Edge Function (section 3f): read-only here
 REVOKE ALL ON TABLE public.hangtag_fin_txns, public.hangtag_cash_book, public.hangtag_bank_book, public.hangtag_deliveries FROM authenticated;
@@ -1228,7 +1345,8 @@ DO $$
 DECLARE t TEXT;
 BEGIN
     FOREACH t IN ARRAY ARRAY['hangtag_products','hangtag_sizes','hangtag_images','hangtag_sales','hangtag_sale_items',
-                             'hangtag_variants','hangtag_stock_moves','hangtag_customers','hangtag_returns','hangtag_return_items','hangtag_meta','hangtag_stock_imports'] LOOP
+                             'hangtag_variants','hangtag_stock_moves','hangtag_customers','hangtag_returns','hangtag_return_items','hangtag_meta','hangtag_stock_imports',
+                             'hangtag_events'] LOOP
         BEGIN
             EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I', t);
         EXCEPTION WHEN OTHERS THEN
@@ -1299,4 +1417,17 @@ SELECT check_name, value, expected, value = expected AS ok FROM (
            (SELECT count(*) FROM public.hangtag_fin_txns f WHERE EXISTS (SELECT 1 FROM public.hangtag_cash_book c WHERE c.owner_id = f.owner_id AND c.fin_txn_id = f.id)
               OR EXISTS (SELECT 1 FROM public.hangtag_bank_book b WHERE b.owner_id = f.owner_id AND b.fin_txn_id = f.id))::bigint,
            (SELECT count(*) FROM public.hangtag_fin_txns)::bigint
+    UNION ALL
+    SELECT 14, 'Bill lines never returned more than bought',
+           (SELECT count(*) FROM public.hangtag_sale_items i WHERE EXISTS (SELECT 1 FROM public.hangtag_return_items x WHERE x.owner_id = i.owner_id AND x.sale_id = i.sale_id AND x.sale_line_no = i.line_no)
+              AND (SELECT sum(x.quantity) FROM public.hangtag_return_items x WHERE x.owner_id = i.owner_id AND x.sale_id = i.sale_id AND x.sale_line_no = i.line_no) <= i.quantity)::bigint,
+           (SELECT count(*) FROM public.hangtag_sale_items i WHERE EXISTS (SELECT 1 FROM public.hangtag_return_items x WHERE x.owner_id = i.owner_id AND x.sale_id = i.sale_id AND x.sale_line_no = i.line_no))::bigint
+    UNION ALL
+    SELECT 15, 'Returns worth exactly their lines plus round off',
+           (SELECT count(*) FROM public.hangtag_returns r WHERE r.value = r.round_off + (SELECT sum(x.value) FROM public.hangtag_return_items x WHERE x.owner_id = r.owner_id AND x.return_id = r.id))::bigint,
+           (SELECT count(*) FROM public.hangtag_returns r WHERE EXISTS (SELECT 1 FROM public.hangtag_return_items x WHERE x.owner_id = r.owner_id AND x.return_id = r.id))::bigint
+    UNION ALL
+    SELECT 16, 'Bills made at an event that exists',
+           (SELECT count(*) FROM public.hangtag_sales s WHERE s.event_id IS NOT NULL AND EXISTS (SELECT 1 FROM public.hangtag_events e WHERE e.owner_id = s.owner_id AND e.id = s.event_id))::bigint,
+           (SELECT count(*) FROM public.hangtag_sales s WHERE s.event_id IS NOT NULL)::bigint
 ) r ORDER BY n;

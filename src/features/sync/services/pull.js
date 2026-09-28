@@ -9,13 +9,13 @@ import { enqueue, flushSbQueue, markSynced } from './outbox.js';
 import { use } from '../../../shared/di/services.js';
 import { toast } from '../../../shared/components/toast.js';
 import { dayKey } from '../../../shared/formatting/dates.js';
-import { saveCatalog, saveCustomers, saveImgs, saveLogo, saveMoves, saveReturns, saveSettings } from '../../../shared/state/persistence.js';
+import { saveCatalog, saveCustomers, saveEvents, saveImgs, saveLogo, saveMoves, saveReturns, saveSettings } from '../../../shared/state/persistence.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { logger } from '../../../shared/logging/logger.js';
 
 /* ---------- pulls (cloud is the truth, except for work still waiting in this device's queue) ---------- */
 
-export const pendingIds = type => new Set(store.sbOfflineQueue.filter(q=>q.type===type).map(q=>q.id || (q.move&&q.move.id) || (q.ret&&q.ret.id) || (q.cust&&q.cust.id)));
+export const pendingIds = type => new Set(store.sbOfflineQueue.filter(q=>q.type===type).map(q=>q.id || (q.move&&q.move.id) || (q.ret&&q.ret.id) || (q.cust&&q.cust.id) || (q.ev&&q.ev.id)));
 export async function pullCatalogFromSupabase(remoteIsTruth = false){
   if(!store.sbClient || !(await sbSessionOk())) return;
   try{
@@ -64,6 +64,14 @@ export async function pullCustomers(){
   Object.values(store.customers).forEach(c => { if(pending.has(c.id)) next[c.id] = c; });
   store.customers = next; saveCustomers();
 }
+/* Events: the cloud's list, except events changed or deleted on this device and not uploaded yet */
+export async function pullEvents(){
+  const list = await use("cloud").fetchEvents();
+  const pending = pendingIds("event"), deleted = pendingIds("eventdel"), next = {};
+  list.forEach(e => { if(!deleted.has(e.id)) next[e.id] = e; });
+  Object.values(store.events || {}).forEach(e => { if(pending.has(e.id)) next[e.id] = e; });
+  store.events = next; saveEvents();
+}
 /* Settings and the receipt logo (both kept in hangtag_meta; a change still waiting to upload wins — also one made while
    the download was on its way) */
 export async function pullSettings(){
@@ -85,6 +93,7 @@ export async function pullFromSupabase(showToast = true){
     await pullMoves();
     await pullReturns();
     await pullCustomers();
+    await pullEvents();
     await pullSettings();
     const sales = await use("cloud").fetchSales();
     const newRemoteDays = {};
@@ -110,6 +119,7 @@ export async function pushLocalToSupabase(){
   Object.keys(store.imgs).forEach(id => enqueue({ type:"img", id }));
   Object.values(store.moves).forEach(m => enqueue({ type:"move", id:m.id, move:m }));
   Object.values(store.customers).forEach(c => enqueue({ type:"cust", id:c.id, cust:c }));
+  Object.values(store.events || {}).forEach(e => enqueue({ type:"event", id:e.id, ev:e }));
   enqueue({ type:"allsales" });
   Object.values(store.returnsMap).forEach(r => enqueue({ type:"return", id:r.id, ret:r }));
   enqueue({ type:"settings" });

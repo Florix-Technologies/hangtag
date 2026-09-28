@@ -88,7 +88,7 @@ console.log('=== upgrade: existing bills and refunds get payments, transactions 
     JSON.stringify(bb.map((x) => [x.id, x.method, x.entry_type, num(x.amount_in), num(x.amount_out), x.status])) === JSON.stringify([
       ['bb:ft:s2:upi', 'upi', 'receipt', 500, 0, 'posted'], ['bb:ft:s3:card', 'card', 'receipt', 800, 0, 'cancelled'], ['bb:ft:r2', 'upi', 'refund', 0, 100, 'posted']]), bb);
   const rep = (await db.query(`SELECT check_name, value, expected, ok FROM (${NEW.slice(NEW.lastIndexOf('SELECT check_name')).replace(/;\s*$/, '')}) q`)).rows;
-  check('migration report: payments, transactions and books all add up', rep.length === 13 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: payments, transactions and books all add up', rep.length === 16 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   await db.close();
 }
 
@@ -185,7 +185,7 @@ check('a bill from an older app version (no payments sent) gets its payment and 
 const sales = (await rows(db, A, `SELECT id, bill_no, timestamp, total, credit, is_void FROM public.hangtag_sales`)).map((s) => ({ id: s.id, no: s.bill_no, t: +s.timestamp, total: s.total, credit: s.credit, void: s.is_void, pay: 'cash' }));
 const payRows = await rows(db, A, `SELECT * FROM public.hangtag_payments`);
 sales.forEach((s) => { s.payments = payRows.filter((p) => p.sale_id === s.id).map((p) => ({ id: p.id, method: p.method, amount: +p.amount, ...(p.method === 'cash' ? { received: +p.tendered, change: +p.change_given } : {}), ...(p.reference ? { ref: p.reference } : {}) })); });
-const rets = (await rows(db, A, `SELECT id, sale_id, t, refund_amount, refund_method FROM public.hangtag_returns`)).map((x) => ({ id: x.id, sale: x.sale_id, t: +x.t, refund: x.refund_amount, pay: x.refund_method }));
+const rets = (await rows(db, A, `SELECT id, sale_id, t, refund_amount, refund_method FROM public.hangtag_returns`)).map((x) => ({ id: x.id, sale: x.sale_id, t: +x.t, refund: num(x.refund_amount), pay: x.refund_method }));
 const tx = financialTransactions(sales, rets);
 const dbTx = await rows(db, A, `SELECT id, method, amount, sale_id, status FROM public.hangtag_fin_txns ORDER BY id`);
 check('the app derives the same financial transactions as the database (ids, amounts, bills, status)',

@@ -6,10 +6,11 @@ import { storage } from '../../../shared/state/persistence.js';
 
 export function renderSync(){
   const el=$("#sync"),tx=el.querySelector("span");
-  const n=store.sbOfflineQueue.length, stuck=store.sbOfflineQueue.find(q=>(q.tries||0)>=3);
+  const n=store.sbOfflineQueue.length, stuck=store.sbOfflineQueue.find(q=>(q.tries||0)>=3), rv=(store.syncReview||[]).length;
   let cls="sync",txt="Connecting…",tip="";
   if(store.sbStatus === "connected"){
-    if(stuck){ cls+=" off"; txt="Sync problem"; tip="Some changes couldn't upload: "+(stuck.err||"unknown error")+". They're kept on this device and will retry."; }
+    if(rv){ cls+=" off"; txt="Sync problem · "+rv; tip=rv+" change"+(rv===1?"":"s")+" the database refused. Tap to review them."; }
+    else if(stuck){ cls+=" off"; txt="Sync problem"; tip="Some changes couldn't upload: "+(stuck.err||"unknown error")+". They're kept on this device and will retry. Tap for details."; }
     else if(n || store.syncing){ cls+=" wait"; txt=n?"Syncing "+n+"…":"Syncing…"; tip=n?n+" change"+(n===1?"":"s")+" uploading to the cloud.":"Checking for changes from your other devices."; }
     else { cls+=" ok"; txt="Synced"+(store.lastSyncAt?" · "+agoText(store.lastSyncAt).replace(" ago",""):""); tip="Cloud synced"+(store.lastSyncAt?" · last synced "+agoText(store.lastSyncAt):"")+". Your devices stay in step."; }
   } else if(store.sbStatus === "connecting"){ cls+=" wait"; txt="Connecting…"; tip="Connecting to the cloud…"; }

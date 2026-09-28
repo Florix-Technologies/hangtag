@@ -198,3 +198,9 @@
 @keyframes pop{0%{transform:scale(.5)}70%{transform:scale(1.15)}100%{transform:scale(1)}}
 @media (hover:none){.kc,.kh,.deskonly{display:none!important}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+/* returns: not for resale; Sell: selling at an event; Reports: summary */
+.rt-nfr{font-size:12.5px;margin-top:4px;color:var(--ink-2)}
+.sellat{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px}
+.sellat .f.inline{display:flex;align-items:center;gap:8px;margin:0;font-weight:600}
+.sellat select{min-height:40px}
+.repsum .row small{font-weight:400}

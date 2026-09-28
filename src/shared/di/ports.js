@@ -145,6 +145,27 @@
  */
 
 /**
+ * "returnRepository": returns and exchanges. Implementation: infrastructure/repositories/local-first-return-repository.js
+ * (this device first, then uploaded through RPC hangtag_save_return; the database refuses returning more than a bill line
+ * has left). Reach it through features/returns/repositories/return-repository.js.
+ * @typedef {Object} ReturnRepositoryPort
+ * @property {() => Object[]} list
+ * @property {(id: string) => (Object|null)} get
+ * @property {(ret: Object) => Object} record   A new return (with its credit note number, lines and refund).
+ */
+
+/**
+ * "eventRepository": the shop's events (Event Mode). Implementation: infrastructure/repositories/local-first-event-repository.js
+ * (this device first, then uploaded to hangtag_events; the database refuses deleting an event that has bills).
+ * Reach it through features/events/repositories/event-repository.js.
+ * @typedef {Object} EventRepositoryPort
+ * @property {() => Object[]} list
+ * @property {(id: string) => (Object|null)} get
+ * @property {(ev: {id, name, start, end, place, status, t}) => Object} save
+ * @property {(id: string) => void} remove   Only for an event without bills (the use case checks; the database too).
+ */
+
+/**
  * "receiptPrinter": a thermal receipt printer. Implementation: infrastructure/printing/epson-epos.js (Epson printers on
  * the shop's network, through their ePOS-Print web service), provided by app/container.js. Used by
  * features/printing/use-cases/print-receipt.js with the printer settings of this device (store.printer).

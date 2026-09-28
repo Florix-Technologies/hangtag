@@ -54,11 +54,22 @@ check('saveProduct: product row with its sort order, then its variants', client.
 client = fakeClient();
 await gw.saveImage('p1', ''); await gw.saveImage('p1', 'data:x');
 check('saveImage: empty removes the photo, a data URL stores it', opNames(client.calls[0]) === 'delete.eq' && opNames(client.calls[1]) === 'upsert' && client.calls[1].ops[0][1][0].image_data === 'data:x');
-// a refused return: lines refused → the return header is removed again when it has no lines
-client = fakeClient((q) => (q.t === 'hangtag_return_items' && q.ops[0][0] === 'upsert' ? { error: { code: '23514', message: "Can't return 1 piece(s): 2 bought, 2 already returned" } } : { data: [], error: null }));
+// a return: one RPC with the return and its lines (all or nothing); a refusal keeps the database rule's own message
+client = fakeClient();
+const ret = { id: 'r1', no: 'CN-260928-001', sale: 's1', t: 1, kind: 'return', refund: 524.5, pay: 'cash', value: 524.5, ro: 0, dev: 'd1',
+  items: [{ ln: 0, q: 1, p: 'p1', n: 'Tee', price: 524.5, value: 524.5, restock: false, tx: 499.52, cgst: 12.49, sgst: 12.49, igst: 0, gst: 5, hsn: '6109' }] };
+await gw.saveReturn(ret);
+check('saveReturn: one call (RPC hangtag_save_return) with the credit note, paise, GST reversed and "not for resale"', client.calls.map((q) => q.t).join() === 'rpc:hangtag_save_return'
+  && arg(client.calls[0]).p_return.credit_no === 'CN-260928-001' && arg(client.calls[0]).p_return.refund_amount === 524.5 && arg(client.calls[0]).p_return.round_off === 0
+  && arg(client.calls[0]).p_items[0].restock === false && arg(client.calls[0]).p_items[0].taxable_value === 499.52 && arg(client.calls[0]).p_items[0].cgst_amount === 12.49 && arg(client.calls[0]).p_items[0].hsn === '6109', arg(client.calls[0]));
+client = fakeClient((q) => (q.t === 'rpc:hangtag_save_return' ? { error: { code: '23514', message: "Can't return 1 piece(s): 2 bought, 2 already returned" } } : { data: [], error: null }));
 err = null; try { await gw.saveReturn({ id: 'r1', sale: 's1', t: 1, items: [{ ln: 0, q: 1, p: 'p1', n: 'Tee' }] }); } catch (e) { err = e; }
-check("saveReturn refused: header removed (no lines left behind), the database rule's own message kept", err && err.code === C.VALIDATION && err.message === "Can't return 1 piece(s): 2 bought, 2 already returned"
-  && client.calls.map((q) => q.t + ':' + opNames(q)).join(' | ') === 'hangtag_returns:upsert | hangtag_return_items:upsert | hangtag_return_items:select.eq.limit | hangtag_returns:delete.eq', client.calls.map((q) => q.t + ':' + opNames(q)));
+check("saveReturn refused: nothing else is written, the database rule's own message kept", err && err.code === C.VALIDATION && err.message === "Can't return 1 piece(s): 2 bought, 2 already returned" && client.calls.length === 1);
+client = fakeClient();
+await gw.saveEvent({ id: 'e1', name: 'Diwali pop-up', start: '2026-10-20', end: '2026-10-22', place: 'Pune', status: 'active', t: 5 });
+await gw.deleteEvent('e1');
+check('saveEvent / deleteEvent: hangtag_events row (dates, place, status), then a delete by id', client.calls.map((q) => q.t + ':' + opNames(q)).join(' | ') === 'hangtag_events:upsert | hangtag_events:delete.eq'
+  && client.calls[0].ops[0][1][0].start_date === '2026-10-20' && client.calls[0].ops[0][1][0].location === 'Pune' && client.calls[0].ops[0][1][0].status === 'active', client.calls.map((q) => q.ops));
 client = fakeClient();
 await gw.saveAllSales(Array.from({ length: 501 }, (_, i) => Object.assign({}, sale, { id: 's' + i, void: i === 0 })));
 check('saveAllSales: bills (with lines and payments) in calls of 100, cancelled flag kept', client.calls.length === 6 && client.calls.every((q) => q.t === 'rpc:hangtag_save_sales')
@@ -145,7 +156,7 @@ check('an AppError passes through unchanged', (() => { const a = new AppError(C.
 client = fakeClient(() => ({ error: { code: 'PGRST205', message: "Could not find the table 'public.hangtag_variants' in the schema cache" } }));
 check('checkSchema: missing tables report OUTDATED_DATABASE (the app shows "Database update needed")', (await gw.checkSchema()).error.code === C.OUTDATED_DATABASE);
 client = fakeClient(() => ({ error: null }));
-check('checkSchema: a current database reports no error (it looks for the payments table, the newest)', (await gw.checkSchema()).error === null && client.calls[0].t === 'hangtag_payments');
+check('checkSchema: a current database reports no error (it looks for the events table, the newest)', (await gw.checkSchema()).error === null && client.calls[0].t === 'hangtag_events');
 check('a missing database function (the bill RPC before schema.sql) becomes OUTDATED_DATABASE', m({ code: 'PGRST202', message: 'Could not find the function public.hangtag_save_sales' }).code === C.OUTDATED_DATABASE);
 
 console.log(`\n${passed} passed, ${failed} failed`);

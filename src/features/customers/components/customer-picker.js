@@ -94,7 +94,7 @@ export function openCustHistory(cid){
   const h=purchaseHistory(cid);
   const billHTML=b=>`<button class="custbill" data-billview="${esc(b.id)}"><span class="cb-top"><b>${esc(b.no||"Bill")}</b><span>${esc(dayLab(dayKey(b.t)))} · ${esc(hhmm(b.t))}${b.pay?" · "+esc(b.pay):""}</span><b class="cb-tot">${inr(b.total)}</b></span>
     <span class="cb-items">${b.items.map(i=>`<span>${esc(i.name)}${i.label?" · "+esc(i.label):""} × ${i.q}</span>`).join("")}</span>
-    <span class="cb-foot">${b.pieces} piece${b.pieces===1?"":"s"}${b.kind==="exchange"?" · exchange":""}${b.returned?` · ${inr(b.returned)} refunded`:""}</span></button>`;
+    <span class="cb-foot">${b.pieces} piece${b.pieces===1?"":"s"}${b.kind==="exchange"?" · exchange":""}${b.returnedPieces?` · ${b.returnedPieces} returned${b.creditNotes.length?" ("+esc(b.creditNotes.join(", "))+")":""}`:""}${b.returned?` · ${inr(b.returned)} refunded`:""}</span></button>`;
   $("#modalHost").innerHTML=sheet(c.name,`
     <div class="sh-head"><span class="avatar lg">${esc(initials(c.name))}</span><div class="sh-t"><h3>${esc(c.name)}${badge(c)}</h3><p>${esc([c.phone,c.email].filter(Boolean).join(" · ")||"No contact details")}${c.gstin?`<br><span class="cgst">GSTIN ${esc(c.gstin)}</span>`:""}</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
     <div class="tmini cust3"><div><span>Bills</span><b>${h.count}</b></div><div><span>Total spent</span><b>${inr(h.spent)}</b></div><div><span>Last visit</span><b>${h.last?esc(dayLab(dayKey(h.last))):"—"}</b></div></div>

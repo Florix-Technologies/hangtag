@@ -161,8 +161,8 @@ check('restoring it posts them again', JSON.stringify(await st(s2.id)) === JSON.
 // ---------- 6. returns and exchanges still work, and their refunds reach the books ----------
 await run(A, `openReturn(${JSON.stringify(s1.id)});retState.q[1]=1;retState.pay="cash";renderReturnSheet();saveReturn();await flushSbQueue()`);
 const ret1 = await run(A, `return Object.values(returnsMap).find(r=>r.sale===${JSON.stringify(s1.id)})`);
-check('return the Cap: refund = what was paid for it (after its discount share, with GST)', ret1 && ret1.refund === 514 && ret1.pay === 'cash', ret1);
-check('the refund leaves the cash book (database)', num((await q(`SELECT amount_out FROM public.hangtag_cash_book WHERE id='cb:ft:${ret1.id}'`))[0].amount_out) === 514);
+check('return the Cap: refund = the paise-exact saved line value (after its discount share, with GST)', ret1 && ret1.refund === 513.58 && ret1.pay === 'cash', ret1);
+check('the refund leaves the cash book (database)', num((await q(`SELECT amount_out FROM public.hangtag_cash_book WHERE id='cb:ft:${ret1.id}'`))[0].amount_out) === 513.58);
 await run(A, `openReturn(${JSON.stringify(s1.id)});retState.mode="exchange";retState.q[0]=1;addToLines(retState.newItems,${JSON.stringify(CAP)},1);retState.pay="upi";renderReturnSheet();saveReturn();closeSheets();await flushSbQueue()`);
 const ex = await run(A, 'return lastSale');
 const exRet = await run(A, `return Object.values(returnsMap).find(r=>r.kind==="exchange")`);
@@ -177,7 +177,7 @@ await A.click('[data-book="cash"]'); await sleep(200);
 const cbView = await text(A, '#bookSheet');
 const app = await run(A, 'const R=periodRange();const c=cashBookFor(R.from,R.to);return {closing:c.closing,sales:c.cashSales,refunds:c.refunds,n:c.entries.length}');
 const dbCash = (await q(`SELECT COALESCE(sum(amount_in - amount_out), 0) b, count(*)::int n FROM public.hangtag_cash_book WHERE status = 'posted'`))[0];
-check('cash book: the app and the database agree on the balance and the entries', app.closing === num(dbCash.b) && app.n === dbCash.n && app.closing === 1000 + 525 - 514, { app, dbCash });
+check('cash book: the app and the database agree on the balance and the entries', app.closing === num(dbCash.b) && app.n === dbCash.n && app.closing === 1000 + 525 - 513.58, { app, dbCash });
 check('cash book view: opening, the cash sales with received / change, the refund and the closing balance', /Opening balance ₹0/.test(cbView) && /received ₹1,200, change ₹200/.test(cbView) && /Cash refund/.test(cbView) && /Closing balance ₹1,011/.test(cbView), cbView);
 await A.screenshot({ path: H.ARTIFACTS + '/pay4_cashbook.png' });
 await run(A, 'closeModal()'); await A.$eval('[data-book="bank"]', (b) => b.scrollIntoView({ block: 'center' })); await A.click('[data-book="bank"]'); await sleep(200);

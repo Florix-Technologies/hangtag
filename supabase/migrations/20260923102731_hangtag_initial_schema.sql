@@ -1,0 +1,88 @@
+CREATE TABLE IF NOT EXISTS public.hangtag_products (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    price INTEGER NOT NULL DEFAULT 0,
+    color TEXT DEFAULT '#8E8A83',
+    sort_order INTEGER DEFAULT 0,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS public.hangtag_sizes (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    product_id TEXT NOT NULL REFERENCES public.hangtag_products(id) ON DELETE CASCADE,
+    size TEXT NOT NULL,
+    stock INTEGER NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(product_id, size)
+);
+CREATE TABLE IF NOT EXISTS public.hangtag_images (
+    product_id TEXT PRIMARY KEY REFERENCES public.hangtag_products(id) ON DELETE CASCADE,
+    image_data TEXT NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS public.hangtag_sales (
+    id TEXT PRIMARY KEY,
+    timestamp BIGINT NOT NULL,
+    subtotal INTEGER NOT NULL DEFAULT 0,
+    discount INTEGER NOT NULL DEFAULT 0,
+    total INTEGER NOT NULL DEFAULT 0,
+    payment_method TEXT NOT NULL,
+    device_id TEXT,
+    is_void BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS public.hangtag_sale_items (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    sale_id TEXT NOT NULL REFERENCES public.hangtag_sales(id) ON DELETE CASCADE,
+    product_id TEXT NOT NULL,
+    product_name TEXT NOT NULL,
+    size TEXT NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 1,
+    unit_price INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS public.hangtag_meta (
+    key TEXT PRIMARY KEY,
+    value JSONB,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_hangtag_sizes_prod ON public.hangtag_sizes(product_id);
+CREATE INDEX IF NOT EXISTS idx_hangtag_sales_time ON public.hangtag_sales(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_hangtag_sale_items_sale ON public.hangtag_sale_items(sale_id);
+CREATE INDEX IF NOT EXISTS idx_hangtag_sale_items_prod ON public.hangtag_sale_items(product_id);
+ALTER TABLE public.hangtag_products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.hangtag_sizes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.hangtag_images ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.hangtag_sales ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.hangtag_sale_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.hangtag_meta ENABLE ROW LEVEL SECURITY;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public access to hangtag_products') THEN
+        CREATE POLICY "Public access to hangtag_products" ON public.hangtag_products FOR ALL USING (true) WITH CHECK (true);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public access to hangtag_sizes') THEN
+        CREATE POLICY "Public access to hangtag_sizes" ON public.hangtag_sizes FOR ALL USING (true) WITH CHECK (true);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public access to hangtag_images') THEN
+        CREATE POLICY "Public access to hangtag_images" ON public.hangtag_images FOR ALL USING (true) WITH CHECK (true);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public access to hangtag_sales') THEN
+        CREATE POLICY "Public access to hangtag_sales" ON public.hangtag_sales FOR ALL USING (true) WITH CHECK (true);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public access to hangtag_sale_items') THEN
+        CREATE POLICY "Public access to hangtag_sale_items" ON public.hangtag_sale_items FOR ALL USING (true) WITH CHECK (true);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public access to hangtag_meta') THEN
+        CREATE POLICY "Public access to hangtag_meta" ON public.hangtag_meta FOR ALL USING (true) WITH CHECK (true);
+    END IF;
+END $$;
+DO $$
+BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE
+        public.hangtag_products,
+        public.hangtag_sizes,
+        public.hangtag_images,
+        public.hangtag_sales,
+        public.hangtag_sale_items;
+EXCEPTION WHEN OTHERS THEN
+    NULL;
+END $$;

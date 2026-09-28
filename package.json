@@ -4,6 +4,8 @@
   "description": "Hangtag clothing shop POS",
   "type": "module",
   "scripts": {
+    "start": "node scripts/serve.mjs",
+    "serve": "node scripts/serve.mjs",
     "build": "node scripts/build.mjs",
     "check": "node scripts/build.mjs --check",
     "lint": "eslint src",
@@ -19,6 +21,7 @@
     "eslint": "^9.39.5",
     "globals": "^17.12.0",
     "jsqr": "^1.4.0",
-    "puppeteer-core": "^25.12.0"
+    "puppeteer-core": "^25.12.0",
+    "supabase": "^2.118.0"
   }
 }

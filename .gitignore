@@ -21,3 +21,6 @@ tests/.artifacts/
 
 # Build output (bundle check only; the app is served from src/)
 dist/
+
+# Supabase CLI local state (linked project, CLI version)
+supabase/.temp/

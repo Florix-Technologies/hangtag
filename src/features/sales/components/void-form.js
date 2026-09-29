@@ -9,8 +9,12 @@ import { ICON } from '../../../shared/constants/icons.js';
 import { $, esc } from '../../../shared/dom.js';
 import { dayKey, dtLong } from '../../../shared/formatting/dates.js';
 import { inrx } from '../../../shared/formatting/money.js';
+import { canAny, notAllowedText } from '../../shop/services/access.js';
+import { CANCEL_BILL } from '../../../domain/shop/permissions.js';
+import { toast } from '../../../shared/components/toast.js';
 
 export function openVoidForm(sid){
+  if(!canAny(CANCEL_BILL)){ toast(notAllowedText("cancel bills")); return; }
   if(!D().saleById[sid]) return;
   store.voidForm={sid,reason:VOID_REASONS[0],note:"",err:""};
   renderVoidForm();

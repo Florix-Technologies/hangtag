@@ -4,6 +4,7 @@ import { pushLocalToSupabase } from '../../sync/services/pull.js';
 import { saveCatalog, saveMoves } from '../../../shared/state/persistence.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { COLORS } from '../../../shared/utils/colors.js';
+import { refuse } from '../../shop/services/access.js';
 
 /* ================= products ================= */
 
@@ -31,6 +32,7 @@ export function exampleCatalog(){
   return {cat:{version:3,example:true,products:list.map(x=>x.p)},moves:mv};
 }
 export function loadExamples(){
+  if(refuse("manage_products","add products"))return;
   const ex=exampleCatalog();
   store.catalog=ex.cat;Object.assign(store.moves,ex.moves);saveCatalog();saveMoves();
   renderAll();

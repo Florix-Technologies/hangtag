@@ -40,3 +40,5 @@ export const saveLogo=()=>storage.set("rc_logo",store.logo||"");
 export const savePrinter=()=>storage.set("rc_printer",store.printer);
 export const saveProfile=()=>storage.set("hangtag_profile",store.profile);
 export const saveLastSync=()=>storage.set("hangtag_last_sync",store.lastSyncAt);
+/* A team member's role and permissions in its shop (null for the owner), kept per account so the till knows them offline */
+export const saveAccess=()=>{ if(store.access) storage.set("hangtag_access",store.access); else storage.remove("hangtag_access"); };

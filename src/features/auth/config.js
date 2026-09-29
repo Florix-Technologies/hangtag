@@ -6,6 +6,11 @@ export const RESET_KEY = "hangtag_pw_reset";       // time this device asked for
 export const RECOVERY_KEY = "hangtag_recovery";    // a reset link was opened; new password not saved yet
 export const PICK_ACCOUNT = "hangtag_pick_account";   // set by Sign out: show Google's account chooser on the next sign-in
 export const OTP_TYPES = ["signup", "invite", "magiclink", "recovery", "email_change", "email"];
+/* A team member's phone: its device key (sent as x-hangtag-device on every request; only its hash is in the database),
+   the device's id, and the member it belongs to. Kept on this device only; put away when that member signs out. */
+export const DEVICE_KEY = "hangtag_device_key";
+export const DEVICE_ID = "hangtag_device_id";
+export const DEVICE_USER = "hangtag_device_user";
 export const MIN_PW = 8;
 export const clearStoredSession = () => [AUTH_STORE, AUTH_STORE + "-code-verifier", AUTH_STORE + "-user"].forEach(k => { try{ storage.remove(k); }catch(e){} });
 export const recent = key => { const t = +storage.get(key, 0) || 0; return t > 0 && Date.now() - t < 3600e3; };

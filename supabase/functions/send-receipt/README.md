@@ -41,6 +41,10 @@ function.
   unguessable link (32 random bytes) to that one bill, kept 12 months in `hangtag_invoice_links` (the shop can revoke
   it from the bill). `{ action: "link", sale_id }` returns the bill's link for sharing by hand. The page
   (`receipt.html`) asks the `receipt` function for the bill; a wrong, revoked or expired token gets "not found".
+- **Team members** (schema.sql section 3i) send for their shop: the function asks the database for the shop
+  (`hangtag_shop_id()` with the caller's session and the phone's `x-hangtag-device` key, which it forwards) and writes
+  every row for that shop, never for the member's own account. The member needs `create_sale` (`hangtag_can`), and
+  `SEND_ALLOWED_USERS` may name the member or, for the whole team, the shop's owner.
 - A channel without its secrets answers `503 not_configured`. Nothing is recorded, and the app offers Download, Share or
   "Open WhatsApp" instead.
 

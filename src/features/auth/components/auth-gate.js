@@ -16,11 +16,14 @@ export const gateUp = () => !aEl("authGate").hidden || !aEl("setupGate").hidden;
 
 export function setEmailMode(mode){
   store.emailMode = mode;
-  const up = mode === "signup", forgot = mode === "forgot";
+  const up = mode === "signup", forgot = mode === "forgot", staff = mode === "staff";
   document.querySelectorAll("#authTabs [data-authtab]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.authtab === (forgot ? "signin" : mode))));
   aEl("authTabs").hidden = forgot;
-  aEl("provBtns").hidden = forgot;
-  aEl("orEmail").hidden = forgot;
+  // Staff: shop code, username and password (a team member's account, made by the owner); no Google, no email
+  aEl("staffForm").hidden = !staff;
+  aEl("emailForm").hidden = staff;
+  aEl("provBtns").hidden = forgot || staff;
+  aEl("orEmail").hidden = forgot || staff;
   aEl("pwWrap").hidden = forgot;
   aEl("pw2Wrap").hidden = !up;
   aEl("pwHint").hidden = !up;
@@ -28,13 +31,15 @@ export function setEmailMode(mode){
   aEl("authPass").setAttribute("autocomplete", up ? "new-password" : "current-password");
   aEl("emailSubmit").textContent = up ? "Create account" : forgot ? "Send reset link" : "Sign in";
   aEl("forgotBtn").hidden = mode !== "signin";
+  aEl("staffPass").value = "";
   aEl("backBtn").hidden = !forgot;
   aEl("resendBtn").hidden = true;
   aEl("authMsg").textContent = up ? "Create your Hangtag account. Every account gets its own private shop."
     : forgot ? "Enter your email and we'll send you a link to choose a new password."
+    : staff ? "Staff: sign in with the shop code, username and password the owner gave you."
     : "Sign in to open billing and stock.";
   const sw = aEl("authSwitch");
-  sw.hidden = forgot;
+  sw.hidden = forgot || staff;
   sw.innerHTML = up ? 'Already have an account? <button type="button" class="link" data-switchto="signin">Sign in</button>'
     : 'New to Hangtag? <button type="button" class="link" data-switchto="signup">Create an account</button>';
   labelProviders();
@@ -59,6 +64,7 @@ export function showGate(state, opts){
   closeAcctMenu();
   aEl("authForms").hidden = state !== "signin";
   aEl("resetForm").hidden = state !== "reset";
+  aEl("enrollAsk").hidden = state !== "ask";
   setAuthBusy(false);
   if(state === "signin"){ setEmailMode(opts.mode || (location.hash === "#signup" ? "signup" : "signin")); renderProviders(); }
   else if(state === "reset") aEl("authMsg").textContent = "Choose a new password for " + (opts.email || "your account") + ".";
@@ -67,6 +73,18 @@ export function showGate(state, opts){
   setAuthNote(opts.note || "");
   if(state === "signin" && opts.showResend) aEl("resendBtn").hidden = false;
   focusCard(gate);
+}
+/* A team sign-in link (<app>#enroll=…) was opened where someone is signed in (who: how to name them): joining the team
+   signs that account out on this browser, so ask first — a link from anyone could otherwise move this till into another
+   shop without a word. → true: go on and join; false: stay signed in */
+export function askToEnroll(who){
+  return new Promise(resolve => {
+    showGate("ask", { message: `This browser is signed in as ${who}. The link you opened signs it in to a shop as a team member instead. Continue only if that shop's owner gave you the code.` });
+    const yes = aEl("enrollYes"), no = aEl("enrollNo");
+    const done = ok => { yes.onclick = null; no.onclick = null; aEl("enrollAsk").hidden = true; resolve(ok); };
+    yes.onclick = () => done(true); no.onclick = () => done(false);
+    yes.focus();
+  });
 }
 export function hideGate(){ aEl("authGate").hidden = true; if(aEl("setupGate").hidden){ document.documentElement.classList.remove("gated"); setAppInert(false); } }
 export const inResetFlow = () => !aEl("authGate").hidden && !aEl("resetForm").hidden;

@@ -3,10 +3,12 @@ import { checkBillDiscounts, checkDiscount, normalizeDiscount } from '../../../d
 import { toPaise } from '../../../domain/sales/paise.js';
 import { store } from '../../../shared/state/store.js';
 import { saveCart } from '../../../shared/state/persistence.js';
+import { can, notAllowedText } from '../../shop/services/access.js';
 
 /* Line i: input { type: "percent" | "fixed", value } — an empty value removes the discount.
    → { ok: true } or { error } (nothing changes) */
 export function setLineDiscount(i,input){
+  if(normalizeDiscount(input)&&!can("apply_discount")) return {error:notAllowedText("give discounts")};
   const c=store.cart[i]; if(!c) return {error:"That line is no longer on the bill."};
   const err=checkDiscount(input,toPaise(c.q*c.price)); if(err) return err;
   const d=normalizeDiscount(input);
@@ -16,6 +18,7 @@ export function setLineDiscount(i,input){
 /* The bill discount box, as typed ({ type, value }). It is kept even when it doesn't fit the bill, so the box keeps
    what was typed; the bill shows why, and payment waits until it's fixed. → { ok: true } or { error } */
 export function setBillDiscount(input){
+  if(normalizeDiscount(input)&&!can("apply_discount")) return {error:notAllowedText("give discounts")};
   store.disc=input?{type:input.type==="percent"?"percent":"fixed",value:input.value==null?"":input.value}:null;
   saveCart();
   const bad=checkBillDiscounts(store.cart,store.disc);

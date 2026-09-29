@@ -64,12 +64,17 @@ export function providerConfig(channel, env) {
 export const configuredChannels = (env) => Object.fromEntries(CHANNELS.map((c) => [c, !!providerConfig(c, env)]));
 
 /* May this signed-in account send? Sign-up is open and the provider accounts are the operator's, so sending is off until
-   SEND_ALLOWED_USERS names who may send: user ids or sign-in emails, comma-separated, or "*" for every signed-in account. */
-export function allowedToSend(user, env) {
+   SEND_ALLOWED_USERS names who may send: user ids or sign-in emails, comma-separated, or "*" for every signed-in account.
+   A shop's team member sends for the shop: listing the shop's owner (owner: the owner's account, looked up by the
+   function from the shop id the database gives) lets the whole team send. */
+export function allowedToSend(user, env, owner = null) {
   const list = str(env.SEND_ALLOWED_USERS).split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
   if (!user || !list.length) return false;
-  return list.includes("*") || list.includes(String(user.id || "").toLowerCase()) || (!!user.email && list.includes(String(user.email).toLowerCase()));
+  const listed = (a) => !!a && (list.includes(String(a.id || "").toLowerCase()) || (!!a.email && list.includes(String(a.email).toLowerCase())));
+  return list.includes("*") || listed(user) || listed(owner);
 }
+/* What a team member needs (hangtag_can) to send a bill or copy its link; the owner may always */
+export const SEND_PERMISSION = "create_sale";
 
 /* An Indian mobile number as +91XXXXXXXXXX, or "" (the same rule as the app: domain/invoices/delivery.js) */
 export function mobileE164(phone) {

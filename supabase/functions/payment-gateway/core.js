@@ -32,12 +32,21 @@ export function razorpayConfig(env) {
 export const basicAuth = (cfg) => "Basic " + btoa(cfg.id + ":" + cfg.secret);
 export const apiUrl = (path) => API + path;
 
-/* May this account take provider payments? PAYMENT_ALLOWED_USERS: user ids or emails, comma-separated, or "*". */
-export function allowedToPay(user, env) {
+/* May this account take provider payments? PAYMENT_ALLOWED_USERS: user ids or emails, comma-separated, or "*". A shop's
+   team member takes payments for the shop: listing the shop's owner (owner: looked up from the shop id the database
+   gives) lets the whole team take them. */
+export function allowedToPay(user, env, owner = null) {
   const list = str(env.PAYMENT_ALLOWED_USERS).split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
   if (!user || !list.length) return false;
-  return list.includes("*") || list.includes(str(user.id).toLowerCase()) || (!!user.email && list.includes(str(user.email).toLowerCase()));
+  const listed = (a) => !!a && (list.includes(str(a.id).toLowerCase()) || (!!a.email && list.includes(str(a.email).toLowerCase())));
+  return list.includes("*") || listed(user) || listed(owner);
 }
+/* What a team member needs (hangtag_can) for each action; the owner may do everything. null = anyone in the shop.
+   Seeing unmatched money is a report (view_reports); settling it (a provider refund, or marking it paid back or added to a
+   bill) moves money, so it needs perform_return like any refund. */
+export const ACTION_PERMISSIONS = { config: null, status: null, create: "create_sale", cancel: "create_sale", verify: "create_sale",
+  refund_return: "perform_return", unmatched: "view_reports", resolve: "perform_return" };
+export const permissionFor = (action) => (Object.prototype.hasOwnProperty.call(ACTION_PERMISSIONS, action) ? ACTION_PERMISSIONS[action] : "manage_settings");
 /* What the app may offer: { provider, upi, cardLink } (all off when not set up or not allowed) */
 export function configView(cfg, allowed) {
   const on = !!cfg && !!allowed;

@@ -8,9 +8,12 @@ import { $ } from '../../../shared/dom.js';
 import { dayKey } from '../../../shared/formatting/dates.js';
 import { storage } from '../../../shared/state/persistence.js';
 import { requestSignOut } from '../../../shared/ui/session-actions.js';
+import { installTeamEvents } from './team-settings.js';
+import { openCashForm } from '../../finance/components/cash-form.js';
 
 /* Registered once at start-up (app/main.js). */
 export function installAccountMenuEvents(){
+  installTeamEvents(openSettings);   // Settings → Team & devices, Roles & permissions (back leads to the settings)
   aEl("acctBtn").addEventListener("click", e => { e.stopPropagation(); if(aEl("acctMenu").hidden) openAcctMenu(); else closeAcctMenu(); });
   aEl("acctMenu").addEventListener("click", e => {
     const b = e.target.closest("[data-am]"); if(!b) return;
@@ -18,6 +21,7 @@ export function installAccountMenuEvents(){
     if(act === "settings") openSettings();
     else if(act === "backup") downloadBackup();
     else if(act === "signout") requestSignOut();
+    else if(act.startsWith("cash:")) openCashForm(act.slice(5));   // a team member's cash drawer (no Reports tab)
   });
   document.addEventListener("click", e => {
     if(!aEl("acctMenu").hidden && !e.target.closest(".acctwrap")) closeAcctMenu();

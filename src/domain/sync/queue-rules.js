@@ -46,11 +46,27 @@ export function waitingKeys(queue,review,done){
   return s;
 }
 export const isBlocked=(item,waiting)=>dependsOn(item).some(k=>waiting.has(k));
-/* After a failed upload: "retry" (keep it queued) or "review" (the database refused it; show it for review) */
-export function failureAction(code,tries){
+/* After a failed upload: "retry" (keep it queued) or "review" (the database refused it; show it for review).
+   For a team member (opts.member), PERMISSION means the role may not do this: retrying won't help, so it goes to review
+   (a phone that lost the shop altogether is signed out before this is asked). For the owner it stays a retry, as before. */
+export function failureAction(code,tries,opts){
   if(REVIEW_NOW.includes(code)) return "review";
+  if(code==="PERMISSION"&&opts&&opts.member) return "review";
   if(code==="NOT_FOUND"&&(tries||0)>=REVIEW_AFTER_TRIES) return "review";
   return "retry";
 }
 /* Only bills can't be discarded from review: a completed sale is never thrown away */
 export const canDiscard=item=>!!item&&item.type!=="sale"&&item.type!=="allsales";
+/* The permissions (any one) the database asks of a team member for each kind of upload (supabase/schema.sql section 5:
+   adding the record; a cancel is a change of the bill, see hangtag_member_write_check). The use cases refuse a member's
+   change its role can't upload before changing anything; one that still reaches the queue goes to the review list with
+   the reason (the owner's are always queued). */
+export const UPLOAD_PERMISSIONS={
+  sale:["create_sale"],void:["perform_return","manage_settings"],allsales:["create_sale"],cashmove:["create_sale"],dayclose:["create_sale"],
+  return:["perform_return"],cust:["create_sale","collect_credit","create_order"],
+  prod:["manage_products"],proddel:["manage_products"],img:["manage_products"],
+  move:["manage_inventory","create_purchase","perform_return"],
+  settings:["manage_settings"],logo:["manage_settings"],event:["manage_settings"],eventdel:["manage_settings"],
+};
+/* May someone with these permissions upload this item? (unknown kinds: yes) */
+export const uploadAllowed=(item,has)=>{const need=item&&UPLOAD_PERMISSIONS[item.type];return !need||need.some(p=>has(p))};

@@ -19,9 +19,11 @@ import { $, esc } from '../../../shared/dom.js';
 import { dtLong } from '../../../shared/formatting/dates.js';
 import { inr, inrx } from '../../../shared/formatting/money.js';
 import { renderAll } from '../../../shared/ui/render.js';
+import { refuse } from '../../shop/services/access.js';
 
 export const RETURN_REASONS=["Didn't fit","Wrong size","Didn't like it","Damaged or faulty","Other"];
 export function openReturn(sid){
+  if(refuse("perform_return","take returns"))return;
   const s=D().saleById[sid]; if(!s||s.void) return;
   store.retState={sid, q:{}, nfr:{}, mode:"return", pay:(paymentsOf(s)[0]||{method:"cash"}).method, reason:RETURN_REASONS[0], note:"", newItems:[], collect:"cash", keepDisc:true};
   closeModal(); renderReturnSheet();

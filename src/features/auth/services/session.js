@@ -1,7 +1,7 @@
 // Session lifecycle: boot, signed in/out, working locally, sign out.
 import { store } from '../../../shared/state/store.js';
 import { profileComplete } from '../../../domain/shop/profile.js';
-import { enterReset, gateUp, hideGate, inResetFlow, showGate } from '../components/auth-gate.js';
+import { askToEnroll, enterReset, gateUp, hideGate, inResetFlow, showGate } from '../components/auth-gate.js';
 import { aEl } from '../../../shared/components/gate.js';
 import { AUTH_STORE, OTP_TYPES, PICK_ACCOUNT, RECOVERY_KEY, RESET_KEY, clearStoredSession, recent } from '../config.js';
 import { loadUserState, switchLocalDataTo } from './account-data.js';
@@ -17,20 +17,39 @@ import { cloudConfigured, cloudWanted } from '../../../shared/config/app-config.
 import { storage } from '../../../shared/state/persistence.js';
 import { use } from '../../../shared/di/services.js';
 import { logger } from '../../../shared/logging/logger.js';
+import { enrollThisPhone, isStaffAccount, openAsMember } from './member-session.js';
+import { forgetDevice, putDeviceAway, useDeviceOf } from './device.js';
+import { clearAccess, signedInAs } from '../../shop/services/access.js';
 
 /* ---------- signing in and out ---------- */
+
+/* Who is signed in on this browser, from the session supabase-js keeps (no network): a name to show, or "" */
+export function storedAccount(){
+  let raw = null;
+  try{ raw = storage.getRaw(AUTH_STORE); }catch(e){ raw = null; }
+  if(!raw) return "";
+  let u = null;
+  try{ const s = JSON.parse(raw); u = (s && (s.user || (s.currentSession && s.currentSession.user))) || null; }catch(e){ u = null; }
+  if(!u){ try{ const x = JSON.parse(storage.getRaw(AUTH_STORE + "-user") || "null"); u = (x && (x.user || x)) || null; }catch(e){ u = null; } }
+  const meta = (u && u.user_metadata) || {};
+  if(meta.staff) return (meta.full_name ? meta.full_name + " " : "") + "(a team member)";
+  return (u && u.email) || storage.get("hangtag_auth_email", "") || "another account";
+}
 
 export function workLocallyAs(email){
   hideGate(); hideSetup();
   store.sbStatus = "disconnected"; store.mode = "standalone"; renderSync();
   renderAccount();
 }
-export function onSignedIn(session){
+/* opts.staff / opts.password: signed in with a password just now (Staff tab / email form): a team member's phone without a
+   device key may then be added to the member's devices */
+export function onSignedIn(session, opts){
   if(store.signingIn) return store.signingIn;   // one at a time; several events can ask at once
-  store.signingIn = doSignedIn(session).finally(() => { store.signingIn = null; });
+  store.signingIn = doSignedIn(session, opts).finally(() => { store.signingIn = null; });
   return store.signingIn;
 }
-export async function doSignedIn(session){
+export async function doSignedIn(session, opts){
+  opts = opts || {};
   if(inResetFlow()) return;
   const user = session && session.user;
   if(!user) return;
@@ -42,6 +61,14 @@ export async function doSignedIn(session){
   if(switched) loadUserState();   // this account's own products and bills, no page reload
   storage.set(PICK_ACCOUNT, "");
   store.authUser = user;
+  useDeviceOf(user.id);   // this account's own device key, if it has one on this phone (another member's is put away)
+  // A team member opens its shop with its role: the shop's profile, never the owner's setup screen
+  if(opts.staff || isStaffAccount(user)){
+    const m = await openAsMember(user, { mayRegister: !!(opts.staff || opts.password) });
+    if(!m.ok){ await signOut({ message: m.message, forgetDevice: !!m.lost }); return; }
+    if(m.member){ await enterApp(false); toast("Signed in as " + signedInAs() + "."); return; }
+  }
+  clearAccess();   // an owner: every permission, exactly as before
   const { profile: p, fresh } = await loadProfile(user);
   // First time (or details missing): ask for the shop details before opening the till
   if(fresh && !profileComplete(p)){ showSetup(Object.assign({ full_name: (user.user_metadata || {}).full_name || (user.user_metadata || {}).name || "" }, p || {})); return; }
@@ -53,8 +80,14 @@ export async function enterApp(firstTime){
   if(firstTime) toast("Welcome to Hangtag, " + firstName() + ". Your shop is ready.");
   await initSupabase();
 }
-export function onSignedOut(){
+/* opts: { message (shown on the sign-in screen), forgetDevice (this phone's team device key is useless: forget it) } */
+export function onSignedOut(opts){
+  // already signed out with the sign-in form up (the auth listener's second call after Sign out): keep its message
+  if(!opts && !store.authUser && !aEl("authGate").hidden && !aEl("authForms").hidden) return;
+  opts = opts || {};
   store.authUser = null;
+  // a member's device key goes with the member: kept aside for its next sign-in here, or forgotten when revoked
+  if(opts.forgetDevice) forgetDevice(); else putDeviceAway();
   storage.set("hangtag_auth_email", ""); storage.set(RESET_KEY, ""); storage.set(RECOVERY_KEY, "");
   if(store.sbRealtimeChannel && store.sbClient){ use("cloud").removeChannel(store.sbRealtimeChannel); store.sbRealtimeChannel = null; }
   store.sbStatus = "disconnected"; store.mode = "standalone"; renderSync();
@@ -62,9 +95,9 @@ export function onSignedOut(){
   renderAccount();
   aEl("welcome").hidden = true;
   document.title = "Hangtag";
-  showGate("signin");
+  showGate("signin", opts.message ? { error: opts.message } : undefined);
 }
-export async function signOut(){
+export async function signOut(opts){
   // Local sign-out: only this device. Offline with an expired token supabase-js returns an error and keeps
   // the session (or waits on the network), which would sign the old account back in later, so remove it here.
   store.signedOutByUser = true;
@@ -77,7 +110,7 @@ export async function signOut(){
     ]);
   }catch(e){ res = { error: e }; }
   if(res && res.error){ logger.warn("Sign-out notice:", res.error); clearStoredSession(); }
-  onSignedOut();
+  onSignedOut(opts || {});
 }
 export async function bootAuth(){
   const lastEmail = storage.get("hangtag_auth_email", "");
@@ -109,6 +142,18 @@ export async function bootAuth(){
     if(!store.authUser && (event === "SIGNED_IN" || event === "TOKEN_REFRESHED")) setTimeout(() => onSignedIn(s), 0);
     else if(store.authUser && event === "TOKEN_REFRESHED" && store.sbStatus !== "connected") setTimeout(() => initSupabase(), 0);
   });
+  // A phone opened the owner's QR code (<app>#enroll=<token>): the code is single-use, so it leaves the address bar at once.
+  // Someone signed in here already: ask before switching this browser to the team member (nothing is redeemed until then)
+  const enroll = new URLSearchParams(location.hash.slice(1)).get("enroll");
+  if(enroll){
+    history.replaceState(null, "", location.pathname + location.search);
+    const here = storedAccount();
+    if(!here || await askToEnroll(here)){
+      showGate("loading", { message: "Signing this phone in to the shop…" });
+      const r = await enrollThisPhone(enroll);
+      if(!r.ok){ store.bootDone = true; showGate("signin", { mode: "staff", error: r.message }); return; }
+    } else showGate("loading", { message: "Opening your shop…" });
+  }
   const qs = new URLSearchParams(location.search), hs = new URLSearchParams(location.hash.slice(1));
   const tokenHash = qs.get("token_hash"), otpType = qs.get("type");
   const linkErr = qs.get("error_code") || hs.get("error_code") || qs.get("error") || hs.get("error");

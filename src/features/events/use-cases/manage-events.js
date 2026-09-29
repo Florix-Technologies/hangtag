@@ -8,12 +8,17 @@ import { eventRepository } from '../repositories/event-repository.js';
 import { flushSbQueue } from '../../sync/services/outbox.js';
 import { savePrefs } from '../../../shared/state/persistence.js';
 import { uid } from '../../../shared/utils/ids.js';
+import { denied } from '../../shop/services/access.js';
+
+/* Events are the shop's settings: a team member needs manage_settings (refused before anything changes) */
+const noEvents=()=>denied("manage_settings","change events");
 
 /* How many bills are tagged with an event (on this device's copy of the shop's bills) */
 export const eventBillCount=id=>D().sales.filter(s=>s.event===id).length;
 
 /* e: { id? (to change one), name, start, end, place } → { event } or { error } */
 export function saveEvent(e){
+  const no=noEvents(); if(no) return no;
   const bad=validateEvent(e); if(bad) return {error:bad};
   const old=e.id?eventRepository().get(e.id):null;
   if(e.id&&!old) return {error:"That event isn't here any more."};
@@ -23,6 +28,7 @@ export function saveEvent(e){
 }
 /* Close (no more bills tagged with it) or reopen an event → { event } or { error } */
 export function setEventStatus(id,status){
+  const no=noEvents(); if(no) return no;
   const old=eventRepository().get(id); if(!old) return {error:"That event isn't here any more."};
   const ev={...old,status:status===EVENT_STATUS.CLOSED?EVENT_STATUS.CLOSED:EVENT_STATUS.ACTIVE};
   eventRepository().save(ev);
@@ -32,6 +38,7 @@ export function setEventStatus(id,status){
 }
 /* Delete an event: only one without bills (close it otherwise) → { ok } or { error } */
 export function deleteEvent(id){
+  const no=noEvents(); if(no) return no;
   if(!eventRepository().get(id)) return {error:"That event isn't here any more."};
   const n=eventBillCount(id);
   if(n) return {error:`This event has ${n} bill${n===1?"":"s"}, so it can't be deleted. Close it instead.`};

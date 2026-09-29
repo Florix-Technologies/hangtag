@@ -24,6 +24,7 @@ import { toast } from '../../../shared/components/toast.js';
 import { ICON } from '../../../shared/constants/icons.js';
 import { $, esc } from '../../../shared/dom.js';
 import { inr, inrx } from '../../../shared/formatting/money.js';
+import { refuse } from '../../shop/services/access.js';
 
 const due=()=>billTotals(store.cart,store.disc).total;
 const blankState=method=>({mode:"single",method:PAY_METHODS.includes(method)?method:"cash",recv:"",ref:{upi:"",card:""},last4:"",amt:{cash:"",upi:"",card:""},
@@ -31,7 +32,7 @@ const blankState=method=>({mode:"single",method:PAY_METHODS.includes(method)?met
 /* store.payState = { mode: "single" | "split", method, recv (cash handed over), ref: { upi, card }, last4 (card), amt: { cash, upi, card },
      via: { upi: "manual"|"qr", card: "terminal"|"link" }, pi: { upi?, card? } (provider intents), saleId, err } */
 export function openPayment(method){
-  if(!store.cart.length) return;
+  if(!store.cart.length||refuse("create_sale","take payments")) return;
   const bad=billDiscountError(); if(bad){ toast(bad); return; }
   // a provider payment was still open for this bill when the app closed: show it again rather than start over
   if(store.payPending&&!store.payState&&resumePayment()) return;

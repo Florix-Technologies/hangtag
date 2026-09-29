@@ -40,6 +40,7 @@ import { checkUnverified, loadUnmatched, resolveUnmatched } from '../../features
 import { completePayment, openPayment, payClosed, payInput, payIntent, payMode, payQuick, payRest, paySend, payVia } from '../../features/sales/components/payment-sheet.js';
 import { openBook } from '../../features/finance/components/books-view.js';
 import { enqueue, flushSbQueue } from '../../features/sync/services/outbox.js';
+import { can } from '../../features/shop/services/access.js';
 import { openSyncPanel, syncDiscard, syncNow, syncRetry } from '../../features/sync/components/sync-panel.js';
 import { chooseSellingAt, deleteEventAction, eventStatusAction, openEventForm, openEventSummary, submitEventForm } from '../../features/events/components/events-view.js';
 import { gstExport, gstMonthChosen, openGstView } from '../../features/reports/components/report-sections.js';
@@ -144,7 +145,8 @@ export function installDomEvents(){
     const pv=t.closest("[data-prodview]");if(pv){store.prodView=pv.dataset.prodview;renderProducts();return}
     const gr=t.closest("[data-grouprev]");if(gr){openGroupPreview(gr.dataset.grouprev);return}
     const gg=t.closest("[data-groupgo]");if(gg){applyGroup(gg.dataset.groupgo);return}
-    const gn=t.closest("[data-groupno]");if(gn){store.settings.groupDismissed=[...(store.settings.groupDismissed||[]),gn.dataset.groupno.toLowerCase()];saveSettings();enqueue({type:"settings"});flushSbQueue();closeModal();renderProducts();return}
+    // "they're different products" is kept in the shop's settings; a team member who can't change them keeps it on this phone
+    const gn=t.closest("[data-groupno]");if(gn){store.settings.groupDismissed=[...(store.settings.groupDismissed||[]),gn.dataset.groupno.toLowerCase()];saveSettings();if(can("manage_settings")){enqueue({type:"settings"});flushSbQueue()}closeModal();renderProducts();return}
     // product editor
     if(store.editor){
       const tc=t.closest("[data-tilecolor]");if(tc){store.editor.color=tc.dataset.tilecolor;renderEditor();return}

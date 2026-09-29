@@ -6,6 +6,7 @@
 import { gstReport } from '../../../domain/gst/gst-report.js';
 import { inFilter } from '../../../domain/events/event.js';
 import { store } from '../../../shared/state/store.js';
+import { can } from '../../shop/services/access.js';
 import { D } from '../../inventory/services/ledger.js';
 import { inDays, periodRange } from './report-data.js';
 import { toast } from '../../../shared/components/toast.js';
@@ -121,6 +122,9 @@ export async function exportGst(format){
 }
 function logGstExport(month,format,F){
   const T=F.totals, entry={period:month,format,t:Date.now(),dev:store.dev,digest:F.digest,totals:{taxable:T.taxable,tax:T.tax,value:T.value,invoices:T.invoices,creditNotes:T.creditNotes}};
+  // the export history is kept in the shop's settings: only someone who may change them records it (a role that only
+  // sees reports still exports)
+  if(!can("manage_settings")) return;
   store.settings=Object.assign({},store.settings,{gstExports:[entry,...(store.settings.gstExports||[])].slice(0,60)});
   saveSettings(); enqueue({type:"settings"}); flushSbQueue();
 }

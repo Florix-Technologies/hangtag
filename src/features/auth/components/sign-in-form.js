@@ -11,6 +11,7 @@ import { HOME_URL } from '../../../shared/config/app-config.js';
 import { storage } from '../../../shared/state/persistence.js';
 import { validEmail } from '../../../shared/validation/email.js';
 import { use } from '../../../shared/di/services.js';
+import { checkStaffSignIn, cleanShopCode, cleanUsername, staffEmail } from '../../../domain/shop/staff.js';
 
 export async function signInWith(provider, loginHint){
   setAuthError(""); if(!loginHint) setAuthNote("");
@@ -101,7 +102,7 @@ export async function onEmailSubmit(ev){
       aEl("authPass").value = "";
       storage.set(RESET_KEY, "");
       showGate("loading", { message: "Opening your shop…" });
-      await onSignedIn(data.session);
+      await onSignedIn(data.session, { password: true });
     } else if(store.emailMode === "signup"){
       storage.set(RESET_KEY, "");
       const { data, error } = await use("cloud").auth.signUp({ email, password: pass, options: { emailRedirectTo: HOME_URL } });
@@ -128,6 +129,34 @@ export async function onEmailSubmit(ev){
   }finally{
     if(!aEl("authGate").hidden) setAuthBusy(false);
   }
+}
+/* Staff tab: a team member signs in with the shop code, username and password the owner gave them. On a phone that has no
+   device key for them yet, the phone is added to their devices with this fresh sign-in (session.js → member-session.js). */
+export function staffErrorText(e){
+  const m = (e && (e.message || e.error_description)) || "", code = (e && e.code) || "";
+  if(code === "invalid_credentials" || /invalid login credentials/i.test(m)) return "Wrong shop code, username or password.";
+  if(code === "user_banned" || /banned/i.test(m)) return "This team member is switched off. Ask the owner.";
+  return authErrorText(e);
+}
+export async function onStaffSubmit(ev){
+  ev.preventDefault();
+  const code = cleanShopCode(aEl("staffShop").value), username = cleanUsername(aEl("staffUser").value), password = aEl("staffPass").value;
+  setAuthError(""); setAuthNote("");
+  const bad = checkStaffSignIn({ code, username, password });
+  if(bad){ setAuthError(bad.error); aEl({ code: "staffShop", username: "staffUser", password: "staffPass" }[bad.field]).focus(); return; }
+  if(!navigator.onLine){ setAuthError("You're offline. Connect to the internet to sign in."); return; }
+  aEl("staffShop").value = code; aEl("staffUser").value = username;
+  store.signedOutByUser = false;
+  setAuthBusy(true);
+  try{
+    const { data, error } = await use("cloud").auth.signInWithPassword({ email: staffEmail(username, code), password });
+    if(error) throw error;
+    aEl("staffPass").value = "";
+    storage.set(RESET_KEY, "");
+    showGate("loading", { message: "Opening the shop…" });
+    await onSignedIn(data.session, { staff: true });
+  }catch(e){ setAuthError(staffErrorText(e)); }
+  finally{ if(!aEl("authGate").hidden) setAuthBusy(false); }
 }
 export async function resendConfirmation(){
   const email = aEl("authEmail").value.trim();
@@ -163,18 +192,20 @@ export async function onResetSubmit(ev){
 export function installSignInEvents(){
   aEl("provBtns").addEventListener("click", e => { const b = e.target.closest("[data-provider]"); if(b) signInWith(b.dataset.provider); });
   aEl("emailForm").addEventListener("submit", onEmailSubmit);
+  aEl("staffForm").addEventListener("submit", onStaffSubmit);
   aEl("authForms").addEventListener("click", e => {
     const t = e.target.closest("[data-authtab],[data-switchto]"); if(!t) return;
-    const email = aEl("authEmail").value;
-    setEmailMode(t.dataset.authtab || t.dataset.switchto);
+    const email = aEl("authEmail").value, mode = t.dataset.authtab || t.dataset.switchto;
+    setEmailMode(mode);
     aEl("authEmail").value = email;   // keep what they typed
-    (email ? aEl("authPass") : aEl("authEmail")).focus();
+    if(mode === "staff") (aEl("staffShop").value ? aEl("staffUser").value ? aEl("staffPass") : aEl("staffUser") : aEl("staffShop")).focus();
+    else (email ? aEl("authPass") : aEl("authEmail")).focus();
   });
   aEl("forgotBtn").addEventListener("click", () => { const em = aEl("authEmail").value; setEmailMode("forgot"); aEl("authEmail").value = em; aEl("authEmail").focus(); });
   aEl("backBtn").addEventListener("click", () => { const em = aEl("authEmail").value; setEmailMode("signin"); aEl("authEmail").value = em; aEl("authPass").focus(); });
   aEl("resendBtn").addEventListener("click", resendConfirmation);
   aEl("resetForm").addEventListener("submit", onResetSubmit);
-  aEl("resetCancel").addEventListener("click", signOut);
+  aEl("resetCancel").addEventListener("click", () => signOut());
   // Back from a sign-in service restores this page as it was, buttons disabled: turn them back on
 
   window.addEventListener("pageshow", e => { if(e.persisted && !aEl("authGate").hidden) setAuthBusy(false); });

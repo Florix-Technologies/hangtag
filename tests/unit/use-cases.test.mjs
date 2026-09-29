@@ -16,6 +16,7 @@ function check(name, ok, info) {
   console.log((ok ? 'PASS ' : 'FAIL ') + name + (!ok && info !== undefined ? '\n     ' + JSON.stringify(info) : ''));
 }
 const clone = (x) => JSON.parse(JSON.stringify(x));
+const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 // A fresh shop: one product (Tee, Black M/L), 10 Black/M in stock, one bill that sold 2 Black/M
 function seed() {
@@ -147,6 +148,36 @@ restore = override({ cloud: { saveProfile: async () => ({ error: { message: 'col
 let msg = null; try { await saveShopProfile({ full_name: 'A' }); } catch (e) { msg = e.message; }
 check('shop profile: an old database gives a plain message, never the raw database error', msg === 'The database needs the latest update (schema.sql) before profiles can be saved.', msg);
 restore();
+
+// ---------- a team member: the use case refuses what its role can't do, before anything changes ----------
+{
+  const member = (perms) => { store.access = { userId: 'm1', shopId: 'shop1', role: 'custom', perms, overrides: {} }; };
+  seed(); repo = fakeProducts(); restore = override({ productRepository: repo });
+  const cat0 = clone(store.catalog), moves0 = clone(store.moves);
+  member(['view_products', 'manage_products']);   // may edit products, not stock
+  r = saveProduct({ draft: editorDraft({ cells: { [K('Black', 'M')]: cell(['Black', 'M'], { id: 'v1', sku: 'TEE-BM', stock: '9' }), [K('Black', 'L')]: cell(['Black', 'L'], { id: 'v2', sku: '', stock: '0' }) } }) });
+  check('a role with products but no stock permission: a save that changes stock is refused, nothing saved or queued',
+    /can't set stock/.test(r.error || '') && repo.calls.length === 0 && eq(store.catalog, cat0) && eq(store.moves, moves0) && store.sbOfflineQueue.length === 0, r);
+  r = saveProduct({ draft: editorDraft() });
+  check('…the same product saved without a stock change goes through', !r.error && repo.calls.length === 1 && repo.calls[0][0] === 'save', r);
+  member(['view_products', 'create_sale']);
+  repo.calls.length = 0;
+  r = saveProduct({ draft: editorDraft() });
+  const a = archiveProduct('p2', true), rm = removeProduct('p2');
+  check('a cashier can\'t save, archive or delete a product (refused in the use case; the repository is never asked)',
+    /can't add or edit products/.test(r.error || '') && /can't change products/.test(a.error || '') && /can't delete products/.test(rm.error || '') && repo.calls.length === 0 && !store.catalog.products[1].archived, { r, a, rm });
+  const stockRepo = { calls: [], record: (x) => stockRepo.calls.push(x) };
+  restore(); restore = override({ productRepository: repo, stockRepository: stockRepo });
+  r = recordStockOperation({ kind: 'in', productId: 'p1', values: { v1: '3' }, costRaw: '', setCost: false, reason: '', note: '' });
+  check('a cashier can\'t add stock', /can't add or adjust stock/.test(r.error || '') && stockRepo.calls.length === 0, r);
+  member(['view_products', 'manage_inventory']);
+  r = recordStockOperation({ kind: 'in', productId: 'p1', values: { v1: '3' }, costRaw: '250', setCost: true, reason: '', note: '' });
+  check('stock in may not change cost prices without products permission', /can't change cost prices/.test(r.error || '') && stockRepo.calls.length === 0, r);
+  r = recordStockOperation({ kind: 'in', productId: 'p1', values: { v1: '3' }, costRaw: '250', setCost: false, reason: '', note: '' });
+  check('…stock in without touching the cost price is fine', !r.error && stockRepo.calls.length === 1, r);
+  store.access = null;
+  restore();
+}
 resetPorts();
 
 console.log(`\n${passed} passed, ${failed} failed`);

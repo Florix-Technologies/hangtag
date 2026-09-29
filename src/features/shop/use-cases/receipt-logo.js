@@ -4,10 +4,12 @@ import { store } from '../../../shared/state/store.js';
 import { enqueue } from '../../sync/services/outbox.js';
 import { use } from '../../../shared/di/services.js';
 import { saveLogo } from '../../../shared/state/persistence.js';
+import { can, notAllowedText } from '../services/access.js';
 
 export const MAX_LOGO_CHARS=300000;
 /* file: a picture from the file picker → { ok } or { error } */
 export async function setReceiptLogo(file){
+  if(!can("manage_settings")) return {error:notAllowedText("change the receipt logo")};
   if(!file||!/^image\/(png|jpeg|webp|gif)$/i.test(file.type||"")) return {error:"Choose a PNG or JPG picture for the logo."};
   if(file.size>10*1024*1024) return {error:"That picture is larger than 10 MB. Choose a smaller one."};
   let url;
@@ -19,4 +21,4 @@ export async function setReceiptLogo(file){
   store.logo=url; saveLogo(); enqueue({type:"logo"});
   return {ok:true};
 }
-export function removeReceiptLogo(){ store.logo=""; saveLogo(); enqueue({type:"logo"}); return {ok:true}; }
+export function removeReceiptLogo(){ if(!can("manage_settings")) return {error:notAllowedText("change the receipt logo")}; store.logo=""; saveLogo(); enqueue({type:"logo"}); return {ok:true}; }

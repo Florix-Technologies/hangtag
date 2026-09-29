@@ -24,4 +24,7 @@ export function installWindowEvents(){
     else await flushSbQueue();
   });
   window.addEventListener("offline",()=>renderSync());
+  // A team sign-in QR's link (<app>#enroll=<code>) opened in a tab where the app is already running: start again, so the
+  // phone is signed in to the shop the same way as when the link opens the app (features/auth/services/session.js)
+  window.addEventListener("hashchange",()=>{if(/(^#|&)enroll=/.test(location.hash))location.reload()});
 }

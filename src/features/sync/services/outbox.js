@@ -1,7 +1,7 @@
 // Upload queue: ordered, retried, never loses work. The rules (one upload per record, order, dependencies, which failures
 // go to review) are in domain/sync/queue-rules.js.
 import { store } from '../../../shared/state/store.js';
-import { canDiscard, failureAction, isBlocked, mergeIntoQueue, ORDERED_TYPES, recordKey, waitingKeys } from '../../../domain/sync/queue-rules.js';
+import { canDiscard, failureAction, isBlocked, mergeIntoQueue, ORDERED_TYPES, recordKey, uploadAllowed, waitingKeys } from '../../../domain/sync/queue-rules.js';
 import { sbSessionOk } from '../../auth/services/auth-settings.js';
 import { D, invalidate } from '../../inventory/services/ledger.js';
 import { products } from '../../products/services/catalog.js';
@@ -9,10 +9,21 @@ import { renderSync } from '../components/sync-status.js';
 import { use } from '../../../shared/di/services.js';
 import { saveLastSync, saveReturns, saveSbQueue, saveSyncReview } from '../../../shared/state/persistence.js';
 import { logger } from '../../../shared/logging/logger.js';
+import { toast } from '../../../shared/components/toast.js';
+import { ACCESS_LOST_TEXT, can, isMember, notAllowedText, refreshAccess } from '../../shop/services/access.js';
+import { requestSignOut } from '../../../shared/ui/session-actions.js';
 
 /* Add work for the cloud; identical product uploads are merged so the queue stays short */
 
 export function enqueue(item){
+  // A team member's change its role can't upload: the use case should have refused it before changing anything. One that
+  // gets here anyway isn't sent (the database would refuse it on every retry) nor lost: it goes to the sync review with
+  // the reason, where it can be discarded (never a bill)
+  if(!uploadAllowed(item,can)){
+    logger.warn("Not uploaded (the role can't upload it):",item.type);
+    const it={...item,tries:0,err:notAllowedText("upload this")};
+    toReview(it,{code:"PERMISSION"}); toast(it.err+" It's in the sync review."); renderSync(); return;
+  }
   if(item.type==="prod"){
     const ex=store.sbOfflineQueue.find(q=>q.type==="prod"&&q.id===item.id&&!q.tries);
     if(ex){ex.delV=[...new Set([...(ex.delV||[]),...(item.delV||[])])];saveSbQueue();return}
@@ -102,7 +113,15 @@ export async function flushSbQueueOnce(){
       catch(err){
         logger.warn("Queue sync item failed:", item.type, err);
         item.tries = (item.tries||0) + 1; item.err = err && (err.message || err.code) || String(err);
-        if(failureAction(err && err.code, item.tries) === "review"){ review.add(item); toReview(item, err); continue; }
+        const member = isMember(), refused = err && err.code === "PERMISSION";
+        if(member && refused){
+          // Is this phone still in the shop? If not (revoked, switched off): sign out; the work stays queued for the member
+          const a = await refreshAccess();
+          if(a.lost){ stopped = true; requestSignOut({ message: ACCESS_LOST_TEXT, forgetDevice: true }); break; }
+          if(!a.ok){ stopped = ORDERED.has(item.type); if(stopped) break; continue; }
+          item.err = notAllowedText("upload this");
+        }
+        if(failureAction(err && err.code, item.tries, { member }) === "review"){ review.add(item); toReview(item, err); if(member && refused) toast(item.err + " It's in the sync review."); continue; }
         if(ORDERED.has(item.type)){ stopped = true; break; }
       }
       finally{ delete item.sending; }

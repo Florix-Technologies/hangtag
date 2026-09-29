@@ -33,5 +33,5 @@ export async function onSetupSubmit(ev){
 /* Registered once at start-up (app/main.js). */
 export function installSetupEvents(){
   aEl("setupForm").addEventListener("submit", onSetupSubmit);
-  aEl("setupSignOut").addEventListener("click", requestSignOut);
+  aEl("setupSignOut").addEventListener("click", () => requestSignOut());
 }

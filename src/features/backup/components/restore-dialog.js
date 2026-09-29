@@ -7,8 +7,10 @@ import { ICON } from '../../../shared/constants/icons.js';
 import { $, esc } from '../../../shared/dom.js';
 import { dtLong } from '../../../shared/formatting/dates.js';
 import { logger } from '../../../shared/logging/logger.js';
+import { isMember } from '../../shop/services/access.js';
 
 export async function restoreBackup(file){
+  if(isMember()){toast("Only the shop's owner can restore a backup.");return}
   let json=null;try{json=JSON.parse(await file.text())}catch(e){logger.warn("Backup parse failed:",e)}
   const B=await readBackup(json);
   if(B.integrity==="bad"){toast("This backup file is damaged or was changed (its check doesn't match), so it can't be restored.");return}

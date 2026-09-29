@@ -10,11 +10,13 @@ import { $, esc } from '../../../shared/dom.js';
 import { dayKey, dayLab, hhmm } from '../../../shared/formatting/dates.js';
 import { inrx } from '../../../shared/formatting/money.js';
 import { renderAll } from '../../../shared/ui/render.js';
+import { refuse } from '../../shop/services/access.js';
 
 const HINT={opening:"Cash put in the drawer at the start of the day.",in:"Cash added to the drawer, e.g. change brought from the bank.",
   out:"Cash taken out, e.g. banked or handed to the owner.",expense:"Cash spent on the shop."};
 /* kind: "opening" | "in" | "out" | "expense" | "close" | "reverse:<entry id>" */
 export function openCashForm(kind){
+  if(refuse("create_sale","record cash"))return;
   if(kind==="close") store.cashForm={kind:"close",day:dayKey(Date.now()),scope:"shop",counted:"",note:"",err:""};
   else if(kind.startsWith("reverse:")) store.cashForm={kind:"reverse",id:kind.slice(8),reason:"",err:""};
   else store.cashForm={kind:"move",type:kind,amount:"",reason:"",category:"",err:""};

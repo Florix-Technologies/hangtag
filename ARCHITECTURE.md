@@ -40,7 +40,8 @@ src/
 │   ├── finance/         books.js (financial transactions, cash book, bank book, reconciliation)
 │   ├── invoices/        invoice.js (the finalized bill as a document), amount-words.js, delivery.js (who a bill can go to)
 │   ├── receipts/        thermal.js (a receipt as fixed-width lines for a thermal printer)
-│   └── shop/            profile.js + profile-validation.js, settings.js + settings-validation.js, printer-settings.js
+│   └── shop/            profile.js + profile-validation.js, settings.js + settings-validation.js, printer-settings.js,
+│                        permissions.js (the 16 permissions, role defaults, labels, tabs, role suggestions), staff.js (staff sign-in)
 ├── infrastructure/      Everything that talks to the outside world
 │   ├── supabase/        client.js (makeSbClient), cloud-gateway.js (the "cloud" port), mappers.js (row ↔ record),
 │   │                    query.js (sbOk, paging), errors.js (→ AppError)
@@ -50,6 +51,7 @@ src/
 │   ├── extraction/      bill-extractor.js (calls the extract-bill Edge Function)
 │   ├── printing/        epson-epos.js (Epson ePOS-Print over the network: the "receiptPrinter" port), raster.js (logo → mono dots)
 │   ├── messaging/       delivery-client.js (the "messageDelivery" port → the send-receipt Edge Function)
+│   ├── team/            team-client.js (the "teamService" port → the team Edge Function + row-secured team reads)
 │   ├── scanner/         camera-scanner.js (rear camera; BarcodeDetector, else vendor/zxing-decode.js, Apache-2.0)
 │   ├── storage/         local-storage.js (the "storage" port)
 │   └── browser/         files.js: download/share, photo → thumbnail, SHA-256, photo downscale, base64 (the "files" port)
@@ -71,7 +73,8 @@ supabase/
 ├── schema.sql           Database of the live app (hangtag_* tables, RLS, triggers). Run in the SQL Editor; safe to re-run
 ├── migrations/          Next-generation database foundation (Phase 1: shops, members, RLS). Not applied to the live project
 ├── functions/           extract-bill: reads supplier bills (Claude; key as a function secret). send-receipt: sends bills by
-│                        email / WhatsApp / SMS (provider keys as function secrets). README in each
+│                        email / WhatsApp / SMS (provider keys as function secrets). team: staff accounts, roles, devices
+│                        and QR enrollment. README in each
 ├── README.md            How the database files are organised and applied
 └── tests/               Database tests (PGlite): schema, RLS isolation, triggers, migrations
 tests/
@@ -88,8 +91,8 @@ eslint.config.js         Lint rules for src/ (undefined names, unused variables)
 
 | Feature | What it owns | Use cases today |
 |---|---|---|
-| `auth` | Sign-in screen, Google/email/other providers, password reset, session lifecycle, per-account local data | (session services) |
-| `shop` | Shop profile (setup and settings), account menu, billing/stock settings, receipt logo | `saveShopProfile`, `saveBillingSettings`, `setReceiptLogo` |
+| `auth` | Sign-in screen, Google/email/other providers, password reset, session lifecycle, per-account local data; the Staff tab (shop code + username + password), QR enrollment (`#enroll=`), this phone's team device key (`services/device.js`, `services/member-session.js`) | (session services) |
+| `shop` | Shop profile (setup and settings), account menu (with a team member's cash drawer when it has no Reports tab), billing/stock settings, receipt logo; who may do what (`services/access.js`: `can(p)`, `denied(p, what)` for use cases, the member's role, refreshed on connect), what a role hides (`components/access-ui.js`), Settings → Team & devices and Roles & permissions (`components/team-settings.js`) | `saveShopProfile`, `saveBillingSettings`, `setReceiptLogo`, `manage-team.js` (`addMember`, `changeMember`, `resetMemberAccess`, `removeMember`, `phoneSignInCode`, `revokePhone`, `removePhone`, `saveRolePermissions`: owner only) |
 | `products` | Product list, product editor (optional options/variants with any names, per-variant SKU/barcode/price/cost, HSN/GST), barcode/QR codes, stickers, colour grouping, examples, archive/delete, photos | `saveProduct`, `archiveProduct`, `removeProduct`, `photoFromFile` |
 | `inventory` | Stock page, stock in, stock adjustment, supplier bill import (upload → review → confirm), the stock ledger read model | `recordStockOperation`, `readSupplierBill`, `planSupplierBill`, `confirmSupplierBill` |
 | `sales` | Sell screen, search, variant picker, cart, line and bill discounts, GST on the bill, payment screen (cash / UPI / card / split), checkout, cancelling bills | `checkout`, `setLineDiscount`, `setBillDiscount`, `voidSale`, `unvoid` |
@@ -189,6 +192,7 @@ export const archiveProduct = (pid, on) => productRepository().setArchived(pid, 
 | `returnRepository` / `eventRepository` | `infrastructure/repositories/local-first-return-repository.js` / `…-event-repository.js` | `features/returns`, `features/events` |
 | `paymentGateway` | `infrastructure/payments/payment-gateway-client.js` → Edge Function `payment-gateway` (Razorpay) | `features/sales/use-cases/provider-payment.js` |
 | `cashRepository` | `infrastructure/repositories/local-first-cash-repository.js` | `features/finance/repositories/cash-repository.js` |
+| `teamService` | `infrastructure/team/team-client.js` → Edge Function `team` (changes) + the cloud gateway (members, devices, roles, `hangtag_touch_device`) | `features/shop/services/team.js` (access, Team & devices, staff sign-in, enrollment) |
 
 `app/main.js` calls `installContainer()` and `installNavigation()` before anything reads storage or renders. The
 rest of start-up keeps the original order.
@@ -212,7 +216,8 @@ ProductEditor (component: reads the form)
 - **One Supabase gateway.** Every Supabase call (tables, auth, realtime, RPC) is a method of
   `infrastructure/supabase/cloud-gateway.js`. Row ↔ record mapping lives in `mappers.js`. The gateway reads the
   client on every call, so signing in again or a test can swap it.
-- **The database is the authority.** Row-level security (`owner_id = auth.uid()`), unique SKU/barcode per shop, the
+- **The database is the authority.** Row-level security (`owner_id = hangtag_shop_id()` plus the role's permission; see
+  [Security](#security)), unique SKU/barcode per shop, the
   return-quantity trigger and foreign keys live in `supabase/schema.sql`. Frontend checks only give quick feedback.
 - **Bills are saved in one step.** The outbox sends a bill with its lines and payments to RPC `hangtag_save_sales`,
   which saves all of it or none (see [Money](#money-discounts-gst-payments-and-the-books)).
@@ -357,7 +362,7 @@ Triggers:
 - `hangtag_sale_status`: cancelling or restoring a bill (`is_void`) cancels or re-posts its entries.
 - `hangtag_sale_default_payment` (deferred): the one payment of a bill saved without payments.
 
-Every table has the "Own rows only" RLS policy. Indexes: `(owner_id, sale_id)` on transactions (reconciliation and
+Every table has the shop's RLS policies (see [Security](#security)). Indexes: `(owner_id, sale_id)` on transactions (reconciliation and
 cancelling) and `(owner_id, t)` on both books (read in date order).
 
 ### Database relationships (schema.sql section 3h)
@@ -491,7 +496,7 @@ Print → printReceipt (features/printing/use-cases/print-receipt.js)
 | `hangtag_deliveries` (channel, recipient, status pending / sent / failed, provider, provider message id, error) | `(owner_id, id)` | bill (link cleared if the bill is deleted; the record stays) | the send-receipt function only (the app reads) |
 | `hangtag_meta` key `logo` (`{ data: <data URL> }`, size-checked) | `(owner_id, key)` | – | the app, through the upload queue |
 
-`hangtag_deliveries` has "Own rows only" RLS and a check that a `sent` row has the provider's message id. Deleting a
+`hangtag_deliveries` has the shop's read-only RLS and a check that a `sent` row has the provider's message id. Deleting a
 bill sets its records' `sale_id` to null (`ON DELETE SET NULL (sale_id)`), so the log and the hourly count can't be
 erased that way; deleting the account removes everything. Indexes:
 `(owner_id, sale_id, created_at)` for a bill's history and `(owner_id, created_at)` for the hourly limit.
@@ -520,12 +525,15 @@ unchanged from the single-file app:
 - Sales: `rc_local` + `rc_dirty`, and `rc_pend`.
 - Cart and preferences: `rc_cart` + `rc_disc` + `rc_cartcust`, and `rc_prefs`.
 - Sync and account: `hangtag_sb_queue`, `hangtag_profile`, `hangtag_last_sync`.
+- Team: `hangtag_access` (a member's role and permissions; per account), and per device `hangtag_device_key`, `hangtag_device_id`,
+  `hangtag_device_user` (a member's phone only; put away under `hangtag_dev_<user>_…` when that member signs out, forgotten
+  when the owner revokes the phone).
 
 When the device's storage is full, `persistLocal()` says so once.
 
 | Kind | Keys (examples) | Written by |
 |---|---|---|
-| Session / auth | `authUser`, `profile`, `authSettings`, `signingIn`, `emailMode` | `auth`, `shop` |
+| Session / auth | `authUser`, `profile`, `authSettings`, `signingIn`, `emailMode`, `access` (a member's role; null for the owner) | `auth`, `shop` |
 | Cloud connection | `sbClient`, `sbStatus`, `sbRealtimeChannel`, `sbOfflineQueue`, `lastSyncAt`, `syncing` | `sync` |
 | Local data (this device's copy of server data) | `catalog`, `imgs`, `moves`, `returnsMap`, `customers`, `settings`, `localDays`, `remoteDays` | Use cases, repositories and `sync` merges (see the exceptions below) |
 | Form state | `editor`, `stockOp`, `retState`, `custForm`, `pick` | The component that opened it |
@@ -614,14 +622,62 @@ an `AppError`.
   `SEND_ALLOWED_USERS`, optional `RECEIPT_URL`, `WHATSAPP_LINK_PARAM`), `payment-gateway` / `payment-webhook`
   (`RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `PAYMENT_ALLOWED_USERS`, `RAZORPAY_WEBHOOK_SECRET`, optional
   `PAYMENT_CARD_LINK=off`). `receipt` and `payment-webhook` are deployed with `--no-verify-jwt` (a token / a signature
-  is their key); the others keep JWT verification on.
+  is their key), and `team` too (a phone redeeming a QR has no session; it checks every other caller itself); the others
+  keep JWT verification on. `team` needs no secrets beyond the defaults.
 
 ## Security
 
-- **Tenant isolation is enforced by the database.** Every `hangtag_*` table has the RLS policy "Own rows only"
-  (`owner_id = auth.uid()`), and signed-out requests are refused. Frontend filtering is never the protection.
-  Tests: `supabase/tests/legacy_schema.test.mjs` and `legacy_variants_migration.test.mjs`, plus the two-account
-  and two-device browser tests.
+- **Tenant isolation is enforced by the database.** The shop is the owner's account; `owner_id` on every `hangtag_*`
+  row is the shop and fills itself in with `public.hangtag_shop_id()`. Every table has the policies "Shop read" and
+  "Shop write (add / change / remove)": `owner_id = hangtag_shop_id()` and the role's permission
+  (`hangtag_can('create_sale')` …; the table → permission list is in `schema.sql` section 5). Signed-out requests are
+  refused. Frontend filtering is never the protection.
+- **Team (schema.sql section 3i).** Staff are accounts of their own, members of one shop (`hangtag_members`, role +
+  status), with permissions per role (`hangtag_default_permissions`, overridden by the shop's `hangtag_roles`). A
+  member reaches its shop only from an enrolled device: the app sends the device key as `x-hangtag-device`, and
+  `hangtag_shop_id()` gives the shop only while the member is active and the key's SHA-256 matches one of its active
+  `hangtag_devices`; otherwise NULL (nothing). An owner (every account that isn't a member) is its own shop with every
+  permission, so single-owner shops see no difference. Staff get no realtime (no headers there): they poll. Members,
+  devices and QR enrollment tokens (hashes only) are written by the `team` Edge Function; RPCs `hangtag_save_sales`,
+  `hangtag_save_return` and `hangtag_import_stock` check `create_sale`, `perform_return` and `create_purchase`;
+  `send-receipt` and `payment-gateway` act for `hangtag_shop_id()` and check the member's permission.
+- **Team in the app.** The Supabase client adds `x-hangtag-device` to every request while this phone has a device key
+  (`infrastructure/supabase/client.js` reads it per request, so enrolling needs no second client). A phone joins by opening
+  the owner's QR (`<app>#enroll=<code>` → `enroll_redeem` → `auth.verifyOtp({ type: 'magiclink', token_hash })`) or on the
+  Staff tab (shop code + username + password → `register_device` with that fresh sign-in). A member never sees the shop
+  setup screen: it works with the shop's profile. `features/shop/services/access.js` keeps the role and permissions
+  (`hangtag_touch_device` + the member's row + `hangtag_roles`), asked again on connect and every 30 s (members get no
+  realtime). Every 30 s the phone also asks `hangtag_shop_changes()` (one small fingerprint per part of the shop) and
+  downloads only the parts that changed — photos only when a photo changed, and of the bills only those saved since its
+  last look plus which are cancelled (`features/sync/services/pull.js` `pullShopChanges`); the full download stays for
+  connecting and Refresh. The app hides what the role can't do (`html[data-noperm]`, `styles/96-team.css`); the use cases
+  refuse it before changing anything (`denied(p, what)` → `{ error }`), and an upload the role still can't make goes to the
+  sync review with the reason instead of being sent (the outbox never drops it). The database is the protection. A
+  member's upload refused by row security — also an update or delete it quietly skipped (the gateway asks the rows back)
+  — goes to the sync review; a phone that no longer reaches the shop (revoked, member switched off) is signed out with
+  "Device revoked". A team QR link opened where someone is signed in asks before switching the browser to the member.
+  A role with no screen yet (kitchen) sees a plain note. The owner sees no difference except Settings → Team & devices and
+  Roles & permissions.
+- **History a member can't rewrite** (`hangtag_member_write_check`, section 3i (f)). A member adds bills (through
+  `hangtag_save_sales` only: a bill's lines and payments go in with it), returns and stock records; it never changes or
+  removes a saved one — the RPCs leave a saved bill or return as it is when a member sends it again, a direct change is
+  refused unless it changes nothing, and removing bills, lines, payments and returns is the owner's alone. Cancelling or
+  restoring a bill needs `perform_return` or `manage_settings` (`CANCEL_BILL`); changing a stock record needs
+  `manage_inventory`; a discount needs `apply_discount` (checked in the database too). "See products and stock" is every
+  member's (the database lets any member read the catalog), so it isn't a switch in Roles & permissions.
+- **Ending a member's access.** Reset, revoke and switch-off revoke the member's devices, end its sign-ins
+  (`hangtag_end_sessions`, service role only; where the project doesn't allow it, the old token still reaches nothing
+  because the device key is checked on every request) and note `access_reset_at`: a phone is added by password only with a
+  password sign-in made after that, and only for a member the owner gave a password (`password_signin`). Reset without a
+  new password replaces the old one with one nobody knows.
+- **Audit log** (`hangtag_audit_log`): written only by the `hangtag_audit()` trigger (who, which device, what, a few
+  fields) for cancelled / restored / changed / removed bills, changed or removed bill lines and payments, returns and
+  their lines, stock adjustments and any stock record changed or removed, cash entries, day closes, customers, team
+  (including access resets), roles, devices, events and products added / removed / archived; readable with
+  `view_reports`. Changes the team Edge Function makes name the owner (`changed_by` / `created_by` on the row).
+  Tests: `supabase/tests/team-tenancy.test.mjs` (roles, devices, shop A vs shop B in every table, RPC permissions,
+  audit), `legacy_schema.test.mjs` and `legacy_variants_migration.test.mjs`, plus the two-account and two-device
+  browser tests.
 - **The Phase 1 foundation** (`supabase/migrations/`) isolates by shop membership (`is_shop_member`). It is tested in
   `supabase/tests/phase1_foundation.test.mjs` but not applied to the live project.
 - **Per-account local data.** On a shared device, each account's local data is kept separately and swapped on

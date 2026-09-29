@@ -10,9 +10,11 @@ import { ICON } from '../../../shared/constants/icons.js';
 import { $, esc } from '../../../shared/dom.js';
 import { inr, inrx } from '../../../shared/formatting/money.js';
 import { renderAll } from '../../../shared/ui/render.js';
+import { refuse } from '../../shop/services/access.js';
 
 /* store.lineDisc = { i, type, value, err } while the sheet is open */
 export function openLineDiscount(i){
+  if(refuse("apply_discount","give discounts"))return;
   const c=store.cart[i]; if(!c) return;
   const d=normalizeDiscount(c.disc);
   store.lineDisc={i,type:d?d.type:"percent",value:d?String(d.value):"",err:""};

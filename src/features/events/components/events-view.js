@@ -13,6 +13,7 @@ import { $, esc } from '../../../shared/dom.js';
 import { dayKey, dayLab } from '../../../shared/formatting/dates.js';
 import { inrx } from '../../../shared/formatting/money.js';
 import { renderAll } from '../../../shared/ui/render.js';
+import { refuse } from '../../shop/services/access.js';
 
 const dates=e=>e.start===e.end?dayLab(e.start):dayLab(e.start)+" – "+dayLab(e.end);
 /* Reports → Events */
@@ -24,6 +25,7 @@ export function eventsCardHTML(){
     <div class="setactions"><button class="btn xs" data-act="evnew">+ New event</button></div>`;
 }
 export function openEventForm(id){
+  if(refuse("manage_settings","change events"))return;
   const e=id?store.events[id]:null, today=dayKey(Date.now());
   store.evForm={id:e?e.id:null,name:e?e.name:"",start:e?e.start:today,end:e?e.end:today,place:e?e.place:"",err:""};
   renderEventForm();
@@ -54,11 +56,13 @@ export function submitEventForm(form){
   toast(F.id?"Event saved.":`Event created. Choose "${r.event.name}" under Selling at on the phones at the stall.`);
 }
 export function eventStatusAction(id,status){
+  if(refuse("manage_settings","change events"))return;
   const r=setEventStatus(id,status); if(r.error){toast(r.error);return}
   store.evForm=null; closeModal(); renderAll();
   toast(status===EVENT_STATUS.CLOSED?"Event closed. New bills are no longer tagged with it.":"Event reopened.");
 }
 export function deleteEventAction(id){
+  if(refuse("manage_settings","change events"))return;
   const r=deleteEvent(id); if(r.error){toast(r.error);return}
   store.evForm=null; closeModal(); renderAll(); toast("Event deleted.");
 }

@@ -19,6 +19,8 @@ import { dayKey } from '../../../shared/formatting/dates.js';
 import { persistLocal, saveCart, savePrefs } from '../../../shared/state/persistence.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { uid } from '../../../shared/utils/ids.js';
+import { can, canAny, denied, notAllowedText } from '../../shop/services/access.js';
+import { CANCEL_BILL } from '../../../domain/shop/permissions.js';
 
 /* A complete bill record, or { error } when a discount is too big or the payments don't settle it.
    lines: bill lines · billDisc: the bill discount · pay: a method ("cash" | "upi" | "card") or one part without its amount
@@ -57,6 +59,9 @@ export function recordSale(sale){
 export async function checkout(pay,opts){
   if(!store.cart.length||Date.now()-store.lastCheckout<600)return null;
   const o=opts||{};
+  // a team member sells only with create_sale, and gives discounts only with apply_discount (the database checks the sale)
+  if(!can("create_sale")) return {error:notAllowedText("sell")};
+  if(!can("apply_discount")&&(normalizeDiscount(store.disc)||store.cart.some(c=>normalizeDiscount(c.disc)))) return {error:notAllowedText("give discounts")+" Remove the discount first."};
   if(o.id&&D().saleById[o.id]) return {error:"This bill is already saved."};
   const sale=newSaleRecord(store.cart,store.disc,pay,o.id?{id:o.id}:undefined);
   if(sale.error) return sale;
@@ -79,6 +84,7 @@ const keptSale=sid=>{for(const d of [...Object.values(store.localDays),...Object
 export const VOID_REASONS=["Wrong items or price","Customer changed their mind","Payment didn't go through","Duplicate bill","Other"];
 /* reason: why (required, 3-200 characters). → { ok } or { error } */
 export async function voidSale(sid,reason){
+  const no=denied(CANCEL_BILL,"cancel bills"); if(no) return no;
   const r=D().retBySale[sid];
   if(r&&r.length){ const e="This bill has a return or exchange, so it can't be cancelled. Use a return instead."; toast(e); return {error:e}; }
   const why=String(reason==null?"":reason).trim().replace(/\s+/g," ");
@@ -92,6 +98,7 @@ export async function voidSale(sid,reason){
   return {ok:true};
 }
 export async function unvoid(sid){
+  if(!canAny(CANCEL_BILL)){ const e=notAllowedText("restore bills"); toast(e); return {error:e}; }
   Object.keys(store.localDays).forEach(id=>{const v=store.localDays[id].voids||[],i=v.indexOf(sid);if(i>-1){v.splice(i,1);store.dirty.add(id)}});
   Object.keys(store.remoteDays).forEach(id=>{const v=store.remoteDays[id].voids||[],i=v.indexOf(sid);if(i>-1)v.splice(i,1)});
   const s=keptSale(sid); if(s) delete s.voidReason;

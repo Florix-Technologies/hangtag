@@ -25,7 +25,8 @@ import { resumePayment } from '../features/sales/components/payment-sheet.js';
 import { checkUnverified } from '../features/finance/components/reconcile-view.js';
 import { installAutoDelivery, processDeliveryQueue } from '../features/delivery/use-cases/auto-delivery.js';
 import { applyCatalogMigration } from '../features/products/services/catalog.js';
-import { initSupabase } from '../features/sync/services/connection.js';
+import { initSupabase, memberPoll } from '../features/sync/services/connection.js';
+import { isMember } from '../features/shop/services/access.js';
 import { flushSbQueue } from '../features/sync/services/outbox.js';
 
 installContainer();    // ports first: everything below may use them
@@ -61,5 +62,7 @@ renderAll();
     if(store.sbOfflineQueue.length && store.sbStatus === "connected") flushSbQueue();
     // Signed in but the cloud dropped out: try again every 30 s while online
     else if(store.authUser && store.sbStatus !== "connected" && navigator.onLine && tick % 3 === 0) initSupabase();
+    // A team member's phone gets no live updates: every 30 s it checks it is still in the shop and downloads the latest
+    if(store.authUser && isMember() && store.sbStatus === "connected" && tick % 3 === 0) memberPoll();
   }, 10000);
 })();

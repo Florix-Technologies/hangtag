@@ -22,6 +22,7 @@ import { use } from '../../../shared/di/services.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { COLORS, okColor, swatchOf } from '../../../shared/utils/colors.js';
 import { uid } from '../../../shared/utils/ids.js';
+import { refuse } from '../../shop/services/access.js';
 
 /* ---------- product editor ----------
    store.editor = { isNew, id, name, cat, brand, desc, price, cost, color, img, archived, hsn, gst,
@@ -30,6 +31,7 @@ import { uid } from '../../../shared/utils/ids.js';
 
 export const SIZE_PRESETS=[["S–XXL",["S","M","L","XL","XXL"]],["XS–XL",["XS","S","M","L","XL"]],["28–36",["28","30","32","34","36"]],["Free size",["Free size"]]];
 export function openEditor(pid){
+  if(refuse("manage_products","add or edit products"))return;
   const p=pid?prod(pid):null;
   if(pid&&!p)return;
   const st=editorState(p,stockOf);

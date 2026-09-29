@@ -5,10 +5,12 @@ import { checkCustomer, findDuplicate, tidyCustomer } from '../../../domain/cust
 import { customerRepository } from '../repositories/customer-repository.js';
 import { saveCart } from '../../../shared/state/persistence.js';
 import { uid } from '../../../shared/utils/ids.js';
+import { canAny, notAllowedText } from '../../shop/services/access.js';
 
 /* input: form values; id: the customer being edited (none = new).
    → { error, field, duplicate? } (nothing saved) or { customer, created } */
 export function saveCustomer(input, { id } = {}){
+  if(!canAny(["create_sale","collect_credit","create_order"])) return { error: notAllowedText("add or change customers") };
   const repo = customerRepository(), c = tidyCustomer(input);
   const bad = checkCustomer(c); if(bad) return bad;
   const dup = findDuplicate(repo.list(), c, id);

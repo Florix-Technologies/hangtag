@@ -79,7 +79,9 @@ export function initState(){
   store.signingIn = null;
   store.signedOutByUser = false;   // set by Sign out; a token refresh that finishes afterwards must not sign back in
   store.emailMode = "signin";      // "signin" | "signup" | "forgot"
-  store.profile = storage.get("hangtag_profile", null);   // this account's profile (kept per account on this device)
+  store.profile = storage.get("hangtag_profile", null);   // this account's profile (kept per account on this device); a team member: its shop's
+  store.access = objOr(storage.get("hangtag_access", null), null);   // a team member's role and permissions in its shop (null: the owner)
+  store.team = null;            // Settings → Team & devices / Roles & permissions (the owner's screens)
   /* ================= Supabase Database Engine ================= */
 
   store.sbInitP = null;

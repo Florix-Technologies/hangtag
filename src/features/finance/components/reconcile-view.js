@@ -15,6 +15,7 @@ import { dayKey, dayLab, hhmm } from '../../../shared/formatting/dates.js';
 import { inrx } from '../../../shared/formatting/money.js';
 import { userMessage } from '../../../shared/errors/app-error.js';
 import { renderAll } from '../../../shared/ui/render.js';
+import { refuse } from '../../shop/services/access.js';
 
 const kv=(l,v,cls)=>`<div${cls?` class="${cls}"`:""}><span>${l}</span><b>${v}</b></div>`;
 const when=t=>`${dayLab(dayKey(t))} · ${hhmm(t)}`;
@@ -55,6 +56,8 @@ export async function loadUnmatched(){
 }
 /* spec: "refund:<id>" (refunds it through the provider) · "refunded:<id>" (paid back another way) · "allocated:<id>" */
 export async function resolveUnmatched(spec){
+  // settling money moves it (a refund, paid back, added to a bill): the same permission as a refund (the function checks it)
+  if(refuse("perform_return","settle unmatched payments")) return;
   const [resolution,id]=spec.split(":"), I=(store.unmatched||[]).find(x=>x.id===id);
   if(!I) return;
   const ask={refund:`Refund ${inrx(I.paidAmount)} to the customer through the payment provider?`,refunded:`Mark ${inrx(I.paidAmount)} as paid back to the customer (in cash or another way)?`,allocated:`Mark ${inrx(I.paidAmount)} as added to a bill?`}[resolution];

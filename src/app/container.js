@@ -3,7 +3,7 @@ import { provide } from '../shared/di/services.js';
 import { LS } from '../infrastructure/storage/local-storage.js';
 import { downscaleImage, fileToThumb, readAsBase64, saveFile, sha256Hex } from '../infrastructure/browser/files.js';
 import { createCloudGateway } from '../infrastructure/supabase/cloud-gateway.js';
-import { AUTH_STORE } from '../features/auth/config.js';
+import { AUTH_STORE, DEVICE_KEY } from '../features/auth/config.js';
 import { sbKey, sbUrl } from '../shared/config/app-config.js';
 import { store } from '../shared/state/store.js';
 import { createLocalFirstProductRepository } from '../infrastructure/repositories/local-first-product-repository.js';
@@ -27,6 +27,7 @@ import { rasterizeLogo } from '../infrastructure/printing/raster.js';
 import { createDeliveryClient } from '../infrastructure/messaging/delivery-client.js';
 import { createPaymentGatewayClient } from '../infrastructure/payments/payment-gateway-client.js';
 import { createLocalFirstCashRepository } from '../infrastructure/repositories/local-first-cash-repository.js';
+import { createTeamClient } from '../infrastructure/team/team-client.js';
 
 /* Called first at start-up (app/main.js), before the state is restored from storage */
 export function installContainer(){
@@ -38,9 +39,13 @@ export function installContainer(){
   provide("barcodeScanner", createCameraScanner());
   // Sign out / open the shop, for the screens around sign-in (shared/ui/session-actions.js)
   provide("session", { signOut, enterApp });
-  // Supabase: the current client is read on every call (it is created at sign-in; tests may replace it)
-  const cloudGateway = createCloudGateway({ getClient: () => store.sbClient, url: sbUrl, key: sbKey, storageKey: AUTH_STORE });
+  // Supabase: the current client is read on every call (it is created at sign-in; tests may replace it). A team member's
+  // phone sends its device key with every request (read each time, so enrolling the phone needs no new client).
+  const deviceKey = () => { const k = LS.get(DEVICE_KEY, ""); return typeof k === "string" ? k : ""; };
+  const cloudGateway = createCloudGateway({ getClient: () => store.sbClient, url: sbUrl, key: sbKey, storageKey: AUTH_STORE, deviceKey });
   provide("cloud", cloudGateway);
+  // The shop's team: staff accounts, roles and permissions, enrolled phones (Edge Function team + row-secured reads)
+  provide("teamService", createTeamClient({ cloud: cloudGateway }));
   // Local-first repositories: this device's state first, then the upload queue (features/sync/services/outbox.js)
   const outbox = { enqueue, dropQueued };
   provide("productRepository", createLocalFirstProductRepository({ store, persist: { saveCatalog, saveMoves, saveImgs, saveSbQueue }, outbox }));

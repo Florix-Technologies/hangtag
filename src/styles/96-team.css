@@ -1,0 +1,52 @@
+/* ================= team: what a member's role hides, Team & devices, Roles & permissions ================= */
+/* A team member sees only what its role allows: html[data-noperm] lists the permissions the person signed in lacks,
+   html[data-notabs] the tabs it has no use for (features/shop/components/access-ui.js). The owner lacks nothing, so
+   none of this applies to owners. Only a convenience: the database refuses anything the role can't do. */
+html[data-notabs~="sell"] .nav [data-tab="sell"],
+html[data-notabs~="stock"] .nav [data-tab="stock"],
+html[data-notabs~="report"] .nav [data-tab="report"],
+html[data-notabs~="products"] .nav [data-tab="products"],
+html[data-notabs~="customers"] .nav [data-tab="customers"],
+html[data-noperm~="manage_products"] :is([data-editp],[data-act="addp"],[data-act="examples"],[data-act="gosetup"],[data-archive],[data-unarchive],[data-delp],[data-grouprev],[data-groupgo],[data-groupno],.card.grp),
+html[data-noperm~="manage_inventory"] :is([data-act="stockin"],[data-act="stockadj"],[data-stockin]),
+html[data-noperm~="create_purchase"] [data-act="billimport"],
+html[data-noperm~="apply_discount"] :is(.discrow,[data-linedisc]),
+html[data-noperm~="perform_return"] :is([data-return],[data-act="exadd"],[data-unm]),
+html[data-noperm~="create_sale"] :is([data-pay],[data-cashform]),
+html[data-noperm~="perform_return"][data-noperm~="manage_settings"] :is([data-undosale],[data-void],[data-unvoid]),
+html[data-noperm~="manage_settings"] :is([data-act="evnew"],[data-evedit],[data-evclose],[data-evopen],[data-evdel],.logoedit),
+html[data-member] :is(label[for="restoreIn"],[data-restore]){display:none!important}
+
+/* a team member's cash drawer in the account menu (a cashier has no Reports tab) */
+.acctmenu .am-sub{display:block;padding:6px 10px 2px;font-size:11.5px;font-weight:700;color:var(--ink-3);text-transform:uppercase;letter-spacing:.04em}
+
+/* Team & devices */
+.teamsheet .teamseg{margin:0 0 14px}
+.tmlist{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+.tm{border:1px solid var(--line);border-radius:12px;padding:12px}
+.tm.off{background:var(--wash)}
+.tm-h{display:flex;align-items:center;gap:10px}
+.tm-w{flex:1;min-width:0;display:flex;flex-direction:column}
+.tm-w .sub{font-size:12.5px;color:var(--ink-3)}
+.tm-role .sel{font-size:13px;padding:5px 8px}
+.tm-a{margin-top:10px}
+.tm-dev{margin-top:10px;border-top:1px dashed var(--line);padding-top:8px;display:flex;flex-direction:column;gap:6px}
+.tm-d{display:flex;align-items:center;gap:8px;font-size:13px}
+.tm-d > span{flex:1;min-width:0;display:flex;flex-direction:column}
+.tm-d small{color:var(--ink-3)}
+.tm-d.off b{color:var(--ink-3);text-decoration:line-through}
+.tm-add{border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:4px}
+.enrollqr{text-align:center;padding:14px;margin:0 0 12px;border:1px solid var(--line);border-radius:12px}
+.enrollqr h4{margin:0 0 8px}
+.enrollqr .qrbox{display:inline-block;background:#fff;padding:6px;border-radius:8px}
+.enrollqr .qrbox svg{display:block;width:220px;height:220px;max-width:70vw;max-height:70vw}
+.enrollqr .qrbox.expired{opacity:.15}
+.enrollqr .setactions{justify-content:center}
+/* Roles & permissions */
+.tscroll{overflow-x:auto;margin:0 -4px}
+.rolegrid{border-collapse:collapse;width:100%;font-size:13px}
+.rolegrid th,.rolegrid td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:center;white-space:nowrap}
+.rolegrid th:first-child,.rolegrid td:first-child{text-align:left;white-space:normal;min-width:150px}
+.rolegrid input{width:18px;height:18px;accent-color:var(--ink)}
+.rolegrid tfoot td{border-bottom:0}
+@media (max-width:520px){.tm-h{flex-wrap:wrap}.tm-role{width:100%}.tm-role .sel{width:100%}}

@@ -15,6 +15,7 @@ import { inr } from '../../../shared/formatting/money.js';
 import { saveCatalog, saveMoves } from '../../../shared/state/persistence.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { SWATCH } from '../../../shared/utils/colors.js';
+import { refuse } from '../../shop/services/access.js';
 
 /* ---------- colour groups: "Oversized Tee – Black" + "Oversized Tee – White" (asks first, never guesses) ---------- */
 
@@ -33,6 +34,7 @@ export function colorGroups(){
   return Object.values(g).filter(x=>x.items.length>1&&optNames(x).size<=1&&new Set(x.items.map(i=>i.color.toLowerCase())).size===x.items.length&&!(store.settings.groupDismissed||[]).includes(x.base.toLowerCase()));
 }
 export function openGroupPreview(base){
+  if(refuse("manage_products","change products"))return;
   const grp=colorGroups().find(x=>x.base===base);if(!grp)return;
   const sizes=[...new Set([].concat(...grp.items.map(i=>((i.p.opts||[])[0]||{v:[]}).v)))];
   const prices=[...new Set(grp.items.map(i=>+i.p.price||0))];
@@ -45,6 +47,7 @@ export function openGroupPreview(base){
   </div></div>`;
 }
 export function applyGroup(base){
+  if(refuse("manage_products","change products"))return;
   const grp=colorGroups().find(x=>x.base===base);if(!grp)return;
   const parent=grp.items[0].p,basePrice=+parent.price||0;
   const sizes=[],variants=[],other=(grp.items.map(i=>(i.p.opts||[])[0]).find(Boolean)||{}).n;
@@ -57,6 +60,8 @@ export function applyGroup(base){
   const opts=[{n:"Colour",v:grp.items.map(i=>i.color)},...(other?[{n:other,v:sizes}]:[])];
   const merged=Object.assign({},parent,{name:grp.base,opts,variants});
   const others=grp.items.slice(1).map(i=>i.p.id);
+  // the stock records move to the combined product (a change of saved records): a team member needs stock adjustments too
+  if(Object.values(store.moves).some(m=>others.includes(m.p))&&refuse("manage_inventory","move stock records to another product"))return;
   store.catalog.products=products().filter(p=>!others.includes(p.id)).map(p=>p.id===parent.id?merged:p);
   // moves keep their variant ids; only the product link is updated
   Object.values(store.moves).forEach(m=>{if(others.includes(m.p)){m.p=parent.id;enqueue({type:"move",id:m.id,move:m})}});

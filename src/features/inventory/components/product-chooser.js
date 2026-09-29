@@ -11,8 +11,10 @@ import { closeModal } from '../../../shared/components/modal.js';
 import { ICON } from '../../../shared/constants/icons.js';
 import { $, esc } from '../../../shared/dom.js';
 import { norm } from '../../../shared/utils/text.js';
+import { refuse } from '../../shop/services/access.js';
 
 export function openProductChooser(forWhat){
+  if(forWhat==="exchange"?refuse("perform_return","exchange items"):refuse("manage_inventory","add or adjust stock"))return;
   store.chooserFor=forWhat; store.chooserQ="";
   renderChooser();
   const i=$("#chooseQ"); if(i) i.focus();

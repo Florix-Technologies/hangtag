@@ -36,7 +36,9 @@
  * provided by app/container.js. Reach it through shared/ui/session-actions.js (requestSignOut, requestEnterApp), so the
  * account menu and shop setup don't import the sign-in module (that would be an import cycle).
  * @typedef {Object} SessionPort
- * @property {() => Promise<void>} signOut                  Sign out on this device (local data is kept per account).
+ * @property {(opts?: {message?: string, forgetDevice?: boolean}) => Promise<void>} signOut  Sign out on this device (local data is kept
+ *   per account). message: shown on the sign-in screen (e.g. a phone the owner signed out); forgetDevice: drop this phone's team
+ *   device key instead of keeping it for the member's next sign-in.
  * @property {(firstTime: boolean) => Promise<void>} enterApp  Show the app after sign-in and shop setup, then connect and sync.
  */
 
@@ -57,13 +59,21 @@
  * @property {Function} saveSale  A bill with its lines and payments in one step (RPC hangtag_save_sales; the database checks the
  *   payments add up and posts the financial transactions and cash / bank book entries). Also: setSaleVoid, saveProduct(p, index),
  *   deleteVariants, deleteProduct, saveImage, saveMove, saveReturn, saveCustomer, saveSettings, saveAllSales.
- *   Used by the outbox (features/sync/services/outbox.js) only.
+ *   Used by the outbox (features/sync/services/outbox.js) only. An update or delete that row security quietly skipped (a team
+ *   member's role doesn't allow it; the rows are still there) throws PERMISSION instead of passing as done.
  * @property {Function} fetchProducts  Also: fetchVariants, fetchImages, fetchMoves, fetchReturns, fetchCustomers, fetchSettings,
  *   fetchSales (bills with lines and payments), fetchSaleLineRows, fetchSalePayments, fetchLogo, fetchDeliveries. Used by downloads
- *   (features/sync/services/pull.js, remote-events.js).
+ *   (features/sync/services/pull.js, remote-events.js). A team member's phone (no live updates) polls shopChanges() (one small
+ *   fingerprint per part of the shop, RPC hangtag_shop_changes) and downloads only what changed: fetchSalesSince(iso) (bills
+ *   saved since, with lines and payments), fetchVoidedSales() ([{ id, reason }]).
  * @property {Function} saveLogo  The receipt logo (hangtag_meta "logo"; queue item "logo"). Also: sendReceipt(body) and
  *   deliveryChannels() (Edge Function send-receipt), used through the "messageDelivery" port only.
- * @property {Function} getProfile  Also: createProfile, updateProfile, saveProfile (the hangtag_profiles row of the signed-in user).
+ * @property {Function} getProfile  Also: createProfile, updateProfile, saveProfile (the hangtag_profiles row of the signed-in user;
+ *   getProfile(shopId) also reads a team member's shop profile).
+ * @property {(name: string, body: Object, what: string) => Promise<Object>} callFunction  An Edge Function's answer; throws an AppError.
+ * @property {() => Promise<{shopId: (string|null), role: (string|null), deviceId: (string|null)}>} touchDevice  RPC hangtag_touch_device.
+ * @property {Function} fetchMembers  Also: fetchDevices, fetchRoles, saveRole({ role, permissions, label }) (the shop's team; used
+ *   through the "teamService" port only).
  */
 
 /**
@@ -207,4 +217,28 @@
  * @property {() => Promise<Object[]>} unmatched  Money received that isn't on any bill.
  * @property {(req: {id: string, resolution: "refund"|"refunded"|"allocated", note?: string}) => Promise<Object>} resolve
  *   Every call throws an AppError when it can't be done: NOT_CONFIGURED, VALIDATION, CONFLICT, NOT_FOUND, AUTH, DELIVERY, NETWORK.
+ */
+
+/**
+ * "teamService": the shop's team — members (staff accounts), roles and permissions, and the phones they use. Implementation:
+ * infrastructure/team/team-client.js: changes → Edge Function team (service role; the database decides the caller is the owner);
+ * reads and role permissions → the cloud gateway (REST with row security: the owner reads the whole team, a member only itself).
+ * Reach it through features/shop/services/team.js. Every call throws an AppError when it can't be done (VALIDATION with the
+ * function's own message, e.g. an expired or used QR code; AUTH; NOT_CONFIGURED when the function isn't deployed; NETWORK).
+ * @typedef {Object} TeamServicePort
+ * @property {(m: {name, username, role, password?}) => Promise<{userId, shopCode, username, member}>} createMember  Owner only.
+ * @property {(m: {userId, name?, role?, status?}) => Promise<{member, revoked}>} updateMember  Disabling revokes every phone of the member
+ *   and ends its sign-ins.
+ * @property {(m: {userId, password?}) => Promise<{revoked, passwordSet, sessionsEnded}>} resetAccess  Revokes every phone of the member,
+ *   ends its sign-ins and always replaces its password (with the new one, or one nobody knows: QR only from then on).
+ * @property {(userId: string) => Promise<{ok: true}>} removeMember
+ * @property {(userId: string) => Promise<{token: string, expiresAt: number}>} enrollStart  A single-use QR code, 10 minutes.
+ * @property {(r: {token, deviceName, platform?}) => Promise<{tokenHash, email, deviceId, deviceKey, shopName, role, name, username}>} enrollRedeem
+ *   The new phone (no session): then auth.verifyOtp({ type: "magiclink", token_hash }) signs it in.
+ * @property {(r: {deviceName, platform?}) => Promise<{deviceId, deviceKey, shopName, role, name, username}>} registerDevice
+ *   A member the owner gave a password, signed in with it in the last 10 minutes (after any reset or revoke), adds this phone.
+ * @property {(deviceId: string) => Promise<{ok: true}>} revokeDevice  Also removeDevice(deviceId). Owner only.
+ * @property {() => Promise<Object[]>} members  Also devices(), roles() ([{ role, permissions }]).
+ * @property {(role: string, permissions: string[], label?: string) => Promise<void>} saveRolePermissions  Owner only (hangtag_roles).
+ * @property {() => Promise<{shopId, role, deviceId}>} touch  This phone's standing in its shop (RPC hangtag_touch_device).
  */

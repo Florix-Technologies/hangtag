@@ -6,6 +6,7 @@
 -- Every account has its own shop: its own profile, products, variants (any options: colour, size, storage...),
 -- stock history, supplier bills, bills (with their discounts, GST and payments), cash and bank books, returns,
 -- customers, bills sent to customers, events, logo and settings. Nobody can see or change another account's data.
+-- A shop's owner can add staff (section 3i): each works in that one shop, from enrolled devices, within its role.
 -- The first run of the variant upgrade keeps a copy of the old product, size and bill tables
 -- (hangtag_backup_v2_*), the first run of the options upgrade keeps a copy of products and variants
 -- (hangtag_backup_v3_*), and the script ends with a migration report you can check.
@@ -668,19 +669,21 @@ CREATE INDEX IF NOT EXISTS idx_hangtag_imports_hash ON public.hangtag_stock_impo
 CREATE INDEX IF NOT EXISTS idx_hangtag_imports_invoice ON public.hangtag_stock_imports (owner_id, lower(invoice_no));
 
 -- Adds a confirmed supplier bill in one step: new products, new variants, stock-in records and the import row are all
--- saved, or none are (any error undoes everything). Runs with the caller's own rights, so row security applies.
+-- saved, or none are (any error undoes everything). Runs with the caller's own rights, so row security applies; the shop is
+-- public.hangtag_shop_id() (section 3i) and the caller needs create_purchase.
 -- The same import id twice is a safe retry. The same file, or the same supplier + invoice number, is refused as a
 -- likely repeat unless p_allow_duplicate is true.
 CREATE OR REPLACE FUNCTION public.hangtag_import_stock(p_import JSONB, p_products JSONB, p_variants JSONB, p_moves JSONB, p_allow_duplicate BOOLEAN DEFAULT FALSE)
 RETURNS JSONB LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
 DECLARE
-    uid UUID := auth.uid(); imp TEXT := p_import ->> 'id'; d RECORD; r JSONB;
+    uid UUID := public.hangtag_shop_id(); imp TEXT := p_import ->> 'id'; d RECORD; r JSONB;
     n_p INT := 0; n_v INT := 0; n_m INT := 0; n_units INT := 0;
     inv TEXT := lower(btrim(COALESCE(p_import ->> 'invoice_no', '')));
     gst TEXT := lower(btrim(COALESCE(p_import ->> 'supplier_gstin', '')));
     sup TEXT := lower(btrim(COALESCE(p_import ->> 'supplier_name', '')));
 BEGIN
-    IF uid IS NULL THEN RAISE EXCEPTION 'Sign in to add stock.' USING ERRCODE = '42501'; END IF;
+    IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Sign in to add stock.' USING ERRCODE = '42501'; END IF;
+    IF uid IS NULL OR NOT public.hangtag_can('create_purchase') THEN RAISE EXCEPTION 'Not allowed to add stock from supplier bills.' USING ERRCODE = '42501'; END IF;
     IF COALESCE(imp, '') = '' THEN RAISE EXCEPTION 'The import has no id.' USING ERRCODE = '22023'; END IF;
     IF EXISTS (SELECT 1 FROM public.hangtag_stock_imports WHERE owner_id = uid AND id = imp) THEN
         RETURN jsonb_build_object('status', 'already_imported', 'import_id', imp);
@@ -1045,14 +1048,17 @@ DROP TRIGGER IF EXISTS hangtag_sale_default_payment ON public.hangtag_sales;
 CREATE CONSTRAINT TRIGGER hangtag_sale_default_payment AFTER INSERT ON public.hangtag_sales
     DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.hangtag_sale_default_payment();
 
--- Saves bills with their lines and payments, all or nothing. Runs with the caller's own rights (row security applies).
+-- Saves bills with their lines and payments, all or nothing. Runs with the caller's own rights (row security applies);
+-- the shop is public.hangtag_shop_id() (section 3i) and the caller needs create_sale (and apply_discount for a discount).
 -- p_bills: [{ sale: {hangtag_sales columns}, items: [{hangtag_sale_items columns}], payments: [{hangtag_payments columns}] }]
--- Saving the same bill again updates it (a safe retry), and payments no longer on it are removed. Each bill's
+-- The owner saving the same bill again updates it (a safe retry), and payments no longer on it are removed. A team member
+-- only adds bills: one already saved is left exactly as it is (its retry saves nothing new; section 3i (f)). Each bill's
 -- payments must add up to exactly what was due, or nothing is saved.
 CREATE OR REPLACE FUNCTION public.hangtag_save_sales(p_bills JSONB)
 RETURNS JSONB LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
 DECLARE
-    uid UUID := auth.uid();
+    uid UUID := public.hangtag_shop_id();
+    member BOOLEAN;
     b JSONB;
     s public.hangtag_sales;
     voided BOOLEAN;
@@ -1060,10 +1066,13 @@ DECLARE
     paid NUMERIC;
     n INT := 0;
 BEGIN
-    IF uid IS NULL THEN RAISE EXCEPTION 'Sign in to save bills.' USING ERRCODE = '42501'; END IF;
+    IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Sign in to save bills.' USING ERRCODE = '42501'; END IF;
+    IF uid IS NULL OR NOT public.hangtag_can('create_sale') THEN RAISE EXCEPTION 'Not allowed to save bills.' USING ERRCODE = '42501'; END IF;
+    member := uid <> auth.uid();
     FOR b IN SELECT * FROM jsonb_array_elements(COALESCE(p_bills, '[]'::jsonb)) LOOP
         s := jsonb_populate_record(NULL::public.hangtag_sales, b -> 'sale');
         IF COALESCE(s.id, '') = '' THEN RAISE EXCEPTION 'A bill has no id.' USING ERRCODE = '22023'; END IF;
+        IF member AND EXISTS (SELECT 1 FROM public.hangtag_sales x WHERE x.owner_id = uid AND x.id = s.id) THEN n := n + 1; CONTINUE; END IF;
         INSERT INTO public.hangtag_sales (id, timestamp, subtotal, discount, total, payment_method, device_id, is_void, bill_no,
             customer_id, customer_name, customer_phone, tax_rate, tax_amount, tax_inclusive, kind, exchange_id, credit,
             item_discount, bill_discount, bill_discount_type, bill_discount_value, taxable_amount, cgst_amount, sgst_amount, igst_amount,
@@ -1201,21 +1210,27 @@ ALTER TABLE public.hangtag_return_items DROP CONSTRAINT IF EXISTS hangtag_return
 ALTER TABLE public.hangtag_return_items ADD CONSTRAINT hangtag_return_items_money_check CHECK (value >= 0 AND cgst_amount >= 0 AND sgst_amount >= 0
     AND igst_amount >= 0 AND (gst_rate IS NULL OR gst_rate BETWEEN 0 AND 100)) NOT VALID;
 
--- Saves a return with its lines, all or nothing. Runs with the caller's own rights (row security applies).
+-- Saves a return with its lines, all or nothing. Runs with the caller's own rights (row security applies);
+-- the shop is public.hangtag_shop_id() (section 3i) and the caller needs perform_return.
 -- p_return: {hangtag_returns columns} · p_items: [{hangtag_return_items columns}]
 -- Saving the same return again updates it (a safe retry); lines no longer on it are removed.
 CREATE OR REPLACE FUNCTION public.hangtag_save_return(p_return JSONB, p_items JSONB)
 RETURNS JSONB LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
 DECLARE
-    uid UUID := auth.uid();
+    uid UUID := public.hangtag_shop_id();
     r public.hangtag_returns;
     voided BOOLEAN;
     lines_value NUMERIC;
     n INT;
 BEGIN
-    IF uid IS NULL THEN RAISE EXCEPTION 'Sign in to save returns.' USING ERRCODE = '42501'; END IF;
+    IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Sign in to save returns.' USING ERRCODE = '42501'; END IF;
+    IF uid IS NULL OR NOT public.hangtag_can('perform_return') THEN RAISE EXCEPTION 'Not allowed to save returns.' USING ERRCODE = '42501'; END IF;
     r := jsonb_populate_record(NULL::public.hangtag_returns, p_return);
     IF COALESCE(r.id, '') = '' THEN RAISE EXCEPTION 'A return has no id.' USING ERRCODE = '22023'; END IF;
+    -- a team member only adds returns: one already saved stays exactly as it is (its retry saves nothing new)
+    IF uid <> auth.uid() AND EXISTS (SELECT 1 FROM public.hangtag_returns x WHERE x.owner_id = uid AND x.id = r.id) THEN
+        RETURN jsonb_build_object('status', 'saved', 'return', r.id, 'lines', (SELECT count(*) FROM public.hangtag_return_items i WHERE i.owner_id = uid AND i.return_id = r.id));
+    END IF;
     SELECT is_void INTO voided FROM public.hangtag_sales WHERE owner_id = uid AND id = r.sale_id;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Bill % was not found', r.sale_id USING ERRCODE = 'foreign_key_violation';
@@ -1467,6 +1482,451 @@ CREATE TABLE IF NOT EXISTS public.hangtag_day_closes (
 );
 
 -- ==============================================================================
+-- 3i. Team, roles, devices, audit
+--   The shop is the owner's account: every owner_id column means "the shop" (as before). Staff are accounts of their
+--   own, each a member of exactly one shop (hangtag_members) with a role. A role's permissions are the defaults below
+--   unless the owner changed them (hangtag_roles). A member reaches the shop only from an enrolled device: the app sends
+--   the device key in the x-hangtag-device header on every request, and public.hangtag_shop_id() gives the member's
+--   shop only while the member is active and that key's hash matches one of the member's active devices. Otherwise the
+--   member sees nothing and can change nothing. Every account that is not a member is an owner: hangtag_shop_id() is its
+--   own id and it may do everything, exactly as before.
+--   Members, devices and enrollments are written by the team Edge Function (service role). The owner may also rename a
+--   member, change the role or status, rename, revoke or remove a device, and edit role permissions. The audit log is
+--   written only by the triggers below (the app can read it with view_reports). Bills, returns and stock records are
+--   history for a member: it adds them, never rewrites or removes them (f). The team function ends a member's sign-ins
+--   on reset, revoke and switch-off (g). A member's phone polls what changed instead of downloading everything (h).
+-- ==============================================================================
+-- (a) Team members and their devices
+CREATE TABLE IF NOT EXISTS public.hangtag_members (
+    user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    shop_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL CHECK (char_length(btrim(name)) BETWEEN 1 AND 80),
+    username TEXT NOT NULL CHECK (username ~ '^[a-z0-9._-]{3,30}$'),
+    role TEXT NOT NULL CHECK (role ~ '^[a-z][a-z0-9_]{1,29}$' AND role <> 'owner'),
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','disabled')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by UUID,
+    last_seen_at TIMESTAMPTZ,
+    CONSTRAINT hangtag_members_shop_username_key UNIQUE (shop_id, username),
+    CONSTRAINT hangtag_members_user_shop_key UNIQUE (user_id, shop_id),
+    CONSTRAINT hangtag_members_not_owner_check CHECK (user_id <> shop_id)
+);
+-- when the owner last reset or switched off the member's access (a phone added with a password must be signed in after
+-- it), whether the owner gave the member a password (else it joins phones by QR only), and who last changed the row (the
+-- team Edge Function writes with the service role, so the audit log reads the owner from here)
+ALTER TABLE public.hangtag_members ADD COLUMN IF NOT EXISTS access_reset_at TIMESTAMPTZ;
+ALTER TABLE public.hangtag_members ADD COLUMN IF NOT EXISTS password_signin BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE public.hangtag_members ADD COLUMN IF NOT EXISTS changed_by UUID;
+-- A device of a member: only the hash of its key is kept (the key itself lives only on the device)
+CREATE TABLE IF NOT EXISTS public.hangtag_devices (
+    owner_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    id TEXT NOT NULL CHECK (id ~ '^[A-Za-z0-9_-]{8,64}$'),
+    user_id UUID NOT NULL,
+    name TEXT NOT NULL CHECK (char_length(btrim(name)) BETWEEN 1 AND 60),
+    platform TEXT CHECK (platform IS NULL OR char_length(platform) <= 40),
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked')),
+    key_hash TEXT NOT NULL CHECK (key_hash ~ '^[0-9a-f]{64}$'),
+    enrolled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at TIMESTAMPTZ,
+    revoked_at TIMESTAMPTZ,
+    PRIMARY KEY (owner_id, id),
+    CONSTRAINT hangtag_devices_key_hash_key UNIQUE (key_hash),
+    CONSTRAINT hangtag_devices_revoked_check CHECK ((status = 'revoked') = (revoked_at IS NOT NULL)),
+    -- a device belongs to a member of the same shop, and goes with the member
+    CONSTRAINT hangtag_devices_member_fkey FOREIGN KEY (user_id, owner_id) REFERENCES public.hangtag_members (user_id, shop_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_hangtag_devices_user ON public.hangtag_devices (user_id);
+ALTER TABLE public.hangtag_devices ADD COLUMN IF NOT EXISTS changed_by UUID;   -- who enrolled, revoked or removed it (for the audit log)
+
+-- (b) Who is asking: the shop, the role and the permissions of the signed-in account
+-- The permissions of each role when the shop hasn't changed them (the same lists as src/domain/shop/permissions.js and
+-- supabase/functions/team/core.js)
+CREATE OR REPLACE FUNCTION public.hangtag_default_permissions(p_role TEXT)
+RETURNS TEXT[] LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
+    SELECT CASE p_role
+        WHEN 'owner' THEN ARRAY['view_products','manage_products','manage_inventory','create_purchase','create_sale','apply_discount',
+            'view_reports','perform_return','collect_credit','manage_users','manage_devices','manage_tables','create_order',
+            'send_to_kitchen','manage_kitchen','manage_settings']
+        WHEN 'manager' THEN ARRAY['view_products','manage_products','manage_inventory','create_purchase','create_sale','apply_discount',
+            'view_reports','perform_return','collect_credit','manage_tables','create_order','send_to_kitchen','manage_kitchen','manage_settings']
+        WHEN 'cashier' THEN ARRAY['view_products','create_sale','apply_discount','perform_return','collect_credit','create_order',
+            'send_to_kitchen','manage_tables']
+        WHEN 'server' THEN ARRAY['view_products','create_order','send_to_kitchen','manage_tables']
+        WHEN 'kitchen' THEN ARRAY['manage_kitchen']
+        ELSE '{}'::TEXT[] END
+$$;
+-- The hash of this request's device key (PostgREST puts the request's headers in request.headers), or NULL
+CREATE OR REPLACE FUNCTION public.hangtag_request_device()
+RETURNS TEXT LANGUAGE sql STABLE SET search_path = '' AS $$
+    SELECT CASE WHEN k IS NOT NULL AND char_length(k) BETWEEN 20 AND 200 THEN encode(sha256(convert_to(k, 'UTF8')), 'hex') END
+    FROM (SELECT CASE WHEN h LIKE '{%' THEN h::json ->> 'x-hangtag-device' END AS k
+          FROM (SELECT current_setting('request.headers', true) AS h) a) b
+$$;
+-- The shop of the signed-in account: NULL when signed out; the account itself when it is not a team member (an owner);
+-- for a member, its shop only while it is active and asks from one of its active devices (else NULL: nothing at all).
+-- These three are plpgsql (not sql): row security calls them in every statement, and a SECURITY DEFINER sql function is
+-- planned again on every call, while plpgsql keeps its plans for the session. Each reads the member row once.
+CREATE OR REPLACE FUNCTION public.hangtag_shop_id()
+RETURNS UUID LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    u UUID := auth.uid();
+    m RECORD;
+BEGIN
+    IF u IS NULL THEN RETURN NULL; END IF;
+    SELECT x.shop_id, x.status INTO m FROM public.hangtag_members x WHERE x.user_id = u;
+    IF NOT FOUND THEN RETURN u; END IF;
+    IF m.status = 'active' AND EXISTS (SELECT 1 FROM public.hangtag_devices d
+        WHERE d.key_hash = public.hangtag_request_device() AND d.owner_id = m.shop_id AND d.user_id = u AND d.status = 'active') THEN
+        RETURN m.shop_id;
+    END IF;
+    RETURN NULL;
+END $$;
+-- 'owner', the member's role, or NULL (no shop)
+CREATE OR REPLACE FUNCTION public.hangtag_role()
+RETURNS TEXT LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    u UUID := auth.uid();
+    m RECORD;
+BEGIN
+    IF u IS NULL THEN RETURN NULL; END IF;
+    SELECT x.shop_id, x.status, x.role INTO m FROM public.hangtag_members x WHERE x.user_id = u;
+    IF NOT FOUND THEN RETURN 'owner'; END IF;
+    IF m.status = 'active' AND EXISTS (SELECT 1 FROM public.hangtag_devices d
+        WHERE d.key_hash = public.hangtag_request_device() AND d.owner_id = m.shop_id AND d.user_id = u AND d.status = 'active') THEN
+        RETURN m.role;
+    END IF;
+    RETURN NULL;
+END $$;
+
+-- A shop's own permissions for a role (no row = the defaults above)
+CREATE TABLE IF NOT EXISTS public.hangtag_roles (
+    owner_id UUID NOT NULL DEFAULT public.hangtag_shop_id() REFERENCES auth.users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK (role ~ '^[a-z][a-z0-9_]{1,29}$' AND role <> 'owner'),
+    label TEXT CHECK (label IS NULL OR char_length(btrim(label)) BETWEEN 1 AND 40),
+    permissions TEXT[] NOT NULL DEFAULT '{}',
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (owner_id, role),
+    -- only known permissions (the owner's list is all of them)
+    CONSTRAINT hangtag_roles_permissions_check CHECK (permissions <@ public.hangtag_default_permissions('owner'))
+);
+-- Whether the signed-in account may do p in its shop: an owner may do everything; a member what its role allows
+CREATE OR REPLACE FUNCTION public.hangtag_can(p TEXT)
+RETURNS BOOLEAN LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    u UUID := auth.uid();
+    m RECORD;
+    perms TEXT[];
+BEGIN
+    IF u IS NULL THEN RETURN FALSE; END IF;
+    SELECT x.shop_id, x.status, x.role INTO m FROM public.hangtag_members x WHERE x.user_id = u;
+    IF NOT FOUND THEN RETURN TRUE; END IF;   -- an owner may do everything
+    IF m.status <> 'active' OR NOT EXISTS (SELECT 1 FROM public.hangtag_devices d
+        WHERE d.key_hash = public.hangtag_request_device() AND d.owner_id = m.shop_id AND d.user_id = u AND d.status = 'active') THEN
+        RETURN FALSE;
+    END IF;
+    SELECT r.permissions INTO perms FROM public.hangtag_roles r WHERE r.owner_id = m.shop_id AND r.role = m.role;
+    RETURN COALESCE(p = ANY (COALESCE(perms, public.hangtag_default_permissions(m.role))), FALSE);
+END $$;
+
+-- (c) Enrolling a device: a single-use QR token for one member, valid 10 minutes (only its hash is kept)
+CREATE TABLE IF NOT EXISTS public.hangtag_enrollments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner_id UUID NOT NULL DEFAULT public.hangtag_shop_id() REFERENCES auth.users(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL,
+    token_hash TEXT NOT NULL CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + interval '10 minutes'),
+    used_at TIMESTAMPTZ,
+    device_id TEXT,
+    created_by UUID,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT hangtag_enrollments_token_key UNIQUE (token_hash),
+    CONSTRAINT hangtag_enrollments_expiry_check CHECK (expires_at <= created_at + interval '10 minutes'),
+    CONSTRAINT hangtag_enrollments_member_fkey FOREIGN KEY (user_id, owner_id) REFERENCES public.hangtag_members (user_id, shop_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_hangtag_enrollments_member ON public.hangtag_enrollments (owner_id, user_id);
+
+-- (d) The audit log: who did what, from which device. Written only by public.hangtag_audit() (a trigger); small rows.
+CREATE TABLE IF NOT EXISTS public.hangtag_audit_log (
+    owner_id UUID NOT NULL DEFAULT public.hangtag_shop_id() REFERENCES auth.users(id) ON DELETE CASCADE,
+    id BIGSERIAL,
+    t TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    user_id UUID,                                  -- no link: the log outlives a removed member
+    device_id TEXT,
+    action TEXT NOT NULL,                          -- insert | update | delete | void | restore | archive | unarchive | revoke | disable | enable
+    entity TEXT NOT NULL,                          -- the table without "hangtag_" (sales, returns, stock_moves …)
+    entity_id TEXT,
+    summary JSONB NOT NULL DEFAULT '{}'::jsonb,    -- a few fields of the row (and the names of the changed columns)
+    PRIMARY KEY (owner_id, id)
+);
+CREATE INDEX IF NOT EXISTS idx_hangtag_audit_time ON public.hangtag_audit_log (owner_id, t DESC);
+
+-- A member's device calls this when the app opens and now and then: it keeps "last seen" and tells the app whether it
+-- still reaches the shop ({shop_id, role, device_id}; shop_id null = signed out of the shop: disabled, revoked or no key)
+CREATE OR REPLACE FUNCTION public.hangtag_touch_device()
+RETURNS JSONB LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    shop UUID := public.hangtag_shop_id();
+    dev TEXT;
+BEGIN
+    IF shop IS NULL THEN RETURN jsonb_build_object('shop_id', NULL, 'role', NULL, 'device_id', NULL); END IF;
+    IF shop <> auth.uid() THEN
+        UPDATE public.hangtag_devices SET last_seen_at = NOW()
+         WHERE key_hash = public.hangtag_request_device() AND owner_id = shop AND user_id = auth.uid() AND status = 'active'
+        RETURNING id INTO dev;
+        UPDATE public.hangtag_members SET last_seen_at = NOW() WHERE user_id = auth.uid();
+    END IF;
+    RETURN jsonb_build_object('shop_id', shop, 'role', public.hangtag_role(), 'device_id', dev);
+END $$;
+
+-- A member stays in its shop, never runs a shop of its own, and a shop is never itself a member
+CREATE OR REPLACE FUNCTION public.hangtag_member_check()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' AND (NEW.user_id <> OLD.user_id OR NEW.shop_id <> OLD.shop_id) THEN
+        RAISE EXCEPTION 'A team member stays in its shop' USING ERRCODE = 'check_violation';
+    END IF;
+    IF TG_OP = 'INSERT' AND (EXISTS (SELECT 1 FROM public.hangtag_members m WHERE m.shop_id = NEW.user_id)
+        OR EXISTS (SELECT 1 FROM public.hangtag_products p WHERE p.owner_id = NEW.user_id)
+        OR EXISTS (SELECT 1 FROM public.hangtag_sales s WHERE s.owner_id = NEW.user_id)) THEN
+        RAISE EXCEPTION 'That account runs a shop of its own, so it can''t join another one' USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (SELECT 1 FROM public.hangtag_members m WHERE m.user_id = NEW.shop_id) THEN
+        RAISE EXCEPTION 'A team member can''t have a team of its own' USING ERRCODE = 'check_violation';
+    END IF;
+    -- switched off: a phone can be added again only with a password sign-in made after now (the team function checks it)
+    IF TG_OP = 'UPDATE' AND NEW.status = 'disabled' AND OLD.status <> 'disabled' THEN NEW.access_reset_at := NOW(); END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_member_check ON public.hangtag_members;
+CREATE TRIGGER hangtag_member_check BEFORE INSERT OR UPDATE ON public.hangtag_members
+    FOR EACH ROW EXECUTE FUNCTION public.hangtag_member_check();
+-- A device keeps its shop, member and key; a revoked device stays revoked (enroll the phone again instead)
+CREATE OR REPLACE FUNCTION public.hangtag_device_check()
+RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
+BEGIN
+    IF NEW.owner_id <> OLD.owner_id OR NEW.user_id <> OLD.user_id OR NEW.key_hash <> OLD.key_hash THEN
+        RAISE EXCEPTION 'A device keeps its shop, member and key' USING ERRCODE = 'check_violation';
+    END IF;
+    IF OLD.status = 'revoked' AND NEW.status <> 'revoked' THEN
+        RAISE EXCEPTION 'A revoked device can''t be switched back on. Enroll it again.' USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_device_check ON public.hangtag_devices;
+CREATE TRIGGER hangtag_device_check BEFORE UPDATE ON public.hangtag_devices
+    FOR EACH ROW EXECUTE FUNCTION public.hangtag_device_check();
+
+-- (e) Audit: one small row per change worth knowing about (bills cancelled, restored, changed or removed, their lines and
+-- payments changed or removed, returns, stock adjustments and any stock record changed or removed, cash entries, day
+-- closes, customers, team, roles, devices, events, products added, removed or archived). A change of "last seen" or
+-- "updated at" only is not logged, nor is a shop whose account is being deleted. Who: the signed-in account; for a
+-- change the team Edge Function made (service role), the owner it names in changed_by (or created_by).
+CREATE OR REPLACE FUNCTION public.hangtag_audit()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    r JSONB;
+    o JSONB;
+    shop UUID;
+    act TEXT := lower(TG_OP);
+    changed TEXT[];
+    dev TEXT;
+    summary JSONB;
+    keep CONSTANT TEXT[] := ARRAY['status','name','username','role','label','permissions','type','qty','amount','reason','category',
+        'reverses','refund_amount','refund_method','value','credit_no','bill_no','total','is_void','void_reason','kind','sale_id',
+        'variant_id','product_id','note','day','scope','expected','counted','difference','archived','platform','user_id',
+        'start_date','end_date','method','credit','discount','quantity','unit_price','line_no','return_id'];
+BEGIN
+    IF TG_OP = 'DELETE' THEN r := to_jsonb(OLD); ELSE r := to_jsonb(NEW); END IF;
+    shop := COALESCE(r ->> 'owner_id', r ->> 'shop_id')::UUID;
+    IF shop IS NULL OR NOT EXISTS (SELECT 1 FROM auth.users u WHERE u.id = shop) THEN RETURN NULL; END IF;
+    IF TG_OP = 'UPDATE' THEN
+        o := to_jsonb(OLD);
+        SELECT array_agg(k ORDER BY k) INTO changed FROM jsonb_object_keys(r) k
+         WHERE k NOT IN ('updated_at','last_seen_at','created_at','changed_by') AND (r -> k) IS DISTINCT FROM (o -> k);
+        IF changed IS NULL THEN RETURN NULL; END IF;
+        act := CASE
+            WHEN TG_TABLE_NAME = 'hangtag_sales' AND 'is_void' = ANY (changed) THEN CASE WHEN (r ->> 'is_void')::BOOLEAN THEN 'void' ELSE 'restore' END
+            WHEN TG_TABLE_NAME = 'hangtag_products' AND 'archived' = ANY (changed) THEN CASE WHEN (r ->> 'archived')::BOOLEAN THEN 'archive' ELSE 'unarchive' END
+            WHEN TG_TABLE_NAME = 'hangtag_devices' AND 'status' = ANY (changed) AND r ->> 'status' = 'revoked' THEN 'revoke'
+            WHEN TG_TABLE_NAME = 'hangtag_members' AND 'status' = ANY (changed) THEN CASE WHEN r ->> 'status' = 'disabled' THEN 'disable' ELSE 'enable' END
+            WHEN TG_TABLE_NAME = 'hangtag_members' AND 'access_reset_at' = ANY (changed) THEN 'reset'
+            ELSE 'update' END;
+    END IF;
+    -- the member's device that made the change (the owner has none: then the device the row names, if any)
+    SELECT d.id INTO dev FROM public.hangtag_devices d
+     WHERE d.key_hash = public.hangtag_request_device() AND d.user_id = auth.uid() AND d.status = 'active';
+    SELECT COALESCE(jsonb_object_agg(e.key, CASE WHEN jsonb_typeof(e.value) = 'string' THEN to_jsonb(left(e.value #>> '{}', 80)) ELSE e.value END), '{}'::jsonb)
+      INTO summary FROM jsonb_each(r) e WHERE e.key = ANY (keep) AND e.value <> 'null'::jsonb;
+    IF changed IS NOT NULL THEN summary := summary || jsonb_build_object('changed', to_jsonb(changed[1:20])); END IF;
+    INSERT INTO public.hangtag_audit_log (owner_id, user_id, device_id, action, entity, entity_id, summary)
+    VALUES (shop, COALESCE(auth.uid(), (r ->> 'changed_by')::UUID, (r ->> 'created_by')::UUID), left(COALESCE(dev, r ->> 'device_id'), 80), act,
+            regexp_replace(TG_TABLE_NAME, '^hangtag_', ''), left(COALESCE(r ->> 'id', r ->> 'user_id', r ->> 'role'), 100), summary);
+    RETURN NULL;
+END $$;
+-- bills, their lines and payments: a new bill is its own record (not logged); cancelling, restoring, any change of a saved
+-- bill, line or payment (re-uploading the same bill changes nothing, so logs nothing; a payment's status follows the bill)
+-- and any removal are logged
+DROP TRIGGER IF EXISTS hangtag_audit_change ON public.hangtag_sales;
+CREATE TRIGGER hangtag_audit_change AFTER UPDATE ON public.hangtag_sales FOR EACH ROW WHEN (OLD.* IS DISTINCT FROM NEW.*) EXECUTE FUNCTION public.hangtag_audit();
+DROP TRIGGER IF EXISTS hangtag_audit_change ON public.hangtag_sale_items;
+CREATE TRIGGER hangtag_audit_change AFTER UPDATE ON public.hangtag_sale_items FOR EACH ROW WHEN (OLD.* IS DISTINCT FROM NEW.*) EXECUTE FUNCTION public.hangtag_audit();
+DROP TRIGGER IF EXISTS hangtag_audit_change ON public.hangtag_payments;
+CREATE TRIGGER hangtag_audit_change AFTER UPDATE OF sale_id, method, amount, tendered, change_given, reference, verification, card_last4 ON public.hangtag_payments FOR EACH ROW
+    WHEN ((OLD.sale_id, OLD.method, OLD.amount, OLD.tendered, OLD.change_given, OLD.reference, OLD.verification, OLD.card_last4)
+          IS DISTINCT FROM (NEW.sale_id, NEW.method, NEW.amount, NEW.tendered, NEW.change_given, NEW.reference, NEW.verification, NEW.card_last4))
+    EXECUTE FUNCTION public.hangtag_audit();
+-- stock: adjustments added, and any stock record changed or removed (opening stock and stock in are their own record)
+DROP TRIGGER IF EXISTS hangtag_audit ON public.hangtag_stock_moves;
+CREATE TRIGGER hangtag_audit AFTER INSERT ON public.hangtag_stock_moves FOR EACH ROW WHEN (NEW.type = 'ADJUST') EXECUTE FUNCTION public.hangtag_audit();
+DROP TRIGGER IF EXISTS hangtag_audit_change ON public.hangtag_stock_moves;
+CREATE TRIGGER hangtag_audit_change AFTER UPDATE ON public.hangtag_stock_moves FOR EACH ROW WHEN (OLD.* IS DISTINCT FROM NEW.*) EXECUTE FUNCTION public.hangtag_audit();
+-- removed: bills, lines, payments, return lines, stock records
+DO $$
+DECLARE t TEXT;
+BEGIN
+    FOREACH t IN ARRAY ARRAY['hangtag_sales','hangtag_sale_items','hangtag_payments','hangtag_return_items','hangtag_stock_moves'] LOOP
+        EXECUTE format('DROP TRIGGER IF EXISTS hangtag_audit_remove ON public.%I', t);
+        EXECUTE format('CREATE TRIGGER hangtag_audit_remove AFTER DELETE ON public.%I FOR EACH ROW EXECUTE FUNCTION public.hangtag_audit()', t);
+    END LOOP;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_audit_change ON public.hangtag_return_items;
+CREATE TRIGGER hangtag_audit_change AFTER UPDATE ON public.hangtag_return_items FOR EACH ROW WHEN (OLD.* IS DISTINCT FROM NEW.*) EXECUTE FUNCTION public.hangtag_audit();
+-- products: added, removed, archived or brought back
+DROP TRIGGER IF EXISTS hangtag_audit ON public.hangtag_products;
+CREATE TRIGGER hangtag_audit AFTER INSERT OR DELETE ON public.hangtag_products FOR EACH ROW EXECUTE FUNCTION public.hangtag_audit();
+DROP TRIGGER IF EXISTS hangtag_audit_change ON public.hangtag_products;
+CREATE TRIGGER hangtag_audit_change AFTER UPDATE OF archived ON public.hangtag_products FOR EACH ROW
+    WHEN (OLD.archived IS DISTINCT FROM NEW.archived) EXECUTE FUNCTION public.hangtag_audit();
+-- cash entries are only ever added
+DROP TRIGGER IF EXISTS hangtag_audit ON public.hangtag_cash_moves;
+CREATE TRIGGER hangtag_audit AFTER INSERT OR DELETE ON public.hangtag_cash_moves FOR EACH ROW EXECUTE FUNCTION public.hangtag_audit();
+-- everything else: added, changed (really changed) or removed
+DO $$
+DECLARE t TEXT;
+BEGIN
+    FOREACH t IN ARRAY ARRAY['hangtag_returns','hangtag_day_closes','hangtag_customers','hangtag_members','hangtag_roles','hangtag_devices','hangtag_events'] LOOP
+        EXECUTE format('DROP TRIGGER IF EXISTS hangtag_audit ON public.%I', t);
+        EXECUTE format('CREATE TRIGGER hangtag_audit AFTER INSERT OR DELETE ON public.%I FOR EACH ROW EXECUTE FUNCTION public.hangtag_audit()', t);
+        EXECUTE format('DROP TRIGGER IF EXISTS hangtag_audit_change ON public.%I', t);
+        EXECUTE format('CREATE TRIGGER hangtag_audit_change AFTER UPDATE ON public.%I FOR EACH ROW WHEN (OLD.* IS DISTINCT FROM NEW.*) EXECUTE FUNCTION public.hangtag_audit()', t);
+    END LOOP;
+END $$;
+
+-- (f) What a team member may write beyond row security. Bills with their lines and payments, returns with their lines, and
+-- stock records are history: a member adds them, and cancels or restores a bill with perform_return or manage_settings,
+-- but never rewrites one. A change to a saved row is refused unless it changes nothing (an upload sent twice); a member's
+-- new bill lines and payments go only onto a bill made in the same save (return lines likewise), and removing any of them
+-- is the owner's alone (section 5). A stock record changes only with manage_inventory. Discounts need apply_discount (the
+-- app hides them too; a price typed lower is not checked here). The owner, the database's own SECURITY DEFINER functions
+-- (posting, cancelling a bill's payments) and the Edge Functions (service role) are not limited by this.
+CREATE OR REPLACE FUNCTION public.hangtag_member_write_check()
+RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
+DECLARE
+    n JSONB;
+    o JSONB;
+BEGIN
+    IF current_user <> 'authenticated' OR NEW.owner_id = auth.uid() THEN RETURN NEW; END IF;
+    IF TG_OP = 'INSERT' THEN
+        IF TG_TABLE_NAME = 'hangtag_sales' THEN
+            NEW.created_at := NOW();   -- "made in this save": its lines and payments check it
+            IF (COALESCE(NEW.discount, 0) > 0 OR COALESCE(NEW.item_discount, 0) > 0 OR COALESCE(NEW.bill_discount, 0) > 0)
+               AND NOT public.hangtag_can('apply_discount') THEN
+                RAISE EXCEPTION 'Not allowed to give discounts.' USING ERRCODE = '42501';
+            END IF;
+        ELSIF TG_TABLE_NAME = 'hangtag_returns' THEN
+            NEW.created_at := NOW();
+        ELSIF TG_TABLE_NAME = 'hangtag_sale_items' THEN
+            IF NOT EXISTS (SELECT 1 FROM public.hangtag_sales s WHERE s.owner_id = NEW.owner_id AND s.id = NEW.sale_id AND s.created_at = NOW()) THEN
+                RAISE EXCEPTION 'Only the owner can change a saved bill.' USING ERRCODE = '42501';
+            END IF;
+            IF (COALESCE(NEW.discount_amount, 0) > 0 OR COALESCE(NEW.bill_discount_share, 0) > 0) AND NOT public.hangtag_can('apply_discount') THEN
+                RAISE EXCEPTION 'Not allowed to give discounts.' USING ERRCODE = '42501';
+            END IF;
+        ELSIF TG_TABLE_NAME = 'hangtag_payments' THEN
+            IF NOT EXISTS (SELECT 1 FROM public.hangtag_sales s WHERE s.owner_id = NEW.owner_id AND s.id = NEW.sale_id AND s.created_at = NOW()) THEN
+                RAISE EXCEPTION 'Only the owner can change a saved bill.' USING ERRCODE = '42501';
+            END IF;
+        ELSIF TG_TABLE_NAME = 'hangtag_return_items' THEN
+            IF NOT EXISTS (SELECT 1 FROM public.hangtag_returns x WHERE x.owner_id = NEW.owner_id AND x.id = NEW.return_id AND x.created_at = NOW()) THEN
+                RAISE EXCEPTION 'Only the owner can change a saved return.' USING ERRCODE = '42501';
+            END IF;
+        END IF;
+        RETURN NEW;
+    END IF;
+    n := to_jsonb(NEW); o := to_jsonb(OLD);
+    IF n = o THEN RETURN NEW; END IF;   -- the same row again (an upload sent twice): nothing changes
+    IF TG_TABLE_NAME = 'hangtag_sales' AND (n - 'is_void' - 'void_reason') = (o - 'is_void' - 'void_reason') THEN
+        -- cancelling or restoring a bill (and its reason)
+        IF public.hangtag_can('perform_return') OR public.hangtag_can('manage_settings') THEN RETURN NEW; END IF;
+        RAISE EXCEPTION 'Not allowed to cancel bills.' USING ERRCODE = '42501';
+    END IF;
+    IF TG_TABLE_NAME = 'hangtag_stock_moves' THEN
+        IF public.hangtag_can('manage_inventory') THEN RETURN NEW; END IF;
+        RAISE EXCEPTION 'Only the owner, or a role with stock adjustments, can change saved stock records.' USING ERRCODE = '42501';
+    END IF;
+    RAISE EXCEPTION '%', CASE WHEN TG_TABLE_NAME IN ('hangtag_returns','hangtag_return_items') THEN 'Only the owner can change a saved return.'
+        ELSE 'Only the owner can change a saved bill.' END USING ERRCODE = '42501';
+END $$;
+DO $$
+DECLARE t TEXT;
+BEGIN
+    FOREACH t IN ARRAY ARRAY['hangtag_sales','hangtag_sale_items','hangtag_payments','hangtag_returns','hangtag_return_items','hangtag_stock_moves'] LOOP
+        EXECUTE format('DROP TRIGGER IF EXISTS hangtag_member_write_check ON public.%I', t);
+        EXECUTE format('CREATE TRIGGER hangtag_member_write_check BEFORE INSERT OR UPDATE ON public.%I FOR EACH ROW EXECUTE FUNCTION public.hangtag_member_write_check()', t);
+    END LOOP;
+END $$;
+
+-- (g) Ending a member's sign-ins (the team Edge Function, service role only): on reset, revoke and switch-off every
+-- session and refresh token of the member goes, so no phone gets a new token. -> true when done; false when the database
+-- doesn't allow it (the member's devices are revoked anyway, so an old token reaches nothing, and adding a phone needs a
+-- password sign-in made after the reset). Never for an owner.
+CREATE OR REPLACE FUNCTION public.hangtag_end_sessions(p_user UUID)
+RETURNS BOOLEAN LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+    IF p_user IS NULL OR NOT EXISTS (SELECT 1 FROM public.hangtag_members m WHERE m.user_id = p_user) THEN RETURN FALSE; END IF;
+    DELETE FROM auth.sessions WHERE user_id = p_user;
+    RETURN TRUE;
+EXCEPTION WHEN undefined_table OR undefined_column OR insufficient_privilege THEN
+    RETURN FALSE;
+END $$;
+
+-- (h) What changed in the shop, cheaply: a member's phone gets no live updates, so every 30 s it asks for one small
+-- fingerprint per part of the shop and downloads only the parts whose fingerprint changed (and only the bills made since
+-- its last look). Runs with the caller's rights: row security decides what each part counts.
+CREATE OR REPLACE FUNCTION public.hangtag_shop_changes()
+RETURNS JSONB LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
+    SELECT jsonb_build_object(
+        'catalog', (SELECT count(*) || ':' || COALESCE(sum(hashtext(p.id || '|' || COALESCE(p.updated_at::text, ''))), 0) FROM public.hangtag_products p)
+                || '/' || (SELECT count(*) || ':' || COALESCE(sum(hashtext(v.id || '|' || COALESCE(v.updated_at::text, ''))), 0) FROM public.hangtag_variants v),
+        'images', (SELECT count(*) || ':' || COALESCE(sum(hashtext(i.product_id || '|' || COALESCE(i.updated_at::text, ''))), 0) FROM public.hangtag_images i),
+        'moves', (SELECT count(*) || ':' || COALESCE(sum(hashtext(m.id || '|' || COALESCE(m.variant_id, '') || '|' || COALESCE(m.product_id, '') || '|' || m.qty::text)), 0) FROM public.hangtag_stock_moves m),
+        'returns', (SELECT count(*) || ':' || COALESCE(sum(hashtext(r.id)), 0) FROM public.hangtag_returns r),
+        'customers', (SELECT count(*) || ':' || COALESCE(sum(hashtext(c.id || '|' || COALESCE(c.updated_at::text, ''))), 0) FROM public.hangtag_customers c),
+        'events', (SELECT count(*) || ':' || COALESCE(sum(hashtext(e.id || '|' || e.status || '|' || COALESCE(e.updated_at::text, ''))), 0) FROM public.hangtag_events e),
+        'cash', (SELECT count(*) || ':' || COALESCE(sum(hashtext(c.id)), 0) FROM public.hangtag_cash_moves c)
+                || '/' || (SELECT count(*) || ':' || COALESCE(sum(hashtext(d.id || '|' || d.counted::text || '|' || d.t::text)), 0) FROM public.hangtag_day_closes d),
+        'settings', (SELECT count(*) || ':' || COALESCE(sum(hashtext(x.key || '|' || COALESCE(x.updated_at::text, ''))), 0) FROM public.hangtag_meta x),
+        -- bills: how many, when the newest was saved (the database's time: the phone fetches those saved since), which are cancelled
+        'sales', b.n || '|' || COALESCE(b.since::text, '') || '|' || b.voids,
+        'sales_count', b.n, 'sales_since', b.since, 'sales_voids', b.voids)
+    FROM (SELECT count(*) AS n, max(s.created_at) AS since,
+                 COALESCE(sum(hashtext(s.id || '|' || COALESCE(s.void_reason, ''))) FILTER (WHERE s.is_void), 0)::text AS voids
+          FROM public.hangtag_sales s) b
+$$;
+
+REVOKE ALL ON FUNCTION public.hangtag_shop_id(), public.hangtag_role(), public.hangtag_can(TEXT), public.hangtag_default_permissions(TEXT),
+    public.hangtag_touch_device(), public.hangtag_shop_changes() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.hangtag_shop_id(), public.hangtag_role(), public.hangtag_can(TEXT), public.hangtag_default_permissions(TEXT),
+    public.hangtag_touch_device(), public.hangtag_shop_changes() TO authenticated;
+REVOKE ALL ON FUNCTION public.hangtag_request_device(), public.hangtag_audit(), public.hangtag_member_check(), public.hangtag_device_check(),
+    public.hangtag_member_write_check(), public.hangtag_end_sessions(UUID) FROM PUBLIC, anon, authenticated;
+-- the team Edge Function (service role) ends sign-ins; nobody else may
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.hangtag_end_sessions(UUID) TO service_role;
+EXCEPTION WHEN undefined_object THEN NULL;   -- a database without Supabase's roles (tests)
+END $$;
+
+-- ==============================================================================
 -- 4. Indexes for reports
 -- ==============================================================================
 DROP INDEX IF EXISTS public.idx_hangtag_sizes_prod;
@@ -1476,30 +1936,118 @@ CREATE INDEX IF NOT EXISTS idx_hangtag_sales_owner_time ON public.hangtag_sales 
 CREATE INDEX IF NOT EXISTS idx_hangtag_sale_items_prod ON public.hangtag_sale_items (product_id);
 
 -- ==============================================================================
--- 5. Row Level Security: each signed-in account sees and changes only its own rows.
---    Replaces the older "Public access" and "Approved staff access" rules.
+-- 5. Row Level Security: a shop's rows are seen and changed only by its owner, and by its team members from their
+--    enrolled devices, each within their role's permissions (section 3i). owner_id fills itself in with the shop of the
+--    signed-in account (public.hangtag_shop_id()), so the app never sends it. For an owner nothing changes: the shop is
+--    the account itself and every permission is theirs.
+--    Replaces the older "Own rows only", "Public access" and "Approved staff access" rules.
 -- ==============================================================================
 DO $$
-DECLARE t TEXT;
+DECLARE
+    r RECORD;
+    rd TEXT;
+    shop CONSTANT TEXT := 'owner_id = (SELECT public.hangtag_shop_id())';
+    any_of TEXT;
+    ops TEXT[];
+    w TEXT[];
+    i INT;
 BEGIN
-    FOREACH t IN ARRAY ARRAY['hangtag_products','hangtag_sizes','hangtag_images','hangtag_sales','hangtag_sale_items','hangtag_meta','hangtag_variants','hangtag_stock_moves','hangtag_customers','hangtag_returns','hangtag_return_items','hangtag_stock_imports',
-                     'hangtag_payments','hangtag_fin_txns','hangtag_cash_book','hangtag_bank_book','hangtag_deliveries','hangtag_events','hangtag_payment_intents','hangtag_invoice_links',
-                     'hangtag_cash_moves','hangtag_day_closes'] LOOP
-        EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
-        EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 'Public access to ' || t, t);
-        EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 'Approved staff access to ' || t, t);
-        EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 'Own rows only', t);
-        EXECUTE format(
-            'CREATE POLICY %I ON public.%I FOR ALL TO authenticated USING (owner_id = (SELECT auth.uid())) WITH CHECK (owner_id = (SELECT auth.uid()))',
-            'Own rows only', t);
+    FOR r IN SELECT * FROM (VALUES
+        -- table, who may read it (any one of these permissions; '' = everyone in the shop),
+        -- who may add / change / remove its rows ('-' = nobody here: the database or an Edge Function writes it; 'owner' = the owner only;
+        -- 'add|change|remove' when they differ). Bills, returns and stock records are history: a member adds them, and
+        -- hangtag_member_write_check() (section 3i) refuses a member's real change of a saved one (except cancelling a bill)
+        ('hangtag_products',        '',                                             'manage_products'),
+        ('hangtag_variants',        '',                                             'manage_products'),
+        ('hangtag_images',          '',                                             'manage_products'),
+        ('hangtag_sizes',           '',                                             'manage_products'),
+        ('hangtag_stock_moves',     '',                                             'manage_inventory,create_purchase,perform_return|manage_inventory,create_purchase,perform_return|manage_inventory'),
+        ('hangtag_sales',           'create_sale,view_reports,create_order',        'create_sale|create_sale,perform_return,manage_settings|owner'),
+        ('hangtag_sale_items',      'create_sale,view_reports,create_order',        'create_sale|create_sale|owner'),
+        ('hangtag_payments',        'create_sale,view_reports,create_order',        'create_sale|create_sale|owner'),
+        ('hangtag_returns',         'create_sale,view_reports',                     'perform_return|perform_return|owner'),
+        ('hangtag_return_items',    'create_sale,view_reports',                     'perform_return|perform_return|owner'),
+        ('hangtag_customers',       '',                                             'create_sale,collect_credit,create_order'),
+        ('hangtag_meta',            '',                                             'manage_settings'),
+        ('hangtag_events',          '',                                             'manage_settings'),
+        ('hangtag_stock_imports',   'create_purchase,manage_inventory,view_reports','create_purchase'),
+        ('hangtag_fin_txns',        'create_sale,view_reports',                     '-'),
+        ('hangtag_cash_book',       'create_sale,view_reports',                     '-'),
+        ('hangtag_bank_book',       'create_sale,view_reports',                     '-'),
+        ('hangtag_deliveries',      'create_sale,view_reports',                     '-'),
+        ('hangtag_payment_intents', 'create_sale,view_reports',                     '-'),
+        ('hangtag_invoice_links',   'create_sale,view_reports',                     'create_sale'),
+        ('hangtag_cash_moves',      'create_sale,view_reports',                     'create_sale'),
+        ('hangtag_day_closes',      'create_sale,view_reports',                     'create_sale'),
+        ('hangtag_roles',           '',                                             'owner'),
+        ('hangtag_audit_log',       'view_reports',                                 '-'),
+        -- devices and enrollment tokens have rules of their own (below); here they get the shop default
+        ('hangtag_devices',         NULL,                                           NULL),
+        ('hangtag_enrollments',     NULL,                                           NULL)
+    ) AS x(t, rd, wr) LOOP
+        EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', r.t);
+        EXECUTE format('ALTER TABLE public.%I ALTER COLUMN owner_id SET DEFAULT public.hangtag_shop_id()', r.t);
+        EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 'Public access to ' || r.t, r.t);
+        EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 'Approved staff access to ' || r.t, r.t);
+        EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 'Own rows only', r.t);
+        EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 'Shop read', r.t);
+        EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 'Shop write (add)', r.t);
+        EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 'Shop write (change)', r.t);
+        EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 'Shop write (remove)', r.t);
+        CONTINUE WHEN r.rd IS NULL;
+        -- (SELECT …) runs each check once per statement, not once per row
+        SELECT string_agg(format('(SELECT public.hangtag_can(%L))', p), ' OR ') INTO any_of FROM unnest(string_to_array(NULLIF(r.rd, ''), ',')) p;
+        rd := shop || COALESCE(' AND (' || any_of || ')', '');
+        EXECUTE format('CREATE POLICY "Shop read" ON public.%I FOR SELECT TO authenticated USING (%s)', r.t, rd);
+        CONTINUE WHEN r.wr = '-';
+        ops := string_to_array(r.wr, '|');
+        IF array_length(ops, 1) = 1 THEN ops := ARRAY[ops[1], ops[1], ops[1]]; END IF;
+        w := ARRAY[]::TEXT[];
+        FOR i IN 1..3 LOOP
+            IF ops[i] = 'owner' THEN
+                w := w || (shop || ' AND (SELECT public.hangtag_role()) = ''owner''');
+            ELSE
+                SELECT string_agg(format('(SELECT public.hangtag_can(%L))', p), ' OR ') INTO any_of FROM unnest(string_to_array(ops[i], ',')) p;
+                w := w || (shop || ' AND (' || any_of || ')');
+            END IF;
+        END LOOP;
+        EXECUTE format('CREATE POLICY "Shop write (add)" ON public.%I FOR INSERT TO authenticated WITH CHECK (%s)', r.t, w[1]);
+        EXECUTE format('CREATE POLICY "Shop write (change)" ON public.%I FOR UPDATE TO authenticated USING (%s) WITH CHECK (%s)', r.t, w[2], w[2]);
+        EXECUTE format('CREATE POLICY "Shop write (remove)" ON public.%I FOR DELETE TO authenticated USING (%s)', r.t, w[3]);
     END LOOP;
 END $$;
 
+-- Team members: a member reads its own row; the owner reads the whole team and may rename a member or change the role
+-- or status (members are added and removed by the team Edge Function)
+ALTER TABLE public.hangtag_members ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Shop read" ON public.hangtag_members;
+DROP POLICY IF EXISTS "Shop write (change)" ON public.hangtag_members;
+CREATE POLICY "Shop read" ON public.hangtag_members FOR SELECT TO authenticated
+    USING (shop_id = (SELECT public.hangtag_shop_id()) AND (user_id = (SELECT auth.uid()) OR (SELECT public.hangtag_role()) = 'owner'));
+CREATE POLICY "Shop write (change)" ON public.hangtag_members FOR UPDATE TO authenticated
+    USING (shop_id = (SELECT public.hangtag_shop_id()) AND (SELECT public.hangtag_role()) = 'owner')
+    WITH CHECK (shop_id = (SELECT public.hangtag_shop_id()) AND (SELECT public.hangtag_role()) = 'owner');
+-- Devices: a member reads its own; the owner reads all of the shop's and may rename, revoke or remove them
+CREATE POLICY "Shop read" ON public.hangtag_devices FOR SELECT TO authenticated
+    USING (owner_id = (SELECT public.hangtag_shop_id()) AND (user_id = (SELECT auth.uid()) OR (SELECT public.hangtag_role()) = 'owner'));
+CREATE POLICY "Shop write (change)" ON public.hangtag_devices FOR UPDATE TO authenticated
+    USING (owner_id = (SELECT public.hangtag_shop_id()) AND (SELECT public.hangtag_role()) = 'owner')
+    WITH CHECK (owner_id = (SELECT public.hangtag_shop_id()) AND (SELECT public.hangtag_role()) = 'owner');
+CREATE POLICY "Shop write (remove)" ON public.hangtag_devices FOR DELETE TO authenticated
+    USING (owner_id = (SELECT public.hangtag_shop_id()) AND (SELECT public.hangtag_role()) = 'owner');
+-- Enrollment tokens: the owner can see them (only their hashes are kept); only the team function writes them
+CREATE POLICY "Shop read" ON public.hangtag_enrollments FOR SELECT TO authenticated
+    USING (owner_id = (SELECT public.hangtag_shop_id()) AND (SELECT public.hangtag_role()) = 'owner');
+
+-- Profiles: an account reads its own and, as a team member, its shop's (name, address, GSTIN on the bills); it changes
+-- only its own
 ALTER TABLE public.hangtag_profiles ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Own profile: read" ON public.hangtag_profiles;
+DROP POLICY IF EXISTS "Own or shop profile: read" ON public.hangtag_profiles;
 DROP POLICY IF EXISTS "Own profile: add" ON public.hangtag_profiles;
 DROP POLICY IF EXISTS "Own profile: change" ON public.hangtag_profiles;
-CREATE POLICY "Own profile: read" ON public.hangtag_profiles FOR SELECT TO authenticated USING (id = (SELECT auth.uid()));
+CREATE POLICY "Own or shop profile: read" ON public.hangtag_profiles FOR SELECT TO authenticated
+    USING (id = (SELECT auth.uid()) OR id = (SELECT public.hangtag_shop_id()));
 CREATE POLICY "Own profile: add" ON public.hangtag_profiles FOR INSERT TO authenticated WITH CHECK (id = (SELECT auth.uid()));
 CREATE POLICY "Own profile: change" ON public.hangtag_profiles FOR UPDATE TO authenticated USING (id = (SELECT auth.uid())) WITH CHECK (id = (SELECT auth.uid()));
 
@@ -1514,11 +2062,13 @@ REVOKE ALL ON TABLE public.hangtag_products, public.hangtag_sizes, public.hangta
     public.hangtag_variants, public.hangtag_stock_moves, public.hangtag_customers,
     public.hangtag_returns, public.hangtag_return_items, public.hangtag_stock_imports,
     public.hangtag_payments, public.hangtag_fin_txns, public.hangtag_cash_book, public.hangtag_bank_book, public.hangtag_deliveries,
-    public.hangtag_events, public.hangtag_payment_intents, public.hangtag_invoice_links, public.hangtag_cash_moves, public.hangtag_day_closes FROM anon;
+    public.hangtag_events, public.hangtag_payment_intents, public.hangtag_invoice_links, public.hangtag_cash_moves, public.hangtag_day_closes,
+    public.hangtag_members, public.hangtag_roles, public.hangtag_devices, public.hangtag_enrollments, public.hangtag_audit_log FROM anon;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.hangtag_products, public.hangtag_sizes, public.hangtag_images,
     public.hangtag_sales, public.hangtag_sale_items, public.hangtag_meta,
     public.hangtag_variants, public.hangtag_stock_moves, public.hangtag_customers,
-    public.hangtag_returns, public.hangtag_return_items, public.hangtag_stock_imports, public.hangtag_payments, public.hangtag_events TO authenticated;
+    public.hangtag_returns, public.hangtag_return_items, public.hangtag_stock_imports, public.hangtag_payments, public.hangtag_events,
+    public.hangtag_roles TO authenticated;
 -- Financial transactions and the cash and bank books are written only by the database (section 3e), and delivery
 -- records only by the send-receipt Edge Function (section 3f): read-only here
 REVOKE ALL ON TABLE public.hangtag_fin_txns, public.hangtag_cash_book, public.hangtag_bank_book, public.hangtag_deliveries, public.hangtag_payment_intents FROM authenticated;
@@ -1531,6 +2081,12 @@ GRANT UPDATE (revoked_at) ON TABLE public.hangtag_invoice_links TO authenticated
 REVOKE ALL ON TABLE public.hangtag_cash_moves FROM authenticated;
 GRANT SELECT, INSERT ON TABLE public.hangtag_cash_moves TO authenticated;
 GRANT SELECT, INSERT, UPDATE ON TABLE public.hangtag_day_closes TO authenticated;
+-- team (section 3i): members, devices and enrollment tokens are written by the team Edge Function; the owner may only
+-- change a member's name, role and status, and rename, revoke or remove a device. The audit log is read-only for everyone.
+REVOKE ALL ON TABLE public.hangtag_members, public.hangtag_devices, public.hangtag_enrollments, public.hangtag_audit_log FROM authenticated;
+GRANT SELECT ON TABLE public.hangtag_members, public.hangtag_devices, public.hangtag_enrollments, public.hangtag_audit_log TO authenticated;
+GRANT UPDATE (name, role, status) ON TABLE public.hangtag_members TO authenticated;
+GRANT UPDATE (name, status, revoked_at), DELETE ON TABLE public.hangtag_devices TO authenticated;
 REVOKE EXECUTE ON FUNCTION public.hangtag_check_return_qty() FROM PUBLIC, anon;
 GRANT SELECT, INSERT, UPDATE ON TABLE public.hangtag_profiles TO authenticated;
 
@@ -1640,4 +2196,19 @@ SELECT check_name, value, expected, value = expected AS ok FROM (
            (SELECT count(*) FROM public.hangtag_cash_moves r JOIN public.hangtag_cash_moves o ON o.owner_id = r.owner_id AND o.id = r.reverses
              WHERE r.type = 'reversal' AND o.type <> 'reversal' AND o.amount = r.amount)::bigint,
            (SELECT count(*) FROM public.hangtag_cash_moves r WHERE r.type = 'reversal')::bigint
+    UNION ALL
+    SELECT 20, 'Team members of a shop that exists and is not itself a team member',
+           (SELECT count(*) FROM public.hangtag_members m WHERE EXISTS (SELECT 1 FROM auth.users u WHERE u.id = m.shop_id)
+              AND NOT EXISTS (SELECT 1 FROM public.hangtag_members x WHERE x.user_id = m.shop_id))::bigint,
+           (SELECT count(*) FROM public.hangtag_members)::bigint
+    UNION ALL
+    SELECT 21, 'Team members with no shop of their own',
+           (SELECT count(*) FROM public.hangtag_members m WHERE NOT EXISTS (SELECT 1 FROM public.hangtag_members x WHERE x.shop_id = m.user_id)
+              AND NOT EXISTS (SELECT 1 FROM public.hangtag_products p WHERE p.owner_id = m.user_id)
+              AND NOT EXISTS (SELECT 1 FROM public.hangtag_sales s WHERE s.owner_id = m.user_id))::bigint,
+           (SELECT count(*) FROM public.hangtag_members)::bigint
+    UNION ALL
+    SELECT 22, 'Devices that belong to a team member of their shop',
+           (SELECT count(*) FROM public.hangtag_devices d JOIN public.hangtag_members m ON m.user_id = d.user_id AND m.shop_id = d.owner_id)::bigint,
+           (SELECT count(*) FROM public.hangtag_devices)::bigint
 ) r ORDER BY n;

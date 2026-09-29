@@ -14,8 +14,10 @@ import { dayKey } from '../../../shared/formatting/dates.js';
 import { $, $$, esc } from '../../../shared/dom.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { recordStockOperation } from '../use-cases/record-stock-operation.js';
+import { refuse } from '../../shop/services/access.js';
 
 export function openStockOp(kind,pid){
+  if(refuse("manage_inventory","add or adjust stock"))return;
   const p=prod(pid); if(!p) return;
   store.stockOp={kind,pid,val:{},cost:"",setCost:true,reason:"Physical count correction",note:""};
   if(kind==="adjust") variantsOf(p).forEach(v=>{store.stockOp.val[v.id]=String(stockOf(v.id))});

@@ -12,18 +12,21 @@ import { dayKey } from '../../../shared/formatting/dates.js';
 import { saveCashMoves, saveCatalog, saveCustomers, saveDayCloses, saveEvents, saveImgs, saveLogo, saveMoves, saveReturns, saveSettings } from '../../../shared/state/persistence.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { logger } from '../../../shared/logging/logger.js';
+import { isMember } from '../../shop/services/access.js';
 
 /* ---------- pulls (cloud is the truth, except for work still waiting in this device's queue) ---------- */
+let seen = null;   // a member's phone: the shop's fingerprints its data matches (null: not known yet; see pullShopChanges)
 
 export const pendingIds = type => new Set(store.sbOfflineQueue.filter(q=>q.type===type).map(q=>q.id || (q.move&&q.move.id) || (q.ret&&q.ret.id) || (q.cust&&q.cust.id) || (q.ev&&q.ev.id)));
-export async function pullCatalogFromSupabase(remoteIsTruth = false){
+/* opts.images: false = leave the photos as they are (a member's phone downloads them only when they changed) */
+export async function pullCatalogFromSupabase(remoteIsTruth = false, opts = {}){
   if(!store.sbClient || !(await sbSessionOk())) return;
   try{
     const cloud = use("cloud");
     const prods = await cloud.fetchProducts();
     if(!prods.length && !products().length) return;
     const vars = await cloud.fetchVariants();
-    const images = await cloud.fetchImages();
+    const images = opts.images === false ? null : await cloud.fetchImages();
     if(prods.length > 0 || remoteIsTruth){
       const pending = pendingIds("prod"), local = {};
       products().forEach(p=>{ local[p.id]=p; });
@@ -35,7 +38,7 @@ export async function pullCatalogFromSupabase(remoteIsTruth = false){
       store.catalog = { version:3, example:false, products: order.map(id=>pMap[id]).filter(Boolean).map(finishDownloadedProduct) };
       saveCatalog();
     }
-    if((images && images.length) || remoteIsTruth){
+    if((images && images.length) || (remoteIsTruth && opts.images !== false)){
       const imgMap = {};
       (images||[]).forEach(im => { imgMap[im.productId] = im.data; });
       store.sbOfflineQueue.filter(q=>q.type==="img").forEach(q=>{ if(store.imgs[q.id]) imgMap[q.id]=store.imgs[q.id]; else delete imgMap[q.id]; });
@@ -98,6 +101,8 @@ export async function pullFromSupabase(showToast = true){
   if(!store.sbClient || store.sbStatus !== "connected" || !(await sbSessionOk())) return;
   store.syncing = true; renderSync();
   try{
+    // a member's phone notes where the shop stands first, so its next look (every 30 s) fetches only what changed after
+    const marks = isMember() ? await use("cloud").shopChanges().catch(() => null) : null;
     await pullCatalogFromSupabase();
     await pullMoves();
     await pullReturns();
@@ -105,15 +110,8 @@ export async function pullFromSupabase(showToast = true){
     await pullEvents();
     await pullCash();
     await pullSettings();
-    const sales = await use("cloud").fetchSales();
-    const newRemoteDays = {};
-    sales.forEach(s => {
-      const d = dayKey(s.t), devId = s.dev || "cloud", dayId = `${d}_${devId}_0`;
-      if(!newRemoteDays[dayId]) newRemoteDays[dayId] = { date: d, dev: devId, chunk: 0, sales: [], voids: [] };
-      newRemoteDays[dayId].sales.push(s);
-      if(s.void) newRemoteDays[dayId].voids.push(s.id);
-    });
-    store.remoteDays = newRemoteDays;
+    await pullSales();
+    if(isMember()) seen = marks;
     markSynced();
     renderAll();
     if(showToast) toast("Everything is up to date.");
@@ -122,6 +120,86 @@ export async function pullFromSupabase(showToast = true){
     if(showToast) toast("Couldn't refresh from the cloud. Your work is saved on this device.");
   }finally{ store.syncing = false; renderSync(); }
 }
+/* Every bill of the shop (with lines and payments), grouped by day and device as the ledger reads them */
+export async function pullSales(){
+  const sales = await use("cloud").fetchSales();
+  const newRemoteDays = {};
+  sales.forEach(s => addRemoteSale(newRemoteDays, s));
+  store.remoteDays = newRemoteDays;
+}
+function addRemoteSale(days, s){
+  const d = dayKey(s.t), devId = s.dev || "cloud", dayId = `${d}_${devId}_0`;
+  if(!days[dayId]) days[dayId] = { date: d, dev: devId, chunk: 0, sales: [], voids: [] };
+  const doc = days[dayId], i = doc.sales.findIndex(x => x.id === s.id);
+  if(i > -1) doc.sales[i] = s; else doc.sales.push(s);
+  doc.voids = doc.voids.filter(v => v !== s.id);
+  if(s.void) doc.voids.push(s.id);
+}
+
+/* ---------- a team member's phone: only what changed ----------
+   It gets no live updates (realtime can't carry its device key), so every 30 s it asks the database for one small
+   fingerprint per part of the shop (hangtag_shop_changes) and downloads only the parts whose fingerprint moved: photos
+   only when a photo changed, and of the bills only those saved since its last look (plus which are cancelled). The full
+   download stays for connecting and "Refresh". */
+export const forgetShopChanges = () => { seen = null; };
+const MARGIN_MS = 120000;   // bills saved by a long upload that began before the last look still come along
+const isoMinus = (t, ms) => { const x = Date.parse(String(t || "").replace(/(\.\d{3})\d+/, "$1")); return Number.isFinite(x) ? new Date(x - ms).toISOString() : null; };
+/* → the parts downloaded (e.g. ["sales","customers"]); [] when nothing changed */
+export async function pullShopChanges(){
+  if(!store.sbClient || store.sbStatus !== "connected" || !(await sbSessionOk())) return [];
+  const cloud = use("cloud");
+  const now = await cloud.shopChanges();
+  if(!seen){ await pullFromSupabase(false); return ["all"]; }   // not known what this phone's copy matches: once, everything
+  const was = seen, parts = ["catalog", "images", "moves", "returns", "customers", "events", "cash", "settings", "sales"].filter(k => now[k] !== was[k]);
+  if(!parts.length) return [];
+  store.syncing = true; renderSync();
+  try{
+    if(parts.includes("catalog")) await pullCatalogFromSupabase(false, { images: false });
+    if(parts.includes("images")) await pullImages();
+    if(parts.includes("moves")) await pullMoves();
+    if(parts.includes("returns")) await pullReturns();
+    if(parts.includes("customers")) await pullCustomers();
+    if(parts.includes("events")) await pullEvents();
+    if(parts.includes("cash")) await pullCash();
+    if(parts.includes("settings")) await pullSettings();
+    if(parts.includes("sales")) await pullNewSales(was, now);
+    seen = now;
+    markSynced();
+    renderAll();
+  }finally{ store.syncing = false; renderSync(); }
+  return parts;
+}
+/* The shop's photos (only when one changed); a photo still waiting to upload from this phone stays as it is */
+export async function pullImages(){
+  const images = await use("cloud").fetchImages();
+  if(!images) return;
+  const imgMap = {};
+  images.forEach(im => { imgMap[im.productId] = im.data; });
+  store.sbOfflineQueue.filter(q=>q.type==="img").forEach(q=>{ if(store.imgs[q.id]) imgMap[q.id]=store.imgs[q.id]; else delete imgMap[q.id]; });
+  store.imgs = imgMap; saveImgs();
+}
+/* The bills saved since the last look, and which bills are cancelled now. If this phone's copy then doesn't hold as many
+   bills as the cloud (a bill removed, a very long upload, 1000 new ones), it downloads them all once. */
+async function pullNewSales(was, now){
+  const cloud = use("cloud");
+  const since = isoMinus(was.sales_since, MARGIN_MS);
+  const fresh = since ? await cloud.fetchSalesSince(since) : null;
+  if(!fresh || fresh.length >= 1000){ await pullSales(); return; }
+  const days = Object.assign({}, store.remoteDays);
+  Object.keys(days).forEach(k => { days[k] = Object.assign({}, days[k], { sales: days[k].sales.slice(), voids: (days[k].voids || []).slice() }); });
+  fresh.forEach(s => addRemoteSale(days, s));
+  if(now.sales_voids !== was.sales_voids){
+    const voided = new Map((await cloud.fetchVoidedSales()).map(v => [v.id, v.reason]));
+    Object.values(days).forEach(doc => {
+      doc.voids = doc.sales.filter(s => voided.has(s.id)).map(s => s.id);
+      doc.sales.forEach(s => { s.void = voided.has(s.id); if(s.void && voided.get(s.id)) s.voidReason = voided.get(s.id); else if(!s.void) delete s.voidReason; });
+    });
+  }
+  const held = new Set(); Object.values(days).forEach(doc => doc.sales.forEach(s => held.add(s.id)));
+  if(held.size !== +now.sales_count){ await pullSales(); return; }
+  store.remoteDays = days;
+}
+
 /* Upload everything this device has (after a restore, or loading examples). Uses the same queue as everyday work. */
 
 export async function pushLocalToSupabase(){

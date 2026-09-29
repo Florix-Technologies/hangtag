@@ -14,18 +14,25 @@ import { provide } from '../shared/di/services.js';
 import { savePrefs } from '../shared/state/persistence.js';
 import { hideTip } from '../shared/components/tooltip.js';
 import { $, $$ } from '../shared/dom.js';
+import { TABS, applyAccessUI, tabOpen } from '../features/shop/components/access-ui.js';
 
 /* ================= render + navigation ================= */
 
 export function renderNav(){
-  $$(".nav [data-tab]").forEach(b=>b.setAttribute("aria-selected",String(b.dataset.tab===store.prefs.tab)));
-  ["sell","stock","report","products","customers"].forEach(t=>{$("#v-"+t).hidden=t!==store.prefs.tab});
-  $("#billBar").hidden=store.prefs.tab!=="sell";
+  // a team member sees only what its role allows (the owner: everything); a tab it can't use opens the first one it can,
+  // and a role with no tab at all (e.g. kitchen, before its screen exists) sees a plain note instead of any screen
+  applyAccessUI();
+  if(!tabOpen(store.prefs.tab)){const t=TABS.find(tabOpen);if(t)store.prefs.tab=t}
+  const none=!tabOpen(store.prefs.tab);
+  $$(".nav [data-tab]").forEach(b=>b.setAttribute("aria-selected",String(!none&&b.dataset.tab===store.prefs.tab)));
+  ["sell","stock","report","products","customers"].forEach(t=>{$("#v-"+t).hidden=none||t!==store.prefs.tab});
+  $("#v-none").hidden=!none;
+  $("#billBar").hidden=none||store.prefs.tab!=="sell";
   $$("[data-density]").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.density===store.prefs.density)));
 }
 function renderViews(){
   invalidate();renderNav();renderSync();
-  const t=store.prefs.tab;
+  const t=tabOpen(store.prefs.tab)?store.prefs.tab:"";   // "": no screen for this role (renderNav shows the note)
   if(t==="sell"){renderGrid();renderBill()}
   else if(t==="stock")renderStock();
   else if(t==="report")renderReport();
@@ -38,7 +45,7 @@ function renderViews(){
   else if(store.billOpen)renderBillSheet();
 }
 function switchTab(t){
-  if(store.prefs.tab===t)return;
+  if(store.prefs.tab===t||!tabOpen(t))return;
   store.prefs.tab=t;savePrefs();closeSheets();hideTip();
   renderViews();
   window.scrollTo(0,0);

@@ -9,13 +9,17 @@ import { stockOf } from '../../inventory/services/stock.js';
 import { productRepository } from '../repositories/product-repository.js';
 import { uid } from '../../../shared/utils/ids.js';
 import { okColor } from '../../../shared/utils/colors.js';
+import { UPLOAD_PERMISSIONS } from '../../../domain/sync/queue-rules.js';
+import { canAny, denied, notAllowedText } from '../../shop/services/access.js';
 
 /* draft: the editor state { id, name, cat, brand, desc, price, cost, color, archived, hsn, gst, hasOpts, opts, cells, codesOn, code, img }
    (opts/cells as in domain/catalog/options.js). Every current combination is saved as a variant (off sale when unticked);
    a saved variant that is no longer a combination is kept, off sale and with its stock zeroed, when it has stock history
    or sales, and deleted otherwise. Returns { error } (nothing saved) or { created, name, activeCount, variantCount, ids }
-   where ids maps each combination's cell key to its variant id. */
+   where ids maps each combination's cell key to its variant id. A team member needs manage_products, and a stock
+   permission when the save changes stock (opening stock, a changed count): refused before anything changes. */
 export function saveProduct({ draft }){
+  const no=denied("manage_products","add or edit products"); if(no) return no;
   const e=draft, repo=productRepository();
   const combos=editorCombos(e), removed=removedCells(e);
   const kept=removed.filter(({cell})=>hasHistory(cell.id)||hasMoves(cell.id));
@@ -38,6 +42,7 @@ export function saveProduct({ draft }){
       if(cur>0)newMoves.push({id:"m"+uid(),v:cell.id,p:e.id,type:"ADJUST",q:-cur,cost:null,note:"Variant removed in the product editor",t,dev:store.dev});
     }else delV.push(cell.id);
   });
+  if(newMoves.length&&!canAny(UPLOAD_PERMISSIONS.move)) return {error:notAllowedText("set stock")+" Leave the stock numbers as they are."};
   const opts=e.hasOpts?e.opts.map(op=>({n:cleanOptionName(op.n),v:op.v.slice()})):[];
   const product={id:e.id,name,cat:String(e.cat||"").trim(),brand:String(e.brand||"").trim(),desc:String(e.desc||"").trim(),price,cost,color:okColor(e.color),archived:!!e.archived,
     hsn,gst,code:e.codesOn?(e.code==="qr"?"qr":"barcode"):"",opts,variants};

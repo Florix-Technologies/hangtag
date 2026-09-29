@@ -20,12 +20,15 @@ import { flushSbQueue } from '../../sync/services/outbox.js';
 import { creditNoteNo, exchangeAvail, exchangeCustomer, exchangeDiscount } from '../services/return-rules.js';
 import { returnRepository } from '../repositories/return-repository.js';
 import { uid } from '../../../shared/utils/ids.js';
+import { can, denied, notAllowedText } from '../../shop/services/access.js';
 
 /* req: { sid, picks: { [line no]: pieces }, mode: "return" | "exchange", pay (refund method), collect (how the customer pays
    an exchange's difference: a method, or split parts), reason, notForResale: { [line no]: true }, newItems (exchange lines),
    keepDiscount (exchange: apply the original bill's % discount; default yes) }
    → { ret, sale (the exchange's new bill, or null), refund, collect } — or { error } and nothing is saved */
 export function recordReturn(req){
+  const no=denied("perform_return","take returns"); if(no) return no;
+  if(req.mode==="exchange"&&!can("create_sale")) return {error:notAllowedText("sell")+" Take it as a return instead."};
   const d=D(), s=d.saleById[req.sid];
   if(!s) return {error:"That bill isn't on this device."};
   if(s.void) return {error:"This bill is cancelled, so nothing on it can be returned."};
@@ -39,6 +42,7 @@ export function recordReturn(req){
     if(!items.length) return {error:"Add the new items for the exchange, or switch to Return."};
     for(const c of items) if(exchangeAvail(s,req.picks,nfr,items,c.v)<0) return {error:`Not enough ${c.name} ${lineLabel(c)} in stock.`};
     const cust=exchangeCustomer(s), billDisc=req.keepDiscount===false?null:exchangeDiscount(s);
+    if(billDisc&&!can("apply_discount")) return {error:notAllowedText("give discounts")+" Switch off the original bill's discount for the new items."};
     S=exchangeSettlement(Q.value,billTotals(items,billDisc,cust).total);
     newSale=newSaleRecord(items,billDisc,req.collect||"cash",{kind:"exchange",ex:exId,cust,credit:S.credit,event:s.event||null});
     if(newSale.error) return {error:newSale.error};

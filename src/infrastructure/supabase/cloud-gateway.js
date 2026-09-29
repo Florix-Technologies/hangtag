@@ -4,9 +4,10 @@ import { makeSbClient } from './client.js';
 import { toAppError } from './errors.js';
 import { AppError, ERROR_CODES } from '../../shared/errors/app-error.js';
 import { sbFetchAll, sbOk } from './query.js';
-import { billArgs, cashMoveRow, custRow, dayCloseRow, eventRow, moveRow, productRow, returnArgs, rowToCashMove, rowToCustomer, rowToDayClose, rowToDelivery, rowToEvent, rowToImport, rowToItem, rowToMove, rowToPayment, rowToProduct, rowToReturn, rowToReturnItem, rowToSale, rowToVariant, variantRows } from './mappers.js';
+import { billArgs, cashMoveRow, custRow, dayCloseRow, eventRow, moveRow, productRow, returnArgs, roleRow, rowToCashMove, rowToCustomer, rowToDayClose, rowToDelivery, rowToDevice, rowToEvent, rowToImport, rowToItem, rowToMember, rowToMove, rowToPayment, rowToProduct, rowToReturn, rowToReturnItem, rowToRole, rowToSale, rowToVariant, variantRows } from './mappers.js';
 
-export function createCloudGateway({ getClient, url, key, storageKey }){
+/* deviceKey: () => this phone's team device key or "" (sent as x-hangtag-device by every client this makes; see client.js) */
+export function createCloudGateway({ getClient, url, key, storageKey, deviceKey }){
   const db = () => getClient();
   const table = t => db().from(t);
 
@@ -51,9 +52,20 @@ export function createCloudGateway({ getClient, url, key, storageKey }){
     if(r.error) throw toAppError(r.error);
     throw E(ERROR_CODES.UNKNOWN, "The server's answer wasn't understood.");
   }
+  /* An update or delete that must reach its rows. Row security quietly skips rows a person may see but not change (a team
+     member whose role doesn't allow it; never the owner), so the written rows are asked back: none, and the rows are still
+     there → refused (PERMISSION: the upload queue keeps it for review, with the reason); none there any more → nothing to do.
+     write(q) makes the change, where(q) picks the rows, key: a column to read back. */
+  async function mustReach(t, key, write, where){
+    const { data } = sbOk(await where(write(table(t))).select(key));
+    if(Array.isArray(data) && data.length) return data.length;
+    const { data: still } = sbOk(await where(table(t).select(key)).limit(1));
+    if(Array.isArray(still) && still.length) throw new AppError(ERROR_CODES.PERMISSION, "The shop's cloud copy didn't take this change: your role may not make it.");
+    return 0;
+  }
   return {
     /* A new client for this app's project; supabase-js keeps the session under storageKey */
-    createClient: () => makeSbClient({ url, key, storageKey }),
+    createClient: () => makeSbClient({ url, key, storageKey, deviceKey }),
     auth,
     /* How an email signs in today: resolves the raw { data, error } of the RPC */
     signInMethods: email => db().rpc("hangtag_sign_in_methods", { p_email: email }),
@@ -93,22 +105,24 @@ export function createCloudGateway({ getClient, url, key, storageKey }){
        don't add up to the amount due, and posts the financial transactions and cash / bank book entries itself) */
     async saveSale(sale){ sbOk(await db().rpc('hangtag_save_sales', { p_bills: [billArgs(Object.assign({}, sale, { void:false }))] })); },
     /* Cancelling a bill needs a reason (kept with it); restoring clears it */
-    async setSaleVoid(id, isVoid, reason){ sbOk(await table('hangtag_sales').update({ is_void: isVoid, void_reason: isVoid ? String(reason || "").slice(0, 200) || null : null }).eq('id', id)); },
+    async setSaleVoid(id, isVoid, reason){
+      await mustReach('hangtag_sales', 'id', q => q.update({ is_void: isVoid, void_reason: isVoid ? String(reason || "").slice(0, 200) || null : null }), q => q.eq('id', id));
+    },
     /* index = the product's position in the list (its sort order) */
     async saveProduct(p, index){
       sbOk(await table('hangtag_products').upsert(productRow(p, index)));
       const rows = variantRows(p);
       if(rows.length) sbOk(await table('hangtag_variants').upsert(rows));
     },
-    async deleteVariants(ids){ sbOk(await table('hangtag_variants').delete().in('id', ids)); },
+    async deleteVariants(ids){ await mustReach('hangtag_variants', 'id', q => q.delete(), q => q.in('id', ids)); },
     async deleteProduct(id){
-      sbOk(await table('hangtag_products').delete().eq('id', id));
-      sbOk(await table('hangtag_images').delete().eq('product_id', id));
+      await mustReach('hangtag_products', 'id', q => q.delete(), q => q.eq('id', id));
+      await mustReach('hangtag_images', 'product_id', q => q.delete(), q => q.eq('product_id', id));
     },
     /* dataUrl = the photo, or empty to remove it */
     async saveImage(productId, dataUrl){
       if(dataUrl) sbOk(await table('hangtag_images').upsert({ product_id:productId, image_data:dataUrl, updated_at:new Date().toISOString() }));
-      else sbOk(await table('hangtag_images').delete().eq('product_id', productId));
+      else await mustReach('hangtag_images', 'product_id', q => q.delete(), q => q.eq('product_id', productId));
     },
     async saveMove(m){ sbOk(await table('hangtag_stock_moves').upsert(moveRow(m))); },
     /* A return with its lines, all or nothing (RPC hangtag_save_return: the database refuses a return on a cancelled bill, or of
@@ -117,7 +131,7 @@ export function createCloudGateway({ getClient, url, key, storageKey }){
     async saveCustomer(c){ sbOk(await table('hangtag_customers').upsert(custRow(c))); },
     async saveEvent(e){ sbOk(await table('hangtag_events').upsert(eventRow(e))); },
     /* The database refuses deleting an event that has bills */
-    async deleteEvent(id){ sbOk(await table('hangtag_events').delete().eq('id', id)); },
+    async deleteEvent(id){ await mustReach('hangtag_events', 'id', q => q.delete(), q => q.eq('id', id)); },
     /* Cash entries are never changed: a repeat upload of the same entry does nothing */
     async saveCashMove(m){ sbOk(await table('hangtag_cash_moves').upsert(cashMoveRow(m), { onConflict:'owner_id,id', ignoreDuplicates:true })); },
     async saveDayClose(c){ sbOk(await table('hangtag_day_closes').upsert(dayCloseRow(c))); },
@@ -180,6 +194,41 @@ export function createCloudGateway({ getClient, url, key, storageKey }){
       pays.forEach(p => { (paysBySale[p.sale_id] = paysBySale[p.sale_id] || []).push(rowToPayment(p)); });
       return sales.map(s => rowToSale(s, itemsBySale[s.id] || [], paysBySale[s.id]));
     },
+    /* ---------- a team member's phone: only what changed (it gets no live updates) ---------- */
+    /* One small fingerprint per part of the shop (RPC hangtag_shop_changes; row security decides what is counted):
+       { catalog, images, moves, returns, customers, events, cash, settings, sales, sales_count, sales_since, sales_voids } */
+    async shopChanges(){
+      const r = await db().rpc('hangtag_shop_changes');
+      if(r.error) throw toAppError(r.error);
+      return r.data && typeof r.data === 'object' ? r.data : {};
+    },
+    /* Bills saved in the cloud since a time (the database's saved-at, ISO), with their lines and payments: up to 1000
+       (a caller that gets 1000 downloads everything instead) */
+    async fetchSalesSince(iso){
+      const { data } = sbOk(await table('hangtag_sales').select('*').gte('created_at', iso).order('created_at').limit(1000));
+      const sales = data || [];
+      if(!sales.length) return [];
+      const ids = sales.map(s => s.id), items = [], pays = [];
+      for(let i = 0; i < ids.length; i += 100){
+        const part = ids.slice(i, i + 100);
+        items.push(...(sbOk(await table('hangtag_sale_items').select('*').in('sale_id', part)).data || []));
+        pays.push(...(sbOk(await table('hangtag_payments').select('*').in('sale_id', part)).data || []));
+      }
+      const itemsBySale = {}, paysBySale = {};
+      items.sort((x, y) => x.line_no - y.line_no).forEach(it => { (itemsBySale[it.sale_id] = itemsBySale[it.sale_id] || []).push(rowToItem(it)); });
+      pays.sort((x, y) => String(x.id).localeCompare(String(y.id))).forEach(p => { (paysBySale[p.sale_id] = paysBySale[p.sale_id] || []).push(rowToPayment(p)); });
+      return sales.map(s => rowToSale(s, itemsBySale[s.id] || [], paysBySale[s.id]));
+    },
+    /* The cancelled bills: [{ id, reason }] (a few small rows) */
+    async fetchVoidedSales(){
+      const out = [];
+      for(let from = 0; ; from += 1000){
+        const { data } = sbOk(await table('hangtag_sales').select('id,void_reason').eq('is_void', true).order('id').range(from, from + 999));
+        out.push(...(data || []).map(r => ({ id: r.id, reason: r.void_reason || "" })));
+        if(!data || data.length < 1000) break;
+      }
+      return out;
+    },
     /* One bill's payments (for a bill that arrived live) */
     async fetchSalePayments(saleId){
       const { data } = sbOk(await table('hangtag_payments').select('*').eq('sale_id', saleId).order('id'));
@@ -214,8 +263,30 @@ export function createCloudGateway({ getClient, url, key, storageKey }){
     invoiceLink: saleId => callFunction("send-receipt", { action:"link", sale_id:saleId }, "Invoice links"),
     /* Stops every invoice link of a bill from working */
     async revokeInvoiceLinks(saleId){
-      sbOk(await table('hangtag_invoice_links').update({ revoked_at:new Date().toISOString() }).eq('sale_id', saleId).is('revoked_at', null));
+      await mustReach('hangtag_invoice_links', 'token', q => q.update({ revoked_at:new Date().toISOString() }), q => q.eq('sale_id', saleId).is('revoked_at', null));
     },
+    /* An Edge Function's answer (body { action, ... }); throws an AppError (see callFunction above). what = the feature, for
+       "… isn't set up yet" */
+    callFunction,
+
+    /* ---------- the shop's team (section 3i; members, devices and enrollment tokens are written by the team function) ---------- */
+    /* This phone's standing in its shop: { shopId, role, deviceId } (shopId null: a member whose phone no longer reaches the
+       shop: revoked, disabled or no key). Also keeps "last seen" of a member's device. */
+    async touchDevice(){
+      const r = await db().rpc('hangtag_touch_device');
+      if(r.error) throw toAppError(r.error);
+      const d = r.data && typeof r.data === 'object' && !Array.isArray(r.data) ? r.data : {};
+      return { shopId: d.shop_id || null, role: d.role || null, deviceId: d.device_id || null };
+    },
+    /* The owner reads the whole team; a member only its own row (row security) */
+    fetchMembers: async () => (sbOk(await table('hangtag_members').select('user_id,shop_id,name,username,role,status,created_at,last_seen_at').order('created_at')).data || []).map(rowToMember),
+    /* The owner reads every device of the shop; a member its own (the key's hash is never read) */
+    fetchDevices: async () => (sbOk(await table('hangtag_devices').select('id,user_id,name,platform,status,enrolled_at,last_seen_at,revoked_at').order('enrolled_at')).data || []).map(rowToDevice),
+    /* The shop's own permission lists per role (no row = the defaults) */
+    fetchRoles: async () => (sbOk(await table('hangtag_roles').select('role,label,permissions,updated_at')).data || []).map(rowToRole),
+    /* The owner saves a role's permissions (the database refuses anyone else, and unknown permissions) */
+    async saveRole(r){ sbOk(await table('hangtag_roles').upsert(roleRow(r))); },
+
     /* Earlier imports with the same file fingerprint or invoice number (newest first) */
     async findImports({ fileHash, invoiceNo }){
       const cols = "id,file_hash,file_name,supplier_name,supplier_gstin,invoice_no,invoice_date,units,created_at";

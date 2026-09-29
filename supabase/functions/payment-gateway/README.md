@@ -15,7 +15,10 @@ refreshing a QR changes nothing.
   phone is watching, so late money is recorded (as verified, or as an unmatched receipt).
 
 Rows live in `hangtag_payment_intents` (schema.sql section 3h), written only by these functions; the app can read its
-own. `hangtag_payments.verification = 'verified'` is refused by the database unless a verified intent of the same shop,
+own. **Team members** (section 3i) take payments for their shop: the shop comes from the database (`hangtag_shop_id()`
+with the caller's session and the phone's `x-hangtag-device` key, which the function forwards), each action needs the
+member's permission (`core.js` `ACTION_PERMISSIONS`: `create_sale`; refunds `perform_return`; listing unmatched receipts
+`view_reports`, settling one (`resolve`: a refund, paid back or added to a bill) `perform_return`), and `PAYMENT_ALLOWED_USERS` may name the member or, for the whole team, the shop's owner. `hangtag_payments.verification = 'verified'` is refused by the database unless a verified intent of the same shop,
 method and amount exists, so the app can't claim a verification.
 
 ## What the app does

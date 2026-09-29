@@ -8,7 +8,7 @@ import { createMockProvider } from "./providers/mock.js";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-hangtag-device",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 const reply = (status: number, body: unknown) =>

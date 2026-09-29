@@ -12,9 +12,11 @@
 //   on the "auto" rows makes a retry or a second phone get the first attempt's answer instead of a second message.
 // - SMS and WhatsApp carry the bill's secure invoice link when RECEIPT_URL is set (hangtag_invoice_links, 12 months).
 // - "refresh" asks Twilio / Resend what happened to the bill's messages (delivered / failed); "link" returns the link.
+// - A shop's team member sends for the shop: the shop is what the database says (hangtag_shop_id() with the caller's
+//   session and device key, forwarded as x-hangtag-device), never the caller's own id; the member needs create_sale.
 // Deploy with JWT verification on (the default).
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { CHANNEL_LABELS, ITEM_COLUMNS, MAX_PER_HOUR, PAYMENT_COLUMNS, PROFILE_COLUMNS, SALE_COLUMNS, allowedToSend, billMessage, configuredChannels,
+import { CHANNEL_LABELS, ITEM_COLUMNS, MAX_PER_HOUR, PAYMENT_COLUMNS, PROFILE_COLUMNS, SALE_COLUMNS, SEND_PERMISSION, allowedToSend, billMessage, configuredChannels,
   deliveryOutcome, fromName, linkRow, linkUrl, liveLink, newToken, providerConfig, providerStatus, receiptBase, recipientFor, reservationRow,
   validateRequest } from "./core.js";
 import { deliver } from "./providers/index.js";
@@ -22,7 +24,7 @@ import { fetchStatus } from "./providers/status.js";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-hangtag-device",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 const reply = (status: number, body: unknown) =>
@@ -36,7 +38,9 @@ Deno.serve(async (req) => {
   const auth = req.headers.get("Authorization");
   if (!auth) return reply(401, { ok: false, error: "unauthorized", message: "Sign in first." });
   const url = Deno.env.get("SUPABASE_URL")!, anon = Deno.env.get("SUPABASE_ANON_KEY")!, service = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const db = createClient(url, anon, { global: { headers: { Authorization: auth } }, auth: { persistSession: false } });
+  // the caller's own session (and device key, for a team member): row security decides what it can read
+  const device = req.headers.get("x-hangtag-device");
+  const db = createClient(url, anon, { global: { headers: { Authorization: auth, ...(device ? { "x-hangtag-device": device } : {}) } }, auth: { persistSession: false } });
   const { data: who } = await db.auth.getUser();
   const user = who && who.user;
   if (!user) return reply(401, { ok: false, error: "unauthorized", message: "Sign in again." });
@@ -45,20 +49,31 @@ Deno.serve(async (req) => {
   try { body = await req.json(); } catch { return reply(400, { ok: false, error: "bad_request", message: "Send the request as JSON." }); }
   const r = validateRequest(body);
   if (!r.ok) return reply(r.status, { ok: false, error: r.error, message: r.message });
-  const allowed = allowedToSend(user, env());
-  if (r.action === "channels") return reply(200, { ok: true, channels: configuredChannels(allowed ? env() : {}) });
-  if (!allowed) return reply(503, { ok: false, error: "not_configured", message: "Sending bills isn't turned on for this account." });
+  // the shop this account works for, as the database sees it: an owner's own account, or a team member's shop (only
+  // from an enrolled device). Every row written below belongs to the shop, never to the caller's own id.
+  const { data: shopData, error: shopErr } = await db.rpc("hangtag_shop_id");
+  if (shopErr && shopErr.code !== "PGRST202") { console.error("send-receipt: couldn't read the shop:", shopErr.message); return unavailable(); }
+  const shopId: string | null = shopErr ? user.id : shopData;   // (PGRST202: a database without section 3i yet, where every account is its own shop)
   const admin = createClient(url, service, { auth: { persistSession: false } });
+  const owner = !shopId ? null : shopId === user.id ? user : ((await admin.auth.admin.getUserById(shopId)).data || { user: null }).user;
+  const allowed = !!shopId && allowedToSend(user, env(), owner);
+  if (r.action === "channels") return reply(200, { ok: true, channels: configuredChannels(allowed ? env() : {}) });
+  if (!allowed || !shopId) return reply(503, { ok: false, error: "not_configured", message: "Sending bills isn't turned on for this account." });
+  const shop: string = shopId;
+  if (shop !== user.id && r.action !== "refresh") {
+    const { data: can } = await db.rpc("hangtag_can", { p: SEND_PERMISSION });
+    if (can !== true) return reply(403, { ok: false, error: "forbidden", message: "This account can't send bills." });
+  }
 
   // the bill's secure link: reused while it works, otherwise a new one (written by this function only)
   const billLink = async (saleId: string) => {
     const base = receiptBase(env());
     if (!base) return "";
-    const { data: rows } = await admin.from("hangtag_invoice_links").select("token,revoked_at,expires_at").eq("owner_id", user.id).eq("sale_id", saleId)
+    const { data: rows } = await admin.from("hangtag_invoice_links").select("token,revoked_at,expires_at").eq("owner_id", shop).eq("sale_id", saleId)
       .is("revoked_at", null).order("created_at", { ascending: false }).limit(1);
     const cur = (rows || [])[0];
     if (cur && liveLink(cur) && Date.parse(cur.expires_at) - Date.now() > 30 * 864e5) return linkUrl(base, cur.token);
-    const row = linkRow({ ownerId: user.id, saleId, token: newToken() });
+    const row = linkRow({ ownerId: shop, saleId, token: newToken() });
     const { error } = await admin.from("hangtag_invoice_links").insert(row);
     if (error) { console.error("send-receipt: couldn't save the invoice link:", error.message); return ""; }
     return linkUrl(base, row.token);
@@ -78,7 +93,7 @@ Deno.serve(async (req) => {
       const st = providerStatus(row.provider, await fetchStatus(cfg, row, fetch));
       const now = new Date().toISOString();
       const patch = st === "delivered" ? { status: "delivered", delivered_at: now, checked_at: now } : st === "failed" ? { status: "failed", error: "The provider couldn't deliver it.", checked_at: now } : { checked_at: now };
-      const { error } = await admin.from("hangtag_deliveries").update(patch).eq("owner_id", user.id).eq("id", row.id).eq("status", "sent");
+      const { error } = await admin.from("hangtag_deliveries").update(patch).eq("owner_id", shop).eq("id", row.id).eq("status", "sent");
       if (!error && st) updated++;
     }
     return reply(200, { ok: true, updated });
@@ -102,12 +117,12 @@ Deno.serve(async (req) => {
   const [items, payments, profile] = await Promise.all([
     db.from("hangtag_sale_items").select(ITEM_COLUMNS).eq("sale_id", sale.id).order("line_no").limit(500),
     db.from("hangtag_payments").select(PAYMENT_COLUMNS).eq("sale_id", sale.id).order("id"),
-    db.from("hangtag_profiles").select(PROFILE_COLUMNS).eq("id", user.id).maybeSingle(),
+    db.from("hangtag_profiles").select(PROFILE_COLUMNS).eq("id", shop).maybeSingle(),
   ]);
   if (items.error || payments.error || profile.error) { console.error("send-receipt: couldn't read the bill:", (items.error || payments.error || profile.error)!.message); return unavailable(); }
   // sent by itself when the bill completed: once per bill and channel — a repeat gets the first attempt's answer
   if (r.auto) {
-    const { data: prev } = await admin.from("hangtag_deliveries").select("status,recipient,provider,provider_message_id").eq("owner_id", user.id)
+    const { data: prev } = await admin.from("hangtag_deliveries").select("status,recipient,provider,provider_message_id").eq("owner_id", shop)
       .eq("sale_id", sale.id).eq("channel", r.channel).eq("mode", "auto").in("status", ["pending", "sent", "delivered"]).limit(1);
     const p = (prev || [])[0];
     if (p && p.status !== "pending") return reply(200, { ok: true, status: p.status, already: true, channel: r.channel, recipient: p.recipient, provider: p.provider, provider_message_id: p.provider_message_id });
@@ -119,19 +134,19 @@ Deno.serve(async (req) => {
 
   // written by the function only (the app can read these rows, not write them). Take a place first, then count: if two
   // requests race, both see each other's row, so the limit can't be passed; if the log fails, nothing is sent.
-  const held = await admin.from("hangtag_deliveries").insert(reservationRow({ ownerId: user.id, saleId: sale.id, channel: r.channel, to: to.to, provider: cfg.name, auto: r.auto })).select("id").single();
+  const held = await admin.from("hangtag_deliveries").insert(reservationRow({ ownerId: shop, saleId: sale.id, channel: r.channel, to: to.to, provider: cfg.name, auto: r.auto })).select("id").single();
   if (held.error && r.auto && /duplicate|unique/i.test(held.error.message || "")) return reply(409, { ok: false, error: "busy", message: "This receipt is being sent already." });
   if (held.error || !held.data) { console.error("send-receipt: couldn't write the delivery log:", held.error && held.error.message); return unavailable(); }
   const heldId: string = held.data.id;
-  const release = () => admin.from("hangtag_deliveries").delete().eq("owner_id", user.id).eq("id", heldId);
+  const release = () => admin.from("hangtag_deliveries").delete().eq("owner_id", shop).eq("id", heldId);
   const since = new Date(Date.now() - 3600_000).toISOString();
-  const { count, error: countErr } = await admin.from("hangtag_deliveries").select("id", { count: "exact", head: true }).eq("owner_id", user.id).gte("created_at", since);
+  const { count, error: countErr } = await admin.from("hangtag_deliveries").select("id", { count: "exact", head: true }).eq("owner_id", shop).gte("created_at", since);
   if (countErr || count == null) { console.error("send-receipt: couldn't count recent messages:", countErr && countErr.message); await release(); return unavailable(); }
   if (count > MAX_PER_HOUR) { await release(); return reply(429, { ok: false, error: "rate_limited", message: "Too many messages in the last hour. Try again later." }); }
 
   const result = await deliver(cfg, r.channel, { to: to.to, fromName: fromName(profile.data && profile.data.shop_name), ...message }, fetch);
   const outcome = deliveryOutcome(result);
-  const saved = await admin.from("hangtag_deliveries").update(outcome).eq("owner_id", user.id).eq("id", heldId);
+  const saved = await admin.from("hangtag_deliveries").update(outcome).eq("owner_id", shop).eq("id", heldId);
   if (saved.error) console.error("send-receipt: couldn't finish the delivery record:", saved.error.message);
   if (outcome.status === "sent") return reply(200, { ok: true, status: "sent", channel: r.channel, recipient: to.to, provider: cfg.name, provider_message_id: outcome.provider_message_id });
   console.error("send-receipt: provider refused:", cfg.name, result && result.status, outcome.error);

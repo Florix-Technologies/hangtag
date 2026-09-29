@@ -44,16 +44,27 @@ check('saveSale: one call saves the bill (not cancelled) with its lines and its 
   && JSON.stringify(arg(client.calls[0]).p_bills[0].payments) === JSON.stringify([{ id: 's1:upi', sale_id: 's1', method: 'upi', amount: 1198, tendered: null, change_given: 0, reference: null, t: 1000, device_id: 'd1', verification: 'recorded', via: null, intent_id: null, provider_payment_id: null, card_last4: null }]), client.calls);
 client = fakeClient();   // a different client: the gateway must use whichever is current
 await gw.setSaleVoid('s1', true);
-check('the gateway reads the current client on every call', client.calls.length === 1 && opNames(client.calls[0]) === 'update.eq' && client.calls[0].ops[0][1][0].is_void === true);
+check('the gateway reads the current client on every call (a cancel asks for the changed bill back; none: is it still there?)', client.calls.length === 2 && opNames(client.calls[0]) === 'update.eq.select'
+  && client.calls[0].ops[0][1][0].is_void === true && opNames(client.calls[1]) === 'select.eq.limit');
+// row security skips a row a team member may see but not change: nothing written back, the row still there → PERMISSION
+client = fakeClient((q) => ({ data: opNames(q).startsWith('select') ? [{ id: 's1' }] : [], error: null }));
+let err = null; try { await gw.setSaleVoid('s1', true, 'Wrong'); } catch (e) { err = e; }
+check('a cancel the database quietly skipped (row security) is refused, not taken as done', err instanceof AppError && err.code === C.PERMISSION, err && err.code);
+client = fakeClient((q) => ({ data: opNames(q).startsWith('update') ? [{ id: 's1' }] : [], error: null }));
+err = null; try { await gw.setSaleVoid('s1', true, 'Wrong'); } catch (e) { err = e; }
+check('…while a cancel that reached its bill is done in one call', !err && client.calls.length === 1);
+client = fakeClient();
+err = null; try { await gw.deleteEvent('gone'); } catch (e) { err = e; }
+check('…and removing something already gone is nothing to do', !err);
 client = fakeClient((q) => (q.t === 'rpc:hangtag_save_sales' ? { error: { message: 'boom' } } : { data: [], error: null }));
-let err = null; try { await gw.saveSale(sale); } catch (e) { err = e; }
+err = null; try { await gw.saveSale(sale); } catch (e) { err = e; }
 check('an upload error is thrown as an AppError (plain message, original kept as cause) and nothing after it is sent', err instanceof AppError && err.code === C.UNKNOWN && err.cause.message === 'boom' && !/boom/.test(err.message) && client.calls.length === 1, err);
 client = fakeClient();
 await gw.saveProduct({ id: 'p1', name: 'Tee', price: 599, color: '#000000', variants: [{ id: 'v1', c: 'Black', s: 'M', active: true }] }, 3);
 check('saveProduct: product row with its sort order, then its variants', client.calls.map((q) => q.t).join() === 'hangtag_products,hangtag_variants' && client.calls[0].ops[0][1][0].sort_order === 3);
 client = fakeClient();
 await gw.saveImage('p1', ''); await gw.saveImage('p1', 'data:x');
-check('saveImage: empty removes the photo, a data URL stores it', opNames(client.calls[0]) === 'delete.eq' && opNames(client.calls[1]) === 'upsert' && client.calls[1].ops[0][1][0].image_data === 'data:x');
+check('saveImage: empty removes the photo, a data URL stores it', opNames(client.calls[0]) === 'delete.eq.select' && opNames(client.calls[2]) === 'upsert' && client.calls[2].ops[0][1][0].image_data === 'data:x');
 // a return: one RPC with the return and its lines (all or nothing); a refusal keeps the database rule's own message
 client = fakeClient();
 const ret = { id: 'r1', no: 'CN-260928-001', sale: 's1', t: 1, kind: 'return', refund: 524.5, pay: 'cash', value: 524.5, ro: 0, dev: 'd1',
@@ -68,7 +79,7 @@ check("saveReturn refused: nothing else is written, the database rule's own mess
 client = fakeClient();
 await gw.saveEvent({ id: 'e1', name: 'Diwali pop-up', start: '2026-10-20', end: '2026-10-22', place: 'Pune', status: 'active', t: 5 });
 await gw.deleteEvent('e1');
-check('saveEvent / deleteEvent: hangtag_events row (dates, place, status), then a delete by id', client.calls.map((q) => q.t + ':' + opNames(q)).join(' | ') === 'hangtag_events:upsert | hangtag_events:delete.eq'
+check('saveEvent / deleteEvent: hangtag_events row (dates, place, status), then a delete by id', client.calls.map((q) => q.t + ':' + opNames(q)).slice(0, 2).join(' | ') === 'hangtag_events:upsert | hangtag_events:delete.eq.select'
   && client.calls[0].ops[0][1][0].start_date === '2026-10-20' && client.calls[0].ops[0][1][0].location === 'Pune' && client.calls[0].ops[0][1][0].status === 'active', client.calls.map((q) => q.ops));
 client = fakeClient();
 await gw.saveAllSales(Array.from({ length: 501 }, (_, i) => Object.assign({}, sale, { id: 's' + i, void: i === 0 })));

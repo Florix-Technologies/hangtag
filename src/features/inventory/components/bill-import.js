@@ -13,6 +13,7 @@ import { isAppError, ERROR_CODES } from '../../../shared/errors/app-error.js';
 import { logger } from '../../../shared/logging/logger.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { uid } from '../../../shared/utils/ids.js';
+import { refuse } from '../../shop/services/access.js';
 
 /* store.billImport = { step: "pick"|"busy"|"dup"|"review"|"summary"|"done", file, fileHash, dups, ext, importId,
      supplier, gstin, invoiceNo, invoiceDate, lines, filter, plan, invDups, conflict, err, busy, result } */
@@ -21,6 +22,7 @@ const numOr = v => { const t = String(v == null ? "" : v).trim().replace(/[₹,%
 const fmtDate = t => { try{ return dtLong(t); }catch{ return ""; } };
 
 export function openBillImport(){
+  if(refuse("create_purchase","add supplier bills"))return;
   if(!store.authUser || !store.sbClient || store.sbStatus !== "connected"){
     toast(store.sbStatus === "update" ? "The database needs its update (schema.sql) before bills can be read." : "Connect to the internet and sign in to read supplier bills. You can still add stock by hand with Stock in.");
     return;

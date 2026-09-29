@@ -143,3 +143,12 @@ export function toRpcArgs(plan, meta, sortStart = 0){
     p_products: products, p_variants: variants, p_moves: moves, p_allow_duplicate: !!meta.allowDuplicate,
   };
 }
+
+/* ---------- the shop's team (section 3i) ---------- */
+export const rowToMember = m => ({ userId:m.user_id, shopId:m.shop_id||null, name:m.name||"", username:m.username||"", role:m.role||"", status:m.status||"active",
+  createdAt:m.created_at||null, lastSeenAt:m.last_seen_at||null });
+export const rowToDevice = d => ({ id:d.id, userId:d.user_id, name:d.name||"", platform:d.platform||"", status:d.status||"active",
+  enrolledAt:d.enrolled_at||null, lastSeenAt:d.last_seen_at||null, revokedAt:d.revoked_at||null });
+export const rowToRole = r => ({ role:r.role, label:r.label||null, permissions:Array.isArray(r.permissions)?r.permissions.slice():[], updatedAt:r.updated_at||null });
+/* owner_id is filled in by the database (the shop) */
+export const roleRow = ({ role, label, permissions }) => ({ role, label:label||null, permissions:(permissions||[]).slice(), updated_at:new Date().toISOString() });

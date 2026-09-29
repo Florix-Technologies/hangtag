@@ -34,3 +34,16 @@ export async function loadProfile(user){
     return { profile:store.profile, fresh: false };
   }
 }
+/* A team member works with its shop's profile (name, address, GSTIN on the bills), read through row security; its own
+   account's profile is never shown or set up. Offline or unreadable: what this device kept. → the profile or null */
+export async function loadShopProfile(shopId){
+  try{
+    const { data, error } = await use("cloud").getProfile(shopId);
+    if(error) throw error;
+    if(data){ store.profile = data; saveProfile(); }
+  }catch(e){
+    logger.warn("Shop profile from this device:", e && e.message || e);
+    store.profile = store.profile || storage.get("hangtag_profile", null);
+  }
+  return store.profile;
+}

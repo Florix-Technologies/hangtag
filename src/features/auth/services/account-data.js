@@ -13,7 +13,7 @@ import { objOr } from '../../../shared/utils/objects.js';
    The app works on the plain keys below. When a different account signs in, the current data is put away
    under its owner and that account's own data (or a fresh start) is brought back. */
 
-export const USER_KEYS = ["hangtag_sb_queue", "hangtag_sync_review", "rc_local", "rc_dirty", "rc_moves", "rc_returns", "rc_customers", "rc_events", "rc_settings", "rc_pend", "rc_cart", "rc_disc", "rc_cartcust", "rc_catalog", "rc_imgs", "hangtag_profile", "rc_logo", "hangtag_pay_pending", "hangtag_delivery_queue", "rc_cash_moves", "rc_day_closes"];
+export const USER_KEYS = ["hangtag_sb_queue", "hangtag_sync_review", "rc_local", "rc_dirty", "rc_moves", "rc_returns", "rc_customers", "rc_events", "rc_settings", "rc_pend", "rc_cart", "rc_disc", "rc_cartcust", "rc_catalog", "rc_imgs", "hangtag_profile", "rc_logo", "hangtag_pay_pending", "hangtag_delivery_queue", "rc_cash_moves", "rc_day_closes", "hangtag_access"];
 export const MUST_KEEP = ["hangtag_sb_queue", "hangtag_sync_review", "rc_local", "rc_dirty", "rc_moves", "rc_returns", "rc_customers", "rc_events", "rc_cash_moves", "rc_day_closes"];   // unsent work: never drop these
 export const DATA_OWNER = "hangtag_data_owner";
 export const stashKey = (owner, k) => "hangtag_u_" + owner + "_" + k;
@@ -72,6 +72,7 @@ export function loadUserState(){
   store.settings = Object.assign({}, DEFAULT_SETTINGS, objOr(storage.get("rc_settings", {}), {}));
   store.sbOfflineQueue = storage.get("hangtag_sb_queue", []); if(!Array.isArray(store.sbOfflineQueue)) store.sbOfflineQueue = [];
   store.profile = storage.get("hangtag_profile", null);
+  store.access = objOr(storage.get("hangtag_access", null), null); store.team = null;
   store.logo = storage.get("rc_logo", "") || ""; store.deliveries = {}; store.channels = null; store.printState = null;
   applyCatalogMigration();
   store.editor = null; store.lastSale = null; store.retState = null; store.stockOp = null; store.showAllBills = false;

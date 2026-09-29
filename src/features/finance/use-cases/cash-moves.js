@@ -13,6 +13,7 @@ import { enqueue, flushSbQueue } from '../../sync/services/outbox.js';
 import { renderSync } from '../../sync/components/sync-status.js';
 import { dayKey } from '../../../shared/formatting/dates.js';
 import { uid } from '../../../shared/utils/ids.js';
+import { denied } from '../../shop/services/access.js';
 
 export const expenseCats=()=>Array.isArray(store.settings.expenseCats)&&store.settings.expenseCats.length?store.settings.expenseCats:DEFAULT_EXPENSE_CATS;
 const byId=()=>Object.fromEntries(cashRepository().moves().map(m=>[m.id,m]));
@@ -20,6 +21,7 @@ const upload=()=>{ renderSync(); flushSbQueue(); };
 
 /* input: { type, amount, reason, category?, reverses? } → { move } or { error, field } */
 export function recordCashMove(input){
+  const no=denied("create_sale","record cash"); if(no) return no;
   const r=checkCashMove(input,{byId:byId(),cats:expenseCats()});
   if(r.error) return r;
   const ev=sellingEventId();
@@ -29,6 +31,7 @@ export function recordCashMove(input){
 }
 /* The shop's expense categories, edited: list of names → { ok } or { error } */
 export function saveExpenseCats(list){
+  const no=denied("manage_settings","change the shop's settings"); if(no) return no;
   const r=checkExpenseCats(list); if(r.error) return r;
   store.settings=Object.assign({},store.settings,{expenseCats:r.cats}); saveSettings(); enqueue({type:"settings"}); upload();
   return {ok:true};
@@ -48,6 +51,7 @@ export function closeState(day,scope="shop"){
 }
 /* { day (default today), scope, counted, note } → { close } or { error } */
 export function closeDay({day,scope,counted,note}){
+  const no=denied("create_sale","close the day"); if(no) return no;
   const dk=day||dayKey(Date.now()), sc=scope||"shop";
   const r=dayClose({day:dk,scope:sc,expected:dayCash(dk,sc).closing,counted,note});
   if(r.error) return r;

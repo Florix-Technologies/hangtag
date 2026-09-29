@@ -7,6 +7,8 @@ import { products } from '../../products/services/catalog.js';
 import { pullFromSupabase } from '../../sync/services/pull.js';
 import { logger } from '../../../shared/logging/logger.js';
 import { uid } from '../../../shared/utils/ids.js';
+import { AppError, ERROR_CODES } from '../../../shared/errors/app-error.js';
+import { can, notAllowedText } from '../../shop/services/access.js';
 
 /* The file's fingerprint and any earlier import of the same file ({ fileHash, dups }) */
 export async function fingerprintBill(file){
@@ -37,8 +39,12 @@ const noteFor = b => ["Supplier bill", b.invoiceNo, b.supplier].filter(Boolean).
 export function planSupplierBill(b){
   return planImport(b.lines, products(), { uid, now: Date.now(), deviceId: store.dev, importId: b.importId, note: noteFor(b), colorIndex: products().length });
 }
-/* Saves the bill in one step. Throws an AppError (CONFLICT with details.kind for a likely repeat, unless allowDuplicate). */
+/* Saves the bill in one step. Throws an AppError (CONFLICT with details.kind for a likely repeat, unless allowDuplicate;
+   PERMISSION when a team member's role can't add supplier bills, or can't add the new products the bill needs). */
 export async function confirmSupplierBill(b, plan, { allowDuplicate = false } = {}){
+  if(!can("create_purchase")) throw new AppError(ERROR_CODES.PERMISSION, notAllowedText("add supplier bills"));
+  const makes = plan && ((plan.newProducts || []).length || (plan.updatedProducts || []).length || (plan.newVariants || []).length);
+  if(makes && !can("manage_products")) throw new AppError(ERROR_CODES.PERMISSION, notAllowedText("add products") + " Match every line to a product the shop has.");
   const used = b.lines.filter(l => l.include !== false && l.action !== "skip");
   const totals = used.map(l => l.total).filter(x => x != null);
   const meta = { id: b.importId, fileHash: b.fileHash, fileName: b.file && b.file.name, fileType: b.file && b.file.type,

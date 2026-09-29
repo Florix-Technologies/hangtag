@@ -1926,6 +1926,36 @@ DO $$ BEGIN
 EXCEPTION WHEN undefined_object THEN NULL;   -- a database without Supabase's roles (tests)
 END $$;
 
+-- ------------------------------------------------------------------------------
+-- 3j. Business profile and capabilities (F2)
+-- ------------------------------------------------------------------------------
+-- (reserved: this batch's SQL goes here)
+
+-- ------------------------------------------------------------------------------
+-- 3k. Units, decimal quantities, device-scoped numbers, weighing (T1)
+-- ------------------------------------------------------------------------------
+-- (reserved: this batch's SQL goes here)
+
+-- ------------------------------------------------------------------------------
+-- 3l. Suppliers, purchases, bulk import, stock count (T2)
+-- ------------------------------------------------------------------------------
+-- (reserved: this batch's SQL goes here)
+
+-- ------------------------------------------------------------------------------
+-- 3m. Customer credit, held carts, orders engine (T3)
+-- ------------------------------------------------------------------------------
+-- (reserved: this batch's SQL goes here)
+
+-- ------------------------------------------------------------------------------
+-- 3n. Serials, batches, expiry (W2-A)
+-- ------------------------------------------------------------------------------
+-- (reserved: this batch's SQL goes here)
+
+-- ------------------------------------------------------------------------------
+-- 3o. Restaurant: tables, sessions, table orders, kitchen (W2-B)
+-- ------------------------------------------------------------------------------
+-- (reserved: this batch's SQL goes here)
+
 -- ==============================================================================
 -- 4. Indexes for reports
 -- ==============================================================================
@@ -1979,6 +2009,18 @@ BEGIN
         ('hangtag_invoice_links',   'create_sale,view_reports',                     'create_sale'),
         ('hangtag_cash_moves',      'create_sale,view_reports',                     'create_sale'),
         ('hangtag_day_closes',      'create_sale,view_reports',                     'create_sale'),
+        -- tables of section 3j
+
+        -- tables of section 3k
+
+        -- tables of section 3l
+
+        -- tables of section 3m
+
+        -- tables of section 3n
+
+        -- tables of section 3o
+
         ('hangtag_roles',           '',                                             'owner'),
         ('hangtag_audit_log',       'view_reports',                                 '-'),
         -- devices and enrollment tokens have rules of their own (below); here they get the shop default

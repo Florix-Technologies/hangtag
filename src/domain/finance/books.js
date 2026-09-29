@@ -7,16 +7,19 @@
 // "ft:<return id>", "cb:…", "bb:…"), so nothing is ever counted twice, and the database posts the very same entries
 // (supabase/schema.sql section 3e). A cancelled bill keeps its entries, marked cancelled, and they leave the balances.
 // Pure; amounts in rupees, added up in paise.
-import { PAY_METHODS, paymentsOf, verificationOf } from '../sales/payments.js';
+import { PAY_METHODS, dueAmtOf, paymentsOf, verificationOf } from '../sales/payments.js';
 import { sumP, toPaise, toRupees } from '../sales/paise.js';
 import { moveDirection } from './cash-moves.js';
 
 const byTime=(a,b)=>a.t-b.t||(a.id<b.id?-1:a.id>b.id?1:0);
 
 /* sales: bills with { id, no, t, void, payments | pay, total, credit } · returns: { id, sale, t, refund, pay }
-   · cashMoves: cash without a bill (domain/finance/cash-moves.js) — opening float, cash in / out, expenses, reversals */
+   · cashMoves: cash without a bill (domain/finance/cash-moves.js) — opening float, cash in / out, expenses, reversals
+   · collections: money customers paid towards what they owe (domain/customers/credit.js): { id, cust, amount, method, ref?,
+     verification?, t, status? } — kind "collection", no bill (ids "ft:<collection id>", like the database's)
+   A return refunded to the customer's account ("due") moves no money: no transaction. */
 const MOVE_KIND={opening:"opening",in:"cash_in",out:"cash_out",expense:"expense",reversal:"reversal"};
-export function financialTransactions(sales,returns,cashMoves){
+export function financialTransactions(sales,returns,cashMoves,collections){
   const bill={}, out=[];
   (sales||[]).forEach(s=>{
     bill[s.id]=s;
@@ -33,6 +36,12 @@ export function financialTransactions(sales,returns,cashMoves){
   const byId=Object.fromEntries((cashMoves||[]).map(m=>[m.id,m]));
   (cashMoves||[]).forEach(m=>out.push({id:"ft:"+m.id,kind:MOVE_KIND[m.type]||"cash_in",dir:moveDirection(m,byId),method:"cash",amount:m.amount,saleId:null,billNo:"",
     paymentId:null,returnId:null,moveId:m.id,ref:"",reason:m.reason||"",category:m.category||"",reverses:m.reverses||null,received:null,change:0,t:m.t,status:"posted"}));
+  (collections||[]).forEach(c=>{
+    if(!(toPaise(c.amount)>0)||!PAY_METHODS.includes(c.method)) return;
+    out.push({id:"ft:"+c.id,kind:"collection",dir:"in",method:c.method,amount:c.amount,saleId:null,billNo:"",paymentId:null,returnId:null,
+      collectionId:c.id,customerId:c.cust||null,customerName:c.custName||"",ref:c.ref||"",received:c.method==="cash"?c.amount:null,change:0,
+      verification:c.verification||"recorded",t:c.t,status:c.status==="cancelled"?"cancelled":"posted"});
+  });
   return out.sort(byTime);
 }
 const CASH_TYPE={sale_receipt:"cash_sale",refund:"cash_refund"};
@@ -46,28 +55,31 @@ export function cashBook(txns,{from=-Infinity,to=Infinity}={}){
     if(live(x)) bal+=signed(x);
     entries.push({id:"cb:"+x.id,finTxnId:x.id,type:CASH_TYPE[x.kind]||x.kind,t:x.t,saleId:x.saleId,billNo:x.billNo,returnId:x.returnId,
       in:x.dir==="in"?x.amount:0,out:x.dir==="out"?x.amount:0,received:x.received,change:x.change,status:x.status,balance:toRupees(bal),
-      ...(x.moveId?{moveId:x.moveId,reason:x.reason,category:x.category,reverses:x.reverses}:{})});
+      ...(x.moveId?{moveId:x.moveId,reason:x.reason,category:x.category,reverses:x.reverses}:{}),
+      ...(x.collectionId?{collectionId:x.collectionId,customerId:x.customerId,customerName:x.customerName}:{})});
   });
   const P=entries.filter(live), add=f=>toRupees(sumP(P.map(f))), of=(type,side)=>add(e=>e.type===type?toPaise(e[side]):0);
   return {opening:toRupees(opening),entries,cashSales:of("cash_sale","in"),received:add(e=>toPaise(e.type==="cash_sale"?e.received:0)),changeGiven:add(e=>toPaise(e.change)),
     refunds:of("cash_refund","out"),openingFloat:of("opening","in"),cashIn:of("cash_in","in"),cashOut:of("cash_out","out"),expenses:of("expense","out"),
-    reversals:add(e=>e.type==="reversal"?toPaise(e.in)-toPaise(e.out):0),closing:toRupees(bal),cancelled:entries.length-P.length};
+    reversals:add(e=>e.type==="reversal"?toPaise(e.in)-toPaise(e.out):0),collections:of("collection","in"),closing:toRupees(bal),cancelled:entries.length-P.length};
 }
 /* Bank book (UPI and card) between two times: entries and totals per method; UPI checked only by hand is also shown on
    its own (upiUnverified), within the UPI figure */
 export function bankBook(txns,{from=-Infinity,to=Infinity}={}){
   const live=x=>x.status==="posted";
   const entries=(txns||[]).filter(x=>(x.method==="upi"||x.method==="card")&&x.t>=from&&x.t<=to).sort(byTime).map(x=>({id:"bb:"+x.id,finTxnId:x.id,
-    type:x.kind==="refund"?"refund":"receipt",method:x.method,t:x.t,saleId:x.saleId,billNo:x.billNo,returnId:x.returnId,ref:x.ref,
-    in:x.dir==="in"?x.amount:0,out:x.dir==="out"?x.amount:0,status:x.status,...(x.kind==="sale_receipt"?{verification:x.verification||"recorded"}:{})}));
+    type:x.kind==="refund"?"refund":x.kind==="collection"?"collection":"receipt",method:x.method,t:x.t,saleId:x.saleId,billNo:x.billNo,returnId:x.returnId,ref:x.ref,
+    in:x.dir==="in"?x.amount:0,out:x.dir==="out"?x.amount:0,status:x.status,...(x.kind==="sale_receipt"||x.kind==="collection"?{verification:x.verification||"recorded"}:{}),
+    ...(x.collectionId?{collectionId:x.collectionId,customerId:x.customerId,customerName:x.customerName}:{})}));
   const P=entries.filter(live), add=f=>toRupees(sumP(P.map(f)));
   return {entries,upiIn:add(e=>e.method==="upi"?toPaise(e.in):0),cardIn:add(e=>e.method==="card"?toPaise(e.in):0),
     upiUnverified:add(e=>e.method==="upi"&&e.verification==="unverified"?toPaise(e.in):0),verifiedIn:add(e=>e.verification==="verified"?toPaise(e.in):0),
-    refunds:add(e=>toPaise(e.out)),net:add(e=>toPaise(e.in)-toPaise(e.out)),cancelled:entries.length-P.length};
+    refunds:add(e=>toPaise(e.out)),net:add(e=>toPaise(e.in)-toPaise(e.out)),collections:add(e=>e.type==="collection"?toPaise(e.in):0),cancelled:entries.length-P.length};
 }
-/* Does a bill's money add up? Posted receipts must equal what was due (nothing for a cancelled bill). */
+/* Does a bill's money add up? Posted receipts must equal what was due now (nothing for a cancelled bill; the part left on
+   the customer's account is collected later, apart from the bill). */
 export function reconcileSale(sale,txns){
-  const due=sale.void?0:Math.max(0,toPaise(sale.total)-toPaise(sale.credit));
+  const due=sale.void?0:Math.max(0,toPaise(sale.total)-toPaise(sale.credit)-toPaise(dueAmtOf(sale)));
   const got=sumP((txns||[]).filter(x=>x.saleId===sale.id&&x.kind==="sale_receipt"&&x.status==="posted").map(x=>toPaise(x.amount)));
   return {due:toRupees(due),received:toRupees(got),ok:due===got};
 }

@@ -1,6 +1,6 @@
 // Account button, account menu and settings dialog: clicks, profile form, Escape.
 import { closeAcctMenu, openAcctMenu } from './account-menu.js';
-import { closeSettings, onProfileSubmit, openSettings } from './settings-modal.js';
+import { closeSettings, installSettingsEvents, onProfileSubmit, openSettings } from './settings-modal.js';
 import { downloadBackup } from '../../backup/services/backup-file.js';
 import { exportCsv } from '../../reports/services/csv-export.js';
 import { aEl } from '../../../shared/components/gate.js';
@@ -14,6 +14,7 @@ import { openCashForm } from '../../finance/components/cash-form.js';
 /* Registered once at start-up (app/main.js). */
 export function installAccountMenuEvents(){
   installTeamEvents(openSettings);   // Settings → Team & devices, Roles & permissions (back leads to the settings)
+  installSettingsEvents();           // Settings: the section bar, Capabilities
   aEl("acctBtn").addEventListener("click", e => { e.stopPropagation(); if(aEl("acctMenu").hidden) openAcctMenu(); else closeAcctMenu(); });
   aEl("acctMenu").addEventListener("click", e => {
     const b = e.target.closest("[data-am]"); if(!b) return;

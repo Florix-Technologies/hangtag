@@ -68,3 +68,6 @@
 /* ---------- the product form: fields by capability ---------- */
 .edcap .pgrid{margin-top:4px}
 .capnote{margin:8px 0 0;padding:8px 10px;border-radius:10px;background:var(--wash);font-size:13px;color:var(--ink-2)}
+.setblk{margin:12px 0 0}
+.setblk > h5,.setblk h5{margin:0 0 8px;font-size:13.5px}
+.setsec h5.subh{font-size:13.5px}

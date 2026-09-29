@@ -1939,7 +1939,307 @@ END $$;
 -- ------------------------------------------------------------------------------
 -- 3l. Suppliers, purchases, bulk import, stock count (T2)
 -- ------------------------------------------------------------------------------
--- (reserved: this batch's SQL goes here)
+-- Suppliers (who the shop buys from), purchases from them (a supplier's invoice: its lines add stock through RESTOCK
+-- records; cash paid out of the drawer goes to the cash book), later payments to a supplier, a low-stock level per product
+-- (bulk product import sets it; the stock page uses it) and stock counts (ADJUST records, audited like every adjustment).
+-- Stock is never stored as a number: a purchase adds stock-in records that point at it (import_id) and carry the cost;
+-- cancelling it adds the opposite adjustments. What a supplier is owed is worked out from the purchases and payments.
+
+-- (a) Suppliers. Never deleted (switched off with active = false), so their purchases and payments keep them.
+CREATE TABLE IF NOT EXISTS public.hangtag_suppliers (
+    owner_id UUID NOT NULL DEFAULT public.hangtag_shop_id() REFERENCES auth.users(id) ON DELETE CASCADE,
+    id TEXT NOT NULL CHECK (char_length(id) BETWEEN 1 AND 64),
+    name TEXT NOT NULL CHECK (char_length(btrim(name)) BETWEEN 1 AND 80),
+    phone TEXT CHECK (phone IS NULL OR char_length(phone) <= 20),
+    email TEXT CHECK (email IS NULL OR char_length(email) <= 120),
+    address TEXT CHECK (address IS NULL OR char_length(address) <= 300),
+    gstin TEXT CHECK (gstin IS NULL OR gstin ~ '^[0-9]{2}[A-Z0-9]{10}[0-9A-Z]{3}$'),
+    notes TEXT CHECK (notes IS NULL OR char_length(notes) <= 500),
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (owner_id, id)
+);
+CREATE INDEX IF NOT EXISTS idx_hangtag_suppliers_name ON public.hangtag_suppliers (owner_id, lower(name));
+
+-- (b) Purchases are rows of hangtag_stock_imports with kind 'purchase' (supplier bills read from a file stay kind 'import').
+--     Money in rupees: total = subtotal + GST; paid at the time of purchase (0 … total) with its method; later payments
+--     are hangtag_supplier_payments. A purchase is history: it is never changed or removed, only cancelled (status
+--     'cancelled', through hangtag_cancel_purchase, which also takes its stock back). user_id: who recorded it.
+ALTER TABLE public.hangtag_stock_imports ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'import';
+ALTER TABLE public.hangtag_stock_imports ADD COLUMN IF NOT EXISTS supplier_id TEXT;
+ALTER TABLE public.hangtag_stock_imports ADD COLUMN IF NOT EXISTS t BIGINT;
+ALTER TABLE public.hangtag_stock_imports ADD COLUMN IF NOT EXISTS subtotal NUMERIC(12,2);
+ALTER TABLE public.hangtag_stock_imports ADD COLUMN IF NOT EXISTS tax_amount NUMERIC(12,2);
+ALTER TABLE public.hangtag_stock_imports ADD COLUMN IF NOT EXISTS total_amount NUMERIC(12,2);
+ALTER TABLE public.hangtag_stock_imports ADD COLUMN IF NOT EXISTS paid_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE public.hangtag_stock_imports ADD COLUMN IF NOT EXISTS payment_method TEXT;
+ALTER TABLE public.hangtag_stock_imports ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'posted';
+ALTER TABLE public.hangtag_stock_imports ADD COLUMN IF NOT EXISTS note TEXT;
+ALTER TABLE public.hangtag_stock_imports ADD COLUMN IF NOT EXISTS user_id UUID DEFAULT auth.uid();
+ALTER TABLE public.hangtag_stock_imports ADD COLUMN IF NOT EXISTS cancel_reason TEXT;
+ALTER TABLE public.hangtag_stock_imports ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
+-- supplier bills saved before: their time is when they were saved; new ones get it by themselves
+UPDATE public.hangtag_stock_imports SET t = (extract(epoch FROM created_at) * 1000)::BIGINT WHERE t IS NULL AND created_at IS NOT NULL;
+ALTER TABLE public.hangtag_stock_imports ALTER COLUMN t SET DEFAULT (extract(epoch FROM now()) * 1000)::BIGINT;
+ALTER TABLE public.hangtag_stock_imports DROP CONSTRAINT IF EXISTS hangtag_stock_imports_kind_check;
+ALTER TABLE public.hangtag_stock_imports ADD CONSTRAINT hangtag_stock_imports_kind_check CHECK (kind IN ('import','purchase'));
+ALTER TABLE public.hangtag_stock_imports DROP CONSTRAINT IF EXISTS hangtag_stock_imports_status_check;
+ALTER TABLE public.hangtag_stock_imports ADD CONSTRAINT hangtag_stock_imports_status_check CHECK (status IN ('posted','cancelled')
+    AND (status = 'posted' OR (kind = 'purchase' AND char_length(btrim(COALESCE(cancel_reason, ''))) BETWEEN 3 AND 200 AND cancelled_at IS NOT NULL)));
+ALTER TABLE public.hangtag_stock_imports DROP CONSTRAINT IF EXISTS hangtag_stock_imports_note_check;
+ALTER TABLE public.hangtag_stock_imports ADD CONSTRAINT hangtag_stock_imports_note_check CHECK (note IS NULL OR char_length(note) <= 200);
+ALTER TABLE public.hangtag_stock_imports DROP CONSTRAINT IF EXISTS hangtag_stock_imports_method_check;
+ALTER TABLE public.hangtag_stock_imports ADD CONSTRAINT hangtag_stock_imports_method_check CHECK (payment_method IS NULL OR payment_method IN ('cash','upi','card','bank','cheque'));
+-- a purchase's money adds up; a method goes with money paid (and only then); cash out of the drawer is at most one cash entry
+ALTER TABLE public.hangtag_stock_imports DROP CONSTRAINT IF EXISTS hangtag_stock_imports_money_check;
+ALTER TABLE public.hangtag_stock_imports ADD CONSTRAINT hangtag_stock_imports_money_check CHECK (kind <> 'purchase' OR (
+    t IS NOT NULL AND char_length(id) <= 58 AND subtotal >= 0 AND tax_amount >= 0 AND total_amount = subtotal + tax_amount
+    AND paid_amount >= 0 AND paid_amount <= total_amount AND (paid_amount = 0) = (payment_method IS NULL)
+    AND (payment_method IS DISTINCT FROM 'cash' OR paid_amount <= 1000000)));
+ALTER TABLE public.hangtag_stock_imports DROP CONSTRAINT IF EXISTS hangtag_stock_imports_supplier_fkey;
+ALTER TABLE public.hangtag_stock_imports ADD CONSTRAINT hangtag_stock_imports_supplier_fkey FOREIGN KEY (owner_id, supplier_id) REFERENCES public.hangtag_suppliers (owner_id, id);
+CREATE INDEX IF NOT EXISTS idx_hangtag_imports_supplier ON public.hangtag_stock_imports (owner_id, supplier_id) WHERE supplier_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_hangtag_imports_time ON public.hangtag_stock_imports (owner_id, t);
+
+-- Purchases are history. Nobody changes a saved one (a re-upload of the same row changes nothing); it is cancelled only
+-- through hangtag_cancel_purchase (which takes its stock back), and a cancelled one stays cancelled. It is removed only
+-- with its shop's account. The database, not the phone, says who recorded it.
+CREATE OR REPLACE FUNCTION public.hangtag_purchase_check()
+RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        IF OLD.kind = 'purchase' AND EXISTS (SELECT 1 FROM auth.users u WHERE u.id = OLD.owner_id) THEN
+            RAISE EXCEPTION 'A purchase can''t be removed. Cancel it instead.' USING ERRCODE = '42501';
+        END IF;
+        RETURN OLD;
+    END IF;
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.kind = 'purchase' THEN
+            IF auth.uid() IS NOT NULL THEN NEW.user_id := auth.uid(); END IF;
+            IF NEW.status <> 'posted' THEN RAISE EXCEPTION 'A new purchase is saved as posted.' USING ERRCODE = 'check_violation'; END IF;
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF OLD.kind = 'purchase' OR NEW.kind = 'purchase' THEN
+        IF (to_jsonb(NEW) - 'status' - 'cancel_reason' - 'cancelled_at') IS DISTINCT FROM (to_jsonb(OLD) - 'status' - 'cancel_reason' - 'cancelled_at') THEN
+            RAISE EXCEPTION 'A saved purchase can''t be changed. Cancel it and enter it again.' USING ERRCODE = '42501';
+        END IF;
+        IF (NEW.status, NEW.cancel_reason, NEW.cancelled_at) IS DISTINCT FROM (OLD.status, OLD.cancel_reason, OLD.cancelled_at)
+           AND (OLD.status <> 'posted' OR COALESCE(current_setting('hangtag.cancel_purchase', true), '') <> OLD.id) THEN
+            RAISE EXCEPTION 'A purchase is cancelled only with Cancel purchase (it takes its stock back), and only once.' USING ERRCODE = '42501';
+        END IF;
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_purchase_check ON public.hangtag_stock_imports;
+CREATE TRIGGER hangtag_purchase_check BEFORE INSERT OR UPDATE OR DELETE ON public.hangtag_stock_imports FOR EACH ROW EXECUTE FUNCTION public.hangtag_purchase_check();
+
+-- (c) Payments to a supplier after the purchase (the part paid at the time is on the purchase). Never changed or deleted:
+--     a mistake gets one reversal for the whole payment, with a reason. purchase_id: the invoice it was for (optional).
+CREATE TABLE IF NOT EXISTS public.hangtag_supplier_payments (
+    owner_id UUID NOT NULL DEFAULT public.hangtag_shop_id() REFERENCES auth.users(id) ON DELETE CASCADE,
+    id TEXT NOT NULL CHECK (char_length(id) BETWEEN 1 AND 58),
+    supplier_id TEXT NOT NULL,
+    purchase_id TEXT,
+    amount NUMERIC(12,2) NOT NULL CHECK (amount > 0 AND amount <= 100000000),
+    method TEXT NOT NULL CHECK (method IN ('cash','upi','card','bank','cheque')),
+    reference TEXT CHECK (reference IS NULL OR char_length(reference) <= 60),
+    note TEXT CHECK (note IS NULL OR char_length(note) <= 200),
+    reverses TEXT,
+    t BIGINT NOT NULL,
+    device_id TEXT,
+    user_id UUID DEFAULT auth.uid(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (owner_id, id),
+    CONSTRAINT hangtag_supplier_payments_cash_check CHECK (method <> 'cash' OR amount <= 1000000),
+    CONSTRAINT hangtag_supplier_payments_supplier_fkey FOREIGN KEY (owner_id, supplier_id) REFERENCES public.hangtag_suppliers (owner_id, id),
+    CONSTRAINT hangtag_supplier_payments_purchase_fkey FOREIGN KEY (owner_id, purchase_id) REFERENCES public.hangtag_stock_imports (owner_id, id),
+    CONSTRAINT hangtag_supplier_payments_reverses_fkey FOREIGN KEY (owner_id, reverses) REFERENCES public.hangtag_supplier_payments (owner_id, id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS hangtag_supplier_payments_reversed_once ON public.hangtag_supplier_payments (owner_id, reverses) WHERE reverses IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_hangtag_supplier_payments_supplier ON public.hangtag_supplier_payments (owner_id, supplier_id, t);
+-- a reversal is for the whole of a payment to the same supplier (same method and invoice), never of another reversal, with a reason;
+-- a payment for an invoice names a purchase from that supplier; the database says who recorded it
+CREATE OR REPLACE FUNCTION public.hangtag_supplier_payment_check()
+RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
+DECLARE o RECORD;
+BEGIN
+    IF auth.uid() IS NOT NULL THEN NEW.user_id := auth.uid(); END IF;
+    IF NEW.reverses IS NOT NULL THEN
+        SELECT supplier_id, purchase_id, amount, method, reverses INTO o FROM public.hangtag_supplier_payments WHERE owner_id = NEW.owner_id AND id = NEW.reverses;
+        IF NOT FOUND THEN RAISE EXCEPTION 'Supplier payment % was not found', NEW.reverses USING ERRCODE = 'foreign_key_violation'; END IF;
+        IF o.reverses IS NOT NULL OR o.amount <> NEW.amount OR o.supplier_id <> NEW.supplier_id OR o.method <> NEW.method OR o.purchase_id IS DISTINCT FROM NEW.purchase_id THEN
+            RAISE EXCEPTION 'A reversal must be for the whole of a payment to the same supplier, and not of another reversal' USING ERRCODE = 'check_violation';
+        END IF;
+        IF char_length(btrim(COALESCE(NEW.note, ''))) < 3 THEN RAISE EXCEPTION 'Say why the payment is reversed.' USING ERRCODE = 'check_violation'; END IF;
+    END IF;
+    IF NEW.purchase_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.hangtag_stock_imports p
+        WHERE p.owner_id = NEW.owner_id AND p.id = NEW.purchase_id AND p.kind = 'purchase' AND p.supplier_id = NEW.supplier_id) THEN
+        RAISE EXCEPTION 'That purchase is not one from this supplier.' USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_supplier_payment_check ON public.hangtag_supplier_payments;
+CREATE TRIGGER hangtag_supplier_payment_check BEFORE INSERT ON public.hangtag_supplier_payments FOR EACH ROW EXECUTE FUNCTION public.hangtag_supplier_payment_check();
+
+-- (d) Cash paid to a supplier leaves the drawer: the database adds the cash book's "Cash out" entry itself (ids
+--     'pur:<purchase>' and 'spay:<payment>'; the phone shows the same entry at once, under the same id), and its reversal
+--     when the purchase is cancelled ('purx:<purchase>') or the payment reversed. SECURITY DEFINER: a role may buy stock
+--     without recording other cash; the owner comes from the row that row security already checked.
+CREATE OR REPLACE FUNCTION public.hangtag_post_purchase_cash()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+    IF NEW.kind <> 'purchase' OR NEW.payment_method IS DISTINCT FROM 'cash' OR NEW.paid_amount <= 0 THEN RETURN NULL; END IF;
+    IF TG_OP = 'INSERT' THEN
+        INSERT INTO public.hangtag_cash_moves (owner_id, id, type, amount, reason, t, device_id)
+        VALUES (NEW.owner_id, 'pur:' || NEW.id, 'out', NEW.paid_amount,
+                left('Paid supplier ' || COALESCE(NULLIF(btrim(NEW.supplier_name), ''), 'for stock') || COALESCE(' · ' || NULLIF(btrim(NEW.invoice_no), ''), ''), 200),
+                NEW.t, NEW.device_id)
+        ON CONFLICT DO NOTHING;
+    ELSIF OLD.status = 'posted' AND NEW.status = 'cancelled' THEN
+        INSERT INTO public.hangtag_cash_moves (owner_id, id, type, amount, reason, reverses, t, device_id)
+        SELECT c.owner_id, 'purx:' || NEW.id, 'reversal', c.amount, left('Purchase cancelled: ' || btrim(NEW.cancel_reason), 200), c.id,
+               (extract(epoch FROM NEW.cancelled_at) * 1000)::BIGINT, NEW.device_id
+        FROM public.hangtag_cash_moves c
+        WHERE c.owner_id = NEW.owner_id AND c.id = 'pur:' || NEW.id AND NOT EXISTS (SELECT 1 FROM public.hangtag_cash_moves r WHERE r.owner_id = c.owner_id AND r.reverses = c.id)
+        ON CONFLICT DO NOTHING;
+    END IF;
+    RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_post_purchase_cash ON public.hangtag_stock_imports;
+CREATE TRIGGER hangtag_post_purchase_cash AFTER INSERT OR UPDATE OF status ON public.hangtag_stock_imports FOR EACH ROW EXECUTE FUNCTION public.hangtag_post_purchase_cash();
+CREATE OR REPLACE FUNCTION public.hangtag_post_supplier_payment_cash()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE s TEXT;
+BEGIN
+    IF NEW.method <> 'cash' THEN RETURN NULL; END IF;
+    SELECT name INTO s FROM public.hangtag_suppliers WHERE owner_id = NEW.owner_id AND id = NEW.supplier_id;
+    IF NEW.reverses IS NULL THEN
+        INSERT INTO public.hangtag_cash_moves (owner_id, id, type, amount, reason, t, device_id)
+        VALUES (NEW.owner_id, 'spay:' || NEW.id, 'out', NEW.amount, left('Paid supplier ' || COALESCE(NULLIF(btrim(s), ''), NEW.supplier_id), 200), NEW.t, NEW.device_id)
+        ON CONFLICT DO NOTHING;
+    ELSE
+        INSERT INTO public.hangtag_cash_moves (owner_id, id, type, amount, reason, reverses, t, device_id)
+        SELECT c.owner_id, 'spay:' || NEW.id, 'reversal', c.amount, left('Supplier payment reversed: ' || btrim(NEW.note), 200), c.id, NEW.t, NEW.device_id
+        FROM public.hangtag_cash_moves c
+        WHERE c.owner_id = NEW.owner_id AND c.id = 'spay:' || NEW.reverses AND NOT EXISTS (SELECT 1 FROM public.hangtag_cash_moves r WHERE r.owner_id = c.owner_id AND r.reverses = c.id)
+        ON CONFLICT DO NOTHING;
+    END IF;
+    RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_post_supplier_payment_cash ON public.hangtag_supplier_payments;
+CREATE TRIGGER hangtag_post_supplier_payment_cash AFTER INSERT ON public.hangtag_supplier_payments FOR EACH ROW EXECUTE FUNCTION public.hangtag_post_supplier_payment_cash();
+
+-- (e) Saves a purchase in one step: the purchase row and its stock-in records (RESTOCK, import_id = the purchase, cost per
+--     piece) are all saved, or none are; the cash entry follows by itself. Runs with the caller's rights (row security
+--     applies); the shop is public.hangtag_shop_id() and the caller needs create_purchase. The same purchase id again is a
+--     safe retry (nothing changes). p_purchase: { id, supplier_id, supplier_name, supplier_gstin, invoice_no, invoice_date,
+--     t, lines [{ p, v, n, vl, sku, q, cost, gst, tx, tax, total, serials?, batch? }], subtotal, tax_amount, total_amount,
+--     paid_amount, payment_method, note, device_id }; p_moves: [{ id, variant_id, product_id, qty, cost_price, note, t,
+--     device_id }]. p_tracking: serial numbers and batches of the lines (a later batch); not used yet.
+CREATE OR REPLACE FUNCTION public.hangtag_save_purchase(p_purchase JSONB, p_moves JSONB, p_tracking JSONB DEFAULT NULL)
+RETURNS JSONB LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+DECLARE
+    uid UUID := public.hangtag_shop_id(); pid TEXT := btrim(COALESCE(p_purchase ->> 'id', ''));
+    lines JSONB := COALESCE(p_purchase -> 'lines', '[]'::jsonb); sid TEXT := NULLIF(btrim(COALESCE(p_purchase ->> 'supplier_id', '')), '');
+    sub NUMERIC := round(COALESCE((p_purchase ->> 'subtotal')::NUMERIC, 0), 2); tax NUMERIC := round(COALESCE((p_purchase ->> 'tax_amount')::NUMERIC, 0), 2);
+    l_sub NUMERIC; l_tax NUMERIC; l_q NUMERIC; n_m INT; m_q NUMERIC; bad BOOLEAN; s_name TEXT; s_gstin TEXT;
+BEGIN
+    IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Sign in to record purchases.' USING ERRCODE = '42501'; END IF;
+    IF uid IS NULL OR NOT public.hangtag_can('create_purchase') THEN RAISE EXCEPTION 'Not allowed to record purchases.' USING ERRCODE = '42501'; END IF;
+    IF pid = '' OR char_length(pid) > 58 THEN RAISE EXCEPTION 'The purchase has no id.' USING ERRCODE = '22023'; END IF;
+    IF EXISTS (SELECT 1 FROM public.hangtag_stock_imports WHERE owner_id = uid AND id = pid) THEN
+        RETURN jsonb_build_object('status', 'already_saved', 'purchase_id', pid);
+    END IF;
+    IF jsonb_typeof(lines) <> 'array' OR jsonb_array_length(lines) = 0 THEN RAISE EXCEPTION 'A purchase needs at least one line.' USING ERRCODE = '23514'; END IF;
+    IF jsonb_typeof(COALESCE(p_moves, 'null'::jsonb)) <> 'array' OR jsonb_array_length(p_moves) = 0 THEN RAISE EXCEPTION 'A purchase needs its stock-in lines.' USING ERRCODE = '23514'; END IF;
+    SELECT COALESCE(sum(round((x ->> 'tx')::NUMERIC, 2)), 0), COALESCE(sum(round((x ->> 'tax')::NUMERIC, 2)), 0), COALESCE(sum((x ->> 'q')::NUMERIC), 0)
+      INTO l_sub, l_tax, l_q FROM jsonb_array_elements(lines) x;
+    IF l_sub <> sub OR l_tax <> tax THEN RAISE EXCEPTION 'The purchase lines don''t add up to its subtotal and GST.' USING ERRCODE = '23514'; END IF;
+    SELECT count(*), COALESCE(sum((x ->> 'qty')::NUMERIC), 0), COALESCE(bool_or(COALESCE((x ->> 'qty')::NUMERIC, 0) <= 0 OR COALESCE((x ->> 'cost_price')::NUMERIC, 0) < 0), FALSE)
+      INTO n_m, m_q, bad FROM jsonb_array_elements(p_moves) x;
+    IF bad THEN RAISE EXCEPTION 'Every line needs a quantity more than 0 and a cost of ₹0 or more.' USING ERRCODE = '23514'; END IF;
+    IF m_q <> l_q THEN RAISE EXCEPTION 'The stock-in lines don''t match the purchase lines.' USING ERRCODE = '23514'; END IF;
+    IF sid IS NOT NULL THEN SELECT name, gstin INTO s_name, s_gstin FROM public.hangtag_suppliers WHERE owner_id = uid AND id = sid; END IF;
+    INSERT INTO public.hangtag_stock_imports (id, kind, supplier_id, supplier_name, supplier_gstin, invoice_no, invoice_date, t, line_count, units, amount,
+                                              subtotal, tax_amount, total_amount, paid_amount, payment_method, status, note, lines, device_id)
+    VALUES (pid, 'purchase', sid, COALESCE(NULLIF(btrim(p_purchase ->> 'supplier_name'), ''), s_name), COALESCE(NULLIF(btrim(p_purchase ->> 'supplier_gstin'), ''), s_gstin),
+            NULLIF(btrim(COALESCE(p_purchase ->> 'invoice_no', '')), ''), NULLIF(p_purchase ->> 'invoice_date', '')::DATE,
+            COALESCE((p_purchase ->> 't')::BIGINT, (extract(epoch FROM now()) * 1000)::BIGINT), jsonb_array_length(lines), round(m_q)::INTEGER,
+            round(COALESCE((p_purchase ->> 'total_amount')::NUMERIC, 0), 2), sub, tax, round(COALESCE((p_purchase ->> 'total_amount')::NUMERIC, 0), 2),
+            round(COALESCE((p_purchase ->> 'paid_amount')::NUMERIC, 0), 2), NULLIF(p_purchase ->> 'payment_method', ''), 'posted',
+            NULLIF(left(btrim(COALESCE(p_purchase ->> 'note', '')), 200), ''), lines, p_purchase ->> 'device_id');
+    INSERT INTO public.hangtag_stock_moves (id, variant_id, product_id, type, qty, cost_price, note, t, device_id, import_id)
+    SELECT x ->> 'id', x ->> 'variant_id', x ->> 'product_id', 'RESTOCK', (x ->> 'qty')::NUMERIC, round((x ->> 'cost_price')::NUMERIC)::INTEGER, left(x ->> 'note', 200),
+           COALESCE((x ->> 't')::BIGINT, (p_purchase ->> 't')::BIGINT, (extract(epoch FROM now()) * 1000)::BIGINT), COALESCE(x ->> 'device_id', p_purchase ->> 'device_id'), pid
+    FROM jsonb_array_elements(p_moves) x;
+    RETURN jsonb_build_object('status', 'saved', 'purchase_id', pid, 'moves', n_m);
+END $$;
+
+-- (f) Cancels a purchase in one step: it is marked cancelled with the reason, and each of its stock-in records gets the
+--     opposite adjustment (id 'pcx:<record>', import_id = the purchase), so its stock leaves the shelf again; cash paid at the
+--     time comes back into the drawer (the trigger above). Needs create_purchase and manage_inventory. Again: nothing changes.
+CREATE OR REPLACE FUNCTION public.hangtag_cancel_purchase(p_id TEXT, p_reason TEXT, p_device TEXT DEFAULT NULL)
+RETURNS JSONB LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+DECLARE uid UUID := public.hangtag_shop_id(); p RECORD; why TEXT := btrim(COALESCE(p_reason, '')); n INT;
+BEGIN
+    IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Sign in to cancel purchases.' USING ERRCODE = '42501'; END IF;
+    IF uid IS NULL OR NOT public.hangtag_can('create_purchase') OR NOT public.hangtag_can('manage_inventory') THEN
+        RAISE EXCEPTION 'Not allowed to cancel purchases.' USING ERRCODE = '42501';
+    END IF;
+    SELECT id, status INTO p FROM public.hangtag_stock_imports WHERE owner_id = uid AND id = p_id AND kind = 'purchase';
+    IF NOT FOUND THEN RAISE EXCEPTION 'That purchase isn''t in the cloud yet.' USING ERRCODE = '23503'; END IF;
+    IF p.status = 'cancelled' THEN RETURN jsonb_build_object('status', 'already_cancelled', 'purchase_id', p_id); END IF;
+    IF char_length(why) < 3 THEN RAISE EXCEPTION 'Say why the purchase is cancelled (at least 3 characters).' USING ERRCODE = '23514'; END IF;
+    PERFORM set_config('hangtag.cancel_purchase', p_id, true);
+    UPDATE public.hangtag_stock_imports SET status = 'cancelled', cancel_reason = left(why, 200), cancelled_at = now() WHERE owner_id = uid AND id = p_id;
+    PERFORM set_config('hangtag.cancel_purchase', '', true);
+    INSERT INTO public.hangtag_stock_moves (id, variant_id, product_id, type, qty, cost_price, note, t, device_id, import_id)
+    SELECT 'pcx:' || m.id, m.variant_id, m.product_id, 'ADJUST', -m.qty, NULL, left('Purchase cancelled: ' || why, 200), (extract(epoch FROM now()) * 1000)::BIGINT, p_device, p_id
+    FROM public.hangtag_stock_moves m WHERE m.owner_id = uid AND m.import_id = p_id AND m.type = 'RESTOCK'
+    ON CONFLICT DO NOTHING;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    RETURN jsonb_build_object('status', 'cancelled', 'purchase_id', p_id, 'moves', n);
+END $$;
+
+-- (g) What changed in suppliers, purchases and supplier payments (a team member's phone gets no live updates: it asks this
+--     next to hangtag_shop_changes and downloads them only when this changed). Row security decides what is counted.
+CREATE OR REPLACE FUNCTION public.hangtag_purchase_changes()
+RETURNS TEXT LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
+    SELECT (SELECT count(*) || ':' || COALESCE(sum(hashtext(s.id || '|' || s.updated_at::text || '|' || s.active::text)), 0) FROM public.hangtag_suppliers s)
+        || '/' || (SELECT count(*) || ':' || COALESCE(sum(hashtext(p.id || '|' || p.status)), 0) FROM public.hangtag_stock_imports p WHERE p.kind = 'purchase')
+        || '/' || (SELECT count(*) || ':' || COALESCE(sum(hashtext(x.id)), 0) FROM public.hangtag_supplier_payments x)
+$$;
+
+-- (h) Low-stock level of one product (bulk import and the product form set it; empty = the shop's level from settings)
+ALTER TABLE public.hangtag_products ADD COLUMN IF NOT EXISTS low_stock INTEGER;
+ALTER TABLE public.hangtag_products DROP CONSTRAINT IF EXISTS hangtag_products_low_stock_check;
+ALTER TABLE public.hangtag_products ADD CONSTRAINT hangtag_products_low_stock_check CHECK (low_stock IS NULL OR low_stock BETWEEN 0 AND 100000);
+
+-- (i) Audit (section 3i): suppliers added / changed; purchases cancelled (or removed with the account); supplier payments
+--     and their reversals. A new purchase is its own record, like a bill. Stock counts are ADJUST records (logged there).
+DROP TRIGGER IF EXISTS hangtag_audit ON public.hangtag_suppliers;
+CREATE TRIGGER hangtag_audit AFTER INSERT OR DELETE ON public.hangtag_suppliers FOR EACH ROW EXECUTE FUNCTION public.hangtag_audit();
+DROP TRIGGER IF EXISTS hangtag_audit_change ON public.hangtag_suppliers;
+CREATE TRIGGER hangtag_audit_change AFTER UPDATE ON public.hangtag_suppliers FOR EACH ROW WHEN (OLD.* IS DISTINCT FROM NEW.*) EXECUTE FUNCTION public.hangtag_audit();
+DROP TRIGGER IF EXISTS hangtag_audit_change ON public.hangtag_stock_imports;
+CREATE TRIGGER hangtag_audit_change AFTER UPDATE ON public.hangtag_stock_imports FOR EACH ROW WHEN (OLD.* IS DISTINCT FROM NEW.*) EXECUTE FUNCTION public.hangtag_audit();
+DROP TRIGGER IF EXISTS hangtag_audit_remove ON public.hangtag_stock_imports;
+CREATE TRIGGER hangtag_audit_remove AFTER DELETE ON public.hangtag_stock_imports FOR EACH ROW EXECUTE FUNCTION public.hangtag_audit();
+DROP TRIGGER IF EXISTS hangtag_audit ON public.hangtag_supplier_payments;
+CREATE TRIGGER hangtag_audit AFTER INSERT OR DELETE ON public.hangtag_supplier_payments FOR EACH ROW EXECUTE FUNCTION public.hangtag_audit();
+
+-- (j) Who may use them: row security is in section 5 (read: create_purchase, manage_inventory or view_reports; suppliers
+--     are written with create_purchase or manage_inventory, payments with create_purchase). Suppliers are never deleted
+--     (switched off instead); supplier payments are only ever added.
+REVOKE ALL ON TABLE public.hangtag_suppliers, public.hangtag_supplier_payments FROM anon, authenticated;
+GRANT SELECT, INSERT, UPDATE ON TABLE public.hangtag_suppliers TO authenticated;
+GRANT SELECT, INSERT ON TABLE public.hangtag_supplier_payments TO authenticated;
+REVOKE ALL ON FUNCTION public.hangtag_save_purchase(JSONB, JSONB, JSONB), public.hangtag_cancel_purchase(TEXT, TEXT, TEXT), public.hangtag_purchase_changes() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.hangtag_save_purchase(JSONB, JSONB, JSONB), public.hangtag_cancel_purchase(TEXT, TEXT, TEXT), public.hangtag_purchase_changes() TO authenticated;
+REVOKE ALL ON FUNCTION public.hangtag_purchase_check(), public.hangtag_supplier_payment_check(), public.hangtag_post_purchase_cash(),
+    public.hangtag_post_supplier_payment_cash() FROM PUBLIC, anon, authenticated;
 
 -- ------------------------------------------------------------------------------
 -- 3m. Customer credit, held carts, orders engine (T3)
@@ -2014,6 +2314,8 @@ BEGIN
         -- tables of section 3k
 
         -- tables of section 3l
+        ('hangtag_suppliers',       'create_purchase,manage_inventory,view_reports','create_purchase,manage_inventory'),
+        ('hangtag_supplier_payments','create_purchase,manage_inventory,view_reports','create_purchase'),
 
         -- tables of section 3m
 
@@ -2253,4 +2555,35 @@ SELECT check_name, value, expected, value = expected AS ok FROM (
     SELECT 22, 'Devices that belong to a team member of their shop',
            (SELECT count(*) FROM public.hangtag_devices d JOIN public.hangtag_members m ON m.user_id = d.user_id AND m.shop_id = d.owner_id)::bigint,
            (SELECT count(*) FROM public.hangtag_devices)::bigint
+    UNION ALL
+    SELECT 40, 'Purchases whose lines add up to their total',
+           (SELECT count(*) FROM public.hangtag_stock_imports p WHERE p.kind = 'purchase' AND p.total_amount = p.subtotal + p.tax_amount
+              AND p.subtotal = (SELECT COALESCE(sum(round((x ->> 'tx')::NUMERIC, 2)), 0) FROM jsonb_array_elements(p.lines) x)
+              AND p.tax_amount = (SELECT COALESCE(sum(round((x ->> 'tax')::NUMERIC, 2)), 0) FROM jsonb_array_elements(p.lines) x))::bigint,
+           (SELECT count(*) FROM public.hangtag_stock_imports p WHERE p.kind = 'purchase')::bigint
+    UNION ALL
+    SELECT 41, 'Purchases whose stock in matches their lines (cancelled ones: taken back)',
+           (SELECT count(*) FROM public.hangtag_stock_imports p WHERE p.kind = 'purchase'
+              AND (SELECT COALESCE(sum(m.qty), 0) FROM public.hangtag_stock_moves m WHERE m.owner_id = p.owner_id AND m.import_id = p.id)
+                = CASE WHEN p.status = 'cancelled' THEN 0 ELSE (SELECT COALESCE(sum((x ->> 'q')::NUMERIC), 0) FROM jsonb_array_elements(p.lines) x) END)::bigint,
+           (SELECT count(*) FROM public.hangtag_stock_imports p WHERE p.kind = 'purchase')::bigint
+    UNION ALL
+    SELECT 42, 'Cash paid to suppliers is in the cash book',
+           ((SELECT count(*) FROM public.hangtag_stock_imports p WHERE p.kind = 'purchase' AND p.payment_method = 'cash' AND p.paid_amount > 0
+              AND EXISTS (SELECT 1 FROM public.hangtag_cash_moves c WHERE c.owner_id = p.owner_id AND c.id = 'pur:' || p.id AND c.type = 'out' AND c.amount = p.paid_amount)
+              AND (p.status = 'posted' OR EXISTS (SELECT 1 FROM public.hangtag_cash_moves r WHERE r.owner_id = p.owner_id AND r.reverses = 'pur:' || p.id)))
+            + (SELECT count(*) FROM public.hangtag_supplier_payments x WHERE x.method = 'cash'
+              AND EXISTS (SELECT 1 FROM public.hangtag_cash_moves c WHERE c.owner_id = x.owner_id AND (c.id = 'spay:' || x.id OR (x.reverses IS NOT NULL AND c.reverses = 'spay:' || x.reverses)))))::bigint,
+           ((SELECT count(*) FROM public.hangtag_stock_imports p WHERE p.kind = 'purchase' AND p.payment_method = 'cash' AND p.paid_amount > 0)
+            + (SELECT count(*) FROM public.hangtag_supplier_payments x WHERE x.method = 'cash'))::bigint
+    UNION ALL
+    SELECT 43, 'Supplier payment reversals for the whole of their payment',
+           (SELECT count(*) FROM public.hangtag_supplier_payments r JOIN public.hangtag_supplier_payments o ON o.owner_id = r.owner_id AND o.id = r.reverses
+             WHERE o.reverses IS NULL AND o.amount = r.amount AND o.supplier_id = r.supplier_id)::bigint,
+           (SELECT count(*) FROM public.hangtag_supplier_payments r WHERE r.reverses IS NOT NULL)::bigint
+    UNION ALL
+    SELECT 44, 'Purchases not paid more than their total',
+           (SELECT count(*) FROM public.hangtag_stock_imports p WHERE p.kind = 'purchase' AND p.paid_amount + COALESCE((SELECT sum(CASE WHEN x.reverses IS NULL THEN x.amount ELSE -x.amount END)
+              FROM public.hangtag_supplier_payments x WHERE x.owner_id = p.owner_id AND x.purchase_id = p.id), 0) <= p.total_amount)::bigint,
+           (SELECT count(*) FROM public.hangtag_stock_imports p WHERE p.kind = 'purchase')::bigint
 ) r ORDER BY n;

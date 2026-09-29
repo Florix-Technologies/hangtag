@@ -66,7 +66,7 @@ export function optionsRow(p){
 }
 export const productRow = (p, idx) => ({ id:p.id, name:p.name, price:+p.price||0, color:okColor(p.color), sort_order:idx, category:p.cat||null, brand:p.brand||null,
   description:p.desc||null, cost_price:p.cost==null?null:p.cost, archived:!!p.archived, hsn:p.hsn||null, gst_rate:p.gst==null||p.gst===""?null:+p.gst,
-  code_type:p.code||null, options:optionsRow(p), updated_at:new Date().toISOString() });
+  code_type:p.code||null, options:optionsRow(p), low_stock:p.low==null||p.low===""?null:Math.round(+p.low), updated_at:new Date().toISOString() });
 export const variantRows = p => variantsOf(p,true).map((v,k)=>({ id:v.id, product_id:p.id, option_values:Array.isArray(v.o)?v.o.slice():[],
   ...(cs => ({ color:cs.c, size:cs.s }))(legacyCS(p.opts, v.o)), sku:v.sku||null, barcode:v.bc||null,
   price:v.price==null?null:v.price, cost_price:v.cost==null?null:v.cost, active:v.active!==false, sort_order:k, updated_at:new Date().toISOString() }));
@@ -87,7 +87,7 @@ export function rowToProduct(p){
   // and finishDownloadedProduct (domain/catalog/options.js) upgrades them once their variants are attached
   const o = p.options || {};
   const base = { id:p.id, name:p.name, cat:p.category||"", brand:p.brand||"", desc:p.description||"", price:p.price, cost:p.cost_price==null?null:p.cost_price,
-    color:p.color, archived:!!p.archived, hsn:p.hsn||"", gst:p.gst_rate==null?null:+p.gst_rate, code:p.code_type||"", variants:[] };
+    color:p.color, archived:!!p.archived, hsn:p.hsn||"", gst:p.gst_rate==null?null:+p.gst_rate, code:p.code_type||"", variants:[], ...(p.low_stock!=null ? { low:+p.low_stock } : {}) };
   if(Array.isArray(o.opts)) return { ...base, opts:o.opts.map(x => ({ n:String(x&&x.name||""), v:Array.isArray(x&&x.values)?x.values.map(String):[] })) };
   return { ...base, colors:Array.isArray(o.colors)?o.colors:undefined, sizes:Array.isArray(o.sizes)?o.sizes:undefined };
 }
@@ -152,3 +152,33 @@ export const rowToDevice = d => ({ id:d.id, userId:d.user_id, name:d.name||"", p
 export const rowToRole = r => ({ role:r.role, label:r.label||null, permissions:Array.isArray(r.permissions)?r.permissions.slice():[], updatedAt:r.updated_at||null });
 /* owner_id is filled in by the database (the shop) */
 export const roleRow = ({ role, label, permissions }) => ({ role, label:label||null, permissions:(permissions||[]).slice(), updated_at:new Date().toISOString() });
+
+/* ---------- suppliers, purchases and payments to suppliers (section 3l) ---------- */
+export const supplierRow = s => ({ id:s.id, name:s.name, phone:s.phone||null, email:s.email||null, address:s.address||null, gstin:s.gstin||null, notes:s.notes||null,
+  active:s.active!==false, created_at:new Date(s.t||Date.now()).toISOString(), updated_at:new Date().toISOString() });
+export const rowToSupplier = r => ({ id:r.id, name:r.name, phone:r.phone||"", email:r.email||"", address:r.address||"", gstin:r.gstin||"", notes:r.notes||"", active:r.active!==false,
+  t:Date.parse(r.created_at)||0 });
+/* A purchase line in the purchase row's lines (JSON): money in rupees; serials / batch only when the line has them */
+const purchaseLineRow = l => Object.assign({ p:l.p, v:l.v, n:l.n||"", vl:l.vl||"", sku:l.sku||"", q:l.q, cost:l.cost, gst:l.gst||0, tx:l.tx, tax:l.tax, total:l.total },
+  l.serials ? { serials:l.serials } : {}, l.batch ? { batch:l.batch } : {});
+/* A purchase and its stock-in records → the arguments of RPC hangtag_save_purchase (p_tracking: the lines' serial numbers and
+   batches, for the batch that tracks them; null while no line has any) */
+export function purchaseArgs(p, moves){
+  const tracking = (p.lines||[]).some(l => l.serials || l.batch) ? (p.lines||[]).map((l, i) => ({ line:i, variant_id:l.v, serials:l.serials||null, batch:l.batch||null })) : null;
+  return {
+    p_purchase: { id:p.id, supplier_id:p.supplierId||null, supplier_name:p.supplier||null, supplier_gstin:p.gstin||null, invoice_no:p.invoiceNo||null,
+      invoice_date:/^\d{4}-\d{2}-\d{2}$/.test(p.invoiceDate||"") ? p.invoiceDate : null, t:p.t, lines:(p.lines||[]).map(purchaseLineRow),
+      subtotal:p.sub, tax_amount:p.tax, total_amount:p.total, paid_amount:p.paid||0, payment_method:p.paid>0 ? p.method : null, note:p.note||null, device_id:p.dev||store.dev },
+    p_moves: (moves||[]).map(moveRow),
+    p_tracking: tracking,
+  };
+}
+export const rowToPurchase = r => Object.assign({ id:r.id, kind:"purchase", supplierId:r.supplier_id||null, supplier:r.supplier_name||"", gstin:r.supplier_gstin||"",
+  invoiceNo:r.invoice_no||"", invoiceDate:r.invoice_date?String(r.invoice_date).slice(0,10):"", t:Number(r.t)||Date.parse(r.created_at)||0,
+  lines:Array.isArray(r.lines) ? r.lines.map(l => ({ ...l, q:+l.q, cost:+l.cost, gst:+l.gst||0, tx:+l.tx, tax:+l.tax, total:+l.total })) : [],
+  sub:+r.subtotal||0, tax:+r.tax_amount||0, total:+r.total_amount||0, paid:+r.paid_amount||0, method:r.payment_method||null, status:r.status==="cancelled"?"cancelled":"posted",
+  note:r.note||"", dev:r.device_id||"" }, r.status === "cancelled" ? { cancelReason:r.cancel_reason||"", cancelledAt:Date.parse(r.cancelled_at)||0 } : {}, r.user_id ? { user:r.user_id } : {});
+export const supplierPaymentRow = x => ({ id:x.id, supplier_id:x.supplierId, purchase_id:x.purchaseId||null, amount:x.amount, method:x.method, reference:x.ref||null,
+  note:x.note||null, reverses:x.reverses||null, t:x.t, device_id:x.dev||store.dev });
+export const rowToSupplierPayment = r => Object.assign({ id:r.id, supplierId:r.supplier_id, purchaseId:r.purchase_id||null, amount:+r.amount, method:r.method, ref:r.reference||"",
+  note:r.note||"", t:Number(r.t)||0, dev:r.device_id||"" }, r.reverses ? { reverses:r.reverses } : {}, r.user_id ? { user:r.user_id } : {});

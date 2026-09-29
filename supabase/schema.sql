@@ -2004,9 +2004,10 @@ CREATE INDEX IF NOT EXISTS idx_hangtag_imports_time ON public.hangtag_stock_impo
 
 -- Purchases are history. Nobody changes a saved one (a re-upload of the same row changes nothing); it is cancelled only
 -- through hangtag_cancel_purchase (which takes its stock back), and a cancelled one stays cancelled. It is removed only
--- with its shop's account. The database, not the phone, says who recorded it.
+-- with its shop's account. The database, not the phone, says who recorded it. SECURITY DEFINER: it reads whether the
+-- shop's account still exists (auth.users); it changes nothing itself.
 CREATE OR REPLACE FUNCTION public.hangtag_purchase_check()
-RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 BEGIN
     IF TG_OP = 'DELETE' THEN
         IF OLD.kind = 'purchase' AND EXISTS (SELECT 1 FROM auth.users u WHERE u.id = OLD.owner_id) THEN
@@ -2077,6 +2078,14 @@ BEGIN
     IF NEW.purchase_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.hangtag_stock_imports p
         WHERE p.owner_id = NEW.owner_id AND p.id = NEW.purchase_id AND p.kind = 'purchase' AND p.supplier_id = NEW.supplier_id) THEN
         RAISE EXCEPTION 'That purchase is not one from this supplier.' USING ERRCODE = 'check_violation';
+    END IF;
+    -- a payment for an invoice: never for a cancelled one, never more than is still owed on it
+    IF NEW.purchase_id IS NOT NULL AND NEW.reverses IS NULL THEN
+        SELECT p.status, p.total_amount - p.paid_amount - COALESCE((SELECT sum(CASE WHEN x.reverses IS NULL THEN x.amount ELSE -x.amount END)
+                 FROM public.hangtag_supplier_payments x WHERE x.owner_id = p.owner_id AND x.purchase_id = p.id), 0) AS due
+          INTO o FROM public.hangtag_stock_imports p WHERE p.owner_id = NEW.owner_id AND p.id = NEW.purchase_id;
+        IF o.status <> 'posted' THEN RAISE EXCEPTION 'That purchase is cancelled: nothing is owed on it.' USING ERRCODE = 'check_violation'; END IF;
+        IF NEW.amount > o.due THEN RAISE EXCEPTION 'That is more than is still owed on this purchase (₹%).', o.due USING ERRCODE = 'check_violation'; END IF;
     END IF;
     RETURN NEW;
 END $$;
@@ -2173,14 +2182,16 @@ BEGIN
     INSERT INTO public.hangtag_stock_moves (id, variant_id, product_id, type, qty, cost_price, note, t, device_id, import_id)
     SELECT x ->> 'id', x ->> 'variant_id', x ->> 'product_id', 'RESTOCK', (x ->> 'qty')::NUMERIC, round((x ->> 'cost_price')::NUMERIC)::INTEGER, left(x ->> 'note', 200),
            COALESCE((x ->> 't')::BIGINT, (p_purchase ->> 't')::BIGINT, (extract(epoch FROM now()) * 1000)::BIGINT), COALESCE(x ->> 'device_id', p_purchase ->> 'device_id'), pid
-    FROM jsonb_array_elements(p_moves) x;
+    FROM jsonb_array_elements(p_moves) x
+    ON CONFLICT (owner_id, id) DO NOTHING;   -- a stock-in record already sent on its own (a full re-upload) stays as it is
     RETURN jsonb_build_object('status', 'saved', 'purchase_id', pid, 'moves', n_m);
 END $$;
 
 -- (f) Cancels a purchase in one step: it is marked cancelled with the reason, and each of its stock-in records gets the
 --     opposite adjustment (id 'pcx:<record>', import_id = the purchase), so its stock leaves the shelf again; cash paid at the
 --     time comes back into the drawer (the trigger above). Needs create_purchase and manage_inventory. Again: nothing changes.
-CREATE OR REPLACE FUNCTION public.hangtag_cancel_purchase(p_id TEXT, p_reason TEXT, p_device TEXT DEFAULT NULL)
+DROP FUNCTION IF EXISTS public.hangtag_cancel_purchase(TEXT, TEXT, TEXT);   -- an early draft without p_t
+CREATE OR REPLACE FUNCTION public.hangtag_cancel_purchase(p_id TEXT, p_reason TEXT, p_device TEXT DEFAULT NULL, p_t BIGINT DEFAULT NULL)
 RETURNS JSONB LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
 DECLARE uid UUID := public.hangtag_shop_id(); p RECORD; why TEXT := btrim(COALESCE(p_reason, '')); n INT;
 BEGIN
@@ -2196,7 +2207,7 @@ BEGIN
     UPDATE public.hangtag_stock_imports SET status = 'cancelled', cancel_reason = left(why, 200), cancelled_at = now() WHERE owner_id = uid AND id = p_id;
     PERFORM set_config('hangtag.cancel_purchase', '', true);
     INSERT INTO public.hangtag_stock_moves (id, variant_id, product_id, type, qty, cost_price, note, t, device_id, import_id)
-    SELECT 'pcx:' || m.id, m.variant_id, m.product_id, 'ADJUST', -m.qty, NULL, left('Purchase cancelled: ' || why, 200), (extract(epoch FROM now()) * 1000)::BIGINT, p_device, p_id
+    SELECT 'pcx:' || m.id, m.variant_id, m.product_id, 'ADJUST', -m.qty, NULL, left('Purchase cancelled: ' || why, 200), COALESCE(p_t, (extract(epoch FROM now()) * 1000)::BIGINT), p_device, p_id
     FROM public.hangtag_stock_moves m WHERE m.owner_id = uid AND m.import_id = p_id AND m.type = 'RESTOCK'
     ON CONFLICT DO NOTHING;
     GET DIAGNOSTICS n = ROW_COUNT;
@@ -2236,8 +2247,8 @@ CREATE TRIGGER hangtag_audit AFTER INSERT OR DELETE ON public.hangtag_supplier_p
 REVOKE ALL ON TABLE public.hangtag_suppliers, public.hangtag_supplier_payments FROM anon, authenticated;
 GRANT SELECT, INSERT, UPDATE ON TABLE public.hangtag_suppliers TO authenticated;
 GRANT SELECT, INSERT ON TABLE public.hangtag_supplier_payments TO authenticated;
-REVOKE ALL ON FUNCTION public.hangtag_save_purchase(JSONB, JSONB, JSONB), public.hangtag_cancel_purchase(TEXT, TEXT, TEXT), public.hangtag_purchase_changes() FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.hangtag_save_purchase(JSONB, JSONB, JSONB), public.hangtag_cancel_purchase(TEXT, TEXT, TEXT), public.hangtag_purchase_changes() TO authenticated;
+REVOKE ALL ON FUNCTION public.hangtag_save_purchase(JSONB, JSONB, JSONB), public.hangtag_cancel_purchase(TEXT, TEXT, TEXT, BIGINT), public.hangtag_purchase_changes() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.hangtag_save_purchase(JSONB, JSONB, JSONB), public.hangtag_cancel_purchase(TEXT, TEXT, TEXT, BIGINT), public.hangtag_purchase_changes() TO authenticated;
 REVOKE ALL ON FUNCTION public.hangtag_purchase_check(), public.hangtag_supplier_payment_check(), public.hangtag_post_purchase_cash(),
     public.hangtag_post_supplier_payment_cash() FROM PUBLIC, anon, authenticated;
 

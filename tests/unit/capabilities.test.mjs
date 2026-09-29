@@ -135,6 +135,8 @@ const ids = () => shownModules().map((d) => d.id);
   check('8 a restaurant sees Tables and Kitchen, and its table orders', ids().includes('tables') && ids().includes('kitchen') && subviewsOf('orders').some((d) => d.id === 'tableorders'));
   store.profile.business_type = 'retail'; store.settings = Object.assign({}, DEFAULT_SETTINGS, { caps: { uses_tables: true } });
   check('8 any shop that switches on a capability gets its module', ids().includes('tables') && !ids().includes('kitchen'));
+  registerModule({ id: 'kitchen', caps: [] });
+  check('8 Kitchen keeps its capability even when registered without one', !ids().includes('kitchen'));
   store.settings = Object.assign({}, DEFAULT_SETTINGS);
   registerSubview('stock', { id: 'levels', label: 'Stock', order: 10, main: true, render() {} });
   check('8 Inventory with one part shows no part bar; a later part adds itself', subviewsOf('stock').length === 1

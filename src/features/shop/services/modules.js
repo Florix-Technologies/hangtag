@@ -15,6 +15,9 @@ import { shopCaps } from './shop-caps.js';
 import { can } from './access.js';
 
 const MODULES = new Map(), SUBVIEWS = new Map();
+/* Modules that only ever show with their capability (a batch registering them can't forget it): never for a shop that
+   doesn't use tables or a kitchen */
+const MODULE_CAPS = { tables: ["uses_tables"], kitchen: ["uses_kitchen"] };
 
 /* def: { id (the tab id; its page is <section id="v-<id>">), label, icon (svg), order (place in the tab bar),
    phone (which stay on a phone's short tab bar: lower first), view: true (a page) | false (an action: open()),
@@ -24,6 +27,7 @@ const MODULES = new Map(), SUBVIEWS = new Map();
 export function registerModule(def){
   const was = MODULES.get(def.id);
   const d = Object.assign({ view: true, order: 100, phone: 50, caps: [], perms: TAB_PERMISSIONS[def.id] || [], icon: NAV_ICONS[def.id] || NAV_ICONS.dot }, was || {}, def);
+  if(MODULE_CAPS[d.id] && !(d.caps || []).some(k => MODULE_CAPS[d.id].includes(k))) d.caps = MODULE_CAPS[d.id].slice();
   MODULES.set(d.id, d);
   return d;
 }

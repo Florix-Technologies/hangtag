@@ -7,10 +7,14 @@
 //     the credit note's round off).
 //   · Stock: returned pieces go back on the shelf unless marked not for resale; the new bill's pieces go out.
 //   · Money: a refund posts a financial transaction and a cash or bank book entry (domain/finance/books.js; the database
-//     posts the same); the new bill's payments post like any bill's.
+//     posts the same); the new bill's payments post like any bill's. A refund to the customer's account ("due", on a bill
+//     left partly on account) moves no money: it only takes off what they owe.
 import { lineLabel } from '../../../domain/catalog/options.js';
 import { exchangeSettlement, quoteReturn } from '../../../domain/returns/return-value.js';
-import { PAY_METHODS } from '../../../domain/sales/payments.js';
+import { DUE, PAY_METHODS } from '../../../domain/sales/payments.js';
+import { dueRefundRoom } from '../../../domain/customers/credit.js';
+import { toPaise } from '../../../domain/sales/paise.js';
+import { inrx } from '../../../shared/formatting/money.js';
 import { store } from '../../../shared/state/store.js';
 import { D } from '../../inventory/services/ledger.js';
 import { billTotals } from '../../sales/services/totals.js';
@@ -47,12 +51,20 @@ export function recordReturn(req){
     newSale=newSaleRecord(items,billDisc,req.collect||"cash",{kind:"exchange",ex:exId,cust,credit:S.credit,event:s.event||null});
     if(newSale.error) return {error:newSale.error};
   }
-  if(S.refund>0&&!PAY_METHODS.includes(req.pay)) return {error:"Choose how the refund is paid."};
+  // a bill left partly on the customer's account may be refunded to it ("due": it takes off what they owe, no money moves),
+  // at most what that bill still has on account; it changes what the customer owes, so it needs collect_credit
+  const toAcct=S.refund>0&&req.pay===DUE;
+  if(toAcct){
+    if(!can("collect_credit")) return {error:notAllowedText("change what customers owe")+" Refund in cash, UPI or card instead."};
+    const room=dueRefundRoom(s,d.retBySale[s.id]||[]);
+    if(toPaise(S.refund)>toPaise(room)) return {error:room>0?`At most ${inrx(room)} of this bill is still on the customer's account. Refund the rest in cash, UPI or card.`:"Nothing on this bill is on the customer's account any more."};
+  }
+  if(S.refund>0&&!toAcct&&!PAY_METHODS.includes(req.pay)) return {error:"Choose how the refund is paid."};
   const byLn={}; s.items.forEach((i,k)=>{byLn[i.ln!=null?i.ln:k]=i});
   const items=Q.lines.map(L=>{const i=byLn[L.ln];
     return {ln:L.ln,v:d.resolve(i)||i.v,p:i.p,n:i.n,c:i.c||"",s:i.s||"",vl:lineLabel(i),ov:i.ov||[],sku:i.sku||"",q:L.q,price:L.unit,value:L.value,
       cost:i.cost==null?null:i.cost,restock:!nfr[L.ln],tx:L.tx,cgst:L.cgst,sgst:L.sgst,igst:L.igst,gst:L.rate,hsn:L.hsn}});
-  const ret={id:"r"+uid(),no:creditNoteNo(t),sale:s.id,t,kind:ex?"exchange":"return",ex:exId,refund:S.refund,pay:PAY_METHODS.includes(req.pay)?req.pay:"cash",
+  const ret={id:"r"+uid(),no:creditNoteNo(t),sale:s.id,t,kind:ex?"exchange":"return",ex:exId,refund:S.refund,pay:toAcct?DUE:PAY_METHODS.includes(req.pay)?req.pay:"cash",
     value:S.value,ro:Math.round((Q.roundOff+S.roundOff)*100)/100,note:String(req.reason||"").slice(0,200),dev:store.dev,items};
   // the new bill first (it is paid now), then the return; both are on this device before anything uploads
   if(newSale){ store.lastSale=newSale; recordSale(newSale); }

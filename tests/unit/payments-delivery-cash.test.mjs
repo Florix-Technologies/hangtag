@@ -364,7 +364,7 @@ const { D, invalidate } = await import('../../src/features/inventory/services/le
 {
   const CM = await import('../../src/features/finance/use-cases/cash-moves.js');
   store.localDays = {}; store.remoteDays = {}; store._d = null; invalidate(); store.cashMoves = {}; store.dayCloses = {}; store.sbOfflineQueue = [];
-  const day = new Date().toISOString().slice(0, 10);
+  const day = (await import('../../src/shared/formatting/dates.js')).dayKey(Date.now());   // this device's day (not UTC's)
   let r = CM.recordCashMove({ type: 'opening', amount: 1000 });
   check('opening float saved on this device and queued for upload', r.move && store.cashMoves[r.move.id] && store.sbOfflineQueue.some((q) => q.type === 'cashmove' && q.id === r.move.id) && JSON.parse(storage.mem.rc_cash_moves)[r.move.id]);
   const e = CM.recordCashMove({ type: 'expense', amount: 150, reason: 'Tea for staff', category: 'Food' }).move;

@@ -3,6 +3,7 @@ import { store } from '../../../shared/state/store.js';
 import { CUSTOMER_TYPES, searchCustomers, typeLabel } from '../../../domain/customers/customer.js';
 import { custStats } from '../services/customer-stats.js';
 import { purchaseHistory } from '../services/purchase-history.js';
+import { accountHTML } from './customer-account.js';
 import { customerRepository } from '../repositories/customer-repository.js';
 import { saveCustomer, setBillCustomer } from '../use-cases/save-customer.js';
 import { flushSbQueue } from '../../sync/services/outbox.js';
@@ -98,6 +99,7 @@ export function openCustHistory(cid){
   $("#modalHost").innerHTML=sheet(c.name,`
     <div class="sh-head"><span class="avatar lg">${esc(initials(c.name))}</span><div class="sh-t"><h3>${esc(c.name)}${badge(c)}</h3><p>${esc([c.phone,c.email].filter(Boolean).join(" · ")||"No contact details")}${c.gstin?`<br><span class="cgst">GSTIN ${esc(c.gstin)}</span>`:""}</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
     <div class="tmini cust3"><div><span>Bills</span><b>${h.count}</b></div><div><span>Total spent</span><b>${inr(h.spent)}</b></div><div><span>Last visit</span><b>${h.last?esc(dayLab(dayKey(h.last))):"—"}</b></div></div>
+    ${accountHTML(c.id)}
     <h4 class="custh">Purchase history</h4>
     <div class="custbills">${h.bills.length?h.bills.map(billHTML).join(""):`<p class="muted">No completed bills yet.</p>`}</div>
     <div class="setactions"><button class="btn sm" data-custedit="${esc(c.id)}">Edit details</button><button class="btn sm primary" data-custpick="${esc(c.id)}">${store.cartCust&&store.cartCust.id===c.id?"On the current bill":"Add to current bill"}</button></div>`);

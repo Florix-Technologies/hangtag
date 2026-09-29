@@ -15,6 +15,7 @@ import { $, $$, esc } from '../../../shared/dom.js';
 import { hhmm } from '../../../shared/formatting/dates.js';
 import { inr, inrx } from '../../../shared/formatting/money.js';
 import { initials } from '../../../shared/utils/text.js';
+import { billHoldHTML, billOrderHTML, billQuoteHTML } from '../../orders/components/bill-extras.js';
 
 /* ---------- the bill ---------- */
 
@@ -51,15 +52,15 @@ function discBoxHTML(where,empty){
 export function billPanelHTML(where){
   const pcs=cartPcs(),T=billTotals(store.cart,store.disc),empty=!store.cart.length,err=empty?"":billDiscountError();
   return `<div class="bp">
-    <div class="bp-head"><div><div class="eyebrow">Bill #${billNo()}</div><div class="bp-title">${empty?"New bill":pcs+" piece"+(pcs>1?"s":"")}</div></div><div class="bp-hact">${empty?"":`<button class="link" data-act="clear">Clear</button>`}${where==="sheet"?`<button class="iconbtn" data-act="closesheet" aria-label="Close bill">${ICON.x}</button>`:""}</div></div>
-    ${custLineHTML()}
+    <div class="bp-head"><div><div class="eyebrow">Bill #${billNo()}</div><div class="bp-title">${empty?"New bill":pcs+" piece"+(pcs>1?"s":"")}</div></div><div class="bp-hact">${billHoldHTML(empty)}${empty?"":`<button class="link" data-act="clear">Clear</button>`}${where==="sheet"?`<button class="iconbtn" data-act="closesheet" aria-label="Close bill">${ICON.x}</button>`:""}</div></div>
+    ${custLineHTML()}${billOrderHTML()}
     <div class="bp-items">${empty?emptyBillHTML():store.cart.map((c,i)=>lineHTML(c,i,T.lines[i])).join("")}</div>
     <div class="bp-foot">
       ${sumRow("Subtotal",inr(T.sub))}${discountRowsHTML({itemDisc:T.itemDisc,billDisc:0})}
       ${discBoxHTML(where,empty)}
       <div data-billsum>${billSumHTML(T)}</div>
       <p class="discerr" id="discerr_${where}" data-discerr role="alert"${err?"":" hidden"}>${esc(err)}</p>
-      <div class="pays">${payBtns(empty||!!err)}</div>
+      <div class="pays">${payBtns(empty||!!err)}</div>${billQuoteHTML(empty)}
     </div></div>`;
 }
 export function billBarHTML(){

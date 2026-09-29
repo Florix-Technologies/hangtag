@@ -19,13 +19,14 @@ import { $, esc } from '../../../shared/dom.js';
 import { dtLong } from '../../../shared/formatting/dates.js';
 import { inr, inrx } from '../../../shared/formatting/money.js';
 import { renderAll } from '../../../shared/ui/render.js';
-import { refuse } from '../../shop/services/access.js';
+import { can, refuse } from '../../shop/services/access.js';
+import { billDueRoom } from '../../customers/services/customer-account.js';
 
 export const RETURN_REASONS=["Didn't fit","Wrong size","Didn't like it","Damaged or faulty","Other"];
 export function openReturn(sid){
   if(refuse("perform_return","take returns"))return;
   const s=D().saleById[sid]; if(!s||s.void) return;
-  store.retState={sid, q:{}, nfr:{}, mode:"return", pay:(paymentsOf(s)[0]||{method:"cash"}).method, reason:RETURN_REASONS[0], note:"", newItems:[], collect:"cash", keepDisc:true};
+  store.retState={sid, q:{}, nfr:{}, mode:"return", pay:(paymentsOf(s)[0]||{method:billDueRoom(s.id)>0&&can("collect_credit")?"due":"cash"}).method, reason:RETURN_REASONS[0], note:"", newItems:[], collect:"cash", keepDisc:true};
   closeModal(); renderReturnSheet();
 }
 export function renderReturnSheet(){
@@ -48,7 +49,10 @@ export function renderReturnSheet(){
       <div class="rt-sum">${back}${row("New items",inrx(nT.total))}
       <div class="row tot"><span>${diff>0?"Customer pays":diff<0?"Refund to customer":"Even exchange"}</span><span class="grand">${diff?inrx(Math.abs(diff)):"₹0"}</span></div></div>`;
   }
-  const payRow=(label,key)=>`<div class="rt-pay"><span>${label}</span><div class="seg">${["cash","upi","card"].map(k=>`<button type="button" data-rtpay="${key}:${k}" aria-pressed="${R[key]===k}">${PAY_LABELS[k]}</button>`).join("")}</div></div>`;
+  // a bill left partly on the customer's account can be refunded to it ("On account": takes off what they owe)
+  const room=billDueRoom(s.id), acct=key=>key==="pay"&&room>0&&can("collect_credit")?["due"]:[];
+  const payRow=(label,key)=>`<div class="rt-pay"><span>${label}</span><div class="seg">${["cash","upi","card",...acct(key)].map(k=>`<button type="button" data-rtpay="${key}:${k}" aria-pressed="${R[key]===k}">${PAY_LABELS[k]}</button>`).join("")}</div></div>`+
+    (key==="pay"&&R.pay==="due"?`<p class="note">Takes the refund off what ${esc(s.cust&&s.cust.name||"the customer")} owes (at most ${inrx(room)} on this bill). No money changes hands.</p>`:"");
   const label=ex?(diff>0?"Collect "+inrx(diff)+" and exchange":diff<0?"Refund "+inrx(-diff)+" and exchange":"Complete exchange"):"Refund "+inrx(val);
   $("#sheetHost").innerHTML=`<div class="scrim" data-scrim><div class="sheet retsheet" role="dialog" aria-modal="true" aria-label="Return or exchange">
     <div class="sh-head"><div class="sh-t"><h3>${ex?"Exchange":"Return"} · bill ${esc(s.no)}</h3><p>${esc(dtLong(s.t))}${s.cust?" · "+esc(s.cust.name):" · walk-in"}</p></div><button class="iconbtn" data-act="closesheet" aria-label="Close">${ICON.x}</button></div>

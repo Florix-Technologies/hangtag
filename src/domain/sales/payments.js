@@ -59,7 +59,7 @@ const REF_NEEDED={upi:"Enter the UPI transaction reference (UTR) from the custom
    — empty or zero amounts are left out. One part may be { method: "due", amount }: left on the customer's account, only
    when opts.customer (the bill has a saved customer); the rest must still add up exactly.
    → { ok: true, payments: [{ method, amount, verification, received?, change?, ref?, via?, last4?, intent?, providerRef? }], paid, received, change,
-       onAccount }
+       onAccount? (only when part is left on account) }
    or { error, method?, field?, paid, balance } (nothing is recorded) */
 export function settlePayments(due,allocations,opts){
   const D=toPaise(due), all=(allocations||[]).filter(a=>a&&amountOf(a.amount)!==0), seen=new Set();
@@ -123,7 +123,7 @@ export function settlePayments(due,allocations,opts){
     }
     payments.push(p);
   }
-  return {ok:true,payments,paid:toRupees(paid),received:toRupees(received),change:toRupees(change),onAccount:toRupees(acct)};
+  return {ok:true,payments,paid:toRupees(paid),received:toRupees(received),change:toRupees(change),...(acct?{onAccount:toRupees(acct)}:{})};
 }
 /* Live figures for the payment screen: paid so far, balance still due, more than due, change from cash handed over, and
    the part left on the customer's account */
@@ -132,7 +132,7 @@ export function paymentProgress(due,allocations){
   const pos=a=>{const v=amountOf(a.amount);return Number.isFinite(v)&&v>0?toPaise(v):0};
   const paid=sumP(list.map(pos)), acct=sumP(all.filter(a=>a.method===DUE).map(pos));
   const cash=list.find(a=>a.method==="cash"), cp=cash?toPaise(amountOf(cash.amount))||0:0, got=cash?toPaise(amountOf(cash.received))||0:0;
-  return {paid:toRupees(paid),balance:toRupees(Math.max(0,D-paid-acct)),over:toRupees(Math.max(0,paid+acct-D)),change:toRupees(got>cp&&cp>0?got-cp:0),onAccount:toRupees(acct)};
+  return {paid:toRupees(paid),balance:toRupees(Math.max(0,D-paid-acct)),over:toRupees(Math.max(0,paid+acct-D)),change:toRupees(got>cp&&cp>0?got-cp:0),...(acct?{onAccount:toRupees(acct)}:{})};
 }
 /* What a bill left on the customer's account (0 for bills without one) */
 export const dueAmtOf=sale=>sale&&+sale.dueAmt>0?+sale.dueAmt:0;

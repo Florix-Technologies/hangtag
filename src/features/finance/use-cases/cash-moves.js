@@ -4,7 +4,7 @@
 import { cashBook, financialTransactions } from '../../../domain/finance/books.js';
 import { DEFAULT_EXPENSE_CATS, changedAfterClose, checkCashMove, checkExpenseCats, dayClose } from '../../../domain/finance/cash-moves.js';
 import { D } from '../../inventory/services/ledger.js';
-import { dayBounds } from '../services/books-data.js';
+import { collectionsForBooks, dayBounds } from '../services/books-data.js';
 import { sellingEventId } from '../../events/services/selling-context.js';
 import { cashRepository } from '../repositories/cash-repository.js';
 import { store } from '../../../shared/state/store.js';
@@ -39,7 +39,7 @@ export function saveExpenseCats(list){
 /* The cash book of one day, for the shop ("shop") or one device (its id) */
 export function dayCash(day,scope="shop"){
   const d=D(), mine=x=>scope==="shop"||(x&&x.dev===scope);
-  const tx=financialTransactions(d.sales.filter(mine),d.rets.filter(mine),cashRepository().moves().filter(mine));
+  const tx=financialTransactions(d.sales.filter(mine),d.rets.filter(mine),cashRepository().moves().filter(mine),collectionsForBooks(mine));
   return cashBook(tx,dayBounds(day,day));
 }
 export const closeId=(day,scope)=>`dc:${day}:${scope||"shop"}`;

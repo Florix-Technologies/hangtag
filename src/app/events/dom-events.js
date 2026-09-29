@@ -53,6 +53,7 @@ import { addDays, dayKey } from '../../shared/formatting/dates.js';
 import { saveCart, savePrefs, saveSettings } from '../../shared/state/persistence.js';
 import { renderAll, setTab } from '../../shared/ui/render.js';
 import { logger } from '../../shared/logging/logger.js';
+import { creditOrdersChange, creditOrdersClick, creditOrdersInput, creditOrdersSubmit } from './credit-orders-events.js';
 
 /* Registered once at start-up (app/main.js). */
 export function installDomEvents(){
@@ -71,6 +72,7 @@ export function installDomEvents(){
     const addv=t.closest("[data-addv]");if(addv){addOne(addv.dataset.addv);store.sellQuery="";const si=$("#sellSearch");if(si)si.value="";renderGrid();return}
     if(t.matches("[data-scrim]")){if(t.matches("[data-paid]")){closeSheets();return}if(store.pick&&store.pick.target==="exchange"){store.pick=null;renderReturnSheet();return}store.retState=null;closeSheets();return}
     if(store.billImport&&t.closest("[data-billimp]")&&billImportClick(t))return;
+    if(creditOrdersClick(t))return;   // customer credit, held bills, orders
     if(t.matches("[data-modal-scrim]")||t.closest("[data-modal-close]")){if(t.matches("[data-editor]")&&store.editor)return;if(t.matches("[data-billimp]")&&store.billImport)return;if(store.payState)payClosed();store.payState=null;store.lineDisc=null;store.syncOpen=false;store.evForm=null;store.cashForm=null;store.voidForm=null;closeModal();return}
     // sync panel
     const sr=t.closest("[data-syncretry]");if(sr){syncRetry(+sr.dataset.syncretry);return}
@@ -201,6 +203,7 @@ export function installDomEvents(){
   });
   document.addEventListener("input",e=>{
     const t=e.target;
+    if(creditOrdersInput(t))return;
     if(t.matches("[data-cellqty]")&&store.pick){const v=t.dataset.cellqty;setPickQty(v,t.value===""?0:t.value);return}
     if(t.matches("[data-disc]")){setBillDiscount({type:store.disc&&store.disc.type,value:t.value});updateBillTotals();return}
     if(t.id==="ldVal"){lineDiscountInput(t.value);return}
@@ -219,6 +222,7 @@ export function installDomEvents(){
     }
   });
   document.addEventListener("submit",e=>{
+    if(creditOrdersSubmit(e))return;
     if(e.target.id==="custForm"){e.preventDefault();saveCustomerForm(e.target);return}
     if(e.target.id==="edForm"){e.preventDefault();return}
     if(e.target.id==="evForm"){e.preventDefault();submitEventForm(e.target);return}
@@ -227,6 +231,7 @@ export function installDomEvents(){
   });
   document.addEventListener("change",async e=>{
     const t=e.target;
+    if(creditOrdersChange(t))return;
     if(t.id==="repFrom"||t.id==="repTo"){if(t.value){store.prefs[t.id==="repFrom"?"from":"to"]=t.value;store.prefs.period="custom";savePrefs();renderReport()}return}
     if(t.id==="sellCat"){store.sellCat=t.value;renderGrid();return}
     if(t.id==="sellAt"){chooseSellingAt(t.value);return}

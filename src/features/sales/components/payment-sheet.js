@@ -4,8 +4,10 @@
 // confirms the money), or — without a provider, offline, or when it can't be reached — checked by hand with the shop's
 // own UPI QR and the transaction reference (recorded as "Unverified"). Card: the card machine's reference (and at most
 // the last 4 digits), or a verified card payment link the customer opens on their phone.
+// Credit: some now (cash, UPI, card, or several), the rest — or all of it — left on a saved customer's account (collected
+// later from the customer's page); needs collect_credit.
 // The sale completes only when the payments add up to the grand total (domain/sales/payments.js).
-import { INTENT_LABELS, PAY_LABELS, PAY_METHODS, PROVIDER_VIA, paymentProgress, settlePayments } from '../../../domain/sales/payments.js';
+import { DUE, INTENT_LABELS, PAY_LABELS, PAY_METHODS, PROVIDER_VIA, paymentProgress, settlePayments } from '../../../domain/sales/payments.js';
 import { toPaise, toRupees } from '../../../domain/sales/paise.js';
 import { upiPayUri } from '../../../domain/sales/upi.js';
 import { store } from '../../../shared/state/store.js';
@@ -24,12 +26,12 @@ import { toast } from '../../../shared/components/toast.js';
 import { ICON } from '../../../shared/constants/icons.js';
 import { $, esc } from '../../../shared/dom.js';
 import { inr, inrx } from '../../../shared/formatting/money.js';
-import { refuse } from '../../shop/services/access.js';
+import { can, refuse } from '../../shop/services/access.js';
 
 const due=()=>billTotals(store.cart,store.disc).total;
 const blankState=method=>({mode:"single",method:PAY_METHODS.includes(method)?method:"cash",recv:"",ref:{upi:"",card:""},last4:"",amt:{cash:"",upi:"",card:""},
   via:{upi:"manual",card:"terminal"},viaSet:{},pi:{},err:""});
-/* store.payState = { mode: "single" | "split", method, recv (cash handed over), ref: { upi, card }, last4 (card), amt: { cash, upi, card },
+/* store.payState = { mode: "single" | "split" | "credit" (the amounts in amt are paid now, the rest goes on account), method, recv (cash handed over), ref: { upi, card }, last4 (card), amt: { cash, upi, card },
      via: { upi: "manual"|"qr", card: "terminal"|"link" }, pi: { upi?, card? } (provider intents), saleId, err } */
 export function openPayment(method){
   if(!store.cart.length||refuse("create_sale","take payments")) return;
@@ -64,12 +66,20 @@ function autoStart(){
   if(s&&s.mode==="single"&&s.method==="upi"&&s.via.upi==="qr"&&!s.pi.upi&&providerReady("upi")) startPart("upi");
 }
 /* The amount a part is for */
-const partAmount=m=>{const s=store.payState;return s.mode==="split"?+s.amt[m]||0:due()};
+const partAmount=m=>{const s=store.payState;return s.mode!=="single"?+s.amt[m]||0:due()};
+/* Credit: the bill has a saved customer (only they can owe the shop) */
+const savedCustomer=()=>{const c=store.cartCust;return !!(c&&c.id&&store.customers&&store.customers[c.id])};
+/* Credit: what is left on account = the total less what is paid now (never below 0) */
+function accountPart(D){
+  const s=store.payState, now=PAY_METHODS.reduce((a,m)=>{const v=toPaise(s.amt[m]);return a+(Number.isFinite(v)&&v>0?v:0)},0);
+  return toRupees(Math.max(0,toPaise(D)-now));
+}
 /* The parts of the payment as typed, for domain/sales/payments.js */
 export function allocations(){
   const s=store.payState, D=due();
   const part=(m,amount)=>({method:m,amount,received:m==="cash"?s.recv:undefined,ref:s.ref[m],via:m==="cash"?undefined:s.via[m],last4:m==="card"?s.last4:undefined,intent:s.pi[m]});
   if(s.mode==="single") return [part(s.method,D)];
+  if(s.mode==="credit") return [...PAY_METHODS.map(m=>part(m,s.amt[m])),{method:DUE,amount:accountPart(D)}];
   return PAY_METHODS.map(m=>part(m,s.amt[m]));
 }
 const quickCash=D=>[...new Set([100,500,2000].map(n=>Math.ceil((D+1)/n)*n))].filter(v=>v>D).slice(0,3);
@@ -125,8 +135,18 @@ function partHTML(m,split){
   if(m==="upi") return viaHTML("upi")+(s.via.upi==="qr"&&(providerReady("upi")||s.pi.upi)?`<div data-pipart="upi">${intentHTML("upi")}</div>`:manualUpiHTML(partAmount("upi"),split));
   return viaHTML("card")+(s.via.card==="link"?`<div data-pipart="card">${intentHTML("card")}</div>`:terminalHTML(split));
 }
+/* Credit: the customer it goes on, and what is paid now (every amount may stay empty: nothing now) */
+function creditHTML(D){
+  const s=store.payState, c=store.cartCust;
+  const who=savedCustomer()?`<p class="note paycred">On <b>${esc(c.name)}</b>'s account: <b data-payacct>${inrx(accountPart(D))}</b>. Enter what they pay now, if anything.</p>`
+    :`<p class="note paycred bad">Only a saved customer can pay later. <button type="button" class="btn xs" data-paycust>Choose the customer</button></p>`;
+  return who+`<div class="splitrows">${PAY_METHODS.map(m=>{const lock=PROVIDER_VIA.includes(s.via[m])&&s.pi[m]&&(isOpen(s.pi[m])||s.pi[m].status==="verified");
+    return `<div class="splitrow"><span class="spl">${PAY_LABELS[m]} now</span><input data-payf="amt:${m}" value="${esc(s.amt[m])}" ${money} placeholder="0" aria-label="${PAY_LABELS[m]} paid now"${lock?" readonly":""}></div>`
+      +(m==="cash"?inp("recv","Cash received <small>(optional, for change)</small>",s.recv,money+' placeholder="Same as cash"'):`<div class="splitpart">${partHTML(m,true)}</div>`)}).join("")}</div>`;
+}
 function fieldsHTML(D){
   const s=store.payState;
+  if(s.mode==="credit") return creditHTML(D);
   if(s.mode==="split") return `<div class="splitrows">${PAY_METHODS.map(m=>{const lock=PROVIDER_VIA.includes(s.via[m])&&s.pi[m]&&(isOpen(s.pi[m])||s.pi[m].status==="verified");
     return `<div class="splitrow"><span class="spl">${PAY_LABELS[m]}</span><input data-payf="amt:${m}" value="${esc(s.amt[m])}" ${money} placeholder="0" aria-label="${PAY_LABELS[m]} amount"${lock?" readonly":""}><button type="button" class="btn xs" data-payrest="${m}"${lock?" disabled":""}>Rest</button></div>`
       +(m==="cash"?inp("recv","Cash received <small>(optional, for change)</small>",s.recv,money+' placeholder="Same as cash"'):`<div class="splitpart">${partHTML(m,true)}</div>`)}).join("")}</div>`;
@@ -143,15 +163,16 @@ function sendHTML(){
   return `<label class="chk paysend"><input type="checkbox" data-paysend${s.send!==false?" checked":""}> Send the receipt to ${esc(c.name)} by ${plan.map(p=>CHANNEL_LABELS[p.channel]+(p.fallback?" (SMS if it fails)":"")).join(" and ")}</label>`;
 }
 function liveHTML(D){
-  const s=store.payState, a=allocations(), P=paymentProgress(D,a), S=settlePayments(D,a);
+  const s=store.payState, a=allocations(), P=paymentProgress(D,a), S=settlePayments(D,a,{customer:savedCustomer()});
   const change=S.ok?S.change:P.change, waiting=S.field==="intent"&&Object.values(s.pi).some(isOpen);
-  return `<div class="paylive"><div><span>Paid</span><b data-paypaid>${inrx(P.paid)}</b></div><div><span>Balance</span><b data-paybal class="${P.balance?"due":""}">${inrx(P.balance)}</b></div><div><span>Change</span><b data-paychange>${inrx(change)}</b></div></div>`+
+  const mid=s.mode==="credit"?`<div><span>On account</span><b data-payacct>${inrx(P.onAccount||0)}</b></div>`:`<div><span>Balance</span><b data-paybal class="${P.balance?"due":""}">${inrx(P.balance)}</b></div>`;
+  return `<div class="paylive"><div><span>${s.mode==="credit"?"Paid now":"Paid"}</span><b data-paypaid>${inrx(P.paid)}</b></div>${mid}<div><span>Change</span><b data-paychange>${inrx(change)}</b></div></div>`+
     `<p class="err${waiting?" wait":""}" id="payErr" role="alert"${S.ok&&!s.err?" hidden":""}>${esc(S.ok?s.err:S.error)}</p>`;
 }
 export function renderPayment(focus){
   const s=store.payState; if(!s||!store.cart.length){closeModal();return}
   const T=billTotals(store.cart,store.disc), D=T.total, pcs=cartPcs(), c=store.cartCust;
-  const modes=[...PAY_METHODS.map(m=>[m,PAY_LABELS[m]]),["split","Split"]], cur=s.mode==="split"?"split":s.method;
+  const modes=[...PAY_METHODS.map(m=>[m,PAY_LABELS[m]]),["split","Split"],...(can("collect_credit")?[["credit","Credit"]]:[])], cur=s.mode==="single"?s.method:s.mode;
   const scroll=$("#paySheet")?$("#paySheet").scrollTop:0;
   // a redraw keeps the box being typed in (and its cursor)
   const act=document.activeElement, keep=act&&act.closest&&act.closest("#paySheet")?(act.dataset&&act.dataset.payf?`[data-payf="${act.dataset.payf}"]`:act.id?"#"+act.id:null):null;
@@ -164,7 +185,7 @@ export function renderPayment(focus){
     <div class="payfields">${fieldsHTML(D)}</div>
     <div id="payLive">${liveHTML(D)}</div>
     ${sendHTML()}
-    <button class="btn primary gbtn" data-act="paydone" id="payDone"${settlePayments(D,allocations()).ok?"":" disabled"}>Complete sale · ${inr(D)}</button>
+    <button class="btn primary gbtn" data-act="paydone" id="payDone"${settlePayments(D,allocations(),{customer:savedCustomer()}).ok?"":" disabled"}>Complete sale · ${inr(D)}</button>
   </div></div>`;
   const sh=$("#paySheet"); if(sh&&scroll) sh.scrollTop=scroll;
   if(focus){const f=$("#paySheet [data-payf]")||$("#payDone");if(f)f.focus({preventScroll:true})}
@@ -181,11 +202,14 @@ export function payInput(t){
 function updatePayLive(){
   const D=due(), live=$("#payLive"), b=$("#payDone");
   if(live) live.innerHTML=liveHTML(D);
-  if(b) b.disabled=!settlePayments(D,allocations()).ok;
+  if(b) b.disabled=!settlePayments(D,allocations(),{customer:savedCustomer()}).ok;
+  const acct=$("#paySheet .paycred [data-payacct]"); if(acct) acct.textContent=inrx(accountPart(D));
 }
 export function payMode(k){
   const s=store.payState; if(!s) return;
   if(k==="split"){ if(s.mode!=="split"){ s.mode="split"; if(!PAY_METHODS.some(m=>String(s.amt[m]).trim()))s.amt[s.method]=String(due()); } }
+  // credit: nothing paid now unless amounts are typed (amounts carried over from split that pay it all are cleared)
+  else if(k==="credit"){ if(s.mode!=="credit"){ if(accountPart(due())<=0) PAY_METHODS.forEach(m=>{ if(!isOpen(s.pi[m])&&!(s.pi[m]&&s.pi[m].status==="verified")) s.amt[m]=""; }); s.mode="credit"; } }
   else {
     // leaving a part that has an open provider payment for another method closes it
     Object.keys(s.pi).forEach(m=>{ if(m!==k&&isOpen(s.pi[m])) cancelPart(m,true); });

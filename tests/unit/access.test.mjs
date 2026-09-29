@@ -78,7 +78,7 @@ check('missing permissions of a cashier', eq(missingFor(ROLE_DEFAULTS.cashier), 
 check('role labels', roleLabel('cashier') === 'Cashier' && roleLabel('owner') === 'Owner' && roleLabel('stock_keeper') === 'Stock keeper' && roleLabel('') === '');
 check('tabs: a cashier sells, sees stock, products and customers, not reports; kitchen sees none of them',
   tabAllowed('sell', ROLE_DEFAULTS.cashier) && tabAllowed('stock', ROLE_DEFAULTS.cashier) && !tabAllowed('report', ROLE_DEFAULTS.cashier)
-  && ['sell', 'stock', 'report', 'products', 'customers'].every((t) => !tabAllowed(t, ROLE_DEFAULTS.kitchen)) && Object.keys(TAB_PERMISSIONS).length === 5);
+  && ['sell', 'stock', 'report', 'products', 'customers', 'orders'].every((t) => !tabAllowed(t, ROLE_DEFAULTS.kitchen)) && Object.keys(TAB_PERMISSIONS).length === 6);
 check('roles offered: restaurants get server and kitchen, shops manager and cashier',
   eq(roleSuggestionsFor('restaurant'), ['manager', 'cashier', 'server', 'kitchen']) && eq(roleSuggestionsFor('Hotel / Restaurant'), ROLE_SUGGESTIONS.restaurant)
   && eq(roleSuggestionsFor('Clothing boutique'), ['manager', 'cashier']) && eq(roleSuggestionsFor(''), ['manager', 'cashier']) && eq(roleSuggestionsFor(undefined), ['manager', 'cashier']));

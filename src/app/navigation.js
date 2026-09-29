@@ -15,6 +15,7 @@ import { savePrefs } from '../shared/state/persistence.js';
 import { hideTip } from '../shared/components/tooltip.js';
 import { $, $$ } from '../shared/dom.js';
 import { TABS, applyAccessUI, tabOpen } from '../features/shop/components/access-ui.js';
+import { renderOrders } from '../features/orders/pages/orders-page.js';
 
 /* ================= render + navigation ================= */
 
@@ -25,7 +26,7 @@ export function renderNav(){
   if(!tabOpen(store.prefs.tab)){const t=TABS.find(tabOpen);if(t)store.prefs.tab=t}
   const none=!tabOpen(store.prefs.tab);
   $$(".nav [data-tab]").forEach(b=>b.setAttribute("aria-selected",String(!none&&b.dataset.tab===store.prefs.tab)));
-  ["sell","stock","report","products","customers"].forEach(t=>{$("#v-"+t).hidden=none||t!==store.prefs.tab});
+  ["sell","stock","report","products","customers","orders"].forEach(t=>{const v=$("#v-"+t);if(v)v.hidden=none||t!==store.prefs.tab});
   $("#v-none").hidden=!none;
   $("#billBar").hidden=none||store.prefs.tab!=="sell";
   $$("[data-density]").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.density===store.prefs.density)));
@@ -37,6 +38,7 @@ function renderViews(){
   else if(t==="stock")renderStock();
   else if(t==="report")renderReport();
   else if(t==="customers")renderCustomers();
+  else if(t==="orders")renderOrders();
   else if(t==="products"){const a=document.activeElement;if(!(a&&a.closest&&a.closest("#v-products")&&a.id!=="prodSearch"))renderProducts()}
   // Don't redraw a window under someone typing in it (a live update can arrive any time)
   const a=document.activeElement, typing=a&&a.matches&&a.matches("#sheetHost input");

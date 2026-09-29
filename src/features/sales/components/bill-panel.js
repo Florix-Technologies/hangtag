@@ -64,7 +64,7 @@ export function billPanelHTML(where){
     </div></div>`;
 }
 export function billBarHTML(){
-  if(!store.cart.length){const t=todayStats();return `<div class="bb-empty"><div><div class="eyebrow">Today</div><div class="bb-today"><b>${inr(t.rev)}</b><span>${t.bills} bill${t.bills===1?"":"s"} · ${t.pcs} pcs</span></div></div><span class="bb-hint">Tap a product<br>to start a bill</span></div>`}
+  if(!store.cart.length){const t=todayStats();return `<div class="bb-empty"><div><div class="eyebrow">Today</div><div class="bb-today"><b>${inr(t.rev)}</b><span>${t.bills} bill${t.bills===1?"":"s"} · ${t.pcs} pcs</span></div></div>${billHoldHTML(true)||`<span class="bb-hint">Tap a product<br>to start a bill</span>`}</div>`}
   const pcs=cartPcs(),T=billTotals(store.cart,store.disc);
   return `<button class="bb-sum" data-act="openbill" aria-label="View bill"><span class="bb-th">${store.cart.slice(-3).map(c=>thumb(prod(c.p)||{id:c.p,name:c.name,color:c.color},"xs")).join("")}</span><span class="bb-cnt"><b>${pcs} piece${pcs>1?"s":""}${store.cartCust&&store.cartCust.name?" · "+esc(store.cartCust.name):""}</b><small>View bill ${ICON.up}</small></span><span class="bb-total" data-grand>${inr(T.total)}</span></button><div class="pays">${payBtns(!!billDiscountError())}</div>`;
 }

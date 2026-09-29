@@ -3,7 +3,7 @@
 import { KIND_LABELS } from '../../../domain/orders/orders.js';
 import { store } from '../../../shared/state/store.js';
 import { orderViews } from '../module.js';
-import { heldCarts, holdCart } from '../use-cases/held-carts.js';
+import { holdCart, listHeldCarts } from '../use-cases/held-carts.js';
 import { detachCartOrder } from '../use-cases/orders.js';
 import { can } from '../../shop/services/access.js';
 import { toast } from '../../../shared/components/toast.js';
@@ -14,7 +14,7 @@ import { renderAll, setTab } from '../../../shared/ui/render.js';
 export function billHoldHTML(empty){
   if(!can("create_sale")) return "";
   if(!empty) return `<button class="link" data-hold>Hold</button>`;
-  const n = heldCarts().length;
+  const n = listHeldCarts().length;
   return n ? `<button class="link" data-heldopen>Held (${n})</button>` : "";
 }
 /* Under the customer: the quotation / sales order the bill delivers (and a way to bill it as an ordinary bill) */

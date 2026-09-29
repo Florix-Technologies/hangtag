@@ -179,7 +179,7 @@ const CK = await import('../../src/features/sales/use-cases/checkout.js');
 const checkout = (pay) => { store.lastCheckout = 0; return CK.checkout(pay); };   // bills rung up one after another (no double-tap guard)
 const { collectPayment, cancelCollection } = await import('../../src/features/customers/use-cases/collect-payment.js');
 const { accountOf, outstandingAll, billDueRoom } = await import('../../src/features/customers/services/customer-account.js');
-const { holdCart, recallHeld, discardHeld, heldCarts } = await import('../../src/features/orders/use-cases/held-carts.js');
+const { holdCart, recallHeld, discardHeld, listHeldCarts } = await import('../../src/features/orders/use-cases/held-carts.js');
 const OU = await import('../../src/features/orders/use-cases/orders.js');
 const { recordReturn } = await import('../../src/features/returns/use-cases/record-return.js');
 const { shopTransactions } = await import('../../src/features/finance/services/books-data.js');
@@ -223,6 +223,8 @@ const ownerAgain = () => { store.access = null; };
   check('a return refunded to the account: no money moves, what they owe goes down', !rr.error && rr.ret.pay === 'due' && accountOf('c1').outstanding === 300 && !shopTransactions().some((x) => x.returnId === rr.ret.id), rr);
   rr = recordReturn({ sid, picks: { 0: 1 }, mode: 'return', pay: 'due', reason: 'Other' });
   check('never more than the bill still has on account', /At most ₹100/.test(rr.error || ''), rr);
+  const c2 = collectPayment('c1', { amount: 250, method: 'cash' });
+  check('…nor more than the customer owes now (a payment collected since covered part of it)', c2.outstanding === 50 && billDueRoom(sid) === 50 && /At most ₹50/.test(recordReturn({ sid, picks: { 0: 1 }, mode: 'return', pay: 'due' }).error || ''));
   member('server', ['view_products', 'create_sale', 'create_order', 'perform_return']);
   check('refunding to the account needs collect_credit', /change what customers owe/.test(recordReturn({ sid, picks: { 0: 1 }, mode: 'return', pay: 'due' }).error || ''));
   ownerAgain();
@@ -235,16 +237,16 @@ const ownerAgain = () => { store.access = null; };
   check('holding needs create_sale', !!holdCart().error && store.cart.length === 1);
   ownerAgain();
   const h = holdCart();
-  check('held: named after the customer, the bill cleared, queued; stock untouched', h.held.name === 'Riya' && !store.cart.length && store.disc === null && q('held').length === 1 && heldCarts().length === 1 && (D().sold['p1:'] || 0) === stockBefore);
+  check('held: named after the customer, the bill cleared, queued; stock untouched', h.held.name === 'Riya' && !store.cart.length && store.disc === null && q('held').length === 1 && listHeldCarts().length === 1 && (D().sold['p1:'] || 0) === stockBefore);
   store.cart = [{ v: 'p2:', p: 'p2', name: 'Cap', q: 1, price: 200 }];
   check('recall only onto an empty bill', /Finish, hold or clear/.test(recallHeld(h.held.id).error));
   store.cart = [];
   const r = recallHeld(h.held.id);
   check('recalled: back on the bill with its discount and customer; the held copy removed (its waiting upload dropped)', !r.error && store.cart.length === 1 && store.disc.value === 5 && store.cartCust.id === 'c1'
-    && !heldCarts().length && q('held').length === 0 && q('helddel').length === 1);
+    && !listHeldCarts().length && q('held').length === 0 && q('helddel').length === 1);
   store.cart = [{ v: 'p2:', p: 'p2', name: 'Cap', q: 1, price: 200 }]; store.cartCust = null; store.disc = null;
   const h2 = holdCart('Second queue');
-  check('a name given is kept', h2.held.name === 'Second queue' && discardHeld(h2.held.id).ok && !heldCarts().length && !!discardHeld('nope').error);
+  check('a name given is kept', h2.held.name === 'Second queue' && discardHeld(h2.held.id).ok && !listHeldCarts().length && !!discardHeld('nope').error);
 }
 // quotations and sales orders
 {
@@ -320,7 +322,7 @@ const ownerAgain = () => { store.access = null; };
   check('saving on an old version: refused as changed elsewhere → sync review, not overwritten', store.syncReview.some((r) => r.item.type === 'order' && r.item.id === o.id) && !q('order').length);
   await PL.pullOrders();
   check('the download brings the cloud\'s order (the refused change stays in the review), other tills\' held bills, and keeps this device\'s collections',
-    OU.orderById(o.id).status === 'cancelled' && OU.orderById(o.id).version === 9 && heldCarts().some((h) => h.id === 'hx') && Object.keys(store.collections).length === 1);
+    OU.orderById(o.id).status === 'cancelled' && OU.orderById(o.id).version === 9 && listHeldCarts().some((h) => h.id === 'hx') && Object.keys(store.collections).length === 2);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

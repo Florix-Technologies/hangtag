@@ -124,7 +124,19 @@
   "variantHits",
   "vCost",
   "voidSale",
-  "vPrice"
+  "vPrice",
+  "setBillCustomer",
+  "accountOf",
+  "listHeldCarts",
+  "ordersOf",
+  "todayKey",
+  "orderById",
+  "billPanelHTML",
+  "saveOrder",
+  "newOrderDraft",
+  "orderLine",
+  "setOrderStatus",
+  "pullOrders"
  ],
  "state": [
   "access",
@@ -167,6 +179,8 @@
   "sellQuery",
   "settings",
   "stockOp",
-  "team"
+  "team",
+  "ordersView",
+  "syncReview"
  ]
 }

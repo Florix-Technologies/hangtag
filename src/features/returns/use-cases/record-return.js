@@ -12,7 +12,7 @@
 import { lineLabel } from '../../../domain/catalog/options.js';
 import { exchangeSettlement, quoteReturn } from '../../../domain/returns/return-value.js';
 import { DUE, PAY_METHODS } from '../../../domain/sales/payments.js';
-import { dueRefundRoom } from '../../../domain/customers/credit.js';
+import { billDueRoom } from '../../customers/services/customer-account.js';
 import { toPaise } from '../../../domain/sales/paise.js';
 import { inrx } from '../../../shared/formatting/money.js';
 import { store } from '../../../shared/state/store.js';
@@ -52,11 +52,11 @@ export function recordReturn(req){
     if(newSale.error) return {error:newSale.error};
   }
   // a bill left partly on the customer's account may be refunded to it ("due": it takes off what they owe, no money moves),
-  // at most what that bill still has on account; it changes what the customer owes, so it needs collect_credit
+  // at most what that bill still has on account and what they owe now; it changes what they owe, so it needs collect_credit
   const toAcct=S.refund>0&&req.pay===DUE;
   if(toAcct){
     if(!can("collect_credit")) return {error:notAllowedText("change what customers owe")+" Refund in cash, UPI or card instead."};
-    const room=dueRefundRoom(s,d.retBySale[s.id]||[]);
+    const room=billDueRoom(s.id);
     if(toPaise(S.refund)>toPaise(room)) return {error:room>0?`At most ${inrx(room)} of this bill is still on the customer's account. Refund the rest in cash, UPI or card.`:"Nothing on this bill is on the customer's account any more."};
   }
   if(S.refund>0&&!toAcct&&!PAY_METHODS.includes(req.pay)) return {error:"Choose how the refund is paid."};

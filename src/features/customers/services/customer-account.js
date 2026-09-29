@@ -4,11 +4,13 @@ import { customerAccount, dueRefundRoom, outstandingByCustomer } from '../../../
 import { D } from '../../inventory/services/ledger.js';
 import { creditRepository } from '../repositories/credit-repository.js';
 
-export const collections = () => creditRepository().list();
-const sources = () => { const d = D(); return { sales: d.sales, returns: d.rets, collections: collections() }; };
+export const collectionsList = () => creditRepository().list();
+const sources = () => { const d = D(); return { sales: d.sales, returns: d.rets, collections: collectionsList() }; };
 /* { purchases, paidAtSale, onAccount, refundedToAccount, collected, paid, outstanding, bills, entries } */
 export const accountOf = cid => customerAccount(cid, sources());
 /* { [customer id]: rupees owed } (only customers with something on account or collected) */
 export const outstandingAll = () => outstandingByCustomer(sources());
-/* How much of a bill can still be refunded to its customer's account */
-export const billDueRoom = sid => { const d = D(), s = d.saleById[sid]; return s ? dueRefundRoom(s, d.retBySale[sid] || []) : 0; };
+/* How much of a bill can still be refunded to its customer's account: what the bill still has on account (the database's
+   rule), and never more than the customer owes now (payments collected since may have covered it) */
+export const billDueRoom = sid => { const d = D(), s = d.saleById[sid]; if(!s || !s.cust || !s.cust.id) return 0;
+  return Math.max(0, Math.min(dueRefundRoom(s, d.retBySale[sid] || []), accountOf(s.cust.id).outstanding)); };

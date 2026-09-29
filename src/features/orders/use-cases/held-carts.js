@@ -14,7 +14,7 @@ import { denied } from '../../shop/services/access.js';
 const upload = () => { renderSync(); flushSbQueue(); };
 const clearCart = () => { store.cart = []; store.disc = null; store.cartCust = null; store.cartOrder = null; saveCart(); };
 /* Held bills, newest first */
-export const heldCarts = () => orderRepository().heldList().slice().sort((a, b) => b.t - a.t);
+export const listHeldCarts = () => orderRepository().heldList().slice().sort((a, b) => b.t - a.t);
 /* name: optional (default: the customer's name, else "Bill 2:05 pm") → { held } or { error } (nothing changes) */
 export function holdCart(name){
   const no = denied("create_sale", "hold bills"); if(no) return no;

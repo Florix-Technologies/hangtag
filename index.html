@@ -29,6 +29,7 @@
 <link rel="stylesheet" href="src/styles/90-checkout-books.css">
 <link rel="stylesheet" href="src/styles/95-billing-output.css">
 <link rel="stylesheet" href="src/styles/96-team.css">
+<link rel="stylesheet" href="src/styles/97-business.css">
 </head>
 <body>
 <div id="authGate" class="authgate" role="dialog" aria-modal="true" aria-labelledby="authTitle">
@@ -102,7 +103,7 @@
     </div>
     <nav class="nav" role="tablist" aria-label="Sections">
       <button role="tab" data-tab="sell" aria-selected="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 8h13l-1.1 12.1a1 1 0 0 1-1 .9H7.6a1 1 0 0 1-1-.9z"/><path d="M9 10V7a3 3 0 0 1 6 0v3"/></svg><span>Sell</span></button>
-      <button role="tab" data-tab="stock" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 5.5a2 2 0 1 1 3 1.7c-.6.4-1 .9-1 1.6V10"/><path d="M12 10 3.4 16.3c-.8.6-.4 1.7.6 1.7h16c1 0 1.4-1.1.6-1.7z"/></svg><span>Stock</span></button>
+      <button role="tab" data-tab="stock" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 5.5a2 2 0 1 1 3 1.7c-.6.4-1 .9-1 1.6V10"/><path d="M12 10 3.4 16.3c-.8.6-.4 1.7.6 1.7h16c1 0 1.4-1.1.6-1.7z"/></svg><span>Inventory</span></button>
       <button role="tab" data-tab="report" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M5 20v-8M10 20V5M15 20v-5M20 20V9"/></svg><span>Reports</span></button>
       <button role="tab" data-tab="products" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 4 3.5 6.6l1.8 4.1 2.2-.9V20h9V9.8l2.2.9 1.8-4.1-5-2.6c-.5 1.3-1.9 2.2-3.5 2.2S9 5.3 8.5 4z"/></svg><span>Products</span></button>
       <button role="tab" data-tab="customers" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.6a3.5 3.5 0 0 1 0 6.8M21.5 20a6.5 6.5 0 0 0-4-6"/></svg><span>Customers</span></button>
@@ -137,9 +138,23 @@
     <aside id="billPanel" class="billpanel" aria-label="Current bill"></aside>
   </section>
 
+  <section id="v-home" hidden>
+    <div id="homeBody"></div>
+  </section>
+
+  <section id="v-orders" hidden>
+    <div class="viewhead"><div><h2 class="vt">Orders</h2><p>Carts put aside, quotations and orders to deliver and bill later.</p></div></div>
+    <div class="subnav" data-subnav="orders" role="group" aria-label="Kind of order" hidden></div>
+    <div data-subalt="orders"></div>
+  </section>
+
   <section id="v-stock" hidden>
+    <div class="subnav" data-subnav="stock" role="group" aria-label="Inventory" hidden></div>
+    <div data-submain="stock">
     <div class="viewhead"><div><h2 class="vt">Stock on the shelf</h2><p>Every variant (colour, size, storage…) has its own count. Bills and returns change it by themselves; record deliveries with Stock in and recounts with Adjust stock.</p></div><div class="vh-acts"><button class="btn sm primary" data-act="stockin">+ Stock in</button><button class="btn sm" data-act="billimport">Upload bill</button><button class="btn sm" data-act="stockadj">Adjust stock</button></div></div>
     <div id="stockBody"></div>
+    </div>
+    <div data-subalt="stock" hidden></div>
   </section>
 
   <section id="v-report" hidden>

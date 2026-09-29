@@ -2,6 +2,7 @@
 // Start-up order matches the original single-file app, after providing the ports and the render bus.
 import { installContainer } from './container.js';
 import { installNavigation } from './navigation.js';
+import { installModules } from './modules.js';
 import { initState } from './state-init.js';
 import { installTestHook } from './test-hook.js';
 import { installAccountSwitchWatch } from '../features/auth/services/account-data.js';
@@ -31,6 +32,7 @@ import { flushSbQueue } from '../features/sync/services/outbox.js';
 
 installContainer();    // ports first: everything below may use them
 installNavigation();   // the render bus (shared/ui/render.js) now reaches this app shell
+installModules();       // the pages of the navigation modules (and the parts later batches register)
 initState();
 installTestHook();
 applyCatalogMigration();

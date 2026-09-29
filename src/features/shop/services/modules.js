@@ -57,6 +57,17 @@ export function chooseSubview(parent, id){
   savePrefs();
 }
 
+/* The tab bar with room for `limit` buttons: { bar: [ids shown in it], more: [ids behind "More"] }, both in tab bar order.
+   list: the modules shown (shownModules()). Everything fits → no More. Otherwise the ones a phone needs most (lowest
+   `phone`) keep their place, one fewer to leave room for More, and the page on screen always keeps its button. */
+export function navSlots(list, current, limit){
+  const ids = list.map(d => d.id);
+  if(ids.length <= limit) return { bar: ids, more: [] };
+  const keep = list.slice().sort((a, b) => a.phone - b.phone || byOrder(a, b)).map(d => d.id).slice(0, Math.max(1, limit - 1));
+  if(current && ids.includes(current) && !keep.includes(current)) keep[keep.length - 1] = current;
+  return { bar: ids.filter(id => keep.includes(id)), more: ids.filter(id => !keep.includes(id)) };
+}
+
 /* ---------- the core modules (every business; their pages are added by app/modules.js) ---------- */
 [
   { id: "home", label: "Home", order: 10, phone: 20 },

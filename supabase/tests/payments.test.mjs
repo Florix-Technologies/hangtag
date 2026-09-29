@@ -88,7 +88,7 @@ console.log('=== upgrade: existing bills and refunds get payments, transactions 
     JSON.stringify(bb.map((x) => [x.id, x.method, x.entry_type, num(x.amount_in), num(x.amount_out), x.status])) === JSON.stringify([
       ['bb:ft:s2:upi', 'upi', 'receipt', 500, 0, 'posted'], ['bb:ft:s3:card', 'card', 'receipt', 800, 0, 'cancelled'], ['bb:ft:r2', 'upi', 'refund', 0, 100, 'posted']]), bb);
   const rep = (await db.query(`SELECT check_name, value, expected, ok FROM (${NEW.slice(NEW.lastIndexOf('SELECT check_name')).replace(/;\s*$/, '')}) q`)).rows;
-  check('migration report: payments, transactions and books all add up', rep.length === 22 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: payments, transactions and books all add up', rep.length === 25 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   await db.close();
 }
 

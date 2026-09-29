@@ -2,6 +2,7 @@
 import { finishDownloadedProduct } from '../../../domain/catalog/options.js';
 import { store } from '../../../shared/state/store.js';
 import { DEFAULT_SETTINGS } from '../../../domain/shop/settings.js';
+import { keepNewerCaps } from '../../../domain/shop/capabilities.js';
 import { sbSessionOk } from '../../auth/services/auth-settings.js';
 import { products } from '../../products/services/catalog.js';
 import { renderSync } from '../components/sync-status.js';
@@ -90,7 +91,8 @@ export async function pullSettings(){
   const waiting = type => store.sbOfflineQueue.some(q=>q.type===type);
   if(!waiting("settings")){
     const value = await use("cloud").fetchSettings();
-    if(value && typeof value === "object" && !waiting("settings")){ store.settings = Object.assign({}, DEFAULT_SETTINGS, value); saveSettings(); }
+    // the capability choices changed last win: a copy uploaded by a phone that was behind never undoes newer ones here
+    if(value && typeof value === "object" && !waiting("settings")){ store.settings = Object.assign({}, DEFAULT_SETTINGS, keepNewerCaps(value, store.settings)); saveSettings(); }
   }
   if(!waiting("logo")){
     const logo = await use("cloud").fetchLogo();

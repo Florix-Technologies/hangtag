@@ -1929,7 +1929,73 @@ END $$;
 -- ------------------------------------------------------------------------------
 -- 3j. Business profile and capabilities (F2)
 -- ------------------------------------------------------------------------------
--- (reserved: this batch's SQL goes here)
+-- The type of business is the shop profile's business_type: 'retail', 'grocery', 'restaurant' (Hotel / Restaurant),
+-- 'electronics' or 'other' (domain/shop/capabilities.js). Profiles saved before these keys keep their value: Clothing
+-- boutique, Pop-up or exhibition stall, Retail store, Online seller and Wholesale count as retail, Other as other, none as
+-- retail — nothing is rewritten, and an older app version can still save its own values.
+-- Capabilities ("does this shop use variants, serial numbers, tables …") are part of the shop's synced settings
+-- (hangtag_meta 'settings': value.caps = { "uses_x": true|false } where the shop differs from its type's defaults,
+-- value.capsAt = when they last changed, ms). They only decide what the app shows: what a person may do stays its role's
+-- permissions (section 3i), and no capability is checked here.
+
+-- a value no app version wrote (only possible through the API) becomes the nearest type, so the rule below holds
+UPDATE public.hangtag_profiles SET business_type = CASE
+        WHEN btrim(business_type) = '' THEN NULL
+        WHEN lower(business_type) ~ '(restaurant|hotel|cafe|café|food)' THEN 'restaurant'
+        WHEN lower(business_type) ~ '(grocer|kirana|supermarket)' THEN 'grocery'
+        WHEN lower(business_type) ~ '(electronic|mobile)' THEN 'electronics'
+        WHEN lower(btrim(business_type)) = 'other' THEN 'other'
+        ELSE 'retail' END
+    WHERE business_type IS NOT NULL AND business_type NOT IN ('retail', 'grocery', 'restaurant', 'electronics', 'other',
+        'Clothing boutique', 'Pop-up or exhibition stall', 'Retail store', 'Online seller', 'Wholesale', 'Other');
+ALTER TABLE public.hangtag_profiles DROP CONSTRAINT IF EXISTS hangtag_profiles_business_type_check;
+ALTER TABLE public.hangtag_profiles ADD CONSTRAINT hangtag_profiles_business_type_check CHECK (business_type IS NULL OR business_type IN
+    ('retail', 'grocery', 'restaurant', 'electronics', 'other',
+     'Clothing boutique', 'Pop-up or exhibition stall', 'Retail store', 'Online seller', 'Wholesale', 'Other'));
+
+-- How a product's pieces are told apart: 'none' (just a count), 'serial' (each piece's serial / IMEI number) or 'batch'
+-- (batch or lot numbers). Chosen in the product form when the shop uses serials or batches; what it does comes with the
+-- serial / batch batch (section 3n).
+ALTER TABLE public.hangtag_products ADD COLUMN IF NOT EXISTS tracking TEXT NOT NULL DEFAULT 'none';
+ALTER TABLE public.hangtag_products DROP CONSTRAINT IF EXISTS hangtag_products_tracking_check;
+ALTER TABLE public.hangtag_products ADD CONSTRAINT hangtag_products_tracking_check CHECK (tracking IN ('none', 'serial', 'batch'));
+
+-- The shop's capability choices survive a phone that uploads an older copy of the settings (it was offline when they
+-- changed, or runs an app version that doesn't know them): the choices changed last win. Also checks their shape.
+-- The app does the same with what it downloads (capabilities.js keepNewerCaps).
+CREATE OR REPLACE FUNCTION public.hangtag_settings_keep_caps()
+RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path = ''
+AS $$
+DECLARE
+    kept_at NUMERIC;
+    new_at NUMERIC;
+BEGIN
+    IF NEW.key IS DISTINCT FROM 'settings' OR NEW.value IS NULL OR jsonb_typeof(NEW.value) <> 'object' THEN
+        RETURN NEW;
+    END IF;
+    IF NEW.value ? 'caps' AND (jsonb_typeof(NEW.value -> 'caps') <> 'object'
+        OR EXISTS (SELECT 1 FROM jsonb_each(NEW.value -> 'caps') c WHERE jsonb_typeof(c.value) <> 'boolean')) THEN
+        RAISE EXCEPTION 'A capability is either on or off.' USING ERRCODE = '23514';
+    END IF;
+    IF NEW.value ? 'capsAt' AND jsonb_typeof(NEW.value -> 'capsAt') <> 'number' THEN
+        RAISE EXCEPTION 'When the capabilities changed must be a time.' USING ERRCODE = '23514';
+    END IF;
+    IF TG_OP = 'UPDATE' AND OLD.value IS NOT NULL AND jsonb_typeof(OLD.value) = 'object' AND jsonb_typeof(OLD.value -> 'caps') = 'object' THEN
+        kept_at := CASE WHEN jsonb_typeof(OLD.value -> 'capsAt') = 'number' THEN (OLD.value ->> 'capsAt')::NUMERIC ELSE 0 END;
+        new_at := CASE WHEN jsonb_typeof(NEW.value -> 'capsAt') = 'number' THEN (NEW.value ->> 'capsAt')::NUMERIC ELSE -1 END;
+        IF NOT (NEW.value ? 'caps') OR new_at < kept_at THEN
+            NEW.value := (NEW.value - 'capsAt') || jsonb_build_object('caps', OLD.value -> 'caps')
+                || CASE WHEN OLD.value ? 'capsAt' THEN jsonb_build_object('capsAt', OLD.value -> 'capsAt') ELSE '{}'::JSONB END;
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.hangtag_settings_keep_caps() FROM PUBLIC;
+DROP TRIGGER IF EXISTS hangtag_settings_keep_caps ON public.hangtag_meta;
+CREATE TRIGGER hangtag_settings_keep_caps BEFORE INSERT OR UPDATE ON public.hangtag_meta
+    FOR EACH ROW EXECUTE FUNCTION public.hangtag_settings_keep_caps();
 
 -- ------------------------------------------------------------------------------
 -- 3k. Units, decimal quantities, device-scoped numbers, weighing (T1)
@@ -2253,4 +2319,18 @@ SELECT check_name, value, expected, value = expected AS ok FROM (
     SELECT 22, 'Devices that belong to a team member of their shop',
            (SELECT count(*) FROM public.hangtag_devices d JOIN public.hangtag_members m ON m.user_id = d.user_id AND m.shop_id = d.owner_id)::bigint,
            (SELECT count(*) FROM public.hangtag_devices)::bigint
+    UNION ALL
+    SELECT 30, 'Shop profiles with a known type of business (none, or a value saved before types, counts as retail)',
+           (SELECT count(*) FROM public.hangtag_profiles p WHERE p.business_type IS NULL OR p.business_type IN ('retail', 'grocery', 'restaurant', 'electronics', 'other',
+              'Clothing boutique', 'Pop-up or exhibition stall', 'Retail store', 'Online seller', 'Wholesale', 'Other'))::bigint,
+           (SELECT count(*) FROM public.hangtag_profiles)::bigint
+    UNION ALL
+    SELECT 31, 'Products tracked by count, serial number or batch',
+           (SELECT count(*) FROM public.hangtag_products p WHERE p.tracking IN ('none', 'serial', 'batch'))::bigint,
+           (SELECT count(*) FROM public.hangtag_products)::bigint
+    UNION ALL
+    SELECT 32, 'Shop settings whose capabilities are all on or off',
+           (SELECT count(*) FROM public.hangtag_meta m WHERE m.key = 'settings' AND (m.value IS NULL OR jsonb_typeof(m.value) <> 'object' OR NOT (m.value ? 'caps')
+              OR (jsonb_typeof(m.value -> 'caps') = 'object' AND NOT EXISTS (SELECT 1 FROM jsonb_each(m.value -> 'caps') c WHERE jsonb_typeof(c.value) <> 'boolean'))))::bigint,
+           (SELECT count(*) FROM public.hangtag_meta m WHERE m.key = 'settings')::bigint
 ) r ORDER BY n;

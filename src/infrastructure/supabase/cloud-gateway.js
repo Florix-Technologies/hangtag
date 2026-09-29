@@ -5,6 +5,7 @@ import { toAppError } from './errors.js';
 import { AppError, ERROR_CODES } from '../../shared/errors/app-error.js';
 import { sbFetchAll, sbOk } from './query.js';
 import { billArgs, cashMoveRow, custRow, dayCloseRow, eventRow, moveRow, productRow, returnArgs, roleRow, rowToCashMove, rowToCustomer, rowToDayClose, rowToDelivery, rowToDevice, rowToEvent, rowToImport, rowToItem, rowToMember, rowToMove, rowToPayment, rowToProduct, rowToReturn, rowToReturnItem, rowToRole, rowToSale, rowToVariant, variantRows } from './mappers.js';
+import { purchaseArgs, rowToPurchase, rowToSupplier, rowToSupplierPayment, supplierPaymentRow, supplierRow } from './mappers.js';
 
 /* deviceKey: () => this phone's team device key or "" (sent as x-hangtag-device by every client this makes; see client.js) */
 export function createCloudGateway({ getClient, url, key, storageKey, deviceKey }){
@@ -252,6 +253,41 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
       const r = await db().rpc("hangtag_import_stock", args);
       if(r.error) throw toAppError(r.error);
       return r.data;
+    },
+
+    /* ---------- suppliers, purchases and payments to suppliers (schema.sql section 3l) ---------- */
+    async saveSupplier(s){ sbOk(await table('hangtag_suppliers').upsert(supplierRow(s))); },
+    /* A purchase with its stock-in records, all or nothing (RPC hangtag_save_purchase; the same id again changes nothing)
+       → { status: "saved"|"already_saved", purchase_id } */
+    async savePurchase(p, moves){
+      const r = await db().rpc('hangtag_save_purchase', purchaseArgs(p, moves));
+      if(r.error) throw toAppError(r.error);
+      return r.data;
+    },
+    /* Cancel a purchase: its stock goes back out and cash paid comes back (RPC hangtag_cancel_purchase; again: nothing changes) */
+    async cancelPurchase(id, reason, device, t){
+      const r = await db().rpc('hangtag_cancel_purchase', { p_id: id, p_reason: reason, p_device: device || null, p_t: t || null });
+      if(r.error) throw toAppError(r.error);
+      return r.data;
+    },
+    /* Payments are only ever added (a mistake gets a reversal): an upload sent twice leaves the first one as it is */
+    async saveSupplierPayment(x){ sbOk(await table('hangtag_supplier_payments').upsert(supplierPaymentRow(x), { onConflict:'owner_id,id', ignoreDuplicates:true })); },
+    fetchSuppliers: async () => (await sbFetchAll(db(), 'hangtag_suppliers', ['created_at','id'])).map(rowToSupplier),
+    async fetchPurchases(){
+      const out = [], N = 1000;
+      for(let from = 0; ; from += N){
+        const { data } = sbOk(await table('hangtag_stock_imports').select('*').eq('kind', 'purchase').order('t').order('id').range(from, from + N - 1));
+        out.push(...(data || []));
+        if(!data || data.length < N) break;
+      }
+      return out.map(rowToPurchase);
+    },
+    fetchSupplierPayments: async () => (await sbFetchAll(db(), 'hangtag_supplier_payments', ['t','id'])).map(rowToSupplierPayment),
+    /* A fingerprint of suppliers, purchases and supplier payments (a team member's phone downloads them only when it moved) */
+    async purchaseChanges(){
+      const r = await db().rpc('hangtag_purchase_changes');
+      if(r.error) throw toAppError(r.error);
+      return String(r.data == null ? "" : r.data);
     },
     /* Edge Function payment-gateway (Razorpay UPI QR / card link intents; the keys stay in the function):
        body { action, ... } → its answer. Throws an AppError: NOT_CONFIGURED, VALIDATION, CONFLICT, NOT_FOUND, AUTH,

@@ -88,6 +88,8 @@
  *   and its photo (a data URL, "" to remove it, undefined to leave it).
  * @property {(id: string, on: boolean) => (Object|null)} setArchived  Take a product off sale or bring it back.
  * @property {(id: string) => (Object|null)} remove           Delete a product with its stock records and photo.
+ * @property {(x: {products: Object[], moves: Object[]}) => void} addMany  New products (bulk import) and their opening stock
+ *   records: saved once, then queued (products before their records).
  */
 
 /**
@@ -96,6 +98,21 @@
  * @typedef {Object} StockRepositoryPort
  * @property {(change: {moves: Object[], changedProductId?: string}) => void} record  Record moves; changedProductId: a product
  *   whose data changed too (e.g. its cost), uploaded before the moves.
+ */
+
+/**
+ * "purchaseRepository": suppliers, purchases from them (a supplier's invoice with its stock-in records) and later payments to
+ * them. Implementation: infrastructure/repositories/local-first-purchase-repository.js, provided by app/container.js. Reach it
+ * through features/inventory/repositories/purchase-repository.js. Kept on the device first, then queued (outbox types
+ * "supplier", "purchase" → RPC hangtag_save_purchase, "pcancel" → RPC hangtag_cancel_purchase, "spay").
+ * @typedef {Object} PurchaseRepositoryPort
+ * @property {() => Object[]} suppliers / purchases / payments           This device's records.
+ * @property {(s: Object) => Object} saveSupplier                          Add or change a supplier (never deleted: active = false).
+ * @property {(p: {purchase: Object, moves: Object[], cashMove?: Object, changedProductIds?: string[]}) => Object} savePurchase
+ *   A purchase, its RESTOCK records (import_id = the purchase) and the cash book entry of cash paid (the database adds the same).
+ * @property {(c: {id: string, reason: string, moves: Object[], cashMove?: Object, t: number, dev: string}) => Object} cancelPurchase
+ *   Mark it cancelled with the opposite adjustments (pcx:<record>) and the cash coming back (purx:<purchase>).
+ * @property {(x: {payment: Object, cashMove?: Object}) => Object} recordPayment   A payment to a supplier or its reversal.
  */
 
 /**

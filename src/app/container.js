@@ -28,6 +28,8 @@ import { createDeliveryClient } from '../infrastructure/messaging/delivery-clien
 import { createPaymentGatewayClient } from '../infrastructure/payments/payment-gateway-client.js';
 import { createLocalFirstCashRepository } from '../infrastructure/repositories/local-first-cash-repository.js';
 import { createTeamClient } from '../infrastructure/team/team-client.js';
+import { createLocalFirstPurchaseRepository } from '../infrastructure/repositories/local-first-purchase-repository.js';
+import { savePurchases, saveSupplierPays, saveSuppliers } from '../shared/state/persistence.js';
 
 /* Called first at start-up (app/main.js), before the state is restored from storage */
 export function installContainer(){
@@ -59,5 +61,7 @@ export function installContainer(){
   provide("messageDelivery", createDeliveryClient({ cloud: cloudGateway }));
   provide("paymentGateway", createPaymentGatewayClient({ cloud: cloudGateway }));
   provide("cashRepository", createLocalFirstCashRepository({ store, persist: { saveCashMoves, saveDayCloses }, outbox: { enqueue } }));
+  // Suppliers, purchases (one RPC each, with their stock-in records) and payments to suppliers
+  provide("purchaseRepository", createLocalFirstPurchaseRepository({ store, persist: { saveSuppliers, savePurchases, saveSupplierPays, saveMoves, saveCashMoves, saveCatalog }, outbox: { enqueue }, invalidate }));
   provide("inventoryImportService", createLocalFirstStockImport({ store, cloud: cloudGateway, persist: { saveCatalog, saveMoves }, outbox: { flush: flushSbQueue }, invalidate }));
 }

@@ -21,6 +21,15 @@ export function createLocalFirstProductRepository({ store, persist, outbox }){
       outbox.enqueue({type:"prod",id:product.id,delV:deletedVariantIds});
       newMoves.forEach(m=>outbox.enqueue({type:"move",id:m.id,move:m}));
     },
+    /* Many new products at once (bulk import) with their opening stock records: the catalog and the stock records are saved
+       once, then each product and record is queued (products first) */
+    addMany({ products, moves }){
+      if(!store.catalog||!Array.isArray(store.catalog.products))store.catalog={version:3,example:false,products:[]};
+      store.catalog.products.push(...products);persist.saveCatalog();
+      moves.forEach(m=>{store.moves[m.id]=m});persist.saveMoves();
+      products.forEach(p=>outbox.enqueue({type:"prod",id:p.id}));
+      moves.forEach(m=>outbox.enqueue({type:"move",id:m.id,move:m}));
+    },
     setArchived(id, on){
       const p = list().find(x => x.id === id); if(!p) return null;
       p.archived=on;persist.saveCatalog();outbox.enqueue({type:"prod",id});

@@ -16,7 +16,7 @@ export function emptyProductsHTML(){return `<div class="empty"><b>No products ye
 /* ---------- product list ---------- */
 
 export function productCardHTML(p){
-  const vs=variantsOf(p),left=productLeft(p),low=vs.filter(v=>levelOf(stockOf(v.id))!=="ok").length;
+  const vs=variantsOf(p),left=productLeft(p),low=vs.filter(v=>levelOf(stockOf(v.id),p)!=="ok").length;
   const nc=colourCount(p), sum=[nc?nc+" colour"+(nc>1?"s":""):"",vs.length+" variant"+(vs.length===1?"":"s")].filter(Boolean).join(" · ");
   return `<div class="pcard${p.archived?" arch":""}">${thumb(p,"md")}<div class="pc-b"><b>${esc(p.name)}</b><span class="sub">${esc([p.cat,p.brand].filter(Boolean).join(" · ")||"No category")}</span><span class="pc-p">${esc(priceRange(p))}${p.cost!=null?` <small>cost ${inr(p.cost)}</small>`:""}</span><span class="sub">${esc(sum)} · <b>${left}</b> in hand${low?` · <span class="lowtxt">${low} low</span>`:""}</span></div>
     <div class="pc-a">${p.archived?`<span class="btag">Archived</span><button class="btn xs" data-unarchive="${esc(p.id)}">Unarchive</button>`:`<button class="btn xs" data-sellp="${esc(p.id)}">Sell</button>`}${p.archived?"":`<button class="btn xs" data-stickers="${esc(p.id)}">Stickers</button>`}<button class="btn xs primary" data-editp="${esc(p.id)}">Edit</button></div></div>`;
@@ -26,7 +26,7 @@ export function renderProducts(){
   const list=all.filter(p=>{
     if(store.prodView==="archived"?!p.archived:p.archived)return false;
     if(store.prodCat&&p.cat!==store.prodCat)return false;
-    if(store.prodView==="low"&&!variantsOf(p).some(v=>levelOf(stockOf(v.id))!=="ok"))return false;
+    if(store.prodView==="low"&&!variantsOf(p).some(v=>levelOf(stockOf(v.id),p)!=="ok"))return false;
     return !toks.length||toks.every(t=>productText(p).includes(t)||variantsOf(p,true).some(v=>variantText(p,v).includes(t)));
   });
   let h=`<div class="ptools"><div class="search"><input id="prodSearch" type="search" placeholder="Search name, SKU or barcode" value="${esc(store.prodQuery)}" autocomplete="off"></div>

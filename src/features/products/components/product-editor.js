@@ -1,5 +1,8 @@
 // Product editor dialog: details, HSN/GST, optional options (Colour, Size, Storage …) with every combination as a variant,
-// and per variant: stock, SKU, barcode/QR code, price and cost.
+// and per variant: stock, SKU, barcode/QR code, price and cost. The fields follow what the shop uses (Settings →
+// Capabilities, domain/shop/capabilities.js productFieldsFor): options and variants with Product variants (a product that
+// already has them keeps showing them), how pieces are tracked (none / serial / batch) with serial or batch tracking,
+// a note on expiry dates with expiry tracking and on selling by weight with weight-based products.
 import { store } from '../../../shared/state/store.js';
 import { szRank } from '../../../domain/catalog/sizes.js';
 import { variantsOf } from '../../../domain/catalog/variants.js';
@@ -23,9 +26,11 @@ import { renderAll } from '../../../shared/ui/render.js';
 import { COLORS, okColor, swatchOf } from '../../../shared/utils/colors.js';
 import { uid } from '../../../shared/utils/ids.js';
 import { refuse } from '../../shop/services/access.js';
+import { TRACKING_MODES, cleanTracking, productFieldsFor } from '../../../domain/shop/capabilities.js';
+import { shopCaps } from '../../shop/services/shop-caps.js';
 
 /* ---------- product editor ----------
-   store.editor = { isNew, id, name, cat, brand, desc, price, cost, color, img, archived, hsn, gst,
+   store.editor = { isNew, id, name, cat, brand, desc, price, cost, color, img, archived, hsn, gst, tracking (none|serial|batch),
                     hasOpts, opts, cells, codesOn, code, sel:{ [cellKey]: true } (rows ticked for stickers), addName, err }
    opts/cells follow domain/catalog/options.js (editorState). A simple product has no options and one cell (key ""). */
 
@@ -37,7 +42,8 @@ export function openEditor(pid){
   const st=editorState(p,stockOf);
   const e={isNew:!p,id:p?p.id:"p"+uid(),name:p?p.name:"",cat:p?p.cat||"":"",brand:p?p.brand||"":"",desc:p?p.desc||"":"",price:p?String(p.price):"",cost:p&&p.cost!=null?String(p.cost):"",
     color:p?okColor(p.color):COLORS[products().length%COLORS.length],img:undefined,archived:p?!!p.archived:false,hsn:p?p.hsn||"":"",gst:p&&p.gst!=null?String(p.gst):"",
-    hasOpts:!!(p&&p.opts&&p.opts.length),opts:st.opts,cells:st.cells,codesOn:!!(p&&p.code),code:p&&p.code?p.code:"barcode",sel:{},addName:"",err:""};
+    hasOpts:!!(p&&p.opts&&p.opts.length),opts:st.opts,cells:st.cells,codesOn:!!(p&&p.code),code:p&&p.code?p.code:"barcode",sel:{},addName:"",err:"",
+    tracking:cleanTracking(p&&p.tracking)};
   store.editor=e;renderEditor();
   const n=$("#edName");if(n&&e.isNew)n.focus();
 }
@@ -82,6 +88,13 @@ export function renderEditor(){
   const codeName=e.code==="qr"?"QR code":"Barcode";
   const soldAny=!e.isNew&&variantsOf(prod(e.id),true).some(v=>hasHistory(v.id));
   const nSel=combos.filter(x=>e.sel[x.key]).length;
+  const fx=productFieldsFor(shopCaps(),{hasOpts:e.hasOpts,tracking:e.tracking});   // the fields this shop uses
+  const stockNote=e.isNew?"":`<p class="note">Changing a stock number here records a stock adjustment, so history is kept. For new deliveries use Stock in on the Stock page.</p>`;
+  const trackHTML=fx.tracking||fx.expiry||fx.weight?`<div class="edsec edcap" data-edcap><h4>Stock tracking</h4>
+      ${fx.tracking?`<div class="pgrid"><label class="f"><span class="lab">Track pieces by</span><select data-ed="tracking" id="edTracking">${TRACKING_MODES.filter(m=>fx.trackingModes.includes(m.key)).map(m=>`<option value="${m.key}"${m.key===cleanTracking(e.tracking)?" selected":""}>${esc(m.label)}</option>`).join("")}</select><span class="fhint">Serial: each piece has its own serial or IMEI number. Batch: stock kept by batch or lot number.</span></label></div>`:""}
+      ${fx.expiry?`<p class="capnote" data-capnote="expiry">Expiry dates are kept with each batch${fx.trackingModes.includes("batch")?": track this product by batch when it has an expiry date":""}.</p>`:""}
+      ${fx.weight?`<p class="capnote" data-capnote="weight">Sold loose by weight or volume? Set the price for one kg (or litre) and sell any amount, typed in or read from the weighing scale. Packed items with a fixed weight are sold by the piece.</p>`:""}
+    </div>`:"";
   const simpleHTML=simple&&one?`<div class="pgrid">
       <label class="f"><span class="lab">SKU</span><input data-edf="sku" data-k="${esc(one.key)}" value="${esc(one.cell.sku)}" maxlength="40" placeholder="Optional" autocomplete="off"></label>
       <label class="f"><span class="lab">Pieces in stock now</span><input type="number" inputmode="numeric" min="0" data-edf="stock" data-k="${esc(one.key)}" value="${esc(one.cell.stock)}" placeholder="0"></label>
@@ -98,7 +111,7 @@ export function renderEditor(){
     :`<button type="button" class="btn sm" data-edact="printsel"${nSel?"":" disabled"}>Print selected${nSel?` (${nSel})`:""}</button><button type="button" class="btn sm" data-edact="printall">Print all variants</button>`;
   const openSheet=$("#modalHost [data-editor] .sheet.editor"),scrollTop=openSheet?openSheet.scrollTop:0,tab=openSheet&&openSheet.querySelector(".vtab"),tabTop=tab?tab.scrollTop:0;
   const html=`<div class="scrim" data-modal-scrim data-editor><div class="sheet editor" role="dialog" aria-modal="true" aria-labelledby="edTitle">
-    <div class="sh-head"><div class="sh-t"><h3 id="edTitle">${e.isNew?"Add product":"Edit product"}</h3><p>${e.isNew?"Basic details first. Tick “multiple options” for sizes, colours, storage and so on.":esc(e.name)}</p></div><button class="iconbtn" data-edclose aria-label="Close">${ICON.x}</button></div>
+    <div class="sh-head"><div class="sh-t"><h3 id="edTitle">${e.isNew?"Add product":"Edit product"}</h3><p>${e.isNew?(fx.variants?"Basic details first. Tick “multiple options” for sizes, colours, storage and so on.":"Basic details first."):esc(e.name)}</p></div><button class="iconbtn" data-edclose aria-label="Close">${ICON.x}</button></div>
     <form id="edForm" novalidate>
     <div class="edsec"><h4>Basic information</h4>
       <div class="edtop"><div class="pc-photo">${thumb({id:e.id,name:e.name||"New",color:e.color},"lg",src||null)}<label class="btn xs" for="edPhoto">${ICON.cam}${src?"Change":"Add photo"}</label><input id="edPhoto" class="sr" type="file" accept="image/*" data-edphoto>${src?`<button type="button" class="link xs danger" data-edact="edrmphoto">Remove photo</button>`:""}</div>
@@ -119,16 +132,18 @@ export function renderEditor(){
       ${e.codesOn?`<div class="codetype" role="radiogroup" aria-label="Code type"><span class="lab">Code type:</span><label class="chk"><input type="radio" name="edCode" value="barcode" data-edcode${e.code!=="qr"?" checked":""}> Barcode <small>(EAN-13 for new codes)</small></label><label class="chk"><input type="radio" name="edCode" value="qr" data-edcode${e.code==="qr"?" checked":""}> QR code</label></div>
         <p class="note">Enter a code that's already on the product, or tap Generate. A code belongs to one ${simple?"product":"variant"} and scanning it finds exactly that one.</p>`:""}
       ${simpleHTML}
+      ${fx.variants?"":stockNote}
     </div>
-    <div class="edsec"><h4>Options and variants</h4>
+    ${fx.variants?`<div class="edsec"><h4>Options and variants</h4>
       <label class="chk"><input type="checkbox" data-edtoggle="hasOpts"${e.hasOpts?" checked":""}> This product has multiple options / variants</label>
       ${e.hasOpts?`${e.opts.map(optionHTML).join("")}
         ${e.opts.length<OPTION_LIMITS.maxOptions?`<div class="optadd"><input id="optAdd" list="optNames" value="${esc(e.addName)}" maxlength="${OPTION_LIMITS.nameLen}" placeholder="Option name, e.g. Size" autocomplete="off" aria-label="New option name"><button type="button" class="btn xs" data-edact="addopt">+ Add option</button>
           <span class="optsugg">${OPTION_SUGGESTIONS.filter(n=>!e.opts.some(op=>op.n.toLowerCase()===n.toLowerCase())).slice(0,8).map(n=>`<button type="button" class="btn xs ghost" data-optsugg="${esc(n)}">${esc(n)}</button>`).join("")}</span></div>`:""}
         <datalist id="optNames">${OPTION_SUGGESTIONS.map(n=>`<option value="${esc(n)}">`).join("")}</datalist>
         ${tableHTML}`:`<p class="note">Sold as one product. Tick the box for sizes, colours, storage, weight and so on — every combination becomes a variant with its own stock, SKU, code and price.</p>`}
-      ${e.isNew?"":`<p class="note">Changing a stock number here records a stock adjustment, so history is kept. For new deliveries use Stock in on the Stock page.</p>`}
-    </div>
+      ${stockNote}
+    </div>`:""}
+    ${trackHTML}
     <p id="edErr" class="autherr"${e.err?"":" hidden"}>${esc(e.err)}</p>
     </form>
     <div class="sh-foot edfoot">${e.isNew?"":e.archived?`<button class="btn sm" data-unarchive="${esc(e.id)}">Unarchive</button>`:`<button class="btn sm" data-archive="${esc(e.id)}">Archive</button>`}${!e.isNew&&!soldAny?`<button class="link xs danger" data-delp="${esc(e.id)}">Delete</button>`:""}

@@ -11,8 +11,9 @@ import { uid } from '../../../shared/utils/ids.js';
 import { okColor } from '../../../shared/utils/colors.js';
 import { UPLOAD_PERMISSIONS } from '../../../domain/sync/queue-rules.js';
 import { canAny, denied, notAllowedText } from '../../shop/services/access.js';
+import { cleanTracking } from '../../../domain/shop/capabilities.js';
 
-/* draft: the editor state { id, name, cat, brand, desc, price, cost, color, archived, hsn, gst, hasOpts, opts, cells, codesOn, code, img }
+/* draft: the editor state { id, name, cat, brand, desc, price, cost, color, archived, hsn, gst, tracking, hasOpts, opts, cells, codesOn, code, img }
    (opts/cells as in domain/catalog/options.js). Every current combination is saved as a variant (off sale when unticked);
    a saved variant that is no longer a combination is kept, off sale and with its stock zeroed, when it has stock history
    or sales, and deleted otherwise. Returns { error } (nothing saved) or { created, name, activeCount, variantCount, ids }
@@ -46,6 +47,7 @@ export function saveProduct({ draft }){
   const opts=e.hasOpts?e.opts.map(op=>({n:cleanOptionName(op.n),v:op.v.slice()})):[];
   const product={id:e.id,name,cat:String(e.cat||"").trim(),brand:String(e.brand||"").trim(),desc:String(e.desc||"").trim(),price,cost,color:okColor(e.color),archived:!!e.archived,
     hsn,gst,code:e.codesOn?(e.code==="qr"?"qr":"barcode"):"",opts,variants};
+  const tracking=cleanTracking(e.tracking); if(tracking!=="none") product.tracking=tracking;   // serial | batch (none: not stored)
   repo.save({product,isNew:!old,renamed:!!old&&old.name!==name,newMoves,deletedVariantIds:delV,image:e.img});
   const active=variants.filter(v=>v.active);
   return {created:!old,name,activeCount:active.length,variantCount:variants.length,ids};

@@ -6,6 +6,7 @@ import { normalizeDiscount } from '../../domain/sales/discounts.js';
 import { paymentsOf } from '../../domain/sales/payments.js';
 import { round2 } from '../../domain/sales/paise.js';
 import { saleGstSplit } from '../../domain/sales/gst.js';
+import { cleanTracking } from '../../domain/shop/capabilities.js';
 import { okColor } from '../../shared/utils/colors.js';
 
 /* ---------- row <-> app shapes ---------- */
@@ -66,7 +67,7 @@ export function optionsRow(p){
 }
 export const productRow = (p, idx) => ({ id:p.id, name:p.name, price:+p.price||0, color:okColor(p.color), sort_order:idx, category:p.cat||null, brand:p.brand||null,
   description:p.desc||null, cost_price:p.cost==null?null:p.cost, archived:!!p.archived, hsn:p.hsn||null, gst_rate:p.gst==null||p.gst===""?null:+p.gst,
-  code_type:p.code||null, options:optionsRow(p), updated_at:new Date().toISOString() });
+  code_type:p.code||null, options:optionsRow(p), tracking:cleanTracking(p.tracking), updated_at:new Date().toISOString() });
 export const variantRows = p => variantsOf(p,true).map((v,k)=>({ id:v.id, product_id:p.id, option_values:Array.isArray(v.o)?v.o.slice():[],
   ...(cs => ({ color:cs.c, size:cs.s }))(legacyCS(p.opts, v.o)), sku:v.sku||null, barcode:v.bc||null,
   price:v.price==null?null:v.price, cost_price:v.cost==null?null:v.cost, active:v.active!==false, sort_order:k, updated_at:new Date().toISOString() }));
@@ -87,7 +88,8 @@ export function rowToProduct(p){
   // and finishDownloadedProduct (domain/catalog/options.js) upgrades them once their variants are attached
   const o = p.options || {};
   const base = { id:p.id, name:p.name, cat:p.category||"", brand:p.brand||"", desc:p.description||"", price:p.price, cost:p.cost_price==null?null:p.cost_price,
-    color:p.color, archived:!!p.archived, hsn:p.hsn||"", gst:p.gst_rate==null?null:+p.gst_rate, code:p.code_type||"", variants:[] };
+    color:p.color, archived:!!p.archived, hsn:p.hsn||"", gst:p.gst_rate==null?null:+p.gst_rate, code:p.code_type||"", variants:[],
+    ...(cleanTracking(p.tracking) !== "none" ? { tracking:p.tracking } : {}) };
   if(Array.isArray(o.opts)) return { ...base, opts:o.opts.map(x => ({ n:String(x&&x.name||""), v:Array.isArray(x&&x.values)?x.values.map(String):[] })) };
   return { ...base, colors:Array.isArray(o.colors)?o.colors:undefined, sizes:Array.isArray(o.sizes)?o.sizes:undefined };
 }

@@ -16,16 +16,18 @@ import { renderAll } from '../../../shared/ui/render.js';
 
 /* hintMs: with the camera on and no code read for this long, tips for a better read are shown */
 export const SCAN_CONFIG = { hintMs: 8000 };
-/* store.scan = { status: "starting" | "live" | "error", message, kind, last: scanToCart result + t, started, gate } */
+/* store.scan = { status: "starting" | "live" | "error", message, kind, last: scanToCart result + t, started, gate, use? } */
 
-export function openScanner(){
+/* use (optional; default: the bill): { title, onCode(text) → { status: "added"|…, message }, footer() → text, onType(),
+   onClose() } — another screen (e.g. a purchase) takes the codes read */
+export function openScanner(use){
   if(store.scan) return;
-  closeSheets();
-  store.scan = { status: "starting", message: "", kind: "", last: null, started: 0, gate: createScanGate() };
+  if(!use) closeSheets();
+  store.scan = { status: "starting", message: "", kind: "", last: null, started: 0, gate: createScanGate(), use: use || null };
   const host = document.createElement("div");
   host.id = "scanHost";
   host.innerHTML = `<div class="scan" role="dialog" aria-modal="true" aria-labelledby="scanT">
-    <div class="scan-top"><b id="scanT">Scan barcode</b><button type="button" class="scan-x" data-scan="close" aria-label="Close the scanner">${ICON.x}</button></div>
+    <div class="scan-top"><b id="scanT">${esc(use && use.title || "Scan barcode")}</b><button type="button" class="scan-x" data-scan="close" aria-label="Close the scanner">${ICON.x}</button></div>
     <div class="scan-view"><video id="scanVideo" playsinline muted aria-label="Camera picture"></video><div class="scan-frame" aria-hidden="true"></div></div>
     <div class="scan-status" id="scanStatus" role="status" aria-live="polite"></div>
     <div class="scan-foot"><span class="scan-bill" id="scanBill"></span><button type="button" class="btn sm" data-scan="type">Type code</button><button type="button" class="btn sm primary" data-scan="close">Done</button></div>
@@ -55,10 +57,10 @@ async function start(){
 export function onCode(text){
   const s = store.scan; if(!s || s.status !== "live") return;
   if(!s.gate.pass(text, Date.now())) return;   // the same sticker still in front of the camera
-  const r = scanToCart(text);
+  const r = s.use ? s.use.onCode(text) : scanToCart(text);
   s.last = { ...r, t: Date.now() };
   try{ if(navigator.vibrate) navigator.vibrate(r.status === "added" ? 60 : [40, 60, 40]); }catch{ /* no vibration */ }
-  if(r.status === "added") renderAll();
+  if(r.status === "added" && !s.use) renderAll();
   paint();
 }
 export function closeScanner(){
@@ -70,12 +72,13 @@ export function closeScanner(){
   store.scan = null;
   document.body.style.overflow = "";
   renderAll();
+  if(s.use && s.use.onClose) s.use.onClose();
 }
 /* Buttons inside the scanner (data-scan) */
 export function scanAction(act){
   if(act === "close") return closeScanner();
   if(act === "retry") return start();
-  if(act === "type"){ closeScanner(); const i = $("#sellSearch"); if(i){ i.value = ""; i.focus(); } }
+  if(act === "type"){ const u = store.scan && store.scan.use; closeScanner(); if(u){ if(u.onType) u.onType(); return; } const i = $("#sellSearch"); if(i){ i.value = ""; i.focus(); } }
 }
 /* The status line and the bill total, updated in place (the video keeps running) */
 function paint(){
@@ -94,6 +97,7 @@ function paint(){
   box.className = "scan-status " + cls;
   box.innerHTML = html;
   const bill = $("#scanBill"), n = cartPcs();
+  if(bill && s.use){ bill.textContent = s.use.footer ? s.use.footer() : ""; return; }
   if(bill) bill.innerHTML = n ? `<b>${n} piece${n === 1 ? "" : "s"}</b> · ${inr(billTotals(store.cart, store.disc).total)}` : "Bill is empty";
 }
 /* The camera is released when the app goes to the background */

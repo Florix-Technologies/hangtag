@@ -53,6 +53,7 @@ import { addDays, dayKey } from '../../shared/formatting/dates.js';
 import { saveCart, savePrefs, saveSettings } from '../../shared/state/persistence.js';
 import { renderAll, setTab } from '../../shared/ui/render.js';
 import { logger } from '../../shared/logging/logger.js';
+import { inventoryChange, inventoryClick, inventoryInput, inventoryModalClose, inventorySubmit } from '../../features/inventory/components/inventory-views.js';
 
 /* Registered once at start-up (app/main.js). */
 export function installDomEvents(){
@@ -71,6 +72,8 @@ export function installDomEvents(){
     const addv=t.closest("[data-addv]");if(addv){addOne(addv.dataset.addv);store.sellQuery="";const si=$("#sellSearch");if(si)si.value="";renderGrid();return}
     if(t.matches("[data-scrim]")){if(t.matches("[data-paid]")){closeSheets();return}if(store.pick&&store.pick.target==="exchange"){store.pick=null;renderReturnSheet();return}store.retState=null;closeSheets();return}
     if(store.billImport&&t.closest("[data-billimp]")&&billImportClick(t))return;
+    if((t.matches("[data-modal-scrim]")||t.closest("[data-modal-close]"))&&inventoryModalClose(t))return;
+    if(inventoryClick(t))return;   // purchases, suppliers, stock count, stock in by barcode, product import
     if(t.matches("[data-modal-scrim]")||t.closest("[data-modal-close]")){if(t.matches("[data-editor]")&&store.editor)return;if(t.matches("[data-billimp]")&&store.billImport)return;if(store.payState)payClosed();store.payState=null;store.lineDisc=null;store.syncOpen=false;store.evForm=null;store.cashForm=null;store.voidForm=null;closeModal();return}
     // sync panel
     const sr=t.closest("[data-syncretry]");if(sr){syncRetry(+sr.dataset.syncretry);return}
@@ -212,6 +215,7 @@ export function installDomEvents(){
     if(t.id==="chooseQ"){store.chooserQ=t.value;const pos=t.selectionStart;renderChooser();const i=$("#chooseQ");if(i){i.focus();i.setSelectionRange(pos,pos)}return}
     if(t.matches("[data-sov]")&&store.stockOp){store.stockOp.val[t.dataset.sov]=t.value;updateStockOp();return}
     if(store.billImport&&billImportInput(t))return;
+    if(inventoryInput(t))return;
     if(store.editor){
       if(t.dataset.ed){store.editor[t.dataset.ed]=t.value;if(t.dataset.ed==="price"||t.dataset.ed==="cost"){const k=t.dataset.ed;$$("#modalHost [data-edf='"+k+"']").forEach(i=>{i.placeholder=t.value})}return}
       if(t.dataset.edf&&t.dataset.k!=null){edFieldInput(t);return}
@@ -224,6 +228,7 @@ export function installDomEvents(){
     if(e.target.id==="evForm"){e.preventDefault();submitEventForm(e.target);return}
     if(e.target.id==="cashForm"){e.preventDefault();submitCashForm(e.target);return}
     if(e.target.id==="voidForm"){e.preventDefault();submitVoidForm(e.target);return}
+    if(inventorySubmit(e))return;
   });
   document.addEventListener("change",async e=>{
     const t=e.target;
@@ -252,6 +257,7 @@ export function installDomEvents(){
     if(t.matches("#custForm [name=type]")){custFormType(t.form);return}
     if(store.stickers&&stickerChange(t))return;
     if(store.billImport&&await billImportChange(t))return;
+    if(await inventoryChange(t))return;
     if(store.editor){
       const tg=t.dataset.edtoggle;if(tg){if(tg==="hasOpts")edToggleOptions(t.checked);else{store.editor.codesOn=t.checked;edFocusKeep(renderEditor)}return}
       if(t.matches("[data-edcode]")){store.editor.code=t.value==="qr"?"qr":"barcode";renderEditor();return}

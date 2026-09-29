@@ -13,6 +13,8 @@ import { kpi } from '../../../shared/components/kpi.js';
 import { ICON } from '../../../shared/constants/icons.js';
 import { $, esc } from '../../../shared/dom.js';
 import { dayKey, dayLab, hhmm } from '../../../shared/formatting/dates.js';
+import { inventorySubnavHTML, renderInventorySub } from '../components/inventory-views.js';
+import { intakeCardHTML } from '../components/code-intake.js';
 import { inr } from '../../../shared/formatting/money.js';
 
 /* Stock matrix for one product: combinations of the first options down (e.g. colours), the last option across (e.g. sizes) */
@@ -28,7 +30,8 @@ export function stockMatrixHTML(p){
 export const MOVE_LABEL=MOVE_LABELS;
 export function renderStock(){
   const host=$("#stockBody"),ps=liveProducts();
-  if(!ps.length){host.innerHTML=emptyProductsHTML();return}
+  if(renderInventorySub(host))return;   // Purchases, Suppliers or Stock count is open
+  if(!ps.length){host.innerHTML=inventorySubnavHTML()+emptyProductsHTML();return}
   let pcs=0,val=0,costVal=0,costKnown=true;const alerts=[];
   ps.forEach(p=>variantsOf(p).forEach(v=>{const l=stockOf(v.id),n=Math.max(0,l);pcs+=n;val+=n*vPrice(p,v);const c=vCost(p,v);if(c==null){if(n)costKnown=false}else costVal+=n*c;const lv=levelOf(l,p);if(lv!=="ok")alerts.push({p,v,l,k:lv})}));
   alerts.sort((a,b)=>a.l-b.l);
@@ -40,7 +43,7 @@ export function renderStock(){
   h+=shown.length?shown.map(p=>`<div class="spc"><div class="spc-h">${thumb(p,"sm")}<div><b>${esc(p.name)}</b><span class="sub">${esc([p.cat,priceRange(p)].filter(Boolean).join(" · "))} · ${productLeft(p)} in hand</span></div><button class="btn xs" data-stockin="${esc(p.id)}">+ Stock in</button></div>${stockMatrixHTML(p)}</div>`).join(""):`<p class="muted" style="padding:0 16px 16px">Nothing to show here.</p>`;
   h+=`</div>`;
   h+=stockHistoryHTML(ps);
-  host.innerHTML=h;
+  host.innerHTML=inventorySubnavHTML()+intakeCardHTML()+h;
 }
 /* Stock history: every change (stock in, adjustments, sales, returns, exchanges) from the stock ledger, newest first, with
    the variant's stock after it. Filter by product, variant and kind (store.stockHist). */

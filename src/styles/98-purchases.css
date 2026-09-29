@@ -1,0 +1,45 @@
+/* ================= purchases, suppliers, stock count, stock in by barcode, product import ================= */
+.invsub{margin:0 0 14px;flex-wrap:wrap}
+.pu-list{display:flex;flex-direction:column}
+.pu-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:4px 12px;align-items:center;text-align:left;padding:10px 4px;border-bottom:1px solid var(--wash-2);font-size:13.5px;width:100%;background:none}
+.pu-row:last-child{border-bottom:0}
+.pu-row:hover{background:var(--wash)}
+.pu-row.off{opacity:.55}
+.pu-row .pu-d{color:var(--ink-3);font-variant-numeric:tabular-nums;font-size:12.5px;min-width:52px}
+.pu-row .pu-w{display:flex;flex-direction:column;min-width:0}
+.pu-row .pu-w small,.pu-row .pu-a small{color:var(--ink-3);font-size:12px}
+.pu-row .pu-a{display:flex;flex-direction:column;align-items:flex-end;font-weight:700;font-variant-numeric:tabular-nums}
+.pu-row .pu-a small.lowtxt{color:var(--warn-ink)}
+.pu-h4{margin:18px 0 6px;font-size:14px}
+.pu-sheet,.im-sheet{max-width:760px}
+.pu-code{display:flex;gap:8px;align-items:center;margin:12px 0 8px}
+.pu-code input{flex:1;min-width:0;padding:10px 12px;border:1px solid var(--line-2);border-radius:10px;font-size:15px;background:var(--bg);color:var(--ink)}
+.pu-code.intake{padding:10px 12px;margin:0 0 14px;flex-wrap:wrap}
+.pu-code.intake b{font-size:14px;margin-right:4px}
+.pu-q{margin:0 0 8px}
+.pu-hits{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+.pu-quick{border:1px solid var(--line);border-radius:12px;padding:12px;margin:8px 0 12px;background:var(--wash)}
+.pu-quick h4{margin:0 0 4px;font-size:14px}
+.pu-lines{border-collapse:collapse;width:100%;font-size:13.5px}
+.pu-lines th,.pu-lines td{padding:6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+.pu-lines th{font-size:12px;color:var(--ink-3);font-weight:600;white-space:nowrap}
+.pu-lines td small{display:block;color:var(--ink-3);font-size:12px}
+.pu-lines input{width:84px;padding:7px 8px;border:1px solid var(--line-2);border-radius:8px;font-size:14px;background:var(--bg);color:var(--ink)}
+.pu-lines .num,.pu-lines .pu-amt{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.pu-lines tr.pu-bad td,.pu-lines tr.bad td{background:var(--crit-soft)}
+.pu-lines .neg{color:var(--crit)}
+.pu-lines .pos{color:var(--good-ink)}
+.pu-lines.sc input{width:90px}
+.pu-empty{margin:10px 0}
+.pu-tot{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:10px 0 4px;font-size:14px}
+/* product import */
+.im-steps{margin:0 0 12px;padding-left:20px;display:flex;flex-direction:column;gap:8px;font-size:14px}
+.im-steps .note{display:block;margin-top:4px}
+.im-sum{display:flex;flex-direction:column;gap:4px;padding:10px 12px;border-radius:10px;margin:8px 0;font-size:13.5px}
+.im-sum.ok{background:var(--accent-soft)}
+.im-sum.bad{background:var(--crit-soft);color:var(--crit)}
+.im-sum span{color:var(--ink-2)}
+.im-tw{max-height:46vh;overflow:auto;border:1px solid var(--line);border-radius:10px}
+.im-errs{margin:0;padding-left:16px;color:var(--crit);font-size:12.5px}
+.im-ok{color:var(--good-ink);font-size:12.5px;display:inline-flex;align-items:center;gap:4px}
+@media (max-width:520px){.pu-lines input{width:64px}.pu-row{grid-template-columns:minmax(0,1fr) auto}.pu-row .pu-d{grid-column:1/-1}}

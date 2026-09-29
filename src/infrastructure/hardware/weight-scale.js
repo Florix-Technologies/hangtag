@@ -54,20 +54,24 @@ export function createSerialScale({serial,getSettings}){
   const settings=()=>scaleSettingsOf(getSettings&&getSettings());
   const deliver=r=>{ latest={...r,at:Date.now()}; const w=waiters; waiters=[]; w.forEach(f=>f(latest)); };
   async function pump(){
-    const dec=new TextDecoder();
-    try{
-      while(port&&port.readable){
-        reader=port.readable.getReader();
-        try{
-          for(;;){
-            const {value,done}=await reader.read(); if(done) break;
-            buf+=dec.decode(value,{stream:true});
-            let i; while((i=buf.search(/[\r\n]/))>-1){ const line=buf.slice(0,i); buf=buf.slice(i+1); const r=parseScaleLine(line,settings().unit); if(r) deliver(r); }
-            if(buf.length>256) buf=buf.slice(-64);
-          }
-        }finally{ try{ reader.releaseLock(); }catch{ /* already released */ } reader=null; }
-      }
-    }catch{ /* the cable was pulled or the port closed: status() shows it */ }
+    const dec=new TextDecoder(), me=port;
+    let ended=false;
+    // a garbled byte (framing, buffer overrun) only replaces the port's stream: reading goes on with the new one. The loop
+    // ends when the port is closed here (disconnect) or the cable is pulled (the port has no stream any more).
+    while(port===me&&me.readable&&!ended){
+      try{ reader=me.readable.getReader(); }catch{ break; }
+      try{
+        for(;;){
+          const {value,done}=await reader.read(); if(done){ ended=true; break; }
+          buf+=dec.decode(value,{stream:true});
+          let i; while((i=buf.search(/[\r\n]/))>-1){ const line=buf.slice(0,i); buf=buf.slice(i+1); const r=parseScaleLine(line,settings().unit); if(r) deliver(r); }
+          if(buf.length>256) buf=buf.slice(-64);
+        }
+      }catch{ /* a read error: try the port's next stream (none when the cable was pulled) */ }
+      finally{ try{ reader.releaseLock(); }catch{ /* already released */ } reader=null; }
+    }
+    // the cable was pulled while this port was in use: it is no longer connected (status() shows it; typing still works)
+    if(port===me&&!ended){ port=null; latest=null; const w=waiters; waiters=[]; w.forEach(f=>f(null)); try{ await me.close(); }catch{ /* already gone */ } }
   }
   async function open(p){
     const s=settings();

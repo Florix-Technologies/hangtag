@@ -3,6 +3,7 @@ import { store } from '../shared/state/store.js';
 import { DEFAULT_SETTINGS } from '../domain/shop/settings.js';
 import { discountInput } from '../domain/sales/discounts.js';
 import { printerOf } from '../domain/shop/printer-settings.js';
+import { scaleSettingsOf } from '../domain/shop/scale-settings.js';
 import { storage } from '../shared/state/persistence.js';
 import { objOr } from '../shared/utils/objects.js';
 
@@ -44,6 +45,8 @@ export function initState(){
   store.logo = storage.get("rc_logo","") || "";                // shop logo for receipts (small data URL; synced as hangtag_meta "logo")
   store.printer = printerOf(storage.get("rc_printer",null));    // this device's receipt printer (not synced: each till has its own)
   store.printState = null;      // the last print from a bill: { sid, status: "printing"|"done"|"error", message }
+  store.scale = scaleSettingsOf(storage.get("hangtag_scale",null));   // this device's weighing scale (not synced: each counter has its own)
+  store.weigh = null;           // the weight dialog: { vid, line (a bill line weighed again), value, err, busy, note }
   store.deliveries = {};        // bills sent to customers, by bill id (this session's sends and what the server recorded)
   store.channels = null;        // which of email / WhatsApp / SMS the server can send ({ email, whatsapp, sms }), once asked
   store.prefs = Object.assign({tab:"sell",density:"photos",period:"today",day:"",from:"",to:""},storage.get("rc_prefs",{}));

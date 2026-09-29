@@ -20,7 +20,7 @@ import { flushSbQueue } from '../../sync/services/outbox.js';
 import { creditNoteNo, exchangeAvail, exchangeCustomer, exchangeDiscount } from '../services/return-rules.js';
 import { returnRepository } from '../repositories/return-repository.js';
 import { uid } from '../../../shared/utils/ids.js';
-import { can, denied, notAllowedText } from '../../shop/services/access.js';
+import { can, denied, notAllowedText, userId } from '../../shop/services/access.js';
 
 /* req: { sid, picks: { [line no]: pieces }, mode: "return" | "exchange", pay (refund method), collect (how the customer pays
    an exchange's difference: a method, or split parts), reason, notForResale: { [line no]: true }, newItems (exchange lines),
@@ -51,9 +51,9 @@ export function recordReturn(req){
   const byLn={}; s.items.forEach((i,k)=>{byLn[i.ln!=null?i.ln:k]=i});
   const items=Q.lines.map(L=>{const i=byLn[L.ln];
     return {ln:L.ln,v:d.resolve(i)||i.v,p:i.p,n:i.n,c:i.c||"",s:i.s||"",vl:lineLabel(i),ov:i.ov||[],sku:i.sku||"",q:L.q,price:L.unit,value:L.value,
-      cost:i.cost==null?null:i.cost,restock:!nfr[L.ln],tx:L.tx,cgst:L.cgst,sgst:L.sgst,igst:L.igst,gst:L.rate,hsn:L.hsn}});
+      cost:i.cost==null?null:i.cost,restock:!nfr[L.ln],tx:L.tx,cgst:L.cgst,sgst:L.sgst,igst:L.igst,gst:L.rate,hsn:L.hsn,...(i.u?{u:i.u}:{})}});
   const ret={id:"r"+uid(),no:creditNoteNo(t),sale:s.id,t,kind:ex?"exchange":"return",ex:exId,refund:S.refund,pay:PAY_METHODS.includes(req.pay)?req.pay:"cash",
-    value:S.value,ro:Math.round((Q.roundOff+S.roundOff)*100)/100,note:String(req.reason||"").slice(0,200),dev:store.dev,items};
+    value:S.value,ro:Math.round((Q.roundOff+S.roundOff)*100)/100,note:String(req.reason||"").slice(0,200),dev:store.dev,...(userId()?{user:userId()}:{}),items};
   // the new bill first (it is paid now), then the return; both are on this device before anything uploads
   if(newSale){ store.lastSale=newSale; recordSale(newSale); }
   returnRepository().record(ret);

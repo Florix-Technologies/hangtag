@@ -7,6 +7,9 @@ import { inr, inrx } from '../../../shared/formatting/money.js';
 
 const row=(l,r,cls)=>`<div class="r-row${cls?" "+cls:""}"><span>${l}</span><span>${r}</span></div>`;
 const pct=r=>r==null?"":Math.round(r*100)/100+"%";
+/* A line's quantity as printed ("2.5 kg", "3") and its rate ("₹43/kg", "₹525") */
+const qtyOf=l=>esc(l.qtyText||String(l.qty));
+const rateOf=l=>inr(l.rate)+(l.unit?"/"+esc(l.unit):"");
 /* Logo, shop name and contact lines (the shop profile controls all of it) */
 function shopHTML(I){
   const S=I.seller;
@@ -15,7 +18,7 @@ function shopHTML(I){
 /* Subtotal → discounts → taxable → GST → round off → total → credit, then payments, change and returns */
 function totalsHTML(I){
   const T=I.totals, G=gstLines(I);
-  let h=row("Subtotal",inr(T.subtotal));
+  let h=row("Subtotal",inrx(T.subtotal));
   if(T.itemDiscount) h+=row("Item discounts","−"+inrx(T.itemDiscount));
   if(T.billDiscount) h+=row("Bill discount"+(T.billDiscountLabel?" "+esc(T.billDiscountLabel):""),"−"+inrx(T.billDiscount));
   if(G.length&&!I.inclusive) h+=row("Taxable amount",inrx(T.taxable))+G.map(g=>row(g.label,inrx(g.amount))).join("");
@@ -37,7 +40,7 @@ function receipt80(I){
   if(I.buyer) h+=row("Customer",esc(I.buyer.name)+(I.buyer.phone?" · "+esc(I.buyer.phone):""))+(I.buyer.gstin?row("Customer GSTIN",esc(I.buyer.gstin)):"");
   if(I.placeOfSupply&&I.gstMode==="inter") h+=row("Place of supply",esc(I.placeOfSupply.name));
   if(I.status==="cancelled") h+=`<div class="r-void">CANCELLED</div>`;
-  h+=`</div><table class="r-items"><thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>${I.lines.map(l=>`<tr><td><b>${esc(l.name)}</b>${l.variant||l.sku?`<span>${esc([l.variant,l.sku].filter(Boolean).join(" · "))}</span>`:""}${l.discount?`<span>Discount${l.discountLabel?" "+esc(l.discountLabel):""} −${inrx(l.discount)}</span>`:""}</td><td>${l.qty}</td><td>${inr(l.rate)}</td><td>${inr(l.gross)}</td></tr>`).join("")}</tbody></table>`;
+  h+=`</div><table class="r-items"><thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>${I.lines.map(l=>`<tr><td><b>${esc(l.name)}</b>${l.variant||l.sku?`<span>${esc([l.variant,l.sku].filter(Boolean).join(" · "))}</span>`:""}${l.discount?`<span>Discount${l.discountLabel?" "+esc(l.discountLabel):""} −${inrx(l.discount)}</span>`:""}</td><td>${qtyOf(l)}</td><td>${rateOf(l)}</td><td>${inrx(l.gross)}</td></tr>`).join("")}</tbody></table>`;
   h+=totalsHTML(I);
   return h+`${I.footer?`<p class="r-foot">${esc(I.footer)}</p>`:""}</div>`;
 }
@@ -48,12 +51,12 @@ function invoiceA4(I){
   if(I.status==="cancelled") h+=`<div class="r-void">CANCELLED — not a valid invoice</div>`;
   h+=`<div class="i-party"><span class="i-lab">Bill to</span>${I.buyer?`<b>${esc(I.buyer.name)}</b>${I.buyer.business?" <small>(business)</small>":""}${I.buyer.phone?`<span>${esc(I.buyer.phone)}</span>`:""}${I.buyer.email?`<span>${esc(I.buyer.email)}</span>`:""}${I.buyer.gstin?`<span>GSTIN ${esc(I.buyer.gstin)}</span>`:""}`:"<b>Walk-in customer</b>"}</div>`;
   const heads=["#","Item",...(hsn?["HSN"]:[]),"Qty","Rate","Discount",...(tax?["Taxable","GST",...(inter?["IGST"]:["CGST","SGST"])]:[]),"Amount"];
-  h+=`<table class="r-items i-table"><thead><tr>${heads.map(x=>`<th>${x}</th>`).join("")}</tr></thead><tbody>${I.lines.map(l=>`<tr><td>${l.sl}</td><td><b>${esc(l.name)}</b>${l.variant||l.sku?`<span>${esc([l.variant,l.sku].filter(Boolean).join(" · "))}</span>`:""}</td>${hsn?`<td>${esc(l.hsn)}</td>`:""}<td>${l.qty}</td><td>${inr(l.rate)}</td><td>${l.discount||l.billDiscount?"−"+inrx(l.discount+l.billDiscount):"—"}</td>`+
-    (tax?`<td>${inrx(l.taxable)}</td><td>${pct(l.gstRate)}</td>${inter?`<td>${inrx(l.igst)}</td>`:`<td>${inrx(l.cgst)}</td><td>${inrx(l.sgst)}</td>`}`:"")+`<td>${l.total!=null?inrx(l.total):inr(l.gross)}</td></tr>`).join("")}</tbody></table>`;
+  h+=`<table class="r-items i-table"><thead><tr>${heads.map(x=>`<th>${x}</th>`).join("")}</tr></thead><tbody>${I.lines.map(l=>`<tr><td>${l.sl}</td><td><b>${esc(l.name)}</b>${l.variant||l.sku?`<span>${esc([l.variant,l.sku].filter(Boolean).join(" · "))}</span>`:""}</td>${hsn?`<td>${esc(l.hsn)}</td>`:""}<td>${qtyOf(l)}</td><td>${rateOf(l)}</td><td>${l.discount||l.billDiscount?"−"+inrx(l.discount+l.billDiscount):"—"}</td>`+
+    (tax?`<td>${inrx(l.taxable)}</td><td>${pct(l.gstRate)}</td>${inter?`<td>${inrx(l.igst)}</td>`:`<td>${inrx(l.cgst)}</td><td>${inrx(l.sgst)}</td>`}`:"")+`<td>${l.total!=null?inrx(l.total):inrx(l.gross)}</td></tr>`).join("")}</tbody></table>`;
   h+=`<div class="i-foot"><div class="i-left">`;
   if(I.taxSummary.length) h+=`<table class="i-tax"><thead><tr><th>GST rate</th><th>Taxable</th>${inter?"<th>IGST</th>":"<th>CGST</th><th>SGST</th>"}<th>Total GST</th></tr></thead><tbody>${I.taxSummary.map(r=>`<tr><td>${r.rate!=null?pct(r.rate):"—"}</td><td>${inrx(r.taxable)}</td>${inter?`<td>${inrx(r.igst)}</td>`:`<td>${inrx(r.cgst)}</td><td>${inrx(r.sgst)}</td>`}<td>${inrx(r.tax)}</td></tr>`).join("")}</tbody></table>`;
   h+=`<p class="i-words"><span class="i-lab">Amount in words</span>${esc(I.amountInWords)}</p>`;
-  if(I.returns.length) h+=`<div class="i-rets"><span class="i-lab">Returns and exchanges</span>${I.returns.map(r=>`<span>${r.kind==="exchange"?"Exchange":"Return"} · ${esc(dtLong(r.t))} · ${esc(r.items.map(i=>i.name+(i.variant?" "+i.variant:"")+" × "+i.qty).join(", "))} · ${inr(r.value)}${r.refund?` · refunded ${inr(r.refund)} (${esc(r.label)})`:""}</span>`).join("")}</div>`;
+  if(I.returns.length) h+=`<div class="i-rets"><span class="i-lab">Returns and exchanges</span>${I.returns.map(r=>`<span>${r.kind==="exchange"?"Exchange":"Return"} · ${esc(dtLong(r.t))} · ${esc(r.items.map(i=>i.name+(i.variant?" "+i.variant:"")+" × "+(i.qtyText||i.qty)).join(", "))} · ${inr(r.value)}${r.refund?` · refunded ${inr(r.refund)} (${esc(r.label)})`:""}</span>`).join("")}</div>`;
   h+=`</div>${totalsHTML(I)}</div>`;
   if(T.tax>0) h+=`<p class="i-note">${I.inclusive?"Prices include GST.":"GST is added to the prices."}</p>`;
   return h+`${I.footer?`<p class="r-foot">${esc(I.footer)}</p>`:""}<p class="i-gen">Computer-generated invoice.</p></div>`;

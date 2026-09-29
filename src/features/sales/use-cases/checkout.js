@@ -3,7 +3,7 @@ import { lineLabel } from '../../../domain/catalog/options.js';
 import { checkBillDiscounts, normalizeDiscount } from '../../../domain/sales/discounts.js';
 import { paymentId, settlePayments } from '../../../domain/sales/payments.js';
 import { store } from '../../../shared/state/store.js';
-import { billCustomer, billTotals, gstContext, invoiceNo } from '../services/totals.js';
+import { billCustomer, billTotals, gstContext, nextBillNo } from '../services/totals.js';
 import { D, invalidate } from '../../inventory/services/ledger.js';
 import { prod } from '../../products/services/catalog.js';
 import { closeSheets } from '../components/bill-panel.js';
@@ -15,11 +15,10 @@ import { renderSync } from '../../sync/components/sync-status.js';
 import { enqueue, flushSbQueue } from '../../sync/services/outbox.js';
 import { queueAutoDelivery } from '../../delivery/use-cases/auto-delivery.js';
 import { toast } from '../../../shared/components/toast.js';
-import { dayKey } from '../../../shared/formatting/dates.js';
 import { persistLocal, saveCart, savePrefs } from '../../../shared/state/persistence.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { uid } from '../../../shared/utils/ids.js';
-import { can, canAny, denied, notAllowedText } from '../../shop/services/access.js';
+import { can, canAny, denied, notAllowedText, userId } from '../../shop/services/access.js';
 import { CANCEL_BILL } from '../../../domain/shop/permissions.js';
 
 /* A complete bill record, or { error } when a discount is too big or the payments don't settle it.
@@ -34,17 +33,18 @@ export function newSaleRecord(lines,billDisc,pay,extra){
   const whole=typeof pay==="string"?{method:pay}:pay&&!Array.isArray(pay)?pay:null;
   const S=settlePayments(due,whole?(due>0?[{...whole,amount:due}]:[]):pay);
   if(S.error) return {error:S.error,field:S.field,method:S.method};
-  const id=x.id||uid(), t=Date.now(), seq=D().sales.filter(s=>dayKey(s.t)===dayKey(t)).length+1, ev=x.event!==undefined?x.event:sellingEventId();
-  return {id,no:invoiceNo(t,seq),t,
+  const id=x.id||uid(), t=Date.now(), ev=x.event!==undefined?x.event:sellingEventId();
+  // this device's own series of numbers that day (domain/sales/sale.js), so two phones selling offline never make the same one
+  return {id,no:nextBillNo(D().sales,t),t,
     items:lines.map((c,k)=>{const L=T.lines[k], d=normalizeDiscount(c.disc), p=prod(c.p);
-      return {ln:k,v:c.v,p:c.p,n:c.name,c:c.c||"",s:c.s||"",vl:lineLabel(c),ov:c.ov||[],sku:c.sku||"",q:c.q,price:c.price,cost:c.cost==null?null:c.cost,
+      return {ln:k,v:c.v,p:c.p,n:c.name,c:c.c||"",s:c.s||"",vl:lineLabel(c),ov:c.ov||[],sku:c.sku||"",q:c.q,...(c.u?{u:c.u}:{}),price:c.price,cost:c.cost==null?null:c.cost,
         ...(d?{disc:d}:{}),dAmt:L.itemDisc,bdAmt:L.billDisc,gst:L.rate,hsn:p&&p.hsn||"",tx:L.taxable,cgst:L.cgst,sgst:L.sgst,igst:L.igst,lt:L.total}}),
     sub:T.sub,disc:T.disc,itemDisc:T.itemDisc,billDisc:normalizeDiscount(billDisc),billDiscAmt:T.billDisc,
     taxable:T.taxable,tax:T.tax,cgst:T.cgst,sgst:T.sgst,igst:T.igst,taxRate:T.rate||0,taxIncl:T.incl,
     gst:{mode:g.mode,pos:g.pos,shopState:g.shopState,b2b:g.b2b},roundOff:T.roundOff,total:T.total,credit,
     kind:x.kind||"sale",ex:x.ex||null,...(ev?{event:ev}:{}),
     pay:S.payments.length>1?"split":S.payments.length?S.payments[0].method:(whole&&whole.method||"cash"),
-    payments:S.payments.map(p=>({id:paymentId(id,p.method),...p})),dev:store.dev,
+    payments:S.payments.map(p=>({id:paymentId(id,p.method),...p})),dev:store.dev,...(userId()?{user:userId()}:{}),
     cust:bc?{id:bc.id||null,name:bc.name,phone:bc.phone||"",...(bc.gstin?{gstin:bc.gstin}:{}),...(bc.type==="business"?{type:"business"}:{})}:null};
 }
 export function recordSale(sale){

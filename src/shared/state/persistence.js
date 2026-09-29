@@ -38,6 +38,8 @@ export const saveDeliveryQueue=()=>storage.set("hangtag_delivery_queue",store.de
 export const saveSettings=()=>storage.set("rc_settings",store.settings);
 export const saveLogo=()=>storage.set("rc_logo",store.logo||"");
 export const savePrinter=()=>storage.set("rc_printer",store.printer);
+/* This device's weighing scale settings (not synced: each counter has its own scale) */
+export const saveScale=()=>storage.set("hangtag_scale",store.scale);
 export const saveProfile=()=>storage.set("hangtag_profile",store.profile);
 export const saveLastSync=()=>storage.set("hangtag_last_sync",store.lastSyncAt);
 /* A team member's role and permissions in its shop (null for the owner), kept per account so the till knows them offline */

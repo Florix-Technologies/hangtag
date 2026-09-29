@@ -28,6 +28,7 @@ import { createDeliveryClient } from '../infrastructure/messaging/delivery-clien
 import { createPaymentGatewayClient } from '../infrastructure/payments/payment-gateway-client.js';
 import { createLocalFirstCashRepository } from '../infrastructure/repositories/local-first-cash-repository.js';
 import { createTeamClient } from '../infrastructure/team/team-client.js';
+import { createWeightScale } from '../infrastructure/hardware/weight-scale.js';
 
 /* Called first at start-up (app/main.js), before the state is restored from storage */
 export function installContainer(){
@@ -59,5 +60,7 @@ export function installContainer(){
   provide("messageDelivery", createDeliveryClient({ cloud: cloudGateway }));
   provide("paymentGateway", createPaymentGatewayClient({ cloud: cloudGateway }));
   provide("cashRepository", createLocalFirstCashRepository({ store, persist: { saveCashMoves, saveDayCloses }, outbox: { enqueue } }));
+  // A weighing scale on a cable (Web Serial, with this device's settings), else the weight is typed
+  provide("weightScale", createWeightScale({ serial: typeof navigator !== "undefined" ? navigator.serial : null, getSettings: () => store.scale }));
   provide("inventoryImportService", createLocalFirstStockImport({ store, cloud: cloudGateway, persist: { saveCatalog, saveMoves }, outbox: { flush: flushSbQueue }, invalidate }));
 }

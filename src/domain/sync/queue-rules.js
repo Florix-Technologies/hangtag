@@ -70,3 +70,6 @@ export const UPLOAD_PERMISSIONS={
 };
 /* May someone with these permissions upload this item? (unknown kinds: yes) */
 export const uploadAllowed=(item,has)=>{const need=item&&UPLOAD_PERMISSIONS[item.type];return !need||need.some(p=>has(p))};
+/* A bill or return refused because another one of the shop already has its number (hangtag_doc_no_check): it can be given
+   the next number of this device's series and sent again */
+export const numberTaken=r=>!!r&&!!r.item&&(r.item.type==="sale"||r.item.type==="return")&&r.code==="CONFLICT"&&/number .+ is already used/i.test(r.err||"");

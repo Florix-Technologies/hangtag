@@ -8,7 +8,9 @@ import { billDiscountError } from '../use-cases/discounts.js';
 import { discountRowsHTML, gstRowsHTML, roundRowHTML, sumRow } from './bill-summary.js';
 import { thumb } from '../../products/components/thumb.js';
 import { prod } from '../../products/services/catalog.js';
-import { availOf, cartPcs } from '../services/cart.js';
+import { availOf, cartPcs, itemsText } from '../services/cart.js';
+import { decimalsOf, fmtQty, isWeighed, perUnit, unitOf } from '../../../domain/catalog/units.js';
+import { linePaise, toRupees } from '../../../domain/sales/paise.js';
 import { billNo, isVoid, todayStats } from '../services/sales-log.js';
 import { ICON } from '../../../shared/constants/icons.js';
 import { $, $$, esc } from '../../../shared/dom.js';
@@ -22,13 +24,18 @@ import { initials } from '../../../shared/utils/text.js';
 export function payBtns(dis){const d=dis?" disabled":"";return `<button class="pay cash" data-pay="cash"${d}>Cash<span class="kh">C</span></button><button class="pay upi" data-pay="upi"${d}>UPI<span class="kh">U</span></button><button class="pay card" data-pay="card"${d}>Card<span class="kh">K</span></button>`}
 export function lineHTML(c,i,L){
   const p=prod(c.p)||{id:c.p,name:c.name,color:c.color};
-  const lab=lineLabel(c), a=availOf(c.v), what=esc((c.name+" "+lab).trim()), d=normalizeDiscount(c.disc), off=L?L.itemDisc:0, gross=c.q*c.price;
-  return `<div class="li" data-li="${i}">${thumb(p,"sm")}<div><div class="nm">${esc(c.name)}</div><div class="sub">${lab?`<span class="szl">${esc(lab)}</span>`:""}${c.sku?`<span class="lsku">SKU ${esc(c.sku)}</span>`:""}<span>${inr(c.price)} each</span>${d?`<span class="ldisc" data-ldisc="${i}">${esc(discountLabel(d))} off · −${inrx(off)}</span>`:""}</div>`+
+  const lab=lineLabel(c), a=availOf(c.v), what=esc((c.name+" "+lab).trim()), d=normalizeDiscount(c.disc), off=L?L.itemDisc:0, gross=toRupees(linePaise(c.q,c.price));
+  // counted units step by one; kg, litres and metres are typed (or weighed again: tap the weight)
+  const dp=decimalsOf(c.u), u=unitOf(c.u), meas=u.id!=="pcs";
+  const qtyIn=`<input type="number" inputmode="${dp?"decimal":"numeric"}" min="${dp?"0."+"0".repeat(dp-1)+"1":"1"}" max="${roundMax(c.q,a)}" step="${dp?"any":"1"}" value="${esc(fmtQty(c.q))}" data-lineqty="${i}" aria-label="Quantity of ${what}${meas?" in "+esc(u.sym):""}">`;
+  return `<div class="li" data-li="${i}">${thumb(p,"sm")}<div><div class="nm">${esc(c.name)}</div><div class="sub">${lab?`<span class="szl">${esc(lab)}</span>`:""}${c.sku?`<span class="lsku">SKU ${esc(c.sku)}</span>`:""}<span>${meas?esc(perUnit(inr(c.price),u.id)):inr(c.price)+" each"}</span>${d?`<span class="ldisc" data-ldisc="${i}">${esc(discountLabel(d))} off · −${inrx(off)}</span>`:""}</div>`+
     `<button type="button" class="link xs ldbtn" data-linedisc="${i}" aria-label="${d?"Change the":"Add a"} discount on ${what}">${d?"Edit discount":"Discount"}</button><button type="button" class="link xs rmline" data-rmline="${i}" aria-label="Remove ${what} from the bill">Remove</button></div>`+
-    `<div class="lir"><span class="amt" data-lineamt="${i}">${off?`<s>${inr(gross)}</s> `:""}${inrx(gross-off)}</span><span class="step"><button data-dec="${i}" aria-label="One less ${what}">−</button>`+
-    `<input type="number" inputmode="numeric" min="1" max="${c.q+Math.max(0,a)}" step="1" value="${c.q}" data-lineqty="${i}" aria-label="Quantity of ${what}">`+
-    `<button data-inc="${i}" aria-label="One more ${what}"${a<=0?" disabled":""}>+</button></span></div></div>`;
+    `<div class="lir"><span class="amt" data-lineamt="${i}">${off?`<s>${inrx(gross)}</s> `:""}${inrx(gross-off)}</span>`+
+    (dp?`<span class="step unitq">${qtyIn}<span class="qu">${esc(u.sym)}</span>${isWeighed(u.id)?`<button type="button" data-reweigh="${i}" aria-label="Weigh ${what} again">${esc("Weigh")}</button>`:""}</span></div></div>`
+      :`<span class="step"><button data-dec="${i}" aria-label="One less ${what}">−</button>${qtyIn}`+
+    `<button data-inc="${i}" aria-label="One more ${what}"${a<=0?" disabled":""}>+</button>${meas?`<span class="qu">${esc(u.sym)}</span>`:""}</span></div></div>`);
 }
+const roundMax=(q,a)=>fmtQty(q+Math.max(0,a));
 export function custLineHTML(){
   if(store.cartCust&&store.cartCust.name)return `<div class="custline"><span class="avatar sm">${esc(initials(store.cartCust.name))}</span><div><b>${esc(store.cartCust.name)}</b>${store.cartCust.phone?`<span>${esc(store.cartCust.phone)}</span>`:""}</div><button class="link xs" data-act="pickcust">Change</button><button class="iconbtn sm" data-act="nocust" aria-label="Remove customer">${ICON.x}</button></div>`;
   return `<div class="custline walkin"><span>Customer · <b>Walk-in</b></span><button class="link xs" data-act="pickcust">+ Add customer</button></div>`;
@@ -51,7 +58,7 @@ function discBoxHTML(where,empty){
 export function billPanelHTML(where){
   const pcs=cartPcs(),T=billTotals(store.cart,store.disc),empty=!store.cart.length,err=empty?"":billDiscountError();
   return `<div class="bp">
-    <div class="bp-head"><div><div class="eyebrow">Bill #${billNo()}</div><div class="bp-title">${empty?"New bill":pcs+" piece"+(pcs>1?"s":"")}</div></div><div class="bp-hact">${empty?"":`<button class="link" data-act="clear">Clear</button>`}${where==="sheet"?`<button class="iconbtn" data-act="closesheet" aria-label="Close bill">${ICON.x}</button>`:""}</div></div>
+    <div class="bp-head"><div><div class="eyebrow">Bill ${esc(billNo())}</div><div class="bp-title">${empty?"New bill":esc(itemsText(pcs))}</div></div><div class="bp-hact">${empty?"":`<button class="link" data-act="clear">Clear</button>`}${where==="sheet"?`<button class="iconbtn" data-act="closesheet" aria-label="Close bill">${ICON.x}</button>`:""}</div></div>
     ${custLineHTML()}
     <div class="bp-items">${empty?emptyBillHTML():store.cart.map((c,i)=>lineHTML(c,i,T.lines[i])).join("")}</div>
     <div class="bp-foot">
@@ -65,7 +72,7 @@ export function billPanelHTML(where){
 export function billBarHTML(){
   if(!store.cart.length){const t=todayStats();return `<div class="bb-empty"><div><div class="eyebrow">Today</div><div class="bb-today"><b>${inr(t.rev)}</b><span>${t.bills} bill${t.bills===1?"":"s"} · ${t.pcs} pcs</span></div></div><span class="bb-hint">Tap a product<br>to start a bill</span></div>`}
   const pcs=cartPcs(),T=billTotals(store.cart,store.disc);
-  return `<button class="bb-sum" data-act="openbill" aria-label="View bill"><span class="bb-th">${store.cart.slice(-3).map(c=>thumb(prod(c.p)||{id:c.p,name:c.name,color:c.color},"xs")).join("")}</span><span class="bb-cnt"><b>${pcs} piece${pcs>1?"s":""}${store.cartCust&&store.cartCust.name?" · "+esc(store.cartCust.name):""}</b><small>View bill ${ICON.up}</small></span><span class="bb-total" data-grand>${inr(T.total)}</span></button><div class="pays">${payBtns(!!billDiscountError())}</div>`;
+  return `<button class="bb-sum" data-act="openbill" aria-label="View bill"><span class="bb-th">${store.cart.slice(-3).map(c=>thumb(prod(c.p)||{id:c.p,name:c.name,color:c.color},"xs")).join("")}</span><span class="bb-cnt"><b>${esc(itemsText(pcs))}${store.cartCust&&store.cartCust.name?" · "+esc(store.cartCust.name):""}</b><small>View bill ${ICON.up}</small></span><span class="bb-total" data-grand>${inr(T.total)}</span></button><div class="pays">${payBtns(!!billDiscountError())}</div>`;
 }
 export function typingDisc(){const a=document.activeElement;return !!(a&&a.matches&&a.matches("[data-disc],[data-lineqty]"))}
 export function renderBill(){if(typingDisc())return;$("#billPanel").innerHTML=billPanelHTML("panel");$("#billBar").innerHTML=billBarHTML()}

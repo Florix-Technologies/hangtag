@@ -26,7 +26,7 @@ export function receiptText(s){
   if(I.status==="cancelled") L.push("CANCELLED");
   if(I.buyer) L.push("Customer: "+I.buyer.name+(I.buyer.gstin?" · GSTIN "+I.buyer.gstin:""));
   L.push("");
-  I.lines.forEach(l=>L.push(`${l.name}${l.variant?" ("+l.variant+")":""} × ${l.qty} = ${inr(l.gross)}${l.discount?` (−${inrx(l.discount)})`:""}`));
+  I.lines.forEach(l=>L.push(`${l.name}${l.variant?" ("+l.variant+")":""} × ${l.qtyText||l.qty} = ${inrx(l.gross)}${l.discount?` (−${inrx(l.discount)})`:""}`));
   L.push("");
   if(T.discount) L.push("Discount: −"+inrx(T.discount));
   if(!I.inclusive) G.forEach(g=>L.push(`${g.label}: ${inrx(g.amount)}`));

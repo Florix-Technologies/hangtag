@@ -6,6 +6,8 @@ export const toPaise=r=>Math.round((+r||0)*100);
 export const toRupees=p=>p/100;
 /* rupees rounded to the paisa */
 export const round2=r=>toRupees(toPaise(r));
+/* q × price in paise, exactly (q up to 3 decimals: 0.335 kg × ₹43 = 1441 paise), rounded half up to the paisa */
+export const linePaise=(q,price)=>Math.round(Math.round((+q||0)*1000)*toPaise(price)/1000);
 /* a sum of paise */
 export const sumP=list=>list.reduce((a,b)=>a+b,0);
 /* true when a typed amount has more than 2 decimal places */

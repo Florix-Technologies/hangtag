@@ -15,6 +15,11 @@ import { $, $$, esc } from '../../../shared/dom.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { recordStockOperation } from '../use-cases/record-stock-operation.js';
 import { refuse } from '../../shop/services/access.js';
+import { decimalsOf, roundQty, sumQty, unitOf } from '../../../domain/catalog/units.js';
+
+/* A typed count in the product's unit (2.5 kg), rounded like the saved record will be */
+const typedQty=raw=>roundQty(+String(raw).replace(",",".")||0,decimalsOf((prod(store.stockOp.pid)||{}).unit));
+const unitWord=()=>{const u=unitOf((prod(store.stockOp&&store.stockOp.pid)||{}).unit);return u.id==="pcs"?"pieces":u.sym};
 
 export function openStockOp(kind,pid){
   if(refuse("manage_inventory","add or adjust stock"))return;
@@ -29,11 +34,11 @@ export function renderStockOp(){
   const adj=store.stockOp.kind==="adjust";
   const {colors,sizes,find,names,sw}=matrixOf(p), hasC=colors[0]!=="";
   const cell=v=>{if(!v)return `<td class="na">—</td>`;const cur=stockOf(v.id),raw=store.stockOp.val[v.id];
-    const d=adj?(raw===""||raw==null?0:Math.round(+raw||0)-cur):0;
-    return `<td><input type="number" inputmode="numeric" ${adj?'min="0"':'min="0"'} data-sov="${esc(v.id)}" value="${esc(raw==null?"":raw)}" placeholder="${adj?cur:"0"}" aria-label="${esc(vLabel(v)||p.name)}"><small data-sonow="${esc(v.id)}">${adj?(d?`<b class="${d<0?"neg":"pos"}">${d>0?"+":""}${d}</b>`:"now "+cur):"now "+cur}</small></td>`};
+    const d=adj?(raw===""||raw==null?0:roundQty(typedQty(raw)-cur)):0, dp=decimalsOf(p.unit);
+    return `<td><input type="number" inputmode="${dp?"decimal":"numeric"}" min="0" step="${dp?"any":"1"}" data-sov="${esc(v.id)}" value="${esc(raw==null?"":raw)}" placeholder="${adj?cur:"0"}" aria-label="${esc(vLabel(v)||p.name)}"><small data-sonow="${esc(v.id)}">${adj?(d?`<b class="${d<0?"neg":"pos"}">${d>0?"+":""}${d}</b>`:"now "+cur):"now "+cur}</small></td>`};
   const T=stockOpTotals();
   $("#modalHost").innerHTML=`<div class="scrim" data-modal-scrim><div class="sheet stockop" role="dialog" aria-modal="true" aria-label="${adj?"Adjust stock":"Stock in"}">
-    <div class="sh-head">${thumb(p,"md")}<div class="sh-t"><h3>${adj?"Adjust stock":"Stock in"} · ${esc(p.name)}</h3><p>${adj?"Type the pieces you actually counted. Only changed variants are recorded.":"Type how many pieces arrived for each variant."}</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
+    <div class="sh-head">${thumb(p,"md")}<div class="sh-t"><h3>${adj?"Adjust stock":"Stock in"} · ${esc(p.name)}</h3><p>${adj?`Type the ${esc(unitWord())} you actually counted. Only changed variants are recorded.`:`Type how many ${esc(unitWord())} arrived for each variant.`}</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
     <div class="tw"><table class="soe"><thead><tr><th>${esc(names.row)}</th>${sizes.map(s=>`<th>${esc(s||(adj?"Counted":"Pieces"))}</th>`).join("")}</tr></thead><tbody>${colors.map(c=>`<tr><th>${hasC?`${sw(c).replace("<i ",'<i class="sw2" ')}${esc(c)}`:""}</th>${sizes.map(s=>cell(find(c,s))).join("")}</tr>`).join("")}</tbody></table></div>
     ${adj?`<div class="pgrid" style="margin-top:12px"><label class="f">Reason<select id="soReason">${["Physical count correction","Damaged","Lost or stolen","Sent back to supplier","Other"].map(r=>`<option${r===store.stockOp.reason?" selected":""}>${r}</option>`).join("")}</select></label><label class="f">Note<input id="soNote" value="${esc(store.stockOp.note)}" maxlength="120" placeholder="Optional"></label></div>`
       :`<div class="pgrid" style="margin-top:12px"><label class="f">Supplier <small>(optional)</small><input id="soSupplier" maxlength="60" autocomplete="off"></label><label class="f">Supplier bill / reference <small>(optional)</small><input id="soRef" maxlength="40" autocomplete="off"></label><label class="f">Date received<input id="soReceived" type="date" value="${esc(dayKey(Date.now()))}" max="${esc(dayKey(Date.now()))}"></label></div><div class="pgrid" style="margin-top:8px"><label class="f">Cost per piece ₹<input id="soCost" type="number" inputmode="numeric" min="0" value="${esc(store.stockOp.cost)}" placeholder="Optional"></label><label class="f">Note<input id="soNote" value="${esc(store.stockOp.note)}" maxlength="120" placeholder="Optional, e.g. supplier or invoice"></label>
@@ -43,13 +48,14 @@ export function renderStockOp(){
   </div></div>`;
 }
 export function stockOpTotals(){
-  const adj=store.stockOp.kind==="adjust";let n=0,pcs=0;
-  Object.entries(store.stockOp.val).forEach(([vid,raw])=>{if(raw===""||raw==null)return;const v=Math.round(+raw||0),d=adj?v-stockOf(vid):v;if(d){n++;pcs+=d}});
-  return {n,pcs,txt:n?(adj?`${n} variant${n>1?"s":""} change · ${pcs>0?"+":""}${pcs} pieces`:`${n} variant${n>1?"s":""} · +${pcs} pieces`):"No changes yet"};
+  const adj=store.stockOp.kind==="adjust";let n=0;const ds=[];
+  Object.entries(store.stockOp.val).forEach(([vid,raw])=>{if(raw===""||raw==null)return;const v=typedQty(raw),d=adj?roundQty(v-stockOf(vid)):v;if(d){n++;ds.push(d)}});
+  const pcs=sumQty(ds), w=unitWord();
+  return {n,pcs,txt:n?(adj?`${n} variant${n>1?"s":""} change · ${pcs>0?"+":""}${pcs} ${w}`:`${n} variant${n>1?"s":""} · +${pcs} ${w}`):"No changes yet"};
 }
 export function updateStockOp(){
   const adj=store.stockOp.kind==="adjust";
-  $$("#modalHost [data-sonow]").forEach(el=>{const vid=el.dataset.sonow,raw=store.stockOp.val[vid],cur=stockOf(vid);if(!adj){el.textContent="now "+cur;return}const d=raw===""||raw==null?0:Math.round(+raw||0)-cur;el.innerHTML=d?`<b class="${d<0?"neg":"pos"}">${d>0?"+":""}${d}</b>`:"now "+cur});
+  $$("#modalHost [data-sonow]").forEach(el=>{const vid=el.dataset.sonow,raw=store.stockOp.val[vid],cur=stockOf(vid);if(!adj){el.textContent="now "+cur;return}const d=raw===""||raw==null?0:roundQty(typedQty(raw)-cur);el.innerHTML=d?`<b class="${d<0?"neg":"pos"}">${d>0?"+":""}${d}</b>`:"now "+cur});
   const T=stockOpTotals(); const s=$("#soSum"); if(s) s.textContent=T.txt; const b=$("#soSave"); if(b) b.disabled=!T.n;
 }
 export function saveStockOp(){
@@ -63,5 +69,6 @@ export function saveStockOp(){
   renderSync(); flushSbQueue();
   const pcs=r.pieces;
   store.stockOp=null; closeModal(); renderAll();
-  toast(adj?`Stock adjusted (${pcs>0?"+":""}${pcs} pieces) and recorded.`:`Added ${pcs} piece${pcs===1?"":"s"} to stock.`);
+  const w=unitOf(p.unit).id==="pcs"?null:unitOf(p.unit).sym;
+  toast(adj?`Stock adjusted (${pcs>0?"+":""}${pcs} ${w||"pieces"}) and recorded.`:w?`Added ${pcs} ${w} to stock.`:`Added ${pcs} piece${pcs===1?"":"s"} to stock.`);
 }

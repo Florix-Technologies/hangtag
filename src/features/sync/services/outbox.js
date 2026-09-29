@@ -1,16 +1,17 @@
 // Upload queue: ordered, retried, never loses work. The rules (one upload per record, order, dependencies, which failures
 // go to review) are in domain/sync/queue-rules.js.
 import { store } from '../../../shared/state/store.js';
-import { canDiscard, failureAction, isBlocked, mergeIntoQueue, ORDERED_TYPES, recordKey, uploadAllowed, waitingKeys } from '../../../domain/sync/queue-rules.js';
+import { canDiscard, failureAction, isBlocked, mergeIntoQueue, numberTaken, ORDERED_TYPES, recordKey, uploadAllowed, waitingKeys } from '../../../domain/sync/queue-rules.js';
 import { sbSessionOk } from '../../auth/services/auth-settings.js';
 import { D, invalidate } from '../../inventory/services/ledger.js';
 import { products } from '../../products/services/catalog.js';
 import { renderSync } from '../components/sync-status.js';
 import { use } from '../../../shared/di/services.js';
-import { saveLastSync, saveReturns, saveSbQueue, saveSyncReview } from '../../../shared/state/persistence.js';
+import { persistLocal, saveLastSync, saveReturns, saveSbQueue, saveSyncReview } from '../../../shared/state/persistence.js';
 import { logger } from '../../../shared/logging/logger.js';
 import { toast } from '../../../shared/components/toast.js';
-import { ACCESS_LOST_TEXT, can, isMember, notAllowedText, refreshAccess } from '../../shop/services/access.js';
+import { ACCESS_LOST_TEXT, can, denied, isMember, notAllowedText, refreshAccess } from '../../shop/services/access.js';
+import { deviceDocNo, nextBillNo } from '../../sales/services/totals.js';
 import { requestSignOut } from '../../../shared/ui/session-actions.js';
 
 /* Add work for the cloud; identical product uploads are merged so the queue stays short */
@@ -149,4 +150,25 @@ export function discardReview(index){
   store.syncReview = store.syncReview.filter((_, i) => i !== index); saveSyncReview();
   renderSync();
   return true;
+}
+/* Review list: a bill or return refused because another one of the shop already has its number (two phones with the same
+   device code, a reinstall…) gets the next number of this device's series (dated like it) and is sent again. The old number
+   was never saved in the cloud. → { ok, no } or { error }. A team member needs the right to make that record. */
+export function renumberReview(index){
+  const r = (store.syncReview||[])[index]; if(!numberTaken(r)) return { error: "This one isn't waiting for a new number." };
+  const sale = r.item.type === "sale", no = denied(sale ? "create_sale" : "perform_return", sale ? "renumber bills" : "renumber returns"); if(no) return no;
+  let fresh;
+  if(sale){
+    const id = r.item.sale.id; fresh = nextBillNo(D().sales, r.item.sale.t);
+    // the bill as kept in its day on this device (D() hands out copies)
+    Object.values(store.localDays).forEach(d => (d.sales||[]).forEach(s => { if(s.id === id) s.no = fresh; }));
+    if(store.lastSale && store.lastSale.id === id) store.lastSale.no = fresh;
+    r.item.sale = { ...r.item.sale, no: fresh };
+    persistLocal(); invalidate();
+  } else {
+    // the refused return is off this device's returns until sent again: count its number too, so the next one is past it
+    fresh = deviceDocNo("CN-", [...D().rets, r.item.ret], r.item.ret.t); r.item.ret = { ...r.item.ret, no: fresh };
+  }
+  saveSyncReview(); retryReview(index);
+  return { ok: true, no: fresh };
 }

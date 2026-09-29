@@ -1,7 +1,7 @@
 // Discounts: on one bill line or on the whole bill, as a percentage or a fixed amount in rupees.
 // A discount never takes off more than the amount it applies to. Only discounts here — GST is worked out afterwards
 // (domain/sales/gst.js), on what is left. Pure; amounts in paise unless a name says rupees.
-import { round2, sumP, toPaise, tooPrecise } from './paise.js';
+import { linePaise, round2, sumP, toPaise, tooPrecise } from './paise.js';
 import { inrx } from '../../shared/formatting/money.js';
 
 export const DISCOUNT_TYPES=["percent","fixed"];
@@ -45,7 +45,7 @@ export function checkDiscount(input,basePaise){
 export function checkBillDiscounts(lines,billDisc){
   let after=0;
   for(const [i,l] of (lines||[]).entries()){
-    const gross=toPaise(l.q*l.price), e=checkDiscount(l.disc,gross);
+    const gross=linePaise(l.q,l.price), e=checkDiscount(l.disc,gross);
     if(e) return {error:(l.name?`${l.name}: `:"")+e.error,line:i};
     after+=gross-discountPaise(l.disc,gross);
   }

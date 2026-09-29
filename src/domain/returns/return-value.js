@@ -9,6 +9,7 @@
 // Pure; rupees in and out, worked in paise.
 import { saleGstSplit } from '../sales/gst.js';
 import { sumP, toPaise, toRupees } from '../sales/paise.js';
+import { decimalsOf, qtyText, roundQty, subQty } from '../catalog/units.js';
 
 export const lineNo=(i,k)=>i.ln!=null?i.ln:k;
 const TAX=["cgst","sgst","igst"];
@@ -28,7 +29,7 @@ export function returnedSoFar(sale,prior){
   sale.items.forEach((i,k)=>{line[lineNo(i,k)]=i});
   (prior||[]).forEach(r=>(r.items||[]).forEach(it=>{
     const o=out[it.ln]||(out[it.ln]={q:0,lt:0,cgst:0,sgst:0,igst:0}), sl=line[it.ln];
-    o.q+=it.q; o.lt+=toPaise(it.value);
+    o.q=roundQty(o.q+it.q); o.lt+=toPaise(it.value);
     if(it.tx!=null) TAX.forEach(x=>{o[x]+=toPaise(it[x])});
     else if(sl&&sl.q){ const f=savedLine(sale,sl); TAX.forEach(x=>{o[x]+=Math.round(f[x]*it.q/sl.q)}); }
   }));
@@ -41,11 +42,12 @@ export function quoteReturn(sale,picks,prior){
   const done=returnedSoFar(sale,prior), lines=[];
   let whole=true;
   for(const [k,i] of sale.items.entries()){
-    const ln=lineNo(i,k), d=done[ln]||{q:0,lt:0,cgst:0,sgst:0,igst:0}, left=Math.max(0,i.q-d.q), q=Math.max(0,Math.round(+(picks||{})[ln]||0));
-    if(q>left) return {error:`Only ${left} of ${i.n} can still be returned.`,line:ln};
-    if(d.q+q<i.q) whole=false;
+    // a line sold by weight comes back in parts too (0.75 of 2.5 kg): picks are rounded to the line unit's decimals
+    const ln=lineNo(i,k), d=done[ln]||{q:0,lt:0,cgst:0,sgst:0,igst:0}, left=Math.max(0,subQty(i.q,d.q)), q=Math.max(0,roundQty(+(picks||{})[ln]||0,decimalsOf(i.u)));
+    if(q>left) return {error:`Only ${qtyText(left,i.u)} of ${i.n} can still be returned.`,line:ln};
+    if(roundQty(d.q+q)<i.q) whole=false;
     if(!q) continue;
-    const f=savedLine(sale,i), last=d.q+q>=i.q, part=x=>last?Math.max(0,f[x]-d[x]):Math.round(f[x]*q/i.q);
+    const f=savedLine(sale,i), last=roundQty(d.q+q)>=i.q, part=x=>last?Math.max(0,f[x]-d[x]):Math.round(f[x]*q/i.q);
     const lt=part("lt"), tax={cgst:part("cgst"),sgst:part("sgst"),igst:part("igst")};
     const tx=lt-tax.cgst-tax.sgst-tax.igst;
     lines.push({ln,q,unit:toRupees(Math.round(lt/q)),value:toRupees(lt),tx:toRupees(tx),cgst:toRupees(tax.cgst),sgst:toRupees(tax.sgst),igst:toRupees(tax.igst),rate:f.rate,hsn:i.hsn||""});
@@ -62,6 +64,6 @@ export function exchangeSettlement(returnValue,newTotal){
   return {credit:toRupees(Math.min(v,n)),refund:toRupees(Math.max(0,v-n)),collect:toRupees(Math.max(0,n-v)),roundOff:toRupees(adj),value:toRupees(v)};
 }
 /* Pieces of a bill line still returnable, given its earlier returns */
-export const returnableQty=(sale,i,k,prior)=>{const d=returnedSoFar(sale,prior)[lineNo(i,k)];return Math.max(0,i.q-(d?d.q:0))};
+export const returnableQty=(sale,i,k,prior)=>{const d=returnedSoFar(sale,prior)[lineNo(i,k)];return Math.max(0,subQty(i.q,d?d.q:0))};
 /* A returned piece goes back on the shelf unless it was marked "not for resale" */
 export const restocks=item=>item.restock!==false;

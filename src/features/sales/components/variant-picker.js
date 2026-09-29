@@ -17,6 +17,8 @@ import { $, $$, esc } from '../../../shared/dom.js';
 import { inr } from '../../../shared/formatting/money.js';
 import { saveCart } from '../../../shared/state/persistence.js';
 import { renderAll } from '../../../shared/ui/render.js';
+import { decimalsOf, fmtQty, isMeasured, isWeighed, qtyText, roundQty, sumQty } from '../../../domain/catalog/units.js';
+import { openWeigh } from './weigh-dialog.js';
 
 /* ---------- variant picker: every variant with its own quantity, added in one go ----------
    Rows are the combinations of every option but the last (e.g. colours), columns the last option's values (e.g. sizes). */
@@ -24,6 +26,8 @@ import { renderAll } from '../../../shared/ui/render.js';
 export function openPicker(pid, target){
   const p=prod(pid); if(!p||p.archived) return;
   const vs=variantsOf(p);
+  // sold by weight or volume, one variant: straight to the weight (typed, or read from the scale)
+  if(isWeighed(p.unit)&&(target||"cart")==="cart"&&vs.length===1){ openWeigh(vs[0].id); return; }
   const rows=rowVals(p), firstColor=rows.find(r=>vs.some(v=>rowKey(p,v)===r&&availOf(v.id)>0))||rows[0]||"";
   // a product without options: one tap on Add (quantity 1 is ready)
   const one=!(p.opts||[]).length&&vs.length===1?vs[0]:null, ready=one&&(target||"cart")==="cart"&&availOf(one.id)>0;
@@ -35,19 +39,20 @@ export const pickMax = vid => store.pick && store.pick.target==="exchange" ? exA
 export const pickRows=matrixOf;
 export function cellHTML(p,v,ki){
   if(!v) return `<div class="vc na" aria-hidden="true"><span>—</span></div>`;
-  const a=pickMax(v.id), q=store.pick.qty[v.id]||0, lv=levelOf(a+q), rest=a-q;
+  const a=pickMax(v.id), q=store.pick.qty[v.id]||0, lv=levelOf(a+q), rest=roundQty(a-q);
   return `<div class="vc ${lv}${q?" on":""}" data-vc="${esc(v.id)}">
     <button type="button" class="vc-tap" data-cellplus="${esc(v.id)}"${a<=0&&!q?" disabled":""} aria-label="Add one ${esc(vLabel(v)||p.name)}, ${a<=0?"sold out":rest+" left"}"><b>${esc(colKey(p,v)||"One size")}</b><small>${a<=0&&!q?"Sold out":rest+" left"}</small>${ki!=null&&ki<9?`<span class="kh">${ki+1}</span>`:""}<em class="vp">${inr(vPrice(p,v))}</em></button>
-    <div class="vc-q"><button type="button" data-cellminus="${esc(v.id)}" aria-label="One less"${q?"":" disabled"}>−</button><input type="number" inputmode="numeric" min="0" max="${Math.max(0,a)}" data-cellqty="${esc(v.id)}" value="${q||""}" placeholder="0" aria-label="Quantity ${esc(vLabel(v)||p.name)}"${a<=0&&!q?" disabled":""}></div>
+    <div class="vc-q"><button type="button" data-cellminus="${esc(v.id)}" aria-label="One less"${q?"":" disabled"}>−</button><input type="number" inputmode="${decimalsOf(p.unit)?"decimal":"numeric"}" min="0" step="${decimalsOf(p.unit)?"any":"1"}" max="${Math.max(0,a)}" data-cellqty="${esc(v.id)}" value="${q?fmtQty(q):""}" placeholder="0" aria-label="Quantity ${esc(vLabel(v)||p.name)}"${a<=0&&!q?" disabled":""}></div>
   </div>`;
 }
 /* Footer text: pieces and amount, plus the variant last picked (its options and price) */
 export function pickSumHTML(p,S){
   const r=store.pick&&store.pick.last&&vRec(store.pick.last),last=r&&r.p.id===p.id&&(store.pick.qty[r.v.id]||0)>0?r.v:null;
   if(!S.n)return "Nothing selected yet";
-  return `<b>${S.n} piece${S.n>1?"s":""}</b> · ${inr(S.amt)}${last&&vLabel(last)?`<small class="pk-last">${esc(vLabel(last))} · ${inr(vPrice(p,last))} each</small>`:""}`;
+  const what=isMeasured(p.unit)?qtyText(S.q,p.unit):`${S.n} piece${S.n>1?"s":""}`;
+  return `<b>${esc(what)}</b> · ${inr(S.amt)}${last&&vLabel(last)?`<small class="pk-last">${esc(vLabel(last))} · ${inr(vPrice(p,last))} each</small>`:""}`;
 }
-export function pickSummary(p){ let n=0,amt=0; Object.entries(store.pick.qty).forEach(([vid,q])=>{const r=vRec(vid);if(r&&q>0){n+=q;amt+=q*vPrice(r.p,r.v)}}); return {n,amt}; }
+export function pickSummary(p){ let n=0,amt=0;const qs=[]; Object.entries(store.pick.qty).forEach(([vid,q])=>{const r=vRec(vid);if(r&&q>0){n+=isMeasured(p.unit)?1:q;qs.push(q);amt+=q*vPrice(r.p,r.v)}}); return {n,amt,q:sumQty(qs)}; }
 export function renderPicker(){
   const p=prod(store.pick&&store.pick.pid); if(!p){closeSheets();return}
   document.body.style.overflow="hidden";
@@ -59,8 +64,8 @@ export function renderPicker(){
   if(single){
     // simple product: price, stock and a big quantity stepper
     const v=single, a=pickMax(v.id), q=store.pick.qty[v.id]||0;
-    body=`<div class="qsheet" data-vc="${esc(v.id)}"><div class="qs-info"><b class="qs-price">${inr(vPrice(p,v))}</b><span class="qs-left ${levelOf(a)}">${a<=0&&!q?"Sold out":(a-q)+" left"}</span>${v.sku?`<span class="qs-sku">SKU ${esc(v.sku)}</span>`:""}</div>
-      <div class="qs-step"><button type="button" data-cellminus="${esc(v.id)}" aria-label="One less"${q?"":" disabled"}>−</button><input type="number" inputmode="numeric" min="0" max="${Math.max(0,a)}" data-cellqty="${esc(v.id)}" value="${q||""}" placeholder="0" aria-label="Quantity"><button type="button" data-cellplus="${esc(v.id)}" aria-label="One more"${a-q<=0?" disabled":""}>+</button></div></div>`;
+    body=`<div class="qsheet" data-vc="${esc(v.id)}"><div class="qs-info"><b class="qs-price">${inr(vPrice(p,v))}</b><span class="qs-left ${levelOf(a)}">${a<=0&&!q?"Sold out":roundQty(a-q)+" left"}</span>${v.sku?`<span class="qs-sku">SKU ${esc(v.sku)}</span>`:""}</div>
+      <div class="qs-step"><button type="button" data-cellminus="${esc(v.id)}" aria-label="One less"${q?"":" disabled"}>−</button><input type="number" inputmode="${decimalsOf(p.unit)?"decimal":"numeric"}" min="0" step="${decimalsOf(p.unit)?"any":"1"}" max="${Math.max(0,a)}" data-cellqty="${esc(v.id)}" value="${q?fmtQty(q):""}" placeholder="0" aria-label="Quantity"><button type="button" data-cellplus="${esc(v.id)}" aria-label="One more"${a-q<=0?" disabled":""}>+</button></div></div>`;
   }else
   if(hasC&&(wide||colors.length===1)){
     // full matrix: colours down, sizes across
@@ -81,7 +86,7 @@ export function renderPicker(){
 export function updatePicker(){
   const p=prod(store.pick&&store.pick.pid); if(!p) return;
   $$("#sheetHost [data-vc]").forEach(cell=>{
-    const vid=cell.dataset.vc, a=pickMax(vid), q=store.pick.qty[vid]||0, rest=a-q, inp=cell.querySelector("input");
+    const vid=cell.dataset.vc, a=pickMax(vid), q=store.pick.qty[vid]||0, rest=roundQty(a-q), inp=cell.querySelector("input");
     cell.classList.toggle("on",q>0);
     const sm=cell.querySelector(".vc-tap small"); if(sm) sm.textContent=a<=0&&!q?"Sold out":rest+" left";
     const ql=cell.querySelector(".qs-left"); if(ql) ql.textContent=a<=0&&!q?"Sold out":rest+" left";
@@ -97,9 +102,10 @@ export function updatePicker(){
 }
 export function setPickQty(vid,q){
   if(!store.pick) return;
-  const max=Math.max(0,pickMax(vid));
-  let n=Math.max(0,Math.round(+q||0));
-  if(n>max){ n=max; toast(max?`Only ${max} left in stock.`:"That one is sold out."); }
+  const max=Math.max(0,pickMax(vid)), r0=vRec(vid), u=r0&&r0.p.unit;
+  // whole pieces, or up to the unit's decimals (2.5 m)
+  let n=Math.max(0,roundQty(+String(q).replace(",",".")||0,decimalsOf(u)));
+  if(n>max){ n=max; toast(max?`Only ${qtyText(max,u)} left in stock.`:"That one is sold out."); }
   if(n) store.pick.qty[vid]=n; else delete store.pick.qty[vid];
   store.pick.last=vid;
   const r=vRec(vid), row=r&&rowKey(r.p,r.v); if(row) store.pick.color=row;
@@ -110,7 +116,8 @@ export function addPicked(){
   const entries=Object.entries(store.pick.qty).filter(([,q])=>q>0);
   if(!entries.length) return;
   if(store.pick.target==="exchange"){ entries.forEach(([vid,q])=>addToLines(store.retState.newItems,vid,q)); store.pick=null; renderReturnSheet(); return; }
-  let n=0; entries.forEach(([vid,q])=>{ addToLines(store.cart,vid,q); n+=q; });
+  const p=prod(store.pick.pid), S=p?pickSummary(p):{n:0,q:0};
+  entries.forEach(([vid,q])=>{ addToLines(store.cart,vid,q); });
   store.justAdded=store.pick.pid; saveCart(); closeSheets(); renderAll();
-  toast(`Added ${n} piece${n>1?"s":""} to the bill.`);
+  toast(p&&isMeasured(p.unit)?`Added ${qtyText(S.q,p.unit)} to the bill.`:`Added ${S.n} piece${S.n>1?"s":""} to the bill.`);
 }

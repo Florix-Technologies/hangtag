@@ -3,6 +3,7 @@ import { store } from '../../../shared/state/store.js';
 import { avatarHTML, closeAcctMenu, methodNames, renderAccount } from './account-menu.js';
 import { billingFormHTML, receiptSetupHTML, refreshPaymentsForm } from './billing-settings.js';
 import { teamSectionHTML } from './team-settings.js';
+import { scaleSetupHTML } from '../../hardware/components/scale-settings.js';
 import { can, isMember, signedInAs } from '../services/access.js';
 import { roleLabel } from '../../../domain/shop/permissions.js';
 import { shopCode } from '../../../domain/shop/staff.js';
@@ -24,7 +25,7 @@ export function openSettings(){
     '<button class="iconbtn" type="button" data-settings-close aria-label="Close">' + ICON.x + "</button></div>" +
     '<form id="profileForm" class="authform" novalidate>' + profileFieldsHTML(p, "ps") +
     '<p id="profileErr" class="autherr" role="alert" hidden></p><div class="setactions"><button class="btn primary" type="submit" id="profileSave">Save changes</button></div></form>' +
-    billingFormHTML() + teamSectionHTML() +
+    billingFormHTML() + scaleSetupHTML() + teamSectionHTML() +
     '<div class="setsec"><h4>Account</h4><dl class="kv"><dt>Email</dt><dd id="kvEmail"></dd><dt>Signs in with</dt><dd id="kvMethod"></dd><dt>Member since</dt><dd id="kvSince"></dd><dt>Account ID</dt><dd id="kvId"></dd></dl></div>' +
     '<div class="setsec"><h4>Your data</h4><p class="note" style="margin:0">Your products, stock and bills are private to this account. Download a copy any time.</p>' +
     '<div class="setactions"><button class="btn sm" type="button" data-settings-act="backup">Download backup</button><button class="btn sm" type="button" data-settings-act="export">Export sales (CSV)</button></div></div>' +
@@ -49,7 +50,7 @@ export function openMemberSettings(){
     '<div class="setsec" style="border-top:0;margin-top:0;padding-top:0"><h4>You</h4><dl class="kv"><dt>Name</dt><dd id="kvName"></dd><dt>Username</dt><dd id="kvUser"></dd><dt>Role</dt><dd id="kvRole"></dd>' +
     '<dt>Shop</dt><dd id="kvShop"></dd><dt>Shop code</dt><dd id="kvCode"></dd><dt>This phone</dt><dd id="kvDevice"></dd></dl>' +
     '<p class="note" style="margin:10px 0 0">The owner manages your role and your phones. Signing out keeps this phone ready for your next sign-in.</p></div>' +
-    (can("manage_settings") ? billingFormHTML() : receiptSetupHTML()) +
+    (can("manage_settings") ? billingFormHTML() : receiptSetupHTML()) + scaleSetupHTML() +
     '<div class="setsec"><h4>Data on this phone</h4><div class="setactions" style="margin-top:0"><button class="btn sm" type="button" data-settings-act="backup">Download backup</button></div></div>' +
     '<div class="setsec"><div class="setactions" style="margin-top:0"><button class="btn sm danger" type="button" data-settings-act="signout">Sign out</button></div></div>' +
     "</div></div>";

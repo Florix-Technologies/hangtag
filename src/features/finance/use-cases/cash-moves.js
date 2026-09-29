@@ -13,7 +13,7 @@ import { enqueue, flushSbQueue } from '../../sync/services/outbox.js';
 import { renderSync } from '../../sync/components/sync-status.js';
 import { dayKey } from '../../../shared/formatting/dates.js';
 import { uid } from '../../../shared/utils/ids.js';
-import { denied } from '../../shop/services/access.js';
+import { denied, userId } from '../../shop/services/access.js';
 
 export const expenseCats=()=>Array.isArray(store.settings.expenseCats)&&store.settings.expenseCats.length?store.settings.expenseCats:DEFAULT_EXPENSE_CATS;
 const byId=()=>Object.fromEntries(cashRepository().moves().map(m=>[m.id,m]));
@@ -25,7 +25,7 @@ export function recordCashMove(input){
   const r=checkCashMove(input,{byId:byId(),cats:expenseCats()});
   if(r.error) return r;
   const ev=sellingEventId();
-  const move={id:"cm"+uid(),...r.move,t:Date.now(),dev:store.dev,...(ev?{event:ev}:{})};
+  const move={id:"cm"+uid(),...r.move,t:Date.now(),dev:store.dev,...(userId()?{user:userId()}:{}),...(ev?{event:ev}:{})};
   cashRepository().record(move); upload();
   return {move};
 }

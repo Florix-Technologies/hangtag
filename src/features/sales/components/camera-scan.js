@@ -3,6 +3,7 @@
 import { store } from '../../../shared/state/store.js';
 import { createScanGate } from '../../../domain/sales/scan-rules.js';
 import { scanToCart } from '../use-cases/scan-to-cart.js';
+import { openWeigh } from './weigh-dialog.js';
 import { cartPcs } from '../services/cart.js';
 import { billTotals } from '../services/totals.js';
 import { closeSheets } from './bill-panel.js';
@@ -59,6 +60,8 @@ export function onCode(text){
   s.last = { ...r, t: Date.now() };
   try{ if(navigator.vibrate) navigator.vibrate(r.status === "added" ? 60 : [40, 60, 40]); }catch{ /* no vibration */ }
   if(r.status === "added") renderAll();
+  // sold by weight: the camera closes and the weight dialog asks for its weight
+  if(r.status === "weigh"){ closeScanner(); openWeigh(r.variantId, null); return; }
   paint();
 }
 export function closeScanner(){

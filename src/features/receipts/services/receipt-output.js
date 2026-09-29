@@ -45,11 +45,11 @@ export async function receiptPNG(s){
   rule(); pair("Bill",I.number,{size:20}); pair("Date",dtLong(I.t),{size:20}); if(I.buyer){ pair("Customer",I.buyer.name,{size:20}); if(I.buyer.gstin) pair("GSTIN",I.buyer.gstin,{size:18}); }
   if(I.status==="cancelled") text("CANCELLED",{align:"c",bold:true});
   rule();
-  I.lines.forEach(l=>{wrap(l.name,W-2*P-150).forEach((ln,i)=>i===0?pair(ln,inr(l.gross),{bold:true,size:21}):text(ln,{bold:true,size:21}));
-    text(`${l.variant?l.variant+" · ":""}${l.qty} × ${inr(l.rate)}`,{size:18,color:"#444"}); if(l.discount) pair("Discount"+(l.discountLabel?" "+l.discountLabel:""),"−"+inrx(l.discount),{size:18,color:"#444"})});
+  I.lines.forEach(l=>{wrap(l.name,W-2*P-150).forEach((ln,i)=>i===0?pair(ln,inrx(l.gross),{bold:true,size:21}):text(ln,{bold:true,size:21}));
+    text(`${l.variant?l.variant+" · ":""}${l.qtyText||l.qty} × ${inr(l.rate)}${l.unit?"/"+l.unit:""}`,{size:18,color:"#444"}); if(l.discount) pair("Discount"+(l.discountLabel?" "+l.discountLabel:""),"−"+inrx(l.discount),{size:18,color:"#444"})});
   rule();
   const G=gstLines(I);
-  pair("Subtotal",inr(T.subtotal)); if(T.discount) pair("Discount","−"+inrx(T.discount)); if(G.length&&!I.inclusive){ pair("Taxable amount",inrx(T.taxable)); G.forEach(g=>pair(g.label,inrx(g.amount))); }
+  pair("Subtotal",inrx(T.subtotal)); if(T.discount) pair("Discount","−"+inrx(T.discount)); if(G.length&&!I.inclusive){ pair("Taxable amount",inrx(T.taxable)); G.forEach(g=>pair(g.label,inrx(g.amount))); }
   if(T.roundOff) pair("Round off",(T.roundOff>0?"+":"")+inrx(T.roundOff));
   pair("Total",inr(T.total),{bold:true,size:28}); if(G.length&&I.inclusive) G.forEach(g=>pair("Includes "+g.label,inrx(g.amount),{size:18}));
   if(T.credit){ pair("Exchange credit","−"+inr(T.credit)); pair("Amount due",inr(T.due),{bold:true}); }

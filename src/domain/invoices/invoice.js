@@ -5,7 +5,8 @@
 import { lineLabel } from '../catalog/options.js';
 import { discountLabel, normalizeDiscount } from '../sales/discounts.js';
 import { gstinState, saleGstSplit, stateCode, stateName } from '../sales/gst.js';
-import { round2, sumP, toPaise, toRupees } from '../sales/paise.js';
+import { linePaise, round2, sumP, toPaise, toRupees } from '../sales/paise.js';
+import { qtyText, roundQty, unitOf } from '../catalog/units.js';
 import { PAY_LABELS, paymentsOf } from '../sales/payments.js';
 import { amountInWords } from './amount-words.js';
 
@@ -24,7 +25,8 @@ export function buildInvoice(sale,ctx={}){
   const seller=sellerOf(ctx.profile), G=saleGstSplit(sale), tax=sale.tax||0, c=sale.cust, cr=ctx.customer||{};
   const lineTax=sale.items.length>0&&sale.items.every(i=>i.lt!=null);
   const lines=sale.items.map((i,k)=>{const d=normalizeDiscount(i.disc);return {sl:k+1,ln:i.ln!=null?i.ln:k,name:i.n,variant:lineLabel(i),sku:i.sku||"",hsn:i.hsn||"",
-    qty:i.q,rate:i.price,gross:round2(i.q*i.price),discount:i.dAmt||0,discountLabel:d?discountLabel(d):"",billDiscount:i.bdAmt||0,
+    // qty: the number; unit: its symbol ("kg"; "" for pieces); qtyText: both, as printed ("2.5 kg", "3")
+    qty:roundQty(i.q),unit:unitOf(i.u).id==="pcs"?"":unitOf(i.u).sym,uqc:unitOf(i.u).uqc,qtyText:qtyText(i.q,i.u),rate:i.price,gross:toRupees(linePaise(i.q,i.price)),discount:i.dAmt||0,discountLabel:d?discountLabel(d):"",billDiscount:i.bdAmt||0,
     taxable:i.tx==null?null:i.tx,gstRate:i.gst==null?null:i.gst,cgst:i.cgst||0,sgst:i.sgst||0,igst:i.igst||0,total:i.lt==null?null:i.lt}});
   const credit=sale.credit||0, due=Math.max(0,round2(sale.total-credit)), roundOff=sale.roundOff||0;
   const itemDiscount=sale.itemDisc||0, billDisc=normalizeDiscount(sale.billDisc);
@@ -32,7 +34,7 @@ export function buildInvoice(sale,ctx={}){
     received:p.method==="cash"?(p.received==null?p.amount:p.received):null,change:p.change||0,verification:p.verification||"recorded",last4:p.last4||""}));
   const paid=toRupees(sumP(pays.map(p=>toPaise(p.amount))));
   const rets=(ctx.returns||[]).map(r=>({id:r.id,kind:r.kind||"return",t:r.t,value:r.value||0,refund:r.refund||0,method:r.pay||"",
-    label:PAY_LABELS[r.pay]||r.pay||"",items:(r.items||[]).map(i=>({name:i.n,variant:lineLabel(i),qty:i.q}))}));
+    label:PAY_LABELS[r.pay]||r.pay||"",items:(r.items||[]).map(i=>({name:i.n,variant:lineLabel(i),qty:roundQty(i.q),qtyText:qtyText(i.q,i.u)}))}));
   const buyer=c&&c.name?{name:c.name,phone:c.phone||cr.phone||"",email:cr.email||"",mobile:cr.phone||"",gstin:c.gstin||"",
     business:c.type==="business"}:null;
   const pos=sale.gst&&sale.gst.pos||"";

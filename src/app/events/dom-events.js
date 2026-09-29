@@ -25,7 +25,7 @@ import { onPrint } from '../../features/printing/components/print-actions.js';
 import { onDeliveryRefresh, onInvoiceLink, onRevokeLinks, onSend } from '../../features/delivery/components/send-actions.js';
 import { renderReport, showTable } from '../../features/reports/pages/report-page.js';
 import { exportCsv } from '../../features/reports/services/csv-export.js';
-import { openReturn, renderReturnSheet, saveReturn } from '../../features/returns/components/return-sheet.js';
+import { openReturn, renderReturnSheet, saveReturn, setReturnQty } from '../../features/returns/components/return-sheet.js';
 import { exAvail } from '../../features/returns/services/return-rules.js';
 import { closeSheets, renderBill, renderBillSheet, updateBillTotals } from '../../features/sales/components/bill-panel.js';
 import { addPicked, openPicker, renderPicker, setPickQty } from '../../features/sales/components/variant-picker.js';
@@ -41,7 +41,7 @@ import { completePayment, openPayment, payClosed, payInput, payIntent, payMode, 
 import { openBook } from '../../features/finance/components/books-view.js';
 import { enqueue, flushSbQueue } from '../../features/sync/services/outbox.js';
 import { can } from '../../features/shop/services/access.js';
-import { openSyncPanel, syncDiscard, syncNow, syncRetry } from '../../features/sync/components/sync-panel.js';
+import { openSyncPanel, syncDiscard, syncNow, syncRenumber, syncRetry } from '../../features/sync/components/sync-panel.js';
 import { chooseSellingAt, deleteEventAction, eventStatusAction, openEventForm, openEventSummary, submitEventForm } from '../../features/events/components/events-view.js';
 import { gstExport, gstMonthChosen, openGstView } from '../../features/reports/components/report-sections.js';
 import { exportGstCsv } from '../../features/reports/services/gst-data.js';
@@ -74,6 +74,7 @@ export function installDomEvents(){
     if(t.matches("[data-modal-scrim]")||t.closest("[data-modal-close]")){if(t.matches("[data-editor]")&&store.editor)return;if(t.matches("[data-billimp]")&&store.billImport)return;if(store.payState)payClosed();store.payState=null;store.lineDisc=null;store.syncOpen=false;store.evForm=null;store.cashForm=null;store.voidForm=null;closeModal();return}
     // sync panel
     const sr=t.closest("[data-syncretry]");if(sr){syncRetry(+sr.dataset.syncretry);return}
+    const sn=t.closest("[data-syncrenumber]");if(sn){syncRenumber(+sn.dataset.syncrenumber);return}
     const sd=t.closest("[data-syncdiscard]");if(sd){if(sd.dataset.confirm){syncDiscard(+sd.dataset.syncdiscard)}else{sd.dataset.confirm="1";sd.textContent="Tap again to discard"}return}
     if(t.closest("[data-edclose]")){store.editor=null;closeModal();return}
     // discounts and payment
@@ -248,6 +249,7 @@ export function installDomEvents(){
     if(t.id==="soSetCost"&&store.stockOp){store.stockOp.setCost=t.checked;return}
     if(t.matches("[data-disc]")){renderBill();return}
     if(t.matches("[data-restore]")){const f=t.files&&t.files[0];t.value="";if(f)await restoreBackup(f);return}
+    if(t.matches("[data-rtq]")&&store.retState){setReturnQty(t.dataset.rtq,t.value);return}
     if(t.matches("[data-lineqty]")){const r=setLineQty(+t.dataset.lineqty,t.value);if(!r.ok&&r.message)toast(r.message);t.blur();renderAll();if(store.billOpen)renderBillSheet();return}
     if(t.matches("#custForm [name=type]")){custFormType(t.form);return}
     if(store.stickers&&stickerChange(t))return;

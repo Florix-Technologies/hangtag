@@ -11,6 +11,8 @@ export function toAppError(e){
   const make = (c, text) => new AppError(c, text, { cause: e, details: { code } });
   if(NETWORK.test(msg)) return make(C.NETWORK, "No internet connection. It will try again.");
   if(code === "42501" || /row-level security|permission denied/i.test(msg)) return make(C.PERMISSION, "This account isn't allowed to change that.");
+  // hangtag_doc_no_check: another bill (credit note) of the shop already has this number; the message says which
+  if(code === "23505" && /^(Bill|Credit note) number .+ is already used/.test(msg)) return new AppError(C.CONFLICT, msg, { cause: e, details: { code, kind: "number" } });
   if(code === "23505" || /duplicate key/i.test(msg)) return make(C.CONFLICT, "Something with the same SKU, barcode or number is already saved.");
   if(code === "PGRST301" || code === "401" || AUTH.test(msg)) return make(C.AUTH, "Your sign-in has expired. Sign in again.");
   // hangtag_import_stock: this bill (same file, or same supplier + invoice number) was added before

@@ -59,7 +59,7 @@ export function thermalReceipt(inv,{cols=48}={}){
   L.push(rule);
   inv.lines.forEach(l=>{
     wrap(l.name+(l.variant?" ("+l.variant+")":""),w).forEach(t=>add(t,{bold:true}));
-    row(`  ${l.qty} x ${money(l.rate)}`,money(l.gross));
+    row(`  ${l.qtyText||l.qty} x ${money(l.rate)}${l.unit?"/"+l.unit:""}`,money(l.gross));
     if(l.discount) row(`  Discount${l.discountLabel?" "+l.discountLabel:""}`,"-"+money(l.discount));
     if(l.hsn||l.gstRate) add(`  ${l.hsn?"HSN "+l.hsn:""}${l.hsn&&l.gstRate?" | ":""}${l.gstRate?"GST "+l.gstRate+"%":""}`);
   });

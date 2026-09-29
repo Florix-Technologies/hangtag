@@ -28,6 +28,9 @@ import { createDeliveryClient } from '../infrastructure/messaging/delivery-clien
 import { createPaymentGatewayClient } from '../infrastructure/payments/payment-gateway-client.js';
 import { createLocalFirstCashRepository } from '../infrastructure/repositories/local-first-cash-repository.js';
 import { createTeamClient } from '../infrastructure/team/team-client.js';
+import { createLocalFirstOrderRepository } from '../infrastructure/repositories/local-first-order-repository.js';
+import { createLocalFirstCreditRepository } from '../infrastructure/repositories/local-first-credit-repository.js';
+import { saveCollections, saveHeldCarts, saveOrders } from '../shared/state/persistence.js';
 
 /* Called first at start-up (app/main.js), before the state is restored from storage */
 export function installContainer(){
@@ -60,4 +63,7 @@ export function installContainer(){
   provide("paymentGateway", createPaymentGatewayClient({ cloud: cloudGateway }));
   provide("cashRepository", createLocalFirstCashRepository({ store, persist: { saveCashMoves, saveDayCloses }, outbox: { enqueue } }));
   provide("inventoryImportService", createLocalFirstStockImport({ store, cloud: cloudGateway, persist: { saveCatalog, saveMoves }, outbox: { flush: flushSbQueue }, invalidate }));
+  // Customer credit, held bills and orders (section 3m)
+  provide("orderRepository", createLocalFirstOrderRepository({ store, persist: { saveOrders, saveHeldCarts }, outbox }));
+  provide("creditRepository", createLocalFirstCreditRepository({ store, persist: { saveCollections }, outbox: { enqueue } }));
 }

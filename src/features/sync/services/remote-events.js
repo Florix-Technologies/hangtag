@@ -1,7 +1,7 @@
 // Applies live changes from the shop's other devices.
 import { store } from '../../../shared/state/store.js';
 import { D } from '../../inventory/services/ledger.js';
-import { pullCatalogFromSupabase, pullCustomers, pullEvents, pullMoves, pullReturns, pullSettings } from './pull.js';
+import { pullCatalogFromSupabase, pullCustomers, pullEvents, pullMoves, pullOrders, pullReturns, pullSettings } from './pull.js';
 import { use } from '../../../shared/di/services.js';
 import { dayKey } from '../../../shared/formatting/dates.js';
 import { saveImgs, saveMoves } from '../../../shared/state/persistence.js';
@@ -80,6 +80,7 @@ export function debouncePull(what){
       else if(what==="settings") await pullSettings();
       else if(what==="moves") await pullMoves();
       else if(what==="events") await pullEvents();
+      else if(what==="orders") await pullOrders();
       renderAll();
     }catch(e){ logger.warn("Pull "+what+" failed:", e); }
   }, 500);

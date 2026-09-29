@@ -31,10 +31,16 @@ export const ORDER_NEXT={
 };
 export const FIRST_STATUS={quote:"draft",sales:"draft",table:"new"};
 export const FINAL={quote:["cancelled","converted"],sales:["completed","cancelled"],table:["served","cancelled"]};
-/* Numbers: QT-260929-001, SO-260929-001, KOT-260929-001 (own series per kind; batch T1's device-scoped series takes over
-   the running number when present) */
+/* Numbers: QT-260929-K3F001, SO-…, KOT-… — the prefix, the date (yymmdd), this device's code (3 characters from its id) and
+   its running number of that kind that day, so two tills offline never make the same number. The same format as the
+   device-scoped bill numbers of batch T1 (formatInvoiceNo + a device code); when both are in, one helper stays. */
 export const ORDER_PREFIX={quote:"QT-",sales:"SO-",table:"KOT-"};
-export const orderNo=(kind,t,seq)=>formatInvoiceNo(ORDER_PREFIX[kind]||"OR-",t,seq);
+export function orderDeviceCode(dev){
+  let h=2166136261;
+  for(const ch of String(dev||"")){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)>>>0}
+  return h.toString(36).toUpperCase().padStart(3,"0").slice(-3);
+}
+export const orderNo=(kind,t,seq,dev)=>{const n=formatInvoiceNo(ORDER_PREFIX[kind]||"OR-",t,seq), i=n.lastIndexOf("-");return n.slice(0,i+1)+orderDeviceCode(dev)+n.slice(i+1)};
 
 export const canMove=(kind,from,to)=>from===to||!!(ORDER_NEXT[kind]&&(ORDER_NEXT[kind][from]||[]).includes(to));
 export const isFinal=o=>!!o&&(FINAL[o.kind]||[]).includes(o.status);

@@ -5,6 +5,7 @@ import { toAppError } from './errors.js';
 import { AppError, ERROR_CODES } from '../../shared/errors/app-error.js';
 import { sbFetchAll, sbOk } from './query.js';
 import { billArgs, cashMoveRow, custRow, dayCloseRow, eventRow, moveRow, productRow, returnArgs, roleRow, rowToCashMove, rowToCustomer, rowToDayClose, rowToDelivery, rowToDevice, rowToEvent, rowToImport, rowToItem, rowToMember, rowToMove, rowToPayment, rowToProduct, rowToReturn, rowToReturnItem, rowToRole, rowToSale, rowToVariant, variantRows } from './mappers.js';
+import { collectionRow, heldRow, orderArgs, rowToCollection, rowToHeld, rowToOrder, rowToOrderItem } from './mappers.js';
 
 /* deviceKey: () => this phone's team device key or "" (sent as x-hangtag-device by every client this makes; see client.js) */
 export function createCloudGateway({ getClient, url, key, storageKey, deviceKey }){
@@ -94,6 +95,10 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
       ch = on(ch, '*', 'hangtag_customers', h.customers);
       ch = on(ch, '*', 'hangtag_meta', h.settings);
       if(h.events) ch = on(ch, '*', 'hangtag_events', h.events);
+      // section 3m: orders, held bills and payments collected, between the shop's own tills
+      if(h.orders) ch = on(ch, '*', 'hangtag_orders', h.orders);
+      if(h.held) ch = on(ch, '*', 'hangtag_held_carts', h.held);
+      if(h.collections) ch = on(ch, '*', 'hangtag_collections', h.collections);
       return ch.subscribe(onStatus);
     },
     removeChannel: ch => db().removeChannel(ch),
@@ -238,6 +243,38 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
     async fetchSaleLineRows(saleId){
       const { data } = sbOk(await table('hangtag_sale_items').select('*').eq('sale_id', saleId).order('line_no'));
       return data || [];
+    },
+
+    /* ---------- customer credit, held bills, orders (section 3m) ---------- */
+    /* A payment collected from a customer: added once (a retry changes nothing); a cancelled one (the owner's) then gets
+       its status, which takes its book entry out of the balances */
+    async saveCollection(c){
+      sbOk(await table('hangtag_collections').upsert(collectionRow(c), { onConflict:'owner_id,id', ignoreDuplicates:true }));
+      if(c.status === "cancelled") await mustReach('hangtag_collections', 'id', q => q.update({ status:'cancelled' }), q => q.eq('id', c.id));
+    },
+    async saveHeldCart(h){ sbOk(await table('hangtag_held_carts').upsert(heldRow(h))); },
+    /* Recalled on some till: gone for every till (already gone is fine) */
+    async deleteHeldCart(id){ await mustReach('hangtag_held_carts', 'id', q => q.delete(), q => q.eq('id', id)); },
+    /* An order with its lines, all or nothing (RPC hangtag_save_order). o.version is the version this device last saw; the
+       database refuses a save made on an older one (CONFLICT: changed on another device) → { version } now in the cloud */
+    async saveOrder(o){
+      const { data } = sbOk(await db().rpc('hangtag_save_order', orderArgs(o)));
+      return { version: data && +data.version || (+o.version || 0) + 1 };
+    },
+    async fetchOrders(){
+      const rows = await sbFetchAll(db(), 'hangtag_orders', ['t','id']);
+      const items = await sbFetchAll(db(), 'hangtag_order_items', ['order_id','line_no']);
+      const byOrder = {};
+      items.forEach(i => { (byOrder[i.order_id] = byOrder[i.order_id] || []).push(rowToOrderItem(i)); });
+      return rows.map(r => rowToOrder(r, byOrder[r.id] || []));
+    },
+    fetchHeldCarts: async () => (await sbFetchAll(db(), 'hangtag_held_carts', ['t','id'])).map(rowToHeld),
+    fetchCollections: async () => (await sbFetchAll(db(), 'hangtag_collections', ['t','id'])).map(rowToCollection),
+    /* A member's poll: one fingerprint each for orders, held bills and collections (RPC hangtag_order_changes) */
+    async orderChanges(){
+      const r = await db().rpc('hangtag_order_changes');
+      if(r.error) throw toAppError(r.error);
+      return r.data && typeof r.data === 'object' ? r.data : {};
     },
 
     /* ---------- shop profile ---------- */

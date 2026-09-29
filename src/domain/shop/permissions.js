@@ -83,5 +83,6 @@ export const TAB_PERMISSIONS = {
   report: ["view_reports"],
   products: ["view_products", "manage_products"],
   customers: ["create_sale", "collect_credit", "create_order"],
+  orders: ["create_sale", "create_order"],
 };
 export const tabAllowed = (tab, perms) => !TAB_PERMISSIONS[tab] || TAB_PERMISSIONS[tab].some(p => (perms || []).includes(p));

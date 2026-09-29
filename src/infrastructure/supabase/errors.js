@@ -12,6 +12,8 @@ export function toAppError(e){
   if(NETWORK.test(msg)) return make(C.NETWORK, "No internet connection. It will try again.");
   if(code === "42501" || /row-level security|permission denied/i.test(msg)) return make(C.PERMISSION, "This account isn't allowed to change that.");
   if(code === "23505" || /duplicate key/i.test(msg)) return make(C.CONFLICT, "Something with the same SKU, barcode or number is already saved.");
+  // hangtag_save_order: the order was changed on another device since this one saw it (its message says which)
+  if(code === "40001") return make(C.CONFLICT, msg || "This was changed on another device.");
   if(code === "PGRST301" || code === "401" || AUTH.test(msg)) return make(C.AUTH, "Your sign-in has expired. Sign in again.");
   // hangtag_import_stock: this bill (same file, or same supplier + invoice number) was added before
   if(/HANGTAG_DUPLICATE_(FILE|INVOICE)/.test(msg)){

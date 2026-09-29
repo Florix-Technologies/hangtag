@@ -10,6 +10,7 @@ import { use } from '../../../shared/di/services.js';
 import { toast } from '../../../shared/components/toast.js';
 import { dayKey } from '../../../shared/formatting/dates.js';
 import { saveCashMoves, saveCatalog, saveCustomers, saveDayCloses, saveEvents, saveImgs, saveLogo, saveMoves, saveReturns, saveSettings } from '../../../shared/state/persistence.js';
+import { saveCollections, saveHeldCarts, saveOrders } from '../../../shared/state/persistence.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { logger } from '../../../shared/logging/logger.js';
 import { isMember } from '../../shop/services/access.js';
@@ -109,6 +110,8 @@ export async function pullFromSupabase(showToast = true){
     await pullCustomers();
     await pullEvents();
     await pullCash();
+    // orders, held bills and payments collected (section 3m): a database without them yet doesn't stop the rest
+    await pullOrders().catch(e => logger.warn("Orders and credit not downloaded:", e));
     await pullSettings();
     await pullSales();
     if(isMember()) seen = marks;
@@ -220,4 +223,33 @@ export async function pushLocalToSupabase(){
   const left = store.sbOfflineQueue.length;
   toast(left ? "Some changes are still uploading." : "Everything is uploaded to the cloud.");
   return !left;
+}
+
+/* ---------- orders, held bills, payments collected from customers (section 3m) ---------- */
+/* Records of a kind still waiting on this device: queued, or refused and kept in the sync review */
+const reviewIds = type => new Set((store.syncReview || []).filter(r => r.item && r.item.type === type).map(r => r.item.id));
+/* The cloud's orders, held bills and collections, except what this device changed and hasn't uploaded yet: an order
+   waiting to upload stays as it is here (one refused as changed elsewhere is replaced by the cloud's, unless the cloud
+   doesn't have it); a held bill recalled here stays gone; collections are never removed, so this device's own stay */
+export async function pullOrders(){
+  const cloud = use("cloud");
+  const [orders, held, cols] = await Promise.all([cloud.fetchOrders(), cloud.fetchHeldCarts(), cloud.fetchCollections()]);
+  const po = pendingIds("order"), ro = reviewIds("order"), ph = pendingIds("held"), pd = pendingIds("helddel"), pc = pendingIds("collection");
+  const O = {}, H = {}, C = {};
+  orders.forEach(o => { O[o.id] = o; });
+  Object.values(store.orders || {}).forEach(o => { if(po.has(o.id) || (!O[o.id] && ro.has(o.id))) O[o.id] = o; });
+  held.forEach(h => { if(!pd.has(h.id)) H[h.id] = h; });
+  Object.values(store.heldCarts || {}).forEach(h => { if(ph.has(h.id)) H[h.id] = h; });
+  cols.forEach(c => { C[c.id] = c; });
+  Object.values(store.collections || {}).forEach(c => { if(pc.has(c.id) || !C[c.id]) C[c.id] = c; });
+  store.orders = O; saveOrders(); store.heldCarts = H; saveHeldCarts(); store.collections = C; saveCollections();
+}
+/* A team member's phone (no live updates): orders, held bills and collections again only when their fingerprint moved */
+let seenOrders = null;
+export async function pullOrderChanges(){
+  if(!store.sbClient || store.sbStatus !== "connected") return false;
+  const now = await use("cloud").orderChanges(), was = seenOrders;
+  if(was && was.orders === now.orders && was.held === now.held && was.credit === now.credit) return false;
+  await pullOrders(); seenOrders = now; renderAll();
+  return true;
 }

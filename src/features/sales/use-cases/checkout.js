@@ -1,7 +1,7 @@
 // Checkout (complete a sale with its payments) and cancelling/restoring bills.
 import { lineLabel } from '../../../domain/catalog/options.js';
 import { checkBillDiscounts, normalizeDiscount } from '../../../domain/sales/discounts.js';
-import { paymentId, settlePayments } from '../../../domain/sales/payments.js';
+import { DUE, paymentId, settlePayments } from '../../../domain/sales/payments.js';
 import { store } from '../../../shared/state/store.js';
 import { billCustomer, billTotals, gstContext, invoiceNo } from '../services/totals.js';
 import { D, invalidate } from '../../inventory/services/ledger.js';
@@ -21,29 +21,32 @@ import { renderAll } from '../../../shared/ui/render.js';
 import { uid } from '../../../shared/utils/ids.js';
 import { can, canAny, denied, notAllowedText } from '../../shop/services/access.js';
 import { CANCEL_BILL } from '../../../domain/shop/permissions.js';
+import { fulfilFromSale } from '../../orders/use-cases/orders.js';
 
 /* A complete bill record, or { error } when a discount is too big or the payments don't settle it.
    lines: bill lines · billDisc: the bill discount · pay: a method ("cash" | "upi" | "card") or one part without its amount
    ({ method, ref?, via?, last4? }) for the whole amount due, or the parts [{ method, amount, received?, ref?, via?, last4?, intent? }]
-   · extra: { id? (fixed when a provider payment was started for it), cust?, credit?, kind?, ex?, event? (default: what this device is selling at) } */
+   · extra: { id? (fixed when a provider payment was started for it), cust?, credit?, kind?, ex?, event? (default: what this device is selling at),
+     order? (the quotation / sales order the bill delivers: its lines keep the order's line numbers) }
+   One part may be { method: "due", amount }: left on the customer's account (only a saved customer), kept as dueAmt */
 export function newSaleRecord(lines,billDisc,pay,extra){
   const x=extra||{}, cust=x.cust!==undefined?x.cust:store.cartCust, credit=x.credit||0;
   const bad=checkBillDiscounts(lines,billDisc); if(bad) return {error:bad.error,field:"discount",line:bad.line};
   const g=gstContext(cust), T=billTotals(lines,billDisc,cust), bc=billCustomer(cust);
   const due=Math.max(0,T.total-credit);
   const whole=typeof pay==="string"?{method:pay}:pay&&!Array.isArray(pay)?pay:null;
-  const S=settlePayments(due,whole?(due>0?[{...whole,amount:due}]:[]):pay);
+  const S=settlePayments(due,whole?(due>0?[{...whole,amount:due}]:[]):pay,{customer:!!(cust&&cust.id&&store.customers[cust.id])});
   if(S.error) return {error:S.error,field:S.field,method:S.method};
   const id=x.id||uid(), t=Date.now(), seq=D().sales.filter(s=>dayKey(s.t)===dayKey(t)).length+1, ev=x.event!==undefined?x.event:sellingEventId();
   return {id,no:invoiceNo(t,seq),t,
     items:lines.map((c,k)=>{const L=T.lines[k], d=normalizeDiscount(c.disc), p=prod(c.p);
       return {ln:k,v:c.v,p:c.p,n:c.name,c:c.c||"",s:c.s||"",vl:lineLabel(c),ov:c.ov||[],sku:c.sku||"",q:c.q,price:c.price,cost:c.cost==null?null:c.cost,
-        ...(d?{disc:d}:{}),dAmt:L.itemDisc,bdAmt:L.billDisc,gst:L.rate,hsn:p&&p.hsn||"",tx:L.taxable,cgst:L.cgst,sgst:L.sgst,igst:L.igst,lt:L.total}}),
+        ...(d?{disc:d}:{}),...(x.order&&c.ord===x.order&&c.oln!=null?{ord:c.ord,oln:c.oln}:{}),dAmt:L.itemDisc,bdAmt:L.billDisc,gst:L.rate,hsn:p&&p.hsn||"",tx:L.taxable,cgst:L.cgst,sgst:L.sgst,igst:L.igst,lt:L.total}}),
     sub:T.sub,disc:T.disc,itemDisc:T.itemDisc,billDisc:normalizeDiscount(billDisc),billDiscAmt:T.billDisc,
     taxable:T.taxable,tax:T.tax,cgst:T.cgst,sgst:T.sgst,igst:T.igst,taxRate:T.rate||0,taxIncl:T.incl,
     gst:{mode:g.mode,pos:g.pos,shopState:g.shopState,b2b:g.b2b},roundOff:T.roundOff,total:T.total,credit,
-    kind:x.kind||"sale",ex:x.ex||null,...(ev?{event:ev}:{}),
-    pay:S.payments.length>1?"split":S.payments.length?S.payments[0].method:(whole&&whole.method||"cash"),
+    kind:x.kind||"sale",ex:x.ex||null,...(ev?{event:ev}:{}),...(S.onAccount>0?{dueAmt:S.onAccount}:{}),...(x.order?{order:x.order}:{}),
+    pay:S.payments.length>1?"split":S.payments.length?S.payments[0].method:S.onAccount>0?"credit":(whole&&whole.method||"cash"),
     payments:S.payments.map(p=>({id:paymentId(id,p.method),...p})),dev:store.dev,
     cust:bc?{id:bc.id||null,name:bc.name,phone:bc.phone||"",...(bc.gstin?{gstin:bc.gstin}:{}),...(bc.type==="business"?{type:"business"}:{})}:null};
 }
@@ -63,12 +66,18 @@ export async function checkout(pay,opts){
   if(!can("create_sale")) return {error:notAllowedText("sell")};
   if(!can("apply_discount")&&(normalizeDiscount(store.disc)||store.cart.some(c=>normalizeDiscount(c.disc)))) return {error:notAllowedText("give discounts")+" Remove the discount first."};
   if(o.id&&D().saleById[o.id]) return {error:"This bill is already saved."};
-  const sale=newSaleRecord(store.cart,store.disc,pay,o.id?{id:o.id}:undefined);
+  // leaving part of the bill on the customer's account needs collect_credit (the database checks it too)
+  if(Array.isArray(pay)&&pay.some(a=>a&&a.method===DUE&&+a.amount>0)&&!can("collect_credit")) return {error:notAllowedText("sell on credit")};
+  // a bill from a quotation / sales order: the order then counts what it delivered (create_order, as for saving it)
+  const ord=store.cartOrder&&store.cartOrder.id&&store.cart.some(c=>c.ord===store.cartOrder.id)?store.cartOrder.id:null;
+  if(ord&&!can("create_order")) return {error:notAllowedText("bill orders")};
+  const sale=newSaleRecord(store.cart,store.disc,pay,Object.assign(o.id?{id:o.id}:{},ord?{order:ord}:{}));
   if(sale.error) return sale;
   store.lastCheckout=Date.now();
-  store.cart=[]; store.disc=null; store.cartCust=null; store.payState=null; saveCart();
+  store.cart=[]; store.disc=null; store.cartCust=null; store.cartOrder=null; store.payState=null; saveCart();
   store.lastSale=sale;
   recordSale(sale);
+  if(ord) fulfilFromSale(sale);
   // the receipt goes out by itself on the channels the shop turned on (unless turned off for this sale)
   if(o.send!==false) queueAutoDelivery(sale);
   // a device still set to an event that was closed (or removed) sold this bill at the store: it now sells at the store

@@ -152,7 +152,7 @@ const collections = [{ id: 'k1', cust: 'c1', amount: 200, method: 'cash', t: 500
 }
 
 // ---------- use cases on this device ----------
-installFakeDom();
+const el = installFakeDom();
 globalThis.window = globalThis.window || { addEventListener(){} };
 globalThis.confirm = () => true;
 const storage = memStorage();
@@ -268,6 +268,8 @@ const ownerAgain = () => { store.access = null; };
   r = OU.setOrderStatus(quote.id, 'sent');
   check('status moves are saved (one queued upload per order)', r.order.status === 'sent' && q('order').length === 1 && OU.orderById(quote.id).no === quote.no);
   check('a move the rules don\'t allow is refused', OU.setOrderStatus(quote.id, 'completed').field === 'status');
+  const stale = { ...OU.orderById(quote.id), notes: 'from an old copy', updatedT: 1 };
+  check('a copy taken before the order last changed isn\'t saved over it', /changed while it was open/.test(OU.saveOrder(stale).error || '') && OU.orderById(quote.id).notes === '');
   store.sbClient = {}; store.sbStatus = 'connected'; await OB.flushSbQueue(); store.sbClient = null; store.sbStatus = 'disconnected';
   check('uploaded: the cloud\'s version is kept for the next save', OU.orderById(quote.id).version === 1 && q('order').length === 0);
   // a line removed and a new one added: numbers aren't reused
@@ -323,6 +325,41 @@ const ownerAgain = () => { store.access = null; };
   await PL.pullOrders();
   check('the download brings the cloud\'s order (the refused change stays in the review), other tills\' held bills, and keeps this device\'s collections',
     OU.orderById(o.id).status === 'cancelled' && OU.orderById(o.id).version === 9 && listHeldCarts().some((h) => h.id === 'hx') && Object.keys(store.collections).length === 2);
+}
+
+// the screens draw (a stand-in DOM: every element is the same object, so innerHTML is the last thing drawn)
+{
+  const OP = await import('../../src/features/orders/pages/orders-page.js');
+  const OE = await import('../../src/features/orders/components/order-editor.js');
+  const CA = await import('../../src/features/customers/components/customer-account.js');
+  const PS = await import('../../src/features/sales/components/payment-sheet.js');
+  const BP = await import('../../src/features/sales/components/bill-panel.js');
+  store.ordersView = 'quote'; OP.renderOrders();
+  check('Orders → Quotations lists them with their status', /data-ordview="held"/.test(el.innerHTML) && /QT-/.test(el.innerHTML) && /ostat-/.test(el.innerHTML), el.innerHTML.slice(0, 300));
+  store.ordersView = 'held'; OP.renderOrders();
+  check("Orders → Held bills: another till's held bill with Recall", /data-heldrecall="hx"/.test(el.innerHTML) && /Other till/.test(el.innerHTML));
+  const so = OU.ordersOf('sales')[0];
+  OE.openOrderEditor(so.id);
+  check('the editor draws an order: customer, lines, totals, read-only once completed', /data-ofcust/.test(el.innerHTML) && /ofTotals/.test(el.innerHTML) && !/data-ofsave/.test(el.innerHTML) && /Completed/.test(el.innerHTML), el.innerHTML.slice(0, 300));
+  OE.openOrderEditor(null, 'quote', false);
+  check('a new quotation: the product search and Save', /id="ofQ"/.test(el.innerHTML) && /data-ofsave/.test(el.innerHTML) && /Valid until/.test(el.innerHTML));
+  check('typing a search lists matching items', OE.orderFormInput({ id: 'ofQ', value: 'tee', dataset: {}, closest: () => el }) && store.orderForm.q === 'tee');
+  store.orderForm = null;
+  const acc = CA.accountHTML('c1');
+  check('a customer\'s account: purchases, paid, outstanding and the history', /Total purchases/.test(acc) && /Outstanding/.test(acc) && /acents/.test(acc));
+  CA.openCollectForm('c1');
+  check('Collect payment opens with what they owe', /collectForm/.test(el.innerHTML) && store.collectForm && store.collectForm.amount === String(accountOf('c1').outstanding));
+  store.collectForm = null;
+  store.cart = [{ v: 'p1:', p: 'p1', name: 'Tee', q: 1, price: 500 }]; store.cartCust = { id: 'c1', name: 'Riya', phone: '' };
+  PS.openPayment('cash'); PS.payMode('credit');
+  check('payment: the Credit option, everything on account until amounts are typed', store.payState.mode === 'credit' && /data-paymode="credit"/.test(el.innerHTML) && /On account/.test(el.innerHTML) && /paycred/.test(el.innerHTML), el.innerHTML.slice(0, 200));
+  check('…the parts: nothing now, ₹500 on account', eq(PS.allocations().filter((a) => +a.amount > 0).map((a) => [a.method, a.amount]), [['due', 500]]));
+  store.payState.amt.cash = '200';
+  check('…₹200 cash now, ₹300 on account', eq(PS.allocations().filter((a) => +a.amount > 0).map((a) => [a.method, a.amount]), [['cash', '200'], ['due', 300]]));
+  store.payState = null;
+  store.imgs = store.imgs || {}; const bp = BP.billPanelHTML('sheet');
+  check('the bill has Hold and "Save as quotation"', /data-hold/.test(bp) && /data-ordfromcart="quote"/.test(bp));
+  store.cart = []; store.cartCust = null;
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

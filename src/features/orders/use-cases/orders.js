@@ -67,6 +67,8 @@ export function saveOrder(draft){
   const o = { ...draft, items, notes: String(draft.notes || "").trim(), validUntil: draft.kind === "quote" ? draft.validUntil || "" : "" };
   const bad = checkOrder(o); if(bad) return bad;
   if(prev){
+    // changed since this copy was taken (another till's save arrived, or a bill delivered some of it): not overwritten
+    if(draft.updatedT != null && prev.updatedT != null && +draft.updatedT !== +prev.updatedT) return { error: "This order changed while it was open (on another till, or a bill delivered some of it). Close it and open it again." };
     if(isFinal(prev)) return { error: `This ${KIND_LABELS[prev.kind].toLowerCase()} is ${STATUS_LABELS[prev.status].toLowerCase()} and can't be changed.` };
     if(!canMove(prev.kind, prev.status, o.status)) return { error: `A ${STATUS_LABELS[prev.status].toLowerCase()} ${KIND_LABELS[prev.kind].toLowerCase()} can't become ${STATUS_LABELS[o.status].toLowerCase()}.`, field: "status" };
     const gone = prev.items.find(l => +l.fq > 0 && !o.items.some(x => x.ln === l.ln && +x.q >= +l.fq));

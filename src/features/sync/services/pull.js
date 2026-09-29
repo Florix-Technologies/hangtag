@@ -13,7 +13,7 @@ import { saveCashMoves, saveCatalog, saveCustomers, saveDayCloses, saveEvents, s
 import { saveCollections, saveHeldCarts, saveOrders } from '../../../shared/state/persistence.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { logger } from '../../../shared/logging/logger.js';
-import { isMember } from '../../shop/services/access.js';
+import { can, isMember } from '../../shop/services/access.js';
 
 /* ---------- pulls (cloud is the truth, except for work still waiting in this device's queue) ---------- */
 let seen = null;   // a member's phone: the shop's fingerprints its data matches (null: not known yet; see pullShopChanges)
@@ -215,6 +215,9 @@ export async function pushLocalToSupabase(){
   Object.values(store.returnsMap).forEach(r => enqueue({ type:"return", id:r.id, ret:r }));
   Object.values(store.cashMoves || {}).sort((x, y) => (x.type === "reversal") - (y.type === "reversal")).forEach(m => enqueue({ type:"cashmove", id:m.id, move:m }));
   Object.values(store.dayCloses || {}).forEach(c => enqueue({ type:"dayclose", id:c.id, close:c }));
+  // payments collected from customers (added once: sending one the cloud has changes nothing); orders upload on their own
+  // version and held bills are short-lived, so neither is sent again here
+  if(can("collect_credit")) Object.values(store.collections || {}).forEach(c => enqueue({ type:"collection", id:c.id, col:c }));
   enqueue({ type:"settings" });
   if(store.logo) enqueue({ type:"logo" });
   renderSync();

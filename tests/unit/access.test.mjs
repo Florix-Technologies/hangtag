@@ -7,8 +7,9 @@ import path from 'path';
 import { store } from '../../src/shared/state/store.js';
 import { override } from '../../src/shared/di/services.js';
 import { memStorage, installFakeDom } from '../helpers/fake-env.mjs';
-import { CANCEL_BILL, EDITABLE_PERMISSIONS, MEMBER_ROLES, PERMISSIONS, PERMISSION_LABELS, ROLE_DEFAULTS, ROLE_SUGGESTIONS, TAB_PERMISSIONS, businessKind, roleCan, missingFor,
-  permissionsFor, roleLabel, roleSuggestionsFor, tabAllowed } from '../../src/domain/shop/permissions.js';
+import { CANCEL_BILL, EDITABLE_PERMISSIONS, MEMBER_ROLES, PERMISSIONS, PERMISSION_LABELS, ROLE_DEFAULTS, TAB_PERMISSIONS, roleCan, missingFor,
+  permissionsFor, roleLabel, tabAllowed } from '../../src/domain/shop/permissions.js';
+import { ROLE_SUGGESTIONS, businessKind, roleSuggestionsFor } from '../../src/domain/shop/capabilities.js';
 import * as permissionsModule from '../../src/domain/shop/permissions.js';
 import { STAFF_DOMAIN, checkNewMember, checkStaffSignIn, cleanShopCode, newPasswordError, shopCode, staffEmail } from '../../src/domain/shop/staff.js';
 import * as core from '../../supabase/functions/team/core.js';
@@ -78,7 +79,8 @@ check('missing permissions of a cashier', eq(missingFor(ROLE_DEFAULTS.cashier), 
 check('role labels', roleLabel('cashier') === 'Cashier' && roleLabel('owner') === 'Owner' && roleLabel('stock_keeper') === 'Stock keeper' && roleLabel('') === '');
 check('tabs: a cashier sells, sees stock, products and customers, not reports; kitchen sees none of them',
   tabAllowed('sell', ROLE_DEFAULTS.cashier) && tabAllowed('stock', ROLE_DEFAULTS.cashier) && !tabAllowed('report', ROLE_DEFAULTS.cashier)
-  && ['sell', 'stock', 'report', 'products', 'customers'].every((t) => !tabAllowed(t, ROLE_DEFAULTS.kitchen)) && Object.keys(TAB_PERMISSIONS).length === 5);
+  && ['sell', 'stock', 'report', 'products', 'customers', 'home', 'orders', 'tables'].every((t) => !tabAllowed(t, ROLE_DEFAULTS.kitchen)) && tabAllowed('kitchen', ROLE_DEFAULTS.kitchen)
+  && Object.keys(TAB_PERMISSIONS).length === 9);
 check('roles offered: restaurants get server and kitchen, shops manager and cashier',
   eq(roleSuggestionsFor('restaurant'), ['manager', 'cashier', 'server', 'kitchen']) && eq(roleSuggestionsFor('Hotel / Restaurant'), ROLE_SUGGESTIONS.restaurant)
   && eq(roleSuggestionsFor('Clothing boutique'), ['manager', 'cashier']) && eq(roleSuggestionsFor(''), ['manager', 'cashier']) && eq(roleSuggestionsFor(undefined), ['manager', 'cashier']));

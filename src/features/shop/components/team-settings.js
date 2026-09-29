@@ -5,7 +5,8 @@
 //   store.team = { view: "members"|"roles", loading, err, members, devices, overrides, adding, how, addErr, busy,
 //                  confirm (the action waiting for a second tap), qr: { userId, name, url, expiresAt }, draft: { role: [perms] } }
 import { store } from '../../../shared/state/store.js';
-import { EDITABLE_PERMISSIONS, MEMBER_ROLES, PERMISSION_LABELS, ROLE_DEFAULTS, permissionsFor, roleLabel, roleSuggestionsFor } from '../../../domain/shop/permissions.js';
+import { EDITABLE_PERMISSIONS, MEMBER_ROLES, PERMISSION_LABELS, ROLE_DEFAULTS, permissionsFor, roleLabel } from '../../../domain/shop/permissions.js';
+import { roleSuggestionsFor } from '../../../domain/shop/capabilities.js';
 import { checkNewMember, cleanMemberName, cleanUsername, newPasswordError, shopCode } from '../../../domain/shop/staff.js';
 import { isMember } from '../services/access.js';
 import { teamService } from '../services/team.js';

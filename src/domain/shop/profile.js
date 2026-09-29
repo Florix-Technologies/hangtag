@@ -1,13 +1,15 @@
 // Shop profile fields and completeness rule.
+import { BUSINESS_TYPES } from './capabilities.js';
 
-/* ---------- Profile: required shop details, the same for every sign-in method ---------- */
+/* ---------- Profile: required shop details, the same for every sign-in method ----------
+   The type of business (domain/shop/capabilities.js) is asked at shop setup (needType) and can be changed in Settings →
+   Business; a profile saved without one counts as retail, so shops set up before never have to set up again. */
 
-export const BUSINESS_TYPES = ["Clothing boutique", "Pop-up or exhibition stall", "Retail store", "Online seller", "Wholesale", "Other"];
 export const PROFILE_FIELDS = [
-  { k: "full_name", label: "Your name", req: true, ac: "name", max: 80 },
   { k: "shop_name", label: "Shop name", req: true, ac: "organization", max: 80 },
+  { k: "business_type", label: "Type of business", select: BUSINESS_TYPES.map(t => ({ value: t.key, label: t.label })), needType: true },
+  { k: "full_name", label: "Your name", req: true, ac: "name", max: 80 },
   { k: "phone", label: "Phone number", req: true, ac: "tel", type: "tel", im: "tel", max: 20, hint: "10 digits, or with country code" },
-  { k: "business_type", label: "Type of business", select: BUSINESS_TYPES },
   { k: "city", label: "City", req: true, ac: "address-level2", max: 60 },
   { k: "state", label: "State", req: true, ac: "address-level1", max: 60 },
   { k: "address", label: "Shop address", ac: "street-address", full: true, max: 200, hint: "Optional. Shown on bills later." },

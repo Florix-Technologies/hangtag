@@ -54,26 +54,7 @@ export const EDITABLE_PERMISSIONS = PERMISSIONS.filter(p => p !== "manage_users"
 /* The permissions a role lacks (what the app hides for it) */
 export const missingFor = perms => PERMISSIONS.filter(p => !(perms || []).includes(p));
 
-/* ---------- roles to offer for the kind of business ----------
-   Temporary: batch F2 moves business types and suggestions to domain/shop/capabilities.js. Old profile values
-   (Clothing boutique, Pop-up or exhibition stall, Retail store, Online seller, Wholesale) count as retail. */
-export const ROLE_SUGGESTIONS = {
-  retail: ["manager", "cashier"],
-  grocery: ["manager", "cashier"],
-  electronics: ["manager", "cashier"],
-  restaurant: ["manager", "cashier", "server", "kitchen"],
-  other: ["manager", "cashier"],
-};
-export function businessKind(type){
-  const t = String(type || "").trim().toLowerCase();
-  if(!t) return "retail";
-  if(/restaurant|hotel|cafe|café|food/.test(t)) return "restaurant";
-  if(/grocer|kirana|supermarket/.test(t)) return "grocery";
-  if(/electronic|mobile/.test(t)) return "electronics";
-  if(t === "other") return "other";
-  return "retail";
-}
-export const roleSuggestionsFor = type => ROLE_SUGGESTIONS[businessKind(type)] || ROLE_SUGGESTIONS.retail;
+/* Roles to offer for the kind of business: domain/shop/capabilities.js (ROLE_SUGGESTIONS, roleSuggestionsFor). */
 
 /* ---------- which permission a screen or an upload needs ---------- */
 /* Tabs: what a person needs to see each one (any of the list) */
@@ -83,5 +64,10 @@ export const TAB_PERMISSIONS = {
   report: ["view_reports"],
   products: ["view_products", "manage_products"],
   customers: ["create_sale", "collect_credit", "create_order"],
+  // the adaptive navigation's modules (features/shop/services/modules.js); Settings is everyone's (what it shows depends on the role)
+  home: ["view_products", "create_sale", "view_reports", "create_order", "manage_inventory", "create_purchase"],
+  orders: ["create_sale", "create_order"],
+  tables: ["manage_tables", "create_order"],
+  kitchen: ["manage_kitchen"],
 };
 export const tabAllowed = (tab, perms) => !TAB_PERMISSIONS[tab] || TAB_PERMISSIONS[tab].some(p => (perms || []).includes(p));

@@ -2123,7 +2123,9 @@ BEGIN
         RAISE EXCEPTION 'A refund to the customer''s account can take off at most % (what this bill still has on account)', GREATEST(COALESCE(owed, 0) - taken, 0)
             USING ERRCODE = 'check_violation';
     END IF;
-    IF current_user = 'authenticated' AND NEW.owner_id <> auth.uid() AND NOT public.hangtag_can('collect_credit') THEN
+    -- a team member (signed in, not the shop's owner) needs collect_credit; this runs as the database owner, so the caller is
+    -- told apart by its sign-in, not by current_user
+    IF auth.uid() IS NOT NULL AND NEW.owner_id <> auth.uid() AND NOT public.hangtag_can('collect_credit') THEN
         RAISE EXCEPTION 'Not allowed to change what customers owe.' USING ERRCODE = '42501';
     END IF;
     RETURN NEW;

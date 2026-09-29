@@ -88,7 +88,7 @@ console.log('=== upgrade: existing bills and refunds get payments, transactions 
     JSON.stringify(bb.map((x) => [x.id, x.method, x.entry_type, num(x.amount_in), num(x.amount_out), x.status])) === JSON.stringify([
       ['bb:ft:s2:upi', 'upi', 'receipt', 500, 0, 'posted'], ['bb:ft:s3:card', 'card', 'receipt', 800, 0, 'cancelled'], ['bb:ft:r2', 'upi', 'refund', 0, 100, 'posted']]), bb);
   const rep = (await db.query(`SELECT check_name, value, expected, ok FROM (${NEW.slice(NEW.lastIndexOf('SELECT check_name')).replace(/;\s*$/, '')}) q`)).rows;
-  check('migration report: payments, transactions and books all add up', rep.length === 22 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: payments, transactions and books all add up', rep.length === 27 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   await db.close();
 }
 
@@ -129,7 +129,7 @@ check('saving the same bill again (a retry) duplicates nothing', !r.err && await
 const b2 = bill('b2', [{ q: 1, price: 1000, rate: 0 }], { gst: { mode: 'none' }, pays: [{ method: 'card', amount: 1000, ref: 'APPR123' }] });
 const bad = (payments) => billArgs({ ...b2, payments });
 r = await saveRaw(db, A, [bad([{ id: 'b2:card', method: 'card', amount: 600 }])]);
-check('underpayment is refused and the bill is not saved', /come to 600(\.00)? but 1000 is due/.test(r.err || '') && await n(db, A, 'hangtag_sales', `WHERE id='b2'`) === 0, r.err);
+check('underpayment is refused and the bill is not saved', /come to 600(\.00)? but 1000(\.00)? is due/.test(r.err || '') && await n(db, A, 'hangtag_sales', `WHERE id='b2'`) === 0, r.err);
 r = await saveRaw(db, A, [bad([{ id: 'b2:card', method: 'card', amount: 700 }, { id: 'b2:upi', method: 'upi', amount: 400 }])]);
 check('overpayment is refused', /would come to 1100/.test(r.err || '') && await n(db, A, 'hangtag_sales', `WHERE id='b2'`) === 0, r.err);
 r = await saveRaw(db, A, [bad([{ id: 'b2:cash', method: 'cash', amount: 500 }, { id: 'b2:cash', method: 'cash', amount: 500 }])]);

@@ -25,6 +25,7 @@ export function rowToSale(s, items, payments){
   const sale = { id:s.id, no:s.bill_no||undefined, t:Number(s.timestamp), items:items||[], sub:s.subtotal, disc:numOr0(s.discount), total:s.total,
     tax:numOr0(s.tax_amount), taxRate:s.tax_rate==null?0:+s.tax_rate, taxIncl:s.tax_inclusive!==false, credit:s.credit||0,
     kind:s.kind||"sale", ex:s.exchange_id||null, pay:s.payment_method, dev:s.device_id, void:s.is_void, ...(s.event_id ? { event:s.event_id } : {}), ...(s.is_void && s.void_reason ? { voidReason:s.void_reason } : {}),
+    ...(+s.due_amount > 0 ? { dueAmt:+s.due_amount } : {}), ...(s.order_id ? { order:s.order_id } : {}),
     cust:s.customer_id||s.customer_name?Object.assign({id:s.customer_id||null,name:s.customer_name||"",phone:s.customer_phone||""},
       s.customer_gstin?{gstin:s.customer_gstin}:{}, s.customer_type==="business"?{type:"business"}:{}):null };
   if(s.gst_mode) Object.assign(sale, { itemDisc:numOr0(s.item_discount), billDiscAmt:numOr0(s.bill_discount),
@@ -42,7 +43,9 @@ export function saleRow(s){
     item_discount:itemDisc, bill_discount:s.billDiscAmt!=null ? s.billDiscAmt : round2((s.disc||0)-itemDisc), bill_discount_type:bd?bd.type:null, bill_discount_value:bd?bd.value:null,
     taxable_amount:s.taxable!=null ? s.taxable : round2(s.total-(s.tax||0)-(s.roundOff||0)), cgst_amount:g.cgst, sgst_amount:g.sgst, igst_amount:g.igst,
     round_off:s.roundOff||0, gst_mode:g.mode, place_of_supply:s.gst&&s.gst.pos||null,
-    customer_gstin:s.cust&&s.cust.gstin||null, customer_type:s.cust?(s.cust.type==="business"?"business":"individual"):null, event_id:s.event||null };
+    customer_gstin:s.cust&&s.cust.gstin||null, customer_type:s.cust?(s.cust.type==="business"?"business":"individual"):null, event_id:s.event||null,
+    // the part left on the customer's account, and the quotation / sales order the bill was made from (section 3m)
+    due_amount:+s.dueAmt>0 ? +s.dueAmt : 0, order_id:s.order||null };
 }
 export const saleItemRows = s => (s.items||[]).map((i,k)=>{ const d = normalizeDiscount(i.disc); return { sale_id:s.id, line_no:i.ln!=null?i.ln:k, product_id:i.p, variant_id:i.v||null, product_name:i.n,
   color:i.c||"", size:i.s==null?"":i.s, variant_label:i.vl||null, options:ovToRow(i.ov), sku:i.sku||null, quantity:i.q, unit_price:i.price, cost_price:i.cost==null?null:i.cost,
@@ -152,3 +155,35 @@ export const rowToDevice = d => ({ id:d.id, userId:d.user_id, name:d.name||"", p
 export const rowToRole = r => ({ role:r.role, label:r.label||null, permissions:Array.isArray(r.permissions)?r.permissions.slice():[], updatedAt:r.updated_at||null });
 /* owner_id is filled in by the database (the shop) */
 export const roleRow = ({ role, label, permissions }) => ({ role, label:label||null, permissions:(permissions||[]).slice(), updated_at:new Date().toISOString() });
+
+/* ---------- customer credit, held bills, orders (section 3m) ---------- */
+/* A payment collected from a customer towards what they owe */
+export const collectionRow = c => ({ id:c.id, customer_id:c.cust, amount:c.amount, method:c.method, reference:c.ref||null, verification:c.verification||"recorded",
+  t:c.t, device_id:c.dev||store.dev, note:c.note||null, status:c.status==="cancelled"?"cancelled":"posted" });
+export const rowToCollection = r => Object.assign({ id:r.id, cust:r.customer_id, amount:+r.amount, method:r.method, verification:r.verification||"recorded", t:Number(r.t),
+  dev:r.device_id||"", status:r.status==="cancelled"?"cancelled":"posted" }, r.reference ? { ref:r.reference } : {}, r.note ? { note:r.note } : {}, r.user_id ? { user:r.user_id } : {});
+/* A bill put aside (its cart lines, discount, customer and note travel as they are, in data) */
+export const heldRow = h => ({ id:h.id, name:h.name, data:h.data||{}, device_id:h.dev||store.dev, t:h.t, updated_at:new Date().toISOString() });
+export const rowToHeld = r => Object.assign({ id:r.id, name:r.name||"", data:r.data&&typeof r.data==="object"?r.data:{}, dev:r.device_id||"", t:Number(r.t) }, r.user_id ? { user:r.user_id } : {});
+/* An order (quotation, sales order, table order) with its lines, for RPC hangtag_save_order. version: the version this
+   device last saw in the cloud (0 for a new order) */
+/* a DATE column: "yyyy-mm-dd" (PostgREST sends the text; a Date object is read as the local day) */
+const dateOnly = v => v instanceof Date ? v.getFullYear()+"-"+String(v.getMonth()+1).padStart(2,"0")+"-"+String(v.getDate()).padStart(2,"0") : v ? String(v).slice(0,10) : "";
+const orderCust = c => c ? Object.assign({ id:c.id||null, name:c.name||"", phone:c.phone||"" }, c.gstin ? { gstin:c.gstin } : {}, c.type==="business" ? { type:"business" } : {}) : null;
+export const orderArgs = o => ({
+  p_order: { id:o.id, kind:o.kind, no:o.no||null, status:o.status, customer_id:o.cust&&o.cust.id||null, customer:orderCust(o.cust), bill_disc:normalizeDiscount(o.billDisc)||null,
+    notes:o.notes||null, valid_until:o.validUntil||null, table_id:o.tableId||null, session_id:o.sessionId||null, source:o.source==="customer"?"customer":"staff",
+    converted_to:o.convertedTo||null, sale_ids:(o.saleIds||[]).slice(), version:+o.version||0, t:o.t, updated_t:o.updatedT||o.t, device_id:o.dev||store.dev },
+  p_items: (o.items||[]).map((l,k) => { const d = normalizeDiscount(l.disc); return { line_no:l.ln!=null?l.ln:k, product_id:l.p||null, variant_id:l.v||null, name:l.name,
+    variant_label:l.vl||null, qty:+l.q, price:+l.price||0, disc:d||null, gst_rate:l.gst==null||l.gst===""?null:+l.gst, note:l.note||null, fulfilled_qty:+l.fq||0,
+    serials:Array.isArray(l.serials)&&l.serials.length?l.serials.slice():null }; }),
+});
+export const rowToOrderItem = i => Object.assign({ ln:i.line_no, p:i.product_id||null, v:i.variant_id||null, name:i.name, vl:i.variant_label||"", q:+i.qty, price:+i.price,
+  gst:i.gst_rate==null?null:+i.gst_rate, fq:+i.fulfilled_qty||0 }, i.disc&&normalizeDiscount(i.disc) ? { disc:normalizeDiscount(i.disc) } : {}, i.note ? { note:i.note } : {},
+  Array.isArray(i.serials)&&i.serials.length ? { serials:i.serials.slice() } : {});
+export const rowToOrder = (r, items) => Object.assign({ id:r.id, kind:r.kind, no:r.no||"", status:r.status, cust:r.customer&&typeof r.customer==="object"&&r.customer.name
+    ? orderCust(r.customer) : r.customer_id ? { id:r.customer_id, name:"", phone:"" } : null,
+  billDisc:normalizeDiscount(r.bill_disc)||null, notes:r.notes||"", validUntil:dateOnly(r.valid_until), source:r.source||"staff",
+  convertedTo:r.converted_to||null, saleIds:Array.isArray(r.sale_ids)?r.sale_ids.slice():[], version:+r.version||1, t:Number(r.t), updatedT:Number(r.updated_t||r.t),
+  dev:r.device_id||"", items:(items||[]).slice().sort((a,b)=>a.ln-b.ln) },
+  r.table_id ? { tableId:r.table_id } : {}, r.session_id ? { sessionId:r.session_id } : {}, r.user_id ? { user:r.user_id } : {});

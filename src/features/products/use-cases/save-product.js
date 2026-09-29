@@ -11,8 +11,9 @@ import { uid } from '../../../shared/utils/ids.js';
 import { okColor } from '../../../shared/utils/colors.js';
 import { UPLOAD_PERMISSIONS } from '../../../domain/sync/queue-rules.js';
 import { canAny, denied, notAllowedText } from '../../shop/services/access.js';
+import { decimalsOf, roundQty, unitId } from '../../../domain/catalog/units.js';
 
-/* draft: the editor state { id, name, cat, brand, desc, price, cost, color, archived, hsn, gst, hasOpts, opts, cells, codesOn, code, img }
+/* draft: the editor state { id, name, cat, brand, desc, price, cost, color, archived, hsn, gst, unit, hasOpts, opts, cells, codesOn, code, img }
    (opts/cells as in domain/catalog/options.js). Every current combination is saved as a variant (off sale when unticked);
    a saved variant that is no longer a combination is kept, off sale and with its stock zeroed, when it has stock history
    or sales, and deleted otherwise. Returns { error } (nothing saved) or { created, name, activeCount, variantCount, ids }
@@ -26,13 +27,14 @@ export function saveProduct({ draft }){
   const ok=validateProductDraft(e,combos,kept,takenCodes(repo.list(),e.id,variantsOf));
   if(ok.error)return {error:ok.error};
   const {name,price,cost,hsn,gst}=ok;
-  const old=repo.get(e.id), t=Date.now();
+  // the unit it is sold in: stock counts keep its decimals (12.5 kg), whole numbers for pieces
+  const old=repo.get(e.id), t=Date.now(), unit=unitId(e.unit), dp=decimalsOf(unit);
   const variants=[], newMoves=[], delV=[], ids={};
   const fields=cell=>({sku:String(cell.sku||"").trim(),bc:cleanCode(cell.bc),price:numOrNull(cell.price),cost:numOrNull(cell.cost)});
   combos.forEach(({o,key,cell})=>{
     const id=cell.id||("v"+uid());ids[key]=id;
     variants.push({id,o:o.slice(),...fields(cell),active:cell.active!==false});
-    const want=cell.stock===""||cell.stock==null?0:Math.round(+cell.stock), cur=cell.exists?stockOf(id):0, dq=want-cur;
+    const want=cell.stock===""||cell.stock==null?0:roundQty(+cell.stock,dp), cur=cell.exists?stockOf(id):0, dq=roundQty(want-cur);
     if(dq) newMoves.push({id:(cell.exists?"m":"open:")+(cell.exists?uid():id),v:id,p:e.id,type:cell.exists?"ADJUST":"OPENING",q:dq,cost:null,note:cell.exists?"Changed in the product editor":"Opening stock",t,dev:store.dev});
   });
   removed.forEach(({cell})=>{
@@ -45,7 +47,7 @@ export function saveProduct({ draft }){
   if(newMoves.length&&!canAny(UPLOAD_PERMISSIONS.move)) return {error:notAllowedText("set stock")+" Leave the stock numbers as they are."};
   const opts=e.hasOpts?e.opts.map(op=>({n:cleanOptionName(op.n),v:op.v.slice()})):[];
   const product={id:e.id,name,cat:String(e.cat||"").trim(),brand:String(e.brand||"").trim(),desc:String(e.desc||"").trim(),price,cost,color:okColor(e.color),archived:!!e.archived,
-    hsn,gst,code:e.codesOn?(e.code==="qr"?"qr":"barcode"):"",opts,variants};
+    hsn,gst,code:e.codesOn?(e.code==="qr"?"qr":"barcode"):"",opts,variants,...(unit!=="pcs"?{unit}:{})};
   repo.save({product,isNew:!old,renamed:!!old&&old.name!==name,newMoves,deletedVariantIds:delV,image:e.img});
   const active=variants.filter(v=>v.active);
   return {created:!old,name,activeCount:active.length,variantCount:variants.length,ids};

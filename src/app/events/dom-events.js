@@ -257,6 +257,7 @@ export function installDomEvents(){
     if(store.editor){
       const tg=t.dataset.edtoggle;if(tg){if(tg==="hasOpts")edToggleOptions(t.checked);else{store.editor.codesOn=t.checked;edFocusKeep(renderEditor)}return}
       if(t.matches("[data-edcode]")){store.editor.code=t.value==="qr"?"qr":"barcode";renderEditor();return}
+      if(t.id==="edUnit"){store.editor.unit=t.value;edFocusKeep(renderEditor);return}
       if(t.dataset.edf==="active"){const c=store.editor.cells[t.dataset.k];if(c){c.active=t.checked;const tr=t.closest("tr");if(tr)tr.classList.toggle("off",!t.checked)}return}
       if(t.matches("[data-edsel]")){store.editor.sel[t.dataset.edsel]=t.checked;edFocusKeep(renderEditor);return}
       if(t.matches("[data-edselall]")){edCombos().forEach(x=>{store.editor.sel[x.key]=t.checked});renderEditor();return}

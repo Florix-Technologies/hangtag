@@ -1,6 +1,7 @@
 // Product rules checked before a product is saved (the database repeats the ones that must always hold).
 import { checkOptions, vLabel } from './options.js';
 import { codeError } from './barcode.js';
+import { decimalsOf, roundQty } from './units.js';
 
 /* Product names: trimmed, single spaces */
 export const cleanProductName=s=>String(s||"").trim().replace(/\s+/g," ");
@@ -44,7 +45,7 @@ export function validateProductDraft(draft,combos,kept,taken){
     const lab=(x.o||[]).join(" / ")||name;
     const m=claim(x,lab);if(m)return {error:m};
     const ce=codeError(x.cell.bc);if(ce)return {error:`${lab}: ${ce}`};
-    const st=x.cell.stock===""||x.cell.stock==null?0:Math.round(+x.cell.stock);if(isNaN(st)||st<0)return {error:`Stock for ${lab} can't be negative.`};
+    const st=x.cell.stock===""||x.cell.stock==null?0:roundQty(+x.cell.stock,decimalsOf(e.unit));if(isNaN(+x.cell.stock)||st<0)return {error:`Stock for ${lab} can't be negative.`};
     for(const f of ["price","cost"]){const v=x.cell[f];if(v!==""&&v!=null&&(isNaN(+v)||+v<0))return {error:`${f==="price"?"Price":"Cost"} for ${lab} can't be negative.`}}
   }
   return {name,price,cost,hsn,gst};

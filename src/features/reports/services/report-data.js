@@ -6,6 +6,7 @@ import { returnLineMoney, saleLineMoney, salesSummary } from '../../../domain/re
 import { D } from '../../inventory/services/ledger.js';
 import { esc } from '../../../shared/dom.js';
 import { addDays, dayKey, dayLab, dayLong, daysBetween, hourLab, pad, parseDay } from '../../../shared/formatting/dates.js';
+import { roundQty } from '../../../domain/catalog/units.js';
 
 /* ================= report ================= */
 
@@ -75,4 +76,4 @@ export function timeSeries(live,rets,R){
   while(y<ey||(y===ey&&m<=em)){const k=y+"-"+pad(m),o=by[k]||{v:0,n:0,p:0},d=new Date(y,m-1,1);rows.push({short:d.toLocaleDateString("en-IN",{month:"short"}),label:d.toLocaleDateString("en-IN",{month:"long",year:"numeric"}),v:o.v,n:o.n,p:o.p});m++;if(m>12){m=1;y++}}
   return {title:"Sales by month",unit:"Month",rows,labelW:30};
 }
-export function byProduct(lines){const m={};lines.forEach(l=>{const o=m[l.pid]||(m[l.pid]={id:l.pid,n:l.name,q:0,a:0});o.q+=l.q;o.a+=l.amt});return m}
+export function byProduct(lines){const m={};lines.forEach(l=>{const o=m[l.pid]||(m[l.pid]={id:l.pid,n:l.name,q:0,a:0});o.q=roundQty(o.q+l.q);o.a+=l.amt});return m}

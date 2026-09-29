@@ -1933,8 +1933,229 @@ END $$;
 
 -- ------------------------------------------------------------------------------
 -- 3k. Units, decimal quantities, device-scoped numbers, weighing (T1)
+--   A product is sold in a unit: pcs, box, pack, dozen, kg, g, l, ml or m. Quantities on bill lines, return lines, stock
+--   records and supplier bills keep up to 3 decimals (2.5 kg sold, 0.75 kg back), so a bill's subtotal can have paise.
+--   Bill and return lines keep the unit they were sold in (the product's, when the phone didn't send it).
+--   Bill numbers are made per device: {prefix}{yymmdd}-{device code}{running number}, so two phones selling offline never
+--   make the same one. A number another bill of the shop already has is refused (credit notes likewise), for a new bill or
+--   a changed number only: numbers saved before stay as they are, even the same twice. The phone shows the refusal in its
+--   sync review.
+--   Who made a bill, return, stock record or cash entry: user_id, always the signed-in account (the database sets it).
 -- ------------------------------------------------------------------------------
--- (reserved: this batch's SQL goes here)
+-- Quantities with decimals (and a subtotal with paise: 2.5 kg × ₹43 = ₹107.50). Changed once; a second run finds them done.
+DO $$
+DECLARE c RECORD;
+BEGIN
+    FOR c IN SELECT * FROM (VALUES ('hangtag_sale_items', 'quantity', 'NUMERIC(12,3)', 3), ('hangtag_return_items', 'quantity', 'NUMERIC(12,3)', 3),
+        ('hangtag_stock_moves', 'qty', 'NUMERIC(12,3)', 3), ('hangtag_stock_imports', 'units', 'NUMERIC(12,3)', 3), ('hangtag_sales', 'subtotal', 'NUMERIC(12,2)', 2)) AS x(t, col, ty, sc)
+    LOOP
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = c.t AND column_name = c.col
+                         AND data_type = 'numeric' AND numeric_scale = c.sc) THEN
+            EXECUTE format('ALTER TABLE public.%I ALTER COLUMN %I TYPE %s', c.t, c.col, c.ty);
+        END IF;
+    END LOOP;
+END $$;
+ALTER TABLE public.hangtag_sale_items DROP CONSTRAINT IF EXISTS hangtag_sale_items_quantity_check;
+ALTER TABLE public.hangtag_sale_items ADD CONSTRAINT hangtag_sale_items_quantity_check CHECK (quantity > 0) NOT VALID;
+-- a line's discounts never take off more than the line (q × price, to the paisa: 0.333 kg × ₹43 = ₹14.32)
+ALTER TABLE public.hangtag_sale_items DROP CONSTRAINT IF EXISTS hangtag_sale_items_money_check;
+ALTER TABLE public.hangtag_sale_items ADD CONSTRAINT hangtag_sale_items_money_check CHECK (discount_amount >= 0 AND bill_discount_share >= 0
+    AND discount_amount + bill_discount_share <= round(quantity * unit_price, 2) AND cgst_amount >= 0 AND sgst_amount >= 0 AND igst_amount >= 0
+    AND (gst_rate IS NULL OR gst_rate BETWEEN 0 AND 100)) NOT VALID;
+
+-- The unit a product is sold in (every product saved before is sold by the piece)
+ALTER TABLE public.hangtag_products ADD COLUMN IF NOT EXISTS unit TEXT NOT NULL DEFAULT 'pcs';
+UPDATE public.hangtag_products SET unit = 'pcs' WHERE unit IS NULL;
+ALTER TABLE public.hangtag_products ALTER COLUMN unit SET DEFAULT 'pcs', ALTER COLUMN unit SET NOT NULL;
+ALTER TABLE public.hangtag_products DROP CONSTRAINT IF EXISTS hangtag_products_unit_check;
+ALTER TABLE public.hangtag_products ADD CONSTRAINT hangtag_products_unit_check CHECK (unit IN ('pcs','box','pack','dozen','kg','g','l','ml','m'));
+-- Bill and return lines: the unit as sold (empty on lines saved before: pieces)
+ALTER TABLE public.hangtag_sale_items ADD COLUMN IF NOT EXISTS unit TEXT;
+ALTER TABLE public.hangtag_return_items ADD COLUMN IF NOT EXISTS unit TEXT;
+ALTER TABLE public.hangtag_sale_items DROP CONSTRAINT IF EXISTS hangtag_sale_items_unit_check;
+ALTER TABLE public.hangtag_sale_items ADD CONSTRAINT hangtag_sale_items_unit_check CHECK (unit IS NULL OR unit IN ('pcs','box','pack','dozen','kg','g','l','ml','m')) NOT VALID;
+ALTER TABLE public.hangtag_return_items DROP CONSTRAINT IF EXISTS hangtag_return_items_unit_check;
+ALTER TABLE public.hangtag_return_items ADD CONSTRAINT hangtag_return_items_unit_check CHECK (unit IS NULL OR unit IN ('pcs','box','pack','dozen','kg','g','l','ml','m')) NOT VALID;
+-- A new line without its unit gets the one it was sold in: a return line its bill line's, else the product's
+CREATE OR REPLACE FUNCTION public.hangtag_line_unit()
+RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
+BEGIN
+    IF NEW.unit IS NULL AND TG_TABLE_NAME = 'hangtag_return_items' THEN
+        SELECT i.unit INTO NEW.unit FROM public.hangtag_sale_items i WHERE i.owner_id = NEW.owner_id AND i.sale_id = NEW.sale_id AND i.line_no = NEW.sale_line_no;
+    END IF;
+    IF NEW.unit IS NULL THEN
+        SELECT p.unit INTO NEW.unit FROM public.hangtag_products p WHERE p.owner_id = NEW.owner_id AND p.id = NEW.product_id;
+    END IF;
+    NEW.unit := COALESCE(NEW.unit, 'pcs');
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_line_unit ON public.hangtag_sale_items;
+CREATE TRIGGER hangtag_line_unit BEFORE INSERT ON public.hangtag_sale_items FOR EACH ROW EXECUTE FUNCTION public.hangtag_line_unit();
+DROP TRIGGER IF EXISTS hangtag_line_unit ON public.hangtag_return_items;
+CREATE TRIGGER hangtag_line_unit BEFORE INSERT ON public.hangtag_return_items FOR EACH ROW EXECUTE FUNCTION public.hangtag_line_unit();
+
+-- Never more of a bill line back than was bought, now in any unit (0.75 kg of 2.5 kg)
+CREATE OR REPLACE FUNCTION public.hangtag_check_return_qty()
+RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path = ''
+AS $$
+DECLARE
+    bought NUMERIC;
+    already NUMERIC;
+    what TEXT := CASE WHEN COALESCE(NEW.unit, 'pcs') = 'pcs' THEN 'piece(s)' ELSE NEW.unit END;
+BEGIN
+    SELECT quantity INTO bought FROM public.hangtag_sale_items
+     WHERE owner_id = NEW.owner_id AND sale_id = NEW.sale_id AND line_no = NEW.sale_line_no;
+    IF bought IS NULL THEN
+        RAISE EXCEPTION 'Bill line % of bill % was not found', NEW.sale_line_no, NEW.sale_id USING ERRCODE = 'foreign_key_violation';
+    END IF;
+    SELECT COALESCE(SUM(quantity), 0) INTO already FROM public.hangtag_return_items
+     WHERE owner_id = NEW.owner_id AND sale_id = NEW.sale_id AND sale_line_no = NEW.sale_line_no
+       AND NOT (return_id = NEW.return_id AND line_no = NEW.line_no);
+    IF already + NEW.quantity > bought THEN
+        RAISE EXCEPTION 'Can''t return % %: % bought, % already returned', trim_scale(NEW.quantity), what, trim_scale(bought), trim_scale(already)
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+-- Supplier bills (section 3c) with quantities in any unit: 12.5 kg in
+CREATE OR REPLACE FUNCTION public.hangtag_import_stock(p_import JSONB, p_products JSONB, p_variants JSONB, p_moves JSONB, p_allow_duplicate BOOLEAN DEFAULT FALSE)
+RETURNS JSONB LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+DECLARE
+    uid UUID := public.hangtag_shop_id(); imp TEXT := p_import ->> 'id'; d RECORD; r JSONB;
+    n_p INT := 0; n_v INT := 0; n_m INT := 0; n_units NUMERIC := 0; q NUMERIC;
+    inv TEXT := lower(btrim(COALESCE(p_import ->> 'invoice_no', '')));
+    gst TEXT := lower(btrim(COALESCE(p_import ->> 'supplier_gstin', '')));
+    sup TEXT := lower(btrim(COALESCE(p_import ->> 'supplier_name', '')));
+BEGIN
+    IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Sign in to add stock.' USING ERRCODE = '42501'; END IF;
+    IF uid IS NULL OR NOT public.hangtag_can('create_purchase') THEN RAISE EXCEPTION 'Not allowed to add stock from supplier bills.' USING ERRCODE = '42501'; END IF;
+    IF COALESCE(imp, '') = '' THEN RAISE EXCEPTION 'The import has no id.' USING ERRCODE = '22023'; END IF;
+    IF EXISTS (SELECT 1 FROM public.hangtag_stock_imports WHERE owner_id = uid AND id = imp) THEN
+        RETURN jsonb_build_object('status', 'already_imported', 'import_id', imp);
+    END IF;
+    IF NOT COALESCE(p_allow_duplicate, FALSE) THEN
+        SELECT id, created_at, invoice_no, supplier_name INTO d FROM public.hangtag_stock_imports
+        WHERE owner_id = uid AND COALESCE(file_hash, '') <> '' AND file_hash = p_import ->> 'file_hash' ORDER BY created_at LIMIT 1;
+        IF FOUND THEN
+            RAISE EXCEPTION 'HANGTAG_DUPLICATE_FILE' USING DETAIL = jsonb_build_object('id', d.id, 'created_at', d.created_at, 'invoice_no', d.invoice_no, 'supplier_name', d.supplier_name)::text;
+        END IF;
+        IF inv <> '' THEN
+            SELECT id, created_at, invoice_no, supplier_name INTO d FROM public.hangtag_stock_imports i
+            WHERE i.owner_id = uid AND lower(btrim(COALESCE(i.invoice_no, ''))) = inv
+              AND CASE WHEN gst <> '' AND btrim(COALESCE(i.supplier_gstin, '')) <> '' THEN lower(btrim(i.supplier_gstin)) = gst
+                       ELSE lower(btrim(COALESCE(i.supplier_name, ''))) = sup END
+            ORDER BY created_at LIMIT 1;
+            IF FOUND THEN
+                RAISE EXCEPTION 'HANGTAG_DUPLICATE_INVOICE' USING DETAIL = jsonb_build_object('id', d.id, 'created_at', d.created_at, 'invoice_no', d.invoice_no, 'supplier_name', d.supplier_name)::text;
+            END IF;
+        END IF;
+    END IF;
+    FOR r IN SELECT * FROM jsonb_array_elements(COALESCE(p_products, '[]'::jsonb)) LOOP
+        IF r ->> 'mode' = 'update_options' THEN
+            UPDATE public.hangtag_products SET options = r -> 'options', updated_at = NOW() WHERE owner_id = uid AND id = r ->> 'id';
+            IF NOT FOUND THEN RAISE EXCEPTION 'A product on this bill no longer exists. Check the bill again.' USING ERRCODE = '23503'; END IF;
+        ELSE
+            INSERT INTO public.hangtag_products (id, name, price, color, sort_order, category, brand, description, cost_price, archived, options, hsn, gst_rate, code_type, unit)
+            VALUES (r ->> 'id', r ->> 'name', COALESCE((r ->> 'price')::INTEGER, 0), COALESCE(r ->> 'color', '#8E8A83'), COALESCE((r ->> 'sort_order')::INTEGER, 0),
+                    NULLIF(r ->> 'category', ''), NULLIF(r ->> 'brand', ''), NULLIF(r ->> 'description', ''), (r ->> 'cost_price')::INTEGER, FALSE,
+                    COALESCE(r -> 'options', '{}'::jsonb), NULLIF(r ->> 'hsn', ''), (r ->> 'gst_rate')::NUMERIC, NULLIF(r ->> 'code_type', ''), COALESCE(NULLIF(r ->> 'unit', ''), 'pcs'));
+        END IF;
+        n_p := n_p + 1;
+    END LOOP;
+    FOR r IN SELECT * FROM jsonb_array_elements(COALESCE(p_variants, '[]'::jsonb)) LOOP
+        INSERT INTO public.hangtag_variants (id, product_id, option_values, color, size, sku, barcode, price, cost_price, active, sort_order)
+        VALUES (r ->> 'id', r ->> 'product_id', COALESCE(r -> 'option_values', '[]'::jsonb), COALESCE(r ->> 'color', ''), COALESCE(r ->> 'size', ''),
+                NULLIF(r ->> 'sku', ''), NULLIF(r ->> 'barcode', ''), (r ->> 'price')::INTEGER, (r ->> 'cost_price')::INTEGER,
+                COALESCE((r ->> 'active')::BOOLEAN, TRUE), COALESCE((r ->> 'sort_order')::INTEGER, 0));
+        n_v := n_v + 1;
+    END LOOP;
+    FOR r IN SELECT * FROM jsonb_array_elements(COALESCE(p_moves, '[]'::jsonb)) LOOP
+        q := round(COALESCE((r ->> 'qty')::NUMERIC, 0), 3);
+        IF q <= 0 THEN RAISE EXCEPTION 'Every line needs a quantity above 0.' USING ERRCODE = '23514'; END IF;
+        INSERT INTO public.hangtag_stock_moves (id, variant_id, product_id, type, qty, cost_price, note, t, device_id, import_id)
+        VALUES (r ->> 'id', r ->> 'variant_id', r ->> 'product_id', 'RESTOCK', q, (r ->> 'cost_price')::INTEGER,
+                LEFT(r ->> 'note', 200), COALESCE((r ->> 't')::BIGINT, (extract(epoch FROM now()) * 1000)::BIGINT), r ->> 'device_id', imp);
+        n_m := n_m + 1; n_units := n_units + q;
+    END LOOP;
+    INSERT INTO public.hangtag_stock_imports (id, file_hash, file_name, file_type, supplier_name, supplier_gstin, invoice_no, invoice_date,
+                                              line_count, units, amount, lines, extraction, device_id)
+    VALUES (imp, NULLIF(p_import ->> 'file_hash', ''), p_import ->> 'file_name', p_import ->> 'file_type', NULLIF(p_import ->> 'supplier_name', ''),
+            NULLIF(p_import ->> 'supplier_gstin', ''), NULLIF(p_import ->> 'invoice_no', ''), NULLIF(p_import ->> 'invoice_date', '')::DATE,
+            COALESCE((p_import ->> 'line_count')::INTEGER, 0), n_units, (p_import ->> 'amount')::NUMERIC,
+            COALESCE(p_import -> 'lines', '[]'::jsonb), p_import -> 'extraction', p_import ->> 'device_id');
+    RETURN jsonb_build_object('status', 'imported', 'import_id', imp, 'products', n_p, 'variants', n_v, 'moves', n_m, 'units', n_units);
+END $$;
+REVOKE ALL ON FUNCTION public.hangtag_import_stock(JSONB, JSONB, JSONB, JSONB, BOOLEAN) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.hangtag_import_stock(JSONB, JSONB, JSONB, JSONB, BOOLEAN) TO authenticated;
+
+-- A bill number (or credit note number) is used once in a shop: a new bill, or a bill given another number, can't take one
+-- another bill already has. The same bill saved again keeps its number, so an upload sent twice (and two bills that got the
+-- same number before this rule) are left alone. Runs with the caller's rights: it looks only at the caller's own shop.
+CREATE INDEX IF NOT EXISTS idx_hangtag_sales_bill_no ON public.hangtag_sales (owner_id, bill_no) WHERE bill_no IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_hangtag_returns_credit_no ON public.hangtag_returns (owner_id, credit_no) WHERE credit_no IS NOT NULL;
+CREATE OR REPLACE FUNCTION public.hangtag_doc_no_check()
+RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
+DECLARE
+    no TEXT;
+    before TEXT;
+    taken BOOLEAN;
+BEGIN
+    IF TG_TABLE_NAME = 'hangtag_sales' THEN
+        no := NEW.bill_no;
+        IF COALESCE(btrim(no), '') = '' THEN RETURN NEW; END IF;
+        IF TG_OP = 'UPDATE' THEN before := OLD.bill_no;
+        ELSE SELECT s.bill_no INTO before FROM public.hangtag_sales s WHERE s.owner_id = NEW.owner_id AND s.id = NEW.id; END IF;
+        IF before IS NOT DISTINCT FROM no THEN RETURN NEW; END IF;
+        SELECT EXISTS (SELECT 1 FROM public.hangtag_sales s WHERE s.owner_id = NEW.owner_id AND s.bill_no = no AND s.id <> NEW.id) INTO taken;
+        IF taken THEN
+            RAISE EXCEPTION 'Bill number % is already used by another bill of this shop.', no USING ERRCODE = 'unique_violation';
+        END IF;
+    ELSE
+        no := NEW.credit_no;
+        IF COALESCE(btrim(no), '') = '' THEN RETURN NEW; END IF;
+        IF TG_OP = 'UPDATE' THEN before := OLD.credit_no;
+        ELSE SELECT r.credit_no INTO before FROM public.hangtag_returns r WHERE r.owner_id = NEW.owner_id AND r.id = NEW.id; END IF;
+        IF before IS NOT DISTINCT FROM no THEN RETURN NEW; END IF;
+        SELECT EXISTS (SELECT 1 FROM public.hangtag_returns r WHERE r.owner_id = NEW.owner_id AND r.credit_no = no AND r.id <> NEW.id) INTO taken;
+        IF taken THEN
+            RAISE EXCEPTION 'Credit note number % is already used by another return of this shop.', no USING ERRCODE = 'unique_violation';
+        END IF;
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_doc_no_check ON public.hangtag_sales;
+CREATE TRIGGER hangtag_doc_no_check BEFORE INSERT OR UPDATE OF bill_no ON public.hangtag_sales FOR EACH ROW EXECUTE FUNCTION public.hangtag_doc_no_check();
+DROP TRIGGER IF EXISTS hangtag_doc_no_check ON public.hangtag_returns;
+CREATE TRIGGER hangtag_doc_no_check BEFORE INSERT OR UPDATE OF credit_no ON public.hangtag_returns FOR EACH ROW EXECUTE FUNCTION public.hangtag_doc_no_check();
+
+-- Who made it: the signed-in account (the app shows it; what a phone sends is never trusted). Rows saved before: unknown.
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS user_id UUID;
+ALTER TABLE public.hangtag_returns ADD COLUMN IF NOT EXISTS user_id UUID;
+ALTER TABLE public.hangtag_stock_moves ADD COLUMN IF NOT EXISTS user_id UUID;
+ALTER TABLE public.hangtag_cash_moves ADD COLUMN IF NOT EXISTS user_id UUID;
+CREATE OR REPLACE FUNCTION public.hangtag_by_user()
+RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
+BEGIN
+    -- the app's requests (a signed-in account): the account adding the row; a change keeps who made it. The Edge Functions
+    -- (service role) and the database's own functions keep what they set.
+    IF current_user = 'authenticated' THEN
+        IF TG_OP = 'INSERT' THEN NEW.user_id := auth.uid(); ELSE NEW.user_id := OLD.user_id; END IF;
+    END IF;
+    RETURN NEW;
+END $$;
+DO $$
+DECLARE t TEXT;
+BEGIN
+    FOREACH t IN ARRAY ARRAY['hangtag_sales','hangtag_returns','hangtag_stock_moves','hangtag_cash_moves'] LOOP
+        EXECUTE format('ALTER TABLE public.%I ALTER COLUMN user_id SET DEFAULT auth.uid()', t);
+        EXECUTE format('DROP TRIGGER IF EXISTS hangtag_by_user ON public.%I', t);
+        EXECUTE format('CREATE TRIGGER hangtag_by_user BEFORE INSERT OR UPDATE ON public.%I FOR EACH ROW EXECUTE FUNCTION public.hangtag_by_user()', t);
+    END LOOP;
+END $$;
+REVOKE ALL ON FUNCTION public.hangtag_line_unit(), public.hangtag_doc_no_check(), public.hangtag_by_user() FROM PUBLIC, anon, authenticated;
 
 -- ------------------------------------------------------------------------------
 -- 3l. Suppliers, purchases, bulk import, stock count (T2)
@@ -2253,4 +2474,28 @@ SELECT check_name, value, expected, value = expected AS ok FROM (
     SELECT 22, 'Devices that belong to a team member of their shop',
            (SELECT count(*) FROM public.hangtag_devices d JOIN public.hangtag_members m ON m.user_id = d.user_id AND m.shop_id = d.owner_id)::bigint,
            (SELECT count(*) FROM public.hangtag_devices)::bigint
+    UNION ALL
+    SELECT 35, 'Quantity columns that keep 3 decimals (bill lines, return lines, stock records)',
+           (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND data_type = 'numeric' AND numeric_scale = 3
+              AND (table_name, column_name) IN (('hangtag_sale_items','quantity'), ('hangtag_return_items','quantity'), ('hangtag_stock_moves','qty')))::bigint,
+           3::bigint
+    UNION ALL
+    SELECT 36, 'Products sold in a known unit',
+           (SELECT count(*) FROM public.hangtag_products p WHERE p.unit IN ('pcs','box','pack','dozen','kg','g','l','ml','m'))::bigint,
+           (SELECT count(*) FROM public.hangtag_products)::bigint
+    UNION ALL
+    SELECT 37, 'Device-numbered bills whose number no other bill of the shop has',
+           (SELECT count(*) FROM public.hangtag_sales s WHERE s.bill_no ~ '[0-9]{6}-[0-9A-Z]{3}[0-9]{3,}$'
+              AND NOT EXISTS (SELECT 1 FROM public.hangtag_sales x WHERE x.owner_id = s.owner_id AND x.bill_no = s.bill_no AND x.id <> s.id))::bigint,
+           (SELECT count(*) FROM public.hangtag_sales s WHERE s.bill_no ~ '[0-9]{6}-[0-9A-Z]{3}[0-9]{3,}$')::bigint
+    UNION ALL
+    SELECT 38, 'Device-numbered credit notes whose number no other return of the shop has',
+           (SELECT count(*) FROM public.hangtag_returns r WHERE r.credit_no ~ '[0-9]{6}-[0-9A-Z]{3}[0-9]{3,}$'
+              AND NOT EXISTS (SELECT 1 FROM public.hangtag_returns x WHERE x.owner_id = r.owner_id AND x.credit_no = r.credit_no AND x.id <> r.id))::bigint,
+           (SELECT count(*) FROM public.hangtag_returns r WHERE r.credit_no ~ '[0-9]{6}-[0-9A-Z]{3}[0-9]{3,}$')::bigint
+    UNION ALL
+    SELECT 39, 'Bills, returns, stock records and cash entries that note who made them (user_id set by the database)',
+           (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND column_name = 'user_id' AND column_default LIKE '%auth.uid()%'
+              AND table_name IN ('hangtag_sales','hangtag_returns','hangtag_stock_moves','hangtag_cash_moves'))::bigint,
+           4::bigint
 ) r ORDER BY n;

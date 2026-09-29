@@ -91,7 +91,7 @@ await db.exec(NEW); await db.exec(NEW);
 console.log('=== the schema runs twice; the report has the team rows ===');
 {
   const rep = await report(db);
-  check('migration report: 22 rows, all ok on an empty database', rep.length === 22 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: 27 rows, all ok on an empty database', rep.length === 27 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   const pols = (await db.query(`SELECT count(*)::int n FROM pg_policies WHERE schemaname = 'public' AND policyname = 'Own rows only'`)).rows[0].n;
   check('no table keeps the old "Own rows only" rule', pols === 0, pols);
   const noRls = (await db.query(`SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE 'hangtag_%' AND NOT c.relrowsecurity`)).rows;
@@ -461,7 +461,7 @@ console.log('=== bills, returns and stock records are history: a member adds the
   check('…and may send it again unchanged (a retry)', !r.err, r);
   r = await tryAs(db, CA, `UPDATE public.hangtag_stock_moves SET qty = 5 WHERE id = 'open:p1:M'`);
   const r7 = await tryAs(db, CA, `DELETE FROM public.hangtag_stock_moves WHERE id = 'open:p1:M' RETURNING id`);
-  check('…but can\'t change or remove the owner\'s opening stock (no stock adjustments)', /can change saved stock records/.test(r.err || '') && !r7.err && r7.r.rows.length === 0 && (await open()).qty === 20, { r, r7 });
+  check('…but can\'t change or remove the owner\'s opening stock (no stock adjustments)', /can change saved stock records/.test(r.err || '') && !r7.err && r7.r.rows.length === 0 && +(await open()).qty === 20, { r, r7 });
   const before = await count(db, A, 'hangtag_audit_log');
   r = await tryAs(db, MA, `UPDATE public.hangtag_stock_moves SET qty = 19 WHERE id = 'open:p1:M' RETURNING id`);
   const ch = await one(db, A, `SELECT user_id::text AS u, action, summary FROM public.hangtag_audit_log WHERE entity = 'stock_moves' AND entity_id = 'open:p1:M' ORDER BY id DESC LIMIT 1`);
@@ -558,7 +558,7 @@ console.log('=== accounts removed ===');
 console.log('=== report after use ===');
 {
   let rep = await report(db);
-  check('migration report: every row ok with a team, devices and audit rows present', rep.length === 22 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: every row ok with a team, devices and audit rows present', rep.length === 27 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   await db.query(`INSERT INTO public.hangtag_products (owner_id, id, name) VALUES ($1, 'stray', 'Stray')`, [CA.id]);
   rep = await report(db);
   check('the report spots a member that runs a shop of its own', rep.find((r) => /no shop of their own/.test(r.check_name)).ok === false);
@@ -589,7 +589,7 @@ console.log('=== upgrade from the schema on the live database today (fixtures/le
   r = !r.err && o.o === A ? await tryAs(up, A, `UPDATE public.hangtag_products SET archived = TRUE WHERE id = 'p1' RETURNING id`) : r;
   check('…and keeps saving bills and changing products (owner_id still the owner)', !r.err && r.r.rows.length === 1, r);
   const rep = await report(up);
-  check('the report is all ok after the upgrade', rep.length === 22 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
+  check('the report is all ok after the upgrade', rep.length === 27 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');

@@ -7,6 +7,8 @@
 // same figures as a structured JSON dataset. Hangtag prepares data for filing; it never files returns. Pure.
 import { DISCLAIMER } from './gst-report.js';
 import { toPaise, toRupees } from '../sales/paise.js';
+import { splitDeviceNo } from '../sales/sale.js';
+import { roundQty } from '../catalog/units.js';
 
 export const DEFAULT_B2CL_LIMIT=100000;
 const R=toRupees, K=["taxable","cgst","sgst","igst"];
@@ -31,8 +33,10 @@ const outP=o=>{const r={...o};K.forEach(k=>{r[k]=R(o[k])});r.tax=R(o.cgst+o.sgst
 const interState=d=>d.mode==="inter"||toPaise(d.igst)!==0;
 const numOrder=(a,b)=>String(a).localeCompare(String(b),"en",{numeric:true});
 
-/* Numbers like "INV-250925-004": the series is everything before the last "-", the number after it */
+/* Numbers like "INV-250925-004": the series is everything before the last "-", the number after it. A device's numbers
+   ("INV-260929-K3F004") are a series of their own per device code */
 export function splitDocNo(no){
+  const dv=splitDeviceNo(no); if(dv) return dv;
   const m=/^(.*?)(\d+)$/.exec(String(no||""));
   return m?{series:m[1].replace(/-$/,""),n:+m[2]}:{series:String(no||""),n:null};
 }
@@ -76,14 +80,14 @@ export function filingSections(G,{b2clLimit=DEFAULT_B2CL_LIMIT,lastExport=null}=
     if(!d.b2b&&!large(d)) d.lines.forEach(l=>acc(cs,d.pos+"|"+l.rate+"|"+(interState(d)?"INTER":"INTRA"),{pos:d.pos,posName:d.posName,rate:l.rate,supply:interState(d)?"INTER":"INTRA"},l));
     d.lines.forEach(l=>{
       if(!l.rate){const k=(interState(d)?"INTER":"INTRA")+(d.b2b?"B2B":"B2C");const o=nil[k]||(nil[k]={type:k,taxable:0});o.taxable+=toPaise(l.taxable);}
-      const h=acc(hsn,(l.hsn||"")+"|"+l.rate,{hsn:l.hsn||"",rate:l.rate,q:0,value:0},l); h.q+=l.q; h.value+=toPaise(l.total);
+      const h=acc(hsn,(l.hsn||"")+"|"+l.rate+"|"+(l.uqc||"PCS"),{hsn:l.hsn||"",rate:l.rate,uqc:l.uqc||"PCS",q:0,value:0},l); h.q=roundQty(h.q+l.q); h.value+=toPaise(l.total);
     });
   });
   G.creditNotes.forEach(c=>{
     if(!c.b2b&&!cnLarge(c)) c.lines.forEach(l=>acc(cs,c.pos+"|"+l.rate+"|"+(interState(c)?"INTER":"INTRA"),{pos:c.pos,posName:c.posName,rate:l.rate,supply:interState(c)?"INTER":"INTRA"},l,-1));
     c.lines.forEach(l=>{
       if(!l.rate){const k=(interState(c)?"INTER":"INTRA")+(c.b2b?"B2B":"B2C");const o=nil[k]||(nil[k]={type:k,taxable:0});o.taxable-=toPaise(l.taxable);}
-      const h=acc(hsn,(l.hsn||"")+"|"+l.rate,{hsn:l.hsn||"",rate:l.rate,q:0,value:0},l,-1); h.q-=l.q; h.value-=toPaise(l.total);
+      const h=acc(hsn,(l.hsn||"")+"|"+l.rate+"|"+(l.uqc||"PCS"),{hsn:l.hsn||"",rate:l.rate,uqc:l.uqc||"PCS",q:0,value:0},l,-1); h.q=roundQty(h.q-l.q); h.value-=toPaise(l.total);
     });
   });
   const cdnr=G.creditNotes.filter(c=>c.b2b).map(note), cdnur=G.creditNotes.filter(cnLarge).map(note);
@@ -121,7 +125,7 @@ export function gstr1Json(F,{gstin,period}){
       orig_inum:x.invoiceNo,orig_idt:x.invoiceT?d8(x.invoiceT):"",itms:itms(x.rates)}))})),
     cdnur:F.cdnur.map(x=>({typ:"B2CL",ntty:"C",nt_num:x.no,nt_dt:d8(x.t),val:x.value,pos:x.pos,orig_inum:x.invoiceNo,orig_idt:x.invoiceT?d8(x.invoiceT):"",itms:itms(x.rates)})),
     nil:{inv:F.nil.map(x=>({sply_ty:{INTERB2B:"INTRB2B",INTRAB2B:"INTRAB2B",INTERB2C:"INTRB2C",INTRAB2C:"INTRAB2C"}[x.type],nil_amt:x.taxable,expt_amt:0,ngsup_amt:0}))},
-    hsn:{data:F.hsn.map((x,i)=>({num:i+1,hsn_sc:x.hsn,desc:"",uqc:"PCS",qty:x.q,val:x.value,txval:x.taxable,iamt:x.igst,camt:x.cgst,samt:x.sgst,csamt:0,rt:x.rate}))},
+    hsn:{data:F.hsn.map((x,i)=>({num:i+1,hsn_sc:x.hsn,desc:"",uqc:x.uqc||"PCS",qty:x.q,val:x.value,txval:x.taxable,iamt:x.igst,camt:x.cgst,samt:x.sgst,csamt:0,rt:x.rate}))},
     doc_issue:{doc_det:[
       {doc_num:1,docs:F.series.invoices.map((s,i)=>({num:i+1,from:s.from,to:s.to,totnum:s.total,cancel:s.cancelled,net_issue:s.net}))},
       {doc_num:5,docs:F.series.creditNotes.map((s,i)=>({num:i+1,from:s.from,to:s.to,totnum:s.total,cancel:0,net_issue:s.total}))}]},

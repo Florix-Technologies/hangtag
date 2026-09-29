@@ -124,7 +124,14 @@
   "variantHits",
   "vCost",
   "voidSale",
-  "vPrice"
+  "vPrice",
+  "shopCaps",
+  "hasCap",
+  "shopType",
+  "subviewsOf",
+  "moduleShown",
+  "pullSettings",
+  "tabOpen"
  ],
  "state": [
   "access",

@@ -92,8 +92,9 @@ eslint.config.js         Lint rules for src/ (undefined names, unused variables)
 | Feature | What it owns | Use cases today |
 |---|---|---|
 | `auth` | Sign-in screen, Google/email/other providers, password reset, session lifecycle, per-account local data; the Staff tab (shop code + username + password), QR enrollment (`#enroll=`), this phone's team device key (`services/device.js`, `services/member-session.js`) | (session services) |
-| `shop` | Shop profile (setup and settings), account menu (with a team member's cash drawer when it has no Reports tab), billing/stock settings, receipt logo; who may do what (`services/access.js`: `can(p)`, `denied(p, what)` for use cases, the member's role, refreshed on connect), what a role hides (`components/access-ui.js`), Settings → Team & devices and Roles & permissions (`components/team-settings.js`) | `saveShopProfile`, `saveBillingSettings`, `setReceiptLogo`, `manage-team.js` (`addMember`, `changeMember`, `resetMemberAccess`, `removeMember`, `phoneSignInCode`, `revokePhone`, `removePhone`, `saveRolePermissions`: owner only) |
-| `products` | Product list, product editor (optional options/variants with any names, per-variant SKU/barcode/price/cost, HSN/GST), barcode/QR codes, stickers, colour grouping, examples, archive/delete, photos | `saveProduct`, `archiveProduct`, `removeProduct`, `photoFromFile` |
+| `shop` | Shop profile (setup and settings), account menu (with a team member's cash drawer when it has no Reports tab), billing/stock settings, receipt logo; who may do what (`services/access.js`: `can(p)`, `denied(p, what)` for use cases, the member's role, refreshed on connect), what a role hides (`components/access-ui.js`), Settings → Team & devices and Roles & permissions (`components/team-settings.js`); the type of business and capabilities (`services/shop-caps.js`, Settings → Capabilities), the settings sections (`services/settings-sections.js`), the navigation module registry (`services/modules.js`) | `saveShopProfile`, `saveBillingSettings`, `saveCapabilities`, `setReceiptLogo`, `manage-team.js` (`addMember`, `changeMember`, `resetMemberAccess`, `removeMember`, `phoneSignInCode`, `revokePhone`, `removePhone`, `saveRolePermissions`: owner only) |
+| `home` | Home: today's sales and bills, running low / sold out, sync state, quick actions (each by capability and permission) | – |
+| `products` | Product list, product editor (fields by capability: options/variants, tracking none/serial/batch, expiry and weight notes; per-variant SKU/barcode/price/cost, HSN/GST), barcode/QR codes, stickers, colour grouping, examples, archive/delete, photos | `saveProduct`, `archiveProduct`, `removeProduct`, `photoFromFile` |
 | `inventory` | Stock page, stock in, stock adjustment, supplier bill import (upload → review → confirm), the stock ledger read model | `recordStockOperation`, `readSupplierBill`, `planSupplierBill`, `confirmSupplierBill` |
 | `sales` | Sell screen, search, variant picker, cart, line and bill discounts, GST on the bill, payment screen (cash / UPI / card / split), checkout, cancelling bills | `checkout`, `setLineDiscount`, `setBillDiscount`, `voidSale`, `unvoid` |
 | `finance` | Financial transactions, cash book and bank book (read models over bills and returns), their views on Reports, a bill's payments in the bill view | – |
@@ -416,7 +417,7 @@ FINALIZED SALE → INVOICE (domain/invoices/invoice.js buildInvoice)
 - One invoice drives every layout: the 80 mm receipt (bill view, print dialog), the A4 invoice (Billing settings →
   Receipt paper, or the bill view's **A4 invoice** switch), the PNG picture, the WhatsApp / share text and the thermal
   print. The shop profile controls the business details on all of them; the footer comes from Billing settings.
-- **Logo:** Settings → Receipts and printer → Add logo. `features/shop/use-cases/receipt-logo.js` shrinks the picture
+- **Logo:** Settings → Receipt → Logo. `features/shop/use-cases/receipt-logo.js` shrinks the picture
   (at most 360 px, JPEG on white, ≤ 300 KB) and keeps it in `store.logo` (this device, per account: `rc_logo`). The
   upload queue sends it to `hangtag_meta` under the key `logo` (queue item `logo`); `pullSettings` downloads it. Row
   security keeps it to the shop, and a database check limits its size. The thermal printer gets it as a mono raster.
@@ -514,6 +515,40 @@ erased that way; deleting the account removes everything. Indexes:
   Each export is logged in the shop settings (`gstExports`: time, device, format, totals, a fingerprint of the month's
   documents), so a later change to the month is flagged. Every screen and file says Hangtag prepares data for filing
   and does not file returns.
+
+## Business type, capabilities and navigation (F2)
+
+One app and one database for every kind of shop; the type of business only changes what is shown.
+
+- **Business type** (`domain/shop/capabilities.js` `BUSINESS_TYPES`): retail, grocery, restaurant (Hotel / Restaurant),
+  electronics, other. Stored in the existing profile (`hangtag_profiles.business_type`, CHECK in schema.sql section 3j).
+  Older values ("Clothing boutique", "Retail store" …) count as retail, "Other" as other, none as retail
+  (`businessKind`): nothing is migrated, and shops set up before never see the setup screen again. Setup asks shop
+  name, then type; the type's defaults apply by themselves.
+- **Capabilities** ("does this shop use X?": `uses_variants`, `uses_serials`, `uses_batches`, `uses_expiry`,
+  `uses_weight`, `uses_quotations`, `uses_sales_orders`, `uses_tables`, `uses_table_qr`, `uses_customer_ordering`,
+  `uses_server_ordering`, `uses_kitchen`). `capsFor(type, overrides)` = the type's `DEFAULT_CAPS`, then the shop's own
+  choices. The choices live in the synced settings blob (`hangtag_meta` 'settings': `caps` = only the differences from
+  the defaults, `capsAt` = when they changed). An older copy of the settings (a phone that was offline, an older app
+  version) never wipes them: the app's `keepNewerCaps` on download and the trigger `hangtag_settings_keep_caps` on upload.
+  Changing them is `SaveCapabilities` (needs `manage_settings`; RLS on `hangtag_meta` enforces the same).
+- **Capability ≠ permission.** A capability only decides which screens, fields and switches appear; what a person may
+  do is its role's permissions (F1), checked in use cases and by the database. A capability never grants a permission,
+  and a permission never switches a capability on.
+- **Navigation module registry** (`features/shop/services/modules.js`): the one place that says which modules (tabs)
+  and module parts exist. A module is shown when it is registered and available, the shop uses one of its capabilities
+  (none listed = every shop), and the person has one of its permissions (`TAB_PERMISSIONS`). Core modules: home, sell,
+  orders (only while one of its parts is registered and in use), stock (Inventory), products, customers, report,
+  settings (an action: opens Settings). `app/modules.js` adds their pages; later batches call `registerModule` /
+  `registerSubview` (Inventory → Purchases, Orders → Quotations, Tables, Kitchen …) — a module that isn't built is not
+  registered, so nothing dead shows. `app/navigation.js` draws the tab bar from it (a phone keeps the most needed
+  and puts the rest behind "More").
+- **Settings sections** (`features/shop/services/settings-sections.js`): Business, Capabilities, Receipt, Taxes,
+  Team & devices, Roles & permissions (the owner's, for every type), Hardware, Account. Other features add parts with
+  `registerSettingsPart(section, { id, perms, html })` (e.g. Hardware → the weighing scale).
+- **Product form**: `productFieldsFor(caps, product)` decides the fields — options/variants with `uses_variants` (a
+  product that has them keeps showing them), tracking none/serial/batch with `uses_serials` / `uses_batches`
+  (`hangtag_products.tracking`), an expiry note with `uses_expiry`, weight guidance with `uses_weight`.
 
 ## State
 

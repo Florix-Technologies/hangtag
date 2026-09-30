@@ -131,7 +131,17 @@
   "subviewsOf",
   "moduleShown",
   "pullSettings",
-  "tabOpen"
+  "tabOpen",
+  "weightScale",
+  "openWeigh",
+  "setLineQty",
+  "cartPcs",
+  "deviceCode",
+  "setReturnQty",
+  "newSaleRecord",
+  "recordSale",
+  "numberTaken",
+  "openSyncPanel"
  ],
  "state": [
   "access",
@@ -174,6 +184,9 @@
   "sellQuery",
   "settings",
   "stockOp",
-  "team"
+  "team",
+  "weigh",
+  "syncReview",
+  "scale"
  ]
 }

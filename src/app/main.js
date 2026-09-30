@@ -16,6 +16,9 @@ import { installDomEvents } from './events/dom-events.js';
 import { installKeyboard } from './events/keyboard.js';
 import { installWindowEvents } from './events/window-events.js';
 import { installBillingSettingsEvents } from '../features/shop/components/billing-settings.js';
+import { installScaleSettingsEvents } from '../features/hardware/components/scale-settings.js';
+import { reconnectScale } from '../features/hardware/services/scale.js';
+import { installWeighDialog } from '../features/sales/components/weigh-dialog.js';
 import { installPwa } from './pwa.js';
 import { store } from '../shared/state/store.js';
 import { renderAll } from '../shared/ui/render.js';
@@ -47,6 +50,8 @@ installDomEvents();
 installKeyboard();
 installWindowEvents();
 installBillingSettingsEvents();
+installScaleSettingsEvents();
+installWeighDialog();
 installPwa();
 installAutoDelivery();
 // Each time the cloud connects: a provider payment left open is shown again, hand-checked UPI is matched with the
@@ -56,6 +61,8 @@ onConnected(()=>processDeliveryQueue());
 renderAll();
 // Sign in, then connect to the cloud database
 
+// A scale this browser remembers is opened again (no prompt), when this device is set to
+reconnectScale(store.scale && store.scale.auto);
 (async()=>{
   await bootAuth();
   let tick = 0;

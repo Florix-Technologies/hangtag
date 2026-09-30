@@ -3,7 +3,7 @@
 // and the receipt all come from here. Pure and deterministic; rupees in and out, worked in paise.
 import { allocate, discountPaise } from './discounts.js';
 import { GST_MODES, lineTax, taxBreakdown } from './gst.js';
-import { sumP, toPaise, toRupees as R } from './paise.js';
+import { linePaise, sumP, toRupees as R } from './paise.js';
 
 /* lines: [{ q, price, disc? (line discount), rate? (GST %) }] · billDisc: the bill discount · gst: { mode, inclusive }
    (mode from gst.js placeOfSupply). Returns rupees:
@@ -12,7 +12,7 @@ import { sumP, toPaise, toRupees as R } from './paise.js';
      rate (the one rate on the bill, null when rates differ), incl, mode, breakdown: [{ rate, taxable, cgst, sgst, igst, tax }] } */
 export function computeCheckout({lines,billDisc,gst}){
   const g={mode:(gst&&gst.mode)||GST_MODES.NONE,inclusive:!!(gst&&gst.inclusive)};
-  const L=(lines||[]).map(l=>{const gross=toPaise((+l.q||0)*(+l.price||0)),itemDisc=discountPaise(l.disc,gross);return {gross,itemDisc,after:gross-itemDisc,rate:l.rate}});
+  const L=(lines||[]).map(l=>{const gross=linePaise(l.q,l.price),itemDisc=discountPaise(l.disc,gross);return {gross,itemDisc,after:gross-itemDisc,rate:l.rate}});
   const bd=discountPaise(billDisc,sumP(L.map(x=>x.after)));
   const shares=allocate(bd,L.map(x=>x.after));
   const P=L.map((x,i)=>{const net=x.after-shares[i];return {gross:x.gross,itemDisc:x.itemDisc,billDisc:shares[i],net,...lineTax(net,x.rate,g)}});

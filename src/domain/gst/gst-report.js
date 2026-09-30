@@ -10,6 +10,7 @@ import { gstinState, stateName } from '../sales/gst.js';
 import { savedLine } from '../returns/return-value.js';
 import { returnLineMoney } from '../reports/sales-report.js';
 import { toPaise, toRupees } from '../sales/paise.js';
+import { roundQty, unitOf } from '../catalog/units.js';
 
 const R=toRupees, TAX=["taxable","cgst","sgst","igst"];
 export const DISCLAIMER="Prepared by Hangtag from your saved invoices and credit notes to help with GST filing. Hangtag does not file GST returns.";
@@ -19,13 +20,13 @@ const rateOf=(sale,i)=>i&&i.gst!=null?+i.gst:+(sale&&sale.taxRate)||0;
 
 /* A bill as an invoice for GST: its lines' saved taxable value and tax (paise inside, rupees out) */
 export function gstInvoice(sale){
-  const lines=sale.items.map(i=>{const f=savedLine(sale,i);return {rate:rateOf(sale,i),hsn:i.hsn||"",q:i.q,taxable:f.tx,cgst:f.cgst,sgst:f.sgst,igst:f.igst,total:f.lt}});
+  const lines=sale.items.map(i=>{const f=savedLine(sale,i);return {rate:rateOf(sale,i),hsn:i.hsn||"",q:i.q,uqc:unitOf(i.u).uqc,taxable:f.tx,cgst:f.cgst,sgst:f.sgst,igst:f.igst,total:f.lt}});
   return {...doc({id:sale.id,no:sale.no||"",t:sale.t,cancelled:!!sale.void,sale,lines,total:toPaise(sale.total),roundOff:toPaise(sale.roundOff||0)}),discount:R(toPaise(sale.disc||0))};
 }
 /* A return as a credit note: its lines' GST as saved on the return (or their share of the bill line's), with the bill's details */
 export function gstCreditNote(ret,sale){
   const lines=(ret.items||[]).map(i=>{const m=returnLineMoney(sale,i),sl=lineOf(sale,i.ln);
-    return {rate:i.gst!=null?+i.gst:rateOf(sale,sl),hsn:i.hsn||(sl&&sl.hsn)||"",q:i.q,taxable:-toPaise(m.rev),cgst:-toPaise(m.cgst),sgst:-toPaise(m.sgst),igst:-toPaise(m.igst),total:toPaise(i.value)}});
+    return {rate:i.gst!=null?+i.gst:rateOf(sale,sl),hsn:i.hsn||(sl&&sl.hsn)||"",q:i.q,uqc:unitOf(i.u||(sl&&sl.u)).uqc,taxable:-toPaise(m.rev),cgst:-toPaise(m.cgst),sgst:-toPaise(m.sgst),igst:-toPaise(m.igst),total:toPaise(i.value)}});
   const d=doc({id:ret.id,no:ret.no||"",t:ret.t,cancelled:false,sale,lines,total:toPaise(ret.value),roundOff:toPaise(ret.ro||0)});
   return {...d,invoiceNo:sale&&sale.no||"",invoiceT:sale&&sale.t||null,invoiceValue:sale?R(toPaise(sale.total)):0,saleId:sale&&sale.id||"",kind:ret.kind||"return"};
 }
@@ -46,11 +47,11 @@ export function gstReport({sales,returns,saleById}){
   const T={inv:{},cn:{}}, b2b={count:0,notes:0}, b2c={count:0,notes:0}, rates={}, hsn={}, pos={}, nil={taxable:0,count:0};
   let invTotal=0,cnTotal=0;
   invoices.forEach(d=>{add(T.inv,d); invTotal+=toPaise(d.total); const g=d.b2b?b2b:b2c; g.count++; add(g,d);
-    d.lines.forEach(l=>{add(rates[l.rate]||(rates[l.rate]={rate:l.rate}),l); const h=hsn[l.hsn||"—"]||(hsn[l.hsn||"—"]={hsn:l.hsn||"",q:0}); h.q+=l.q; add(h,l);
+    d.lines.forEach(l=>{add(rates[l.rate]||(rates[l.rate]={rate:l.rate}),l); const h=hsn[l.hsn||"—"]||(hsn[l.hsn||"—"]={hsn:l.hsn||"",q:0}); h.q=roundQty(h.q+l.q); add(h,l);
       if(!d.b2b){const k=d.pos+"|"+l.rate; add(pos[k]||(pos[k]={pos:d.pos,posName:d.posName,rate:l.rate}),l);}
       if(!l.rate){nil.taxable+=toPaise(l.taxable);nil.count++;}})});
   notes.forEach(d=>{add(T.cn,d); cnTotal+=toPaise(d.total); const g=d.b2b?b2b:b2c; g.notes++; add(g,d,-1);
-    d.lines.forEach(l=>{add(rates[l.rate]||(rates[l.rate]={rate:l.rate}),l,-1); const h=hsn[l.hsn||"—"]||(hsn[l.hsn||"—"]={hsn:l.hsn||"",q:0}); h.q-=l.q; add(h,l,-1);
+    d.lines.forEach(l=>{add(rates[l.rate]||(rates[l.rate]={rate:l.rate}),l,-1); const h=hsn[l.hsn||"—"]||(hsn[l.hsn||"—"]={hsn:l.hsn||"",q:0}); h.q=roundQty(h.q-l.q); add(h,l,-1);
       if(!d.b2b){const k=d.pos+"|"+l.rate; add(pos[k]||(pos[k]={pos:d.pos,posName:d.posName,rate:l.rate}),l,-1);}
       if(!l.rate) nil.taxable-=toPaise(l.taxable);})});
   const net={}; TAX.forEach(k=>{net[k]=(T.inv[k]||0)-(T.cn[k]||0)});

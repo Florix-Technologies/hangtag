@@ -461,7 +461,7 @@ console.log('=== bills, returns and stock records are history: a member adds the
   check('…and may send it again unchanged (a retry)', !r.err, r);
   r = await tryAs(db, CA, `UPDATE public.hangtag_stock_moves SET qty = 5 WHERE id = 'open:p1:M'`);
   const r7 = await tryAs(db, CA, `DELETE FROM public.hangtag_stock_moves WHERE id = 'open:p1:M' RETURNING id`);
-  check('…but can\'t change or remove the owner\'s opening stock (no stock adjustments)', /can change saved stock records/.test(r.err || '') && !r7.err && r7.r.rows.length === 0 && (await open()).qty === 20, { r, r7 });
+  check('…but can\'t change or remove the owner\'s opening stock (no stock adjustments)', /can change saved stock records/.test(r.err || '') && !r7.err && r7.r.rows.length === 0 && +(await open()).qty === 20, { r, r7 });
   const before = await count(db, A, 'hangtag_audit_log');
   r = await tryAs(db, MA, `UPDATE public.hangtag_stock_moves SET qty = 19 WHERE id = 'open:p1:M' RETURNING id`);
   const ch = await one(db, A, `SELECT user_id::text AS u, action, summary FROM public.hangtag_audit_log WHERE entity = 'stock_moves' AND entity_id = 'open:p1:M' ORDER BY id DESC LIMIT 1`);

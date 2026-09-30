@@ -20,6 +20,7 @@ import { dtLong } from '../../../shared/formatting/dates.js';
 import { inr, inrx } from '../../../shared/formatting/money.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { refuse } from '../../shop/services/access.js';
+import { decimalsOf, fmtQty, qtyText, roundQty, subQty, unitOf } from '../../../domain/catalog/units.js';
 
 export const RETURN_REASONS=["Didn't fit","Wrong size","Didn't like it","Damaged or faulty","Other"];
 export function openReturn(sid){
@@ -34,9 +35,12 @@ export function renderReturnSheet(){
   if(!R.nfr) R.nfr={};
   const ex=R.mode==="exchange", Q=retQuote(), val=Q.error?0:Q.value;
   const lines=s.items.map((i,k)=>{const ln=i.ln!=null?i.ln:k,max=returnable(s,i,k),q=R.q[ln]||0;
-    return `<div class="rt-line${max?"":" done"}"><div><b>${esc(i.n)}</b><span>${esc(lineLabel(i)||"")}${lineLabel(i)?" · ":""}bought ${i.q}${i.q-max?" · "+(i.q-max)+" already returned":""} · ${inrx(unitValue(s,i))} each</span>
+    // a line sold by weight or length comes back in parts: typed (0.75 of 2.5 kg); pieces step by one
+    const dp=decimalsOf(i.u), gone=subQty(i.q,max);
+    return `<div class="rt-line${max?"":" done"}"><div><b>${esc(i.n)}</b><span>${esc(lineLabel(i)||"")}${lineLabel(i)?" · ":""}bought ${esc(qtyText(i.q,i.u))}${gone?" · "+esc(qtyText(gone,i.u))+" already returned":""} · ${inrx(unitValue(s,i))} ${i.u&&i.u!=="pcs"?"per "+esc(unitOf(i.u).sym):"each"}</span>
       ${q?`<label class="chk rt-nfr"><input type="checkbox" data-rtnfr="${ln}"${R.nfr[ln]?" checked":""}> Not for resale (damaged) — don't put back on the shelf</label>`:""}</div>
-      ${max?`<span class="step"><button data-rtm="${ln}" aria-label="One less"${q?"":" disabled"}>−</button><b>${q}</b><button data-rtp="${ln}" aria-label="One more"${q<max?"":" disabled"}>+</button></span>`:`<span class="note">Nothing left to return</span>`}</div>`}).join("");
+      ${!max?`<span class="note">Nothing left to return</span>`:dp?`<span class="step unitq"><input type="number" inputmode="decimal" min="0" max="${esc(fmtQty(max))}" step="any" data-rtq="${ln}" value="${q?esc(fmtQty(q)):""}" placeholder="0" aria-label="Quantity of ${esc(i.n)} coming back"><span class="qu">${esc(unitOf(i.u).sym)}</span></span>`
+        :`<span class="step"><button data-rtm="${ln}" aria-label="One less"${q?"":" disabled"}>−</button><b>${q}</b><button data-rtp="${ln}" aria-label="One more"${q<max?"":" disabled"}>+</button></span>`}</div>`}).join("");
   const dsc=exchangeDiscount(s), nT=billTotals(R.newItems,ex&&R.keepDisc!==false?dsc:null,exchangeCustomer(s)), X=exchangeSettlement(val,nT.total), diff=X.collect||-X.refund;
   const row=(a,b)=>`<div class="row"><span>${a}</span><span class="tnum">${b}</span></div>`;
   const back=val?row("Coming back",inrx(val))+(Q.tax?row(`of which GST reversed`,inrx(Q.tax)):"")+(Q.roundOff?row("Round off (whole bill)",inrx(Q.roundOff)):"")+(ex&&X.roundOff&&R.newItems.length?row("Round off",inrx(X.roundOff)):""):"";
@@ -84,4 +88,13 @@ export function saveReturn(){
   // the exchange's new bill goes to the customer by the same rules as any bill
   if(r.sale){ queueAutoDelivery(r.sale); showPaid(r.sale); }
   else toast(`Return saved · credit note ${r.ret.no} · refund ${inrx(r.refund)} by ${PAY_LABELS[r.ret.pay]}. ${r.ret.items.every(i=>i.restock)?"Stock is back on the shelf.":"Items not for resale stay off the shelf."}`);
+}
+/* A typed quantity coming back on bill line ln (a line sold by weight or length): rounded to its unit's decimals, never more
+   than is left to return */
+export function setReturnQty(ln,raw){
+  const R=store.retState, s=R&&D().saleById[R.sid]; if(!s) return;
+  const k=s.items.findIndex((x,j)=>(x.ln!=null?x.ln:j)===+ln), i=s.items[k]; if(!i) return;
+  const max=returnable(s,i,k), q=Math.max(0,roundQty(+String(raw).replace(",",".")||0,decimalsOf(i.u)));
+  if(q>max) toast(`Only ${qtyText(max,i.u)} can still come back.`);
+  R.q[ln]=Math.min(q,max); renderReturnSheet();
 }

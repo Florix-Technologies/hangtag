@@ -14,6 +14,7 @@ import { ICON } from '../../../shared/constants/icons.js';
 import { $, esc } from '../../../shared/dom.js';
 import { dayKey, dayLab, hhmm } from '../../../shared/formatting/dates.js';
 import { inr } from '../../../shared/formatting/money.js';
+import { qtyText, roundQty } from '../../../domain/catalog/units.js';
 
 /* Stock matrix for one product: combinations of the first options down (e.g. colours), the last option across (e.g. sizes) */
 
@@ -30,14 +31,14 @@ export function renderStock(){
   const host=$("#stockBody"),ps=liveProducts();
   if(!ps.length){host.innerHTML=emptyProductsHTML();return}
   let pcs=0,val=0,costVal=0,costKnown=true;const alerts=[];
-  ps.forEach(p=>variantsOf(p).forEach(v=>{const l=stockOf(v.id),n=Math.max(0,l);pcs+=n;val+=n*vPrice(p,v);const c=vCost(p,v);if(c==null){if(n)costKnown=false}else costVal+=n*c;const lv=levelOf(l);if(lv!=="ok")alerts.push({p,v,l,k:lv})}));
+  ps.forEach(p=>variantsOf(p).forEach(v=>{const l=stockOf(v.id),n=Math.max(0,l);pcs=roundQty(pcs+n);val+=n*vPrice(p,v);const c=vCost(p,v);if(c==null){if(n)costKnown=false}else costVal+=n*c;const lv=levelOf(l);if(lv!=="ok")alerts.push({p,v,l,k:lv})}));
   alerts.sort((a,b)=>a.l-b.l);
   const outN=alerts.filter(a=>a.k==="out").length,lowN=alerts.length-outN,t=lowAt(),negN=alerts.filter(a=>a.l<0).length;
   let h=`<div class="kpis four">${kpi("Pieces in hand",pcs.toLocaleString("en-IN"),`across ${ps.length} product${ps.length===1?"":"s"}`)}${kpi("Stock value",inr(val),"at selling price"+(costVal?` · ${inr(costVal)} at cost${costKnown?"":" (some costs missing)"}`:""))}${kpi("Running low",String(lowN),`variants with 1–${t} pieces`,lowN?"warn":"")}${kpi("Sold out",String(outN),negN?`variants at zero · ${negN} below zero (check the count)`:"variants at zero",outN?"crit":"")}</div>`;
   h+=`<div class="card"><div class="card-h"><h3>Restock soon</h3><span class="note">Variants with ${t} piece${t===1?"":"s"} or fewer · change this in Profile &amp; shop settings</span></div>${alerts.length?`<div class="alerts">${alerts.slice(0,60).map(a=>`<button class="al ${a.k}" data-stockin="${esc(a.p.id)}">${a.k==="out"?ICON.out:ICON.warn}<b>${esc(a.p.name)}</b>${vLabel(a.v)?`<span class="szl">${esc(vLabel(a.v))}</span>`:""}<span class="st">${a.l<0?a.l+" (below zero)":a.k==="out"?"sold out":a.l+" left"}</span></button>`).join("")}${alerts.length>60?`<span class="note">+${alerts.length-60} more</span>`:""}</div>`:`<p class="okline">${ICON.ok}Every variant has more than ${t} piece${t===1?"":"s"}.</p>`}</div>`;
   const shown=ps.filter(p=>store.stockView==="all"||variantsOf(p).some(v=>{const lv=levelOf(stockOf(v.id));return store.stockView==="low"?lv!=="ok":lv==="out"}));
   h+=`<div class="card flush" style="margin-top:14px"><div class="card-h"><h3>Every product, every variant</h3><div class="seg" role="group" aria-label="Show">${[["all","All"],["low","Low or out"],["out","Sold out"]].map(([k,l])=>`<button data-stockview="${k}" aria-pressed="${store.stockView===k}">${l}</button>`).join("")}</div></div>`;
-  h+=shown.length?shown.map(p=>`<div class="spc"><div class="spc-h">${thumb(p,"sm")}<div><b>${esc(p.name)}</b><span class="sub">${esc([p.cat,priceRange(p)].filter(Boolean).join(" · "))} · ${productLeft(p)} in hand</span></div><button class="btn xs" data-stockin="${esc(p.id)}">+ Stock in</button></div>${stockMatrixHTML(p)}</div>`).join(""):`<p class="muted" style="padding:0 16px 16px">Nothing to show here.</p>`;
+  h+=shown.length?shown.map(p=>`<div class="spc"><div class="spc-h">${thumb(p,"sm")}<div><b>${esc(p.name)}</b><span class="sub">${esc([p.cat,priceRange(p)].filter(Boolean).join(" · "))} · ${esc(qtyText(productLeft(p),p.unit))} in hand</span></div><button class="btn xs" data-stockin="${esc(p.id)}">+ Stock in</button></div>${stockMatrixHTML(p)}</div>`).join(""):`<p class="muted" style="padding:0 16px 16px">Nothing to show here.</p>`;
   h+=`</div>`;
   h+=stockHistoryHTML(ps);
   host.innerHTML=h;

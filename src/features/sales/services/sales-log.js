@@ -2,10 +2,12 @@
 import { store } from '../../../shared/state/store.js';
 import { pcsOf } from '../../../domain/sales/sale.js';
 import { D } from '../../inventory/services/ledger.js';
+import { nextBillNo } from './totals.js';
 import { dayKey } from '../../../shared/formatting/dates.js';
 
 export function todayStats(){const k=dayKey(Date.now());let rev=0,bills=0,pcs=0;D().sales.forEach(s=>{if(s.void||dayKey(s.t)!==k)return;rev+=s.total-(s.credit||0);bills++;pcs+=pcsOf(s)});D().rets.forEach(r=>{if(dayKey(r.t)===k)rev-=r.refund||0});return{rev,bills,pcs}}
-export function billNo(){const k=dayKey(Date.now());return D().sales.filter(s=>dayKey(s.t)===k).length+1}
+/* The number the next bill made on this device gets */
+export const billNo=()=>nextBillNo(D().sales,Date.now());
 export const isVoid=id=>{const s=D().saleById[id];return !!(s&&s.void)};
 /* ================= local document helper ================= */
 

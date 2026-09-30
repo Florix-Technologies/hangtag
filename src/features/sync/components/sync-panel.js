@@ -1,8 +1,9 @@
 // Sync panel (tap the sync status): what is still waiting to upload and why, and the changes the database refused, to send
 // again or (never a bill) discard.
-import { canDiscard, dependsOn, waitingKeys } from '../../../domain/sync/queue-rules.js';
+import { canDiscard, dependsOn, numberTaken, waitingKeys } from '../../../domain/sync/queue-rules.js';
 import { store } from '../../../shared/state/store.js';
-import { discardReview, flushSbQueue, retryReview } from '../services/outbox.js';
+import { discardReview, flushSbQueue, renumberReview, retryReview } from '../services/outbox.js';
+import { toast } from '../../../shared/components/toast.js';
 import { products } from '../../products/services/catalog.js';
 import { ICON } from '../../../shared/constants/icons.js';
 import { $, esc } from '../../../shared/dom.js';
@@ -32,7 +33,7 @@ export function renderSyncPanel(){
   const qRows=Q.map(q=>{const blocked=dependsOn(q).some(k=>waiting.has(k));
     return `<div class="retline"><b>${esc(itemLabel(q))}</b>${q.tries?` · tried ${q.tries}×`:""}${blocked?" · waits for its bill or product to upload first":""}${q.err?`<br><span class="note">${esc(q.err)}</span>`:""}</div>`}).join("");
   const rRows=R.map((r,i)=>`<div class="retline" data-review="${i}"><b>${esc(itemLabel(r.item))}</b> · ${esc(dtLong(r.t))}<br><span class="note">${esc(r.err||"Refused")}</span>
-    <div class="setactions" style="margin-top:6px"><button class="btn xs" data-syncretry="${i}">Send again</button>${canDiscard(r.item)?`<button class="btn xs danger" data-syncdiscard="${i}">Discard</button>`:`<span class="note">A bill is never discarded: it stays on this device.</span>`}</div></div>`).join("");
+    <div class="setactions" style="margin-top:6px">${numberTaken(r)?`<button class="btn xs primary" data-syncrenumber="${i}">Give it a new number and send</button>`:""}<button class="btn xs" data-syncretry="${i}">Send again</button>${canDiscard(r.item)?`<button class="btn xs danger" data-syncdiscard="${i}">Discard</button>`:`<span class="note">A bill is never discarded: it stays on this device.</span>`}</div></div>`).join("");
   $("#modalHost").innerHTML=`<div class="scrim" data-modal-scrim><div class="sheet custsheet" role="dialog" aria-modal="true" aria-label="Sync">
     <div class="sh-head"><div class="sh-t"><h3>Sync</h3><p>${esc(status)}${store.lastSyncAt?" · last fully synced "+esc(agoText(store.lastSyncAt)):""}</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
     <div class="setsec" style="border-top:0;padding-top:0"><h4>Waiting to upload (${Q.length})</h4>${Q.length?qRows:`<p class="okline">${ICON.ok}Nothing waiting.</p>`}
@@ -43,3 +44,4 @@ export function renderSyncPanel(){
 export async function syncNow(){ await flushSbQueue(); renderSyncPanel(); }
 export function syncRetry(i){ retryReview(i); renderSyncPanel(); }
 export function syncDiscard(i){ discardReview(i); renderSyncPanel(); }
+export function syncRenumber(i){ const r=renumberReview(i); toast(r.error||`New number ${r.no}: sending it again.`); renderSyncPanel(); }

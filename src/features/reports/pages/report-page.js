@@ -21,6 +21,7 @@ import { $, $$, esc } from '../../../shared/dom.js';
 import { dayKey, dayLong, hhmm } from '../../../shared/formatting/dates.js';
 import { inr, inrShort, inrx } from '../../../shared/formatting/money.js';
 import { initials } from '../../../shared/utils/text.js';
+import { qtyText, roundQty } from '../../../domain/catalog/units.js';
 
 export const showTable={time:false,size:false};
 export function drawTime(TS){
@@ -30,7 +31,7 @@ export function drawTime(TS){
   colChart(host,rows.map(r=>({short:r.short,v:r.v,tv:inr(r.v),tl:r.label,tm:r.n+" bill"+(r.n===1?"":"s")+" · "+r.p+" pcs"})),{axis:inrShort,peak:inrShort,labelW:TS.labelW,aria:TS.title});
 }
 export function drawSizes(lines){
-  const host=$("#chSize");if(!host)return;const m={};lines.forEach(l=>{const k=l.s||"One size";m[k]=(m[k]||0)+l.q});
+  const host=$("#chSize");if(!host)return;const m={};lines.forEach(l=>{const k=l.s||"One size";m[k]=roundQty((m[k]||0)+l.q)});
   Object.keys(m).forEach(k=>{if(m[k]<=0)delete m[k]});
   const tot=Object.values(m).reduce((a,b)=>a+b,0);
   if(!tot){host.innerHTML=`<p class="muted">No sizes sold in this period.</p>`;return}
@@ -58,14 +59,14 @@ export function bestHTML(lines){
   return `<div class="hb">${rows.map(r=>{const p=prod(r.id)||{id:r.id,name:r.n,color:"#8E8A83"},f=max?r.q/max:0;return `<div class="hbr" tabindex="0" data-tipv="${esc(r.q+" pcs · "+inr(r.a))}" data-tipl="${esc(p.name)}"><div class="who">${thumb(p,"xs")}<span class="nmx">${esc(p.name)}</span></div><div class="track"><span class="bar2" style="width:calc((100% - 104px) * ${f.toFixed(4)})"></span><span class="v">${r.q} pcs<small>${inrShort(r.a)}</small></span></div></div>`}).join("")}</div>${all.length>10?`<p class="muted">+${all.length-10} more in Product × size below.</p>`:""}`;
 }
 export function variantPerfHTML(lines){
-  const m={};lines.forEach(l=>{const o=m[l.vid]||(m[l.vid]={pid:l.pid,n:l.name,vl:l.vl,q:0,a:0});o.q+=l.q;o.a+=l.amt});
+  const m={};lines.forEach(l=>{const o=m[l.vid]||(m[l.vid]={pid:l.pid,n:l.name,vl:l.vl,q:0,a:0});o.q=roundQty(o.q+l.q);o.a+=l.amt});
   const rows=Object.values(m).filter(r=>r.q>0).sort((a,b)=>b.q-a.q||b.a-a.a).slice(0,10);
   if(!rows.length)return `<p class="muted">Nothing sold in this period.</p>`;
   return `<div class="vperf">${rows.map((r,i)=>{const p=prod(r.pid)||{id:r.pid,name:r.n,color:"#8E8A83"};return `<div class="vp-row"><span class="vp-i">${i+1}</span>${thumb(p,"xs")}<span class="vp-n"><b>${esc(p.name)}</b>${r.vl?` <span class="szl">${esc(r.vl)}</span>`:""}</span><span class="vp-q">${r.q} sold</span><span class="vp-a">${inr(r.a)}</span></div>`}).join("")}</div>`;
 }
 export function heatHTML(lines){
   const m={},names={},amt={};
-  lines.forEach(l=>{const r=m[l.pid]||(m[l.pid]={});const s=l.s||"One size";r[s]=(r[s]||0)+l.q;names[l.pid]=l.name;amt[l.pid]=(amt[l.pid]||0)+l.amt});
+  lines.forEach(l=>{const r=m[l.pid]||(m[l.pid]={});const s=l.s||"One size";r[s]=roundQty((r[s]||0)+l.q);names[l.pid]=l.name;amt[l.pid]=(amt[l.pid]||0)+l.amt});
   const ids=Object.keys(m).filter(id=>Object.values(m[id]).some(v=>v>0));if(!ids.length)return `<p class="muted">Nothing sold in this period.</p>`;
   const rows=ids.map(id=>prod(id)||{id,name:names[id],color:"#8E8A83"});
   let sizes=sizeOrder([].concat(...ids.map(id=>Object.keys(m[id]))));if(ids.some(id=>m[id]["One size"])&&!sizes.includes("One size"))sizes.push("One size");
@@ -101,7 +102,7 @@ export function billsHTML(all,R){
   const cap=store.showAllBills?400:25,list=all.slice(0,cap),multi=R.from!==R.to;let h=`<div class="bills">`,cur="";
   list.forEach(s=>{const k=dayKey(s.t);if(multi&&k!==cur){cur=k;h+=`<div class="bday">${esc(dayLong(k))}</div>`}
     const rt=D().retBySale[s.id],tags=(s.kind==="exchange"?`<span class="btag">Exchange</span>`:"")+(rt&&rt.length?`<span class="btag">${rt.some(r=>r.kind==="exchange")?"Exchanged":"Returned"}</span>`:"")+(s.cust?`<span class="btag c">${esc(s.cust.name)}</span>`:"");
-    h+=`<div class="bill${s.void?" void":""}"><span class="bt">${esc(hhmm(s.t))}</span><button class="bi asbtn" data-billview="${esc(s.id)}">${s.items.map(i=>`${esc(i.n)}${lineLabel(i)?` <span class="szl">${esc(lineLabel(i))}</span>`:""}${i.q>1?" ×"+i.q:""}`).join(", ")}${tags}</button><span class="ptag c-${esc(s.pay)}">${esc(payLabel(s))}</span><span class="ba">${inr(s.total)}</span><button class="btn xs" data-billview="${esc(s.id)}">Open</button></div>`});
+    h+=`<div class="bill${s.void?" void":""}"><span class="bt">${esc(hhmm(s.t))}</span><button class="bi asbtn" data-billview="${esc(s.id)}">${s.items.map(i=>`${esc(i.n)}${lineLabel(i)?` <span class="szl">${esc(lineLabel(i))}</span>`:""}${i.q>1||(i.u&&i.u!=="pcs")?" ×"+esc(qtyText(i.q,i.u)):""}`).join(", ")}${tags}</button><span class="ptag c-${esc(s.pay)}">${esc(payLabel(s))}</span><span class="ba">${inr(s.total)}</span><button class="btn xs" data-billview="${esc(s.id)}">Open</button></div>`});
   if(all.length>cap)h+=store.showAllBills?`<p class="muted">Showing the latest ${cap} of ${all.length} bills — download the CSV for all of them.</p>`:`<div class="row c" style="padding-top:12px"><button class="btn sm" data-act="allbills">Show all ${all.length} bills</button></div>`;
   return h+`</div>`;
 }

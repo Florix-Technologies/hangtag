@@ -1,12 +1,11 @@
 // Return values and limits for the bills on this device (the rules are in domain/returns/return-value.js).
 import { store } from '../../../shared/state/store.js';
 import { lineNo, quoteReturn, returnableQty, savedLine } from '../../../domain/returns/return-value.js';
-import { formatCreditNoteNo } from '../../../domain/sales/sale.js';
+import { nextDocNo } from '../../../domain/sales/sale.js';
 import { normalizeDiscount } from '../../../domain/sales/discounts.js';
 import { toRupees } from '../../../domain/sales/paise.js';
 import { D } from '../../inventory/services/ledger.js';
 import { stockOf } from '../../inventory/services/stock.js';
-import { dayKey } from '../../../shared/formatting/dates.js';
 
 /* What one piece of a bill line was paid (its share of the line after discounts, with GST), from the saved bill */
 export function unitValue(s,i){ return i.q?toRupees(Math.round(savedLine(s,i).lt/i.q)):0; }
@@ -29,5 +28,5 @@ export function exAvail(vid){
   const R=store.retState, s=R&&D().saleById[R.sid];
   return s?exchangeAvail(s,R.q,R.nfr,R.newItems,vid):stockOf(vid);
 }
-/* The next credit note number (credit notes that day, like bill numbers) */
-export function creditNoteNo(t){ const k=dayKey(t); return formatCreditNoteNo(t,D().rets.filter(r=>dayKey(r.t)===k).length+1); }
+/* The next credit note number: this device's own series that day, like bill numbers (CN-260929-K3F001) */
+export const creditNoteNo=t=>nextDocNo("CN-",D().rets,t,store.dev);

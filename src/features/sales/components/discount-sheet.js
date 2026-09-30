@@ -1,6 +1,7 @@
 // Discount on one bill line: % or ₹ off, with the new line amount shown before it's applied.
 import { checkDiscount, discountPaise, normalizeDiscount } from '../../../domain/sales/discounts.js';
-import { toPaise } from '../../../domain/sales/paise.js';
+import { linePaise, toRupees } from '../../../domain/sales/paise.js';
+import { qtyText } from '../../../domain/catalog/units.js';
 import { lineLabel } from '../../../domain/catalog/variants.js';
 import { store } from '../../../shared/state/store.js';
 import { setLineDiscount } from '../use-cases/discounts.js';
@@ -23,9 +24,9 @@ export function openLineDiscount(i){
 }
 export function renderLineDiscount(){
   const s=store.lineDisc, c=s&&store.cart[s.i]; if(!c){closeModal();return}
-  const gross=c.q*c.price, lab=lineLabel(c), had=!!normalizeDiscount(c.disc);
+  const gross=toRupees(linePaise(c.q,c.price)), lab=lineLabel(c), had=!!normalizeDiscount(c.disc);
   $("#modalHost").innerHTML=`<div class="scrim" data-modal-scrim><div class="sheet discsheet" id="ldSheet" role="dialog" aria-modal="true" aria-label="Discount on ${esc(c.name)}">
-    <div class="sh-head"><div class="sh-t"><h3>Discount on this line</h3><p>${esc(c.name)}${lab?" · "+esc(lab):""} · ${c.q} × ${inr(c.price)} = ${inr(gross)}</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
+    <div class="sh-head"><div class="sh-t"><h3>Discount on this line</h3><p>${esc(c.name)}${lab?" · "+esc(lab):""} · ${esc(qtyText(c.q,c.u))} × ${inr(c.price)} = ${inrx(gross)}</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
     <div class="seg ldseg" role="group" aria-label="Discount in percent or rupees"><button type="button" data-ldtype="percent" aria-pressed="${s.type==="percent"}">% off</button><button type="button" data-ldtype="fixed" aria-pressed="${s.type==="fixed"}">₹ off</button></div>
     <label class="f"><span class="lab">${s.type==="percent"?"Percent off":"Rupees off this line"}</span><input id="ldVal" type="number" inputmode="decimal" min="0" ${s.type==="percent"?'max="100" ':""}step="any" placeholder="0" value="${esc(s.value)}" autocomplete="off"></label>
     <p class="ldprev" id="ldPrev">${previewText()}</p>
@@ -34,7 +35,7 @@ export function renderLineDiscount(){
   </div></div>`;
 }
 function previewText(){
-  const s=store.lineDisc, c=store.cart[s.i], base=toPaise(c.q*c.price), bad=checkDiscount(s,base);
+  const s=store.lineDisc, c=store.cart[s.i], base=linePaise(c.q,c.price), bad=checkDiscount(s,base);
   if(bad) return "";
   const off=discountPaise(s,base);
   return off?`${inrx(off/100)} off · line becomes <b>${inrx((base-off)/100)}</b>`:"No discount on this line.";
@@ -42,7 +43,7 @@ function previewText(){
 /* typing in the box: keep the value, redraw the preview and the message only */
 export function lineDiscountInput(v){
   const s=store.lineDisc; if(!s) return;
-  s.value=v; const c=store.cart[s.i], bad=c&&checkDiscount(s,toPaise(c.q*c.price));
+  s.value=v; const c=store.cart[s.i], bad=c&&checkDiscount(s,linePaise(c.q,c.price));
   s.err=bad?bad.error:"";
   const p=$("#ldPrev"), e=$("#ldErr"); if(p) p.innerHTML=previewText(); if(e){e.textContent=s.err;e.hidden=!s.err}
 }

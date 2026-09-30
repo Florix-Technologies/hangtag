@@ -29,8 +29,10 @@ import { refuse } from '../../shop/services/access.js';
 import { TRACKING_MODES, cleanTracking, productFieldsFor } from '../../../domain/shop/capabilities.js';
 import { shopCaps } from '../../shop/services/shop-caps.js';
 
+import { UNITS, decimalsOf, unitId, unitOf } from '../../../domain/catalog/units.js';
+
 /* ---------- product editor ----------
-   store.editor = { isNew, id, name, cat, brand, desc, price, cost, color, img, archived, hsn, gst, tracking (none|serial|batch),
+   store.editor = { isNew, id, name, cat, brand, desc, price, cost, color, img, archived, hsn, gst, unit (what it is sold by: pcs, kg…), tracking (none|serial|batch),
                     hasOpts, opts, cells, codesOn, code, sel:{ [cellKey]: true } (rows ticked for stickers), addName, err }
    opts/cells follow domain/catalog/options.js (editorState). A simple product has no options and one cell (key ""). */
 
@@ -41,7 +43,7 @@ export function openEditor(pid){
   if(pid&&!p)return;
   const st=editorState(p,stockOf);
   const e={isNew:!p,id:p?p.id:"p"+uid(),name:p?p.name:"",cat:p?p.cat||"":"",brand:p?p.brand||"":"",desc:p?p.desc||"":"",price:p?String(p.price):"",cost:p&&p.cost!=null?String(p.cost):"",
-    color:p?okColor(p.color):COLORS[products().length%COLORS.length],img:undefined,archived:p?!!p.archived:false,hsn:p?p.hsn||"":"",gst:p&&p.gst!=null?String(p.gst):"",
+    color:p?okColor(p.color):COLORS[products().length%COLORS.length],img:undefined,archived:p?!!p.archived:false,hsn:p?p.hsn||"":"",gst:p&&p.gst!=null?String(p.gst):"",unit:unitId(p&&p.unit),
     hasOpts:!!(p&&p.opts&&p.opts.length),opts:st.opts,cells:st.cells,codesOn:!!(p&&p.code),code:p&&p.code?p.code:"barcode",sel:{},addName:"",err:"",
     tracking:cleanTracking(p&&p.tracking)};
   store.editor=e;renderEditor();
@@ -74,7 +76,7 @@ function rowHTML(x,e){
     <td class="ck"><input type="checkbox" data-edsel="${k}"${e.sel[x.key]?" checked":""} aria-label="Select ${esc(lab)} for stickers"></td>
     <th>${esc(lab)}${c.exists?"":` <small class="new">new</small>`}</th>
     <td class="ck"><input type="checkbox" data-edf="active" data-k="${k}"${c.active!==false?" checked":""} aria-label="${esc(lab)} on sale"></td>
-    <td><input type="number" inputmode="numeric" min="0" data-edf="stock" data-k="${k}" value="${esc(c.stock)}" placeholder="0" aria-label="Stock ${esc(lab)}"></td>
+    <td><input type="number" inputmode="${decimalsOf(e.unit)?"decimal":"numeric"}" min="0" step="${decimalsOf(e.unit)?"any":"1"}" data-edf="stock" data-k="${k}" value="${esc(c.stock)}" placeholder="0" aria-label="Stock ${esc(lab)}"></td>
     <td><input data-edf="sku" data-k="${k}" value="${esc(c.sku)}" maxlength="40" placeholder="—" aria-label="SKU ${esc(lab)}"></td>
     ${e.codesOn?`<td class="codecell"><div class="coderow"><input data-edf="bc" data-k="${k}" value="${esc(c.bc)}" maxlength="64" placeholder="Scan or type" aria-label="${e.code==="qr"?"QR code":"Barcode"} ${esc(lab)}"><button type="button" class="btn xs" data-edgen="${k}">Generate</button></div><div class="codeprev" data-prev="${k}">${codePreview(c.bc,e.code)}</div></td>`:""}
     <td><input type="number" inputmode="numeric" min="0" data-edf="price" data-k="${k}" value="${esc(c.price)}" placeholder="${inherit("price")}" aria-label="Price ${esc(lab)}"></td>
@@ -123,6 +125,7 @@ export function renderEditor(){
         <label class="f"><span class="lab">Cost price ₹</span><input data-ed="cost" type="number" inputmode="numeric" min="0" value="${esc(e.cost)}" placeholder="For gross profit"></label>
         <label class="f"><span class="lab">HSN code</span><input data-ed="hsn" value="${esc(e.hsn)}" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="4, 6 or 8 digits"></label>
         <label class="f"><span class="lab">GST %</span><input data-ed="gst" type="number" inputmode="decimal" min="0" max="100" step="0.01" value="${esc(e.gst)}" placeholder="e.g. 5"></label>
+        <label class="f"><span class="lab">Sold by</span><select data-ed="unit" id="edUnit">${UNITS.map(u=>`<option value="${u.id}"${unitId(e.unit)===u.id?" selected":""}>${esc(u.label)}${u.dp?` (up to ${u.dp} decimals)`:""}</option>`).join("")}</select><span class="fhint">Kg and litres are weighed on the bill; prices are per ${esc(unitOf(e.unit).id==="pcs"?"piece":unitOf(e.unit).sym)}</span></label>
       </div></div>
       <label class="f"><span class="lab">Description</span><textarea data-ed="desc" rows="2" maxlength="300" placeholder="Optional">${esc(e.desc)}</textarea></label>
       <div class="f"><span>Tile colour <span class="hintx">· shown when there's no photo</span></span><div class="colors">${COLORS.map(cc=>`<button type="button" data-tilecolor="${cc}" aria-label="Tile colour ${cc}" aria-pressed="${cc===e.color}" style="background:${cc}"></button>`).join("")}</div></div>

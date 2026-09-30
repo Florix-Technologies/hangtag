@@ -40,6 +40,18 @@ export const denied = (p, what) => (Array.isArray(p) ? canAny(p) : can(p)) ? nul
 /* Shown on the sign-in screen when a member's phone no longer reaches the shop */
 export const ACCESS_LOST_TEXT = "Device revoked: this phone was signed out of the shop by the owner (or your access was switched off). Ask the owner for a new QR code, or sign in with your staff password.";
 
+/* The account signed in: kept on bills, returns, stock records and cash entries (as `user`) so the till can show who made
+   them. The database notes it too (user_id, set from the sign-in: what the phone sends is never trusted). */
+export const userId = () => store.authUser && store.authUser.id || null;
+/* Who made a record, in words: "you", "the owner", a team member's name (when this phone knows it), else "a team member" */
+export function userLabel(id){
+  if(!id) return "";
+  if(id === userId()) return "you";
+  if(isMember() && id === store.access.shopId) return "the owner";
+  const m = store.team && (store.team.members || []).find(x => x.userId === id);
+  return m ? m.name || m.username || "a team member" : "a team member";
+}
+
 export function setAccess(a){ store.access = a; saveAccess(); }
 export function clearAccess(){ if(store.access){ store.access = null; saveAccess(); } }
 

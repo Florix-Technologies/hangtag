@@ -242,3 +242,20 @@
  * @property {(role: string, permissions: string[], label?: string) => Promise<void>} saveRolePermissions  Owner only (hangtag_roles).
  * @property {() => Promise<{shopId, role, deviceId}>} touch  This phone's standing in its shop (RPC hangtag_touch_device).
  */
+
+/**
+ * "weightScale": a weighing scale on this device. Implementation: infrastructure/hardware/weight-scale.js — a scale on a
+ * cable through Web Serial (any scale that prints "a number and a unit"; baud rate, bare-number unit and an optional
+ * request command from Settings → Hardware, store.scale), else the manual provider (the weight is typed). Reach it through
+ * features/hardware/services/scale.js. Nothing here throws: failures come back as { error } with a message a person can
+ * act on, and typing the weight is always possible.
+ * @typedef {Object} WeightScalePort
+ * @property {() => boolean} supported     This browser can reach a scale on a cable (Web Serial).
+ * @property {() => {connected: boolean, kind: "serial"|"manual", name: string}} status
+ * @property {() => Promise<{ok: true, name: string}|{error: string}>} connect   Asks the person to choose the port (needs a tap).
+ * @property {() => Promise<boolean>} reconnect    Opens the port this browser remembers, without asking (at start-up).
+ * @property {() => Promise<void>} disconnect
+ * @property {(opts?: {timeoutMs?: number}) => Promise<{value: number, unit: "kg"|"g"|"lb"|"oz"|"l"|"ml", stable: true}|{error: string}>} read
+ *   The next settled reading (a scale still settling, or nothing within the time, is an error).
+ * @property {(line: string, unit?: string) => ({value, unit, stable}|null)} feed  Gives the manual provider a reading, as a scale would print it.
+ */

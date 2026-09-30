@@ -1,6 +1,6 @@
 // Add, change or remove a discount on one bill line or on the whole bill. Rules: domain/sales/discounts.js.
 import { checkBillDiscounts, checkDiscount, normalizeDiscount } from '../../../domain/sales/discounts.js';
-import { toPaise } from '../../../domain/sales/paise.js';
+import { linePaise } from '../../../domain/sales/paise.js';
 import { store } from '../../../shared/state/store.js';
 import { saveCart } from '../../../shared/state/persistence.js';
 import { can, notAllowedText } from '../../shop/services/access.js';
@@ -10,7 +10,7 @@ import { can, notAllowedText } from '../../shop/services/access.js';
 export function setLineDiscount(i,input){
   if(normalizeDiscount(input)&&!can("apply_discount")) return {error:notAllowedText("give discounts")};
   const c=store.cart[i]; if(!c) return {error:"That line is no longer on the bill."};
-  const err=checkDiscount(input,toPaise(c.q*c.price)); if(err) return err;
+  const err=checkDiscount(input,linePaise(c.q,c.price)); if(err) return err;
   const d=normalizeDiscount(input);
   if(d) c.disc=d; else delete c.disc;
   saveCart(); return {ok:true};

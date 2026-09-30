@@ -5,8 +5,10 @@ import { scanCodeError } from '../../../domain/sales/scan-rules.js';
 import { findByCode } from '../services/search.js';
 import { addToLines, availOf, cartQtyV } from '../services/cart.js';
 import { saveCart } from '../../../shared/state/persistence.js';
+import { isWeighed } from '../../../domain/catalog/units.js';
 
-/* → { status: "added" | "not-found" | "sold-out" | "limit" | "invalid", message, label?, q?, variantId? }
+/* → { status: "added" | "weigh" | "not-found" | "sold-out" | "limit" | "invalid", message, label?, q?, variantId? }
+   "weigh": it is sold by weight or volume, so nothing is added yet: the weight dialog asks for its weight.
    Only this shop's catalog is searched (exact barcode or QR text first, then SKU); nothing is ever created. */
 export function scanToCart(raw){
   const bad = scanCodeError(raw);
@@ -19,6 +21,7 @@ export function scanToCart(raw){
     return onBill ? { status: "limit", message: `All ${onBill} in stock are already on the bill (${label}).`, label, variantId: hit.v.id }
       : { status: "sold-out", message: `${label} is sold out.`, label, variantId: hit.v.id };
   }
+  if(isWeighed(hit.p.unit)) return { status: "weigh", message: `Weigh ${label}`, label, variantId: hit.v.id };
   addToLines(store.cart, hit.v.id, 1); store.justAdded = hit.p.id; saveCart();
   const q = cartQtyV(hit.v.id);
   return { status: "added", message: `Added ${label}${q > 1 ? ` · ${q} on the bill` : ""}`, label, q, variantId: hit.v.id };

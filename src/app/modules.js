@@ -7,6 +7,9 @@
 // A part or module that isn't registered doesn't exist in the app: nothing shows for it (Orders appears only once one
 // of its parts is registered and in use).
 import { registerModule, registerSubview } from '../features/shop/services/modules.js';
+import { registerSettingsPart } from '../features/shop/services/settings-sections.js';
+import { hasCap } from '../features/shop/services/shop-caps.js';
+import { scaleSetupHTML } from '../features/hardware/components/scale-settings.js';
 import { onSubviewClick, renderSubviews } from '../features/shop/components/module-page.js';
 import { renderHome } from '../features/home/pages/home-page.js';
 import { renderBill } from '../features/sales/components/bill-panel.js';
@@ -17,6 +20,7 @@ import { renderCustomers } from '../features/customers/pages/customers-page.js';
 import { renderProducts } from '../features/products/pages/products-page.js';
 import { openSettings } from '../features/shop/components/settings-modal.js';
 import { openNavMore } from './navigation.js';
+import { storage } from '../shared/state/persistence.js';
 
 let installed = false;
 export function installModules(){
@@ -32,6 +36,8 @@ export function installModules(){
   // don't redraw the product list under someone typing in it (except its search box)
   registerModule({ id: "products", render(){ const a = document.activeElement; if(!(a && a.closest && a.closest("#v-products") && a.id !== "prodSearch")) renderProducts(); } });
   registerModule({ id: "settings", open: openSettings });
+  // Settings → Hardware: the weighing scale (T1), for shops that sell by weight or already set one up on this device
+  registerSettingsPart("hardware", { id: "scale", order: 20, html: () => hasCap("uses_weight") || storage.get("hangtag_scale", null) ? scaleSetupHTML() : "" });
   document.addEventListener("click", e => {
     if(onSubviewClick(e)) return;
     if(e.target && e.target.closest && e.target.closest("[data-navmore]")) openNavMore();

@@ -5,6 +5,10 @@ import { products } from '../../products/services/catalog.js';
 import { dayKey } from '../../../shared/formatting/dates.js';
 import { ledgerEntries } from '../../../domain/inventory/stock-ledger.js';
 import { restocks } from '../../../domain/returns/return-value.js';
+import { roundQty } from '../../../domain/catalog/units.js';
+
+/* Quantities (2.5 kg, 3 pieces) are added up rounded to 3 decimals, so stock never drifts (0.1 + 0.2 kg is 0.3 kg) */
+const add=(m,k,q)=>{m[k]=roundQty((m[k]||0)+q)};
 
 export const invalidate=()=>{store._d=null};
 export function D(){
@@ -26,17 +30,17 @@ export function D(){
   products().forEach(p=>(p.variants||[]).forEach(v=>{vIdx[v.id]={v,p}}));
   const resolve=i=>{if(i.v&&vIdx[i.v])return i.v;const k=i.p+":"+(i.s==null?"":i.s);return vIdx[k]?k:(i.v||null)};
   const sold={},saleById={};
-  sales.forEach(s=>{saleById[s.id]=s;if(s.void)return;s.items.forEach(i=>{const vid=resolve(i);if(vid)sold[vid]=(sold[vid]||0)+i.q})});
+  sales.forEach(s=>{saleById[s.id]=s;if(s.void)return;s.items.forEach(i=>{const vid=resolve(i);if(vid)add(sold,vid,i.q)})});
   const rets=Object.values(store.returnsMap).filter(r=>r&&Array.isArray(r.items)).sort((a,b)=>a.t-b.t);
   const returned={},retLine={},retBySale={};
   rets.forEach(r=>{
     (retBySale[r.sale]=retBySale[r.sale]||[]).push(r);
-    r.items.forEach(it=>{const vid=resolve(it);if(vid&&restocks(it))returned[vid]=(returned[vid]||0)+it.q;const k=r.sale+"|"+it.ln;retLine[k]=(retLine[k]||0)+it.q});
+    r.items.forEach(it=>{const vid=resolve(it);if(vid&&restocks(it))add(returned,vid,it.q);add(retLine,r.sale+"|"+it.ln,it.q)});
   });
   const moved={};
-  Object.values(store.moves).forEach(m=>{if(m&&m.v)moved[m.v]=(moved[m.v]||0)+(Math.round(+m.q)||0)});
+  Object.values(store.moves).forEach(m=>{if(m&&m.v)add(moved,m.v,roundQty(m.q))});
   // returns against a cancelled bill don't count (a bill with returns can't be cancelled; this keeps stock right if one arrives)
-  rets.forEach(r=>{const s=saleById[r.sale];if(s&&s.void)r.items.forEach(it=>{const vid=resolve(it);if(vid&&restocks(it))returned[vid]-=it.q})});
+  rets.forEach(r=>{const s=saleById[r.sale];if(s&&s.void)r.items.forEach(it=>{const vid=resolve(it);if(vid&&restocks(it))add(returned,vid,-it.q)})});
   let ledger=null;
   store._d={sales,saleById,vIdx,resolve,sold,returned,retLine,retBySale,rets,moved,
     /* every stock change, oldest first (domain/inventory/stock-ledger.js), built when first asked for */

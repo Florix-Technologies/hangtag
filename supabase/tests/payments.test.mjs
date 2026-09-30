@@ -147,7 +147,7 @@ r = await save(db, A, [ex]);
 check('an exchange covered by its credit needs no payment', !r.err && await n(db, A, 'hangtag_payments', `WHERE sale_id='b3'`) === 0, r.err);
 
 // the money rules on bills
-const withSale = (patch) => [{ ...billArgs(b2), sale: { ...billArgs(b2).sale, id: 'bx', ...patch }, items: [], payments: [{ id: 'bx:card', method: 'card', amount: patch.total ?? 1000 }] }];
+const withSale = (patch) => [{ ...billArgs(b2), sale: { ...billArgs(b2).sale, id: 'bx', bill_no: 'INV-bx', ...patch }, items: [], payments: [{ id: 'bx:card', method: 'card', amount: patch.total ?? 1000 }] }];
 r = await saveRaw(db, A, withSale({ discount: 1200, bill_discount: 1200, subtotal: 1000 }));
 check('a discount larger than the subtotal is refused', /hangtag_sales_money_check/.test(r.err || ''), r.err);
 r = await saveRaw(db, A, withSale({ bill_discount_type: 'percent', bill_discount_value: 120 }));
@@ -156,7 +156,7 @@ r = await saveRaw(db, A, withSale({ gst_mode: 'inter', tax_amount: 50, cgst_amou
 check('IGST bills carry no CGST / SGST', /hangtag_sales_gst_check/.test(r.err || ''), r.err);
 r = await saveRaw(db, A, withSale({ gst_mode: 'intra', tax_amount: 50, cgst_amount: 20, sgst_amount: 20 }));
 check('GST must equal CGST + SGST + IGST', /hangtag_sales_gst_check/.test(r.err || ''), r.err);
-r = await saveRaw(db, A, [{ ...billArgs(b2), sale: { ...billArgs(b2).sale, id: 'by' }, payments: [{ id: 'by:card', method: 'card', amount: 1000 }],
+r = await saveRaw(db, A, [{ ...billArgs(b2), sale: { ...billArgs(b2).sale, id: 'by', bill_no: 'INV-by' }, payments: [{ id: 'by:card', method: 'card', amount: 1000 }],
   items: [{ ...billArgs(b2).items[0], sale_id: 'by', discount_type: 'fixed', discount_value: 1500, discount_amount: 1500 }] }]);
 check('a line discount larger than the line is refused', /hangtag_sale_items_money_check/.test(r.err || ''), r.err);
 

@@ -261,6 +261,7 @@ check('a refusal by row security: a member\'s goes to review; the owner\'s keeps
   const fake = new Proxy({
     auth: { getSession: async () => ({ data: { session: { user: { id: MEMBER } } } }) },
     shopChanges: async () => { asked.push('changes'); return { ...marks }; },
+    purchaseChanges: async () => { asked.push('pchanges'); return 'p1'; },
     fetchSalesSince: async (iso) => { asked.push('since:' + iso); return [bill('s3', 3)]; },
     fetchVoidedSales: async () => { asked.push('voids'); return [{ id: 's1', reason: 'Duplicate' }]; },
     fetchCustomers: async () => { asked.push('customers'); return [{ id: 'c1', name: 'Asha' }]; },
@@ -274,7 +275,7 @@ check('a refusal by row security: a member\'s goes to review; the owner\'s keeps
   await pullShopChanges();   // not known yet: one full download, which notes the marks first
   asked.length = 0;
   let got = await pullShopChanges();
-  check('nothing changed: one small question, nothing downloaded', eq(got, []) && eq(asked, ['changes']), asked);
+  check('nothing changed: one small question, nothing downloaded', eq(got, []) && eq(asked, ['changes', 'pchanges']), asked);
   marks = { ...marks, customers: 'u2', sales: '3|t2|123', sales_count: 3, sales_since: '2026-09-29T10:05:00+05:30', sales_voids: '123' };
   asked.length = 0;
   got = await pullShopChanges();

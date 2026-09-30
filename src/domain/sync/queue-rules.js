@@ -10,7 +10,7 @@
 //     by the database's rules won't fix itself by retrying: the item goes to the review list with the reason. Nothing is
 //     ever dropped silently; review items can be sent again, and all but bills can be discarded after review.
 export const ORDERED_TYPES=["sale","prod","allsales","event"];
-const ONE_PER_RECORD=["sale","return","cust","move","event","eventdel","void","cashmove","dayclose","collection","held","helddel","order"];
+const ONE_PER_RECORD=["sale","return","cust","move","event","eventdel","void","cashmove","dayclose","collection","held","helddel","order","supplier","purchase","pcancel","spay"];
 const REVIEW_NOW=["VALIDATION","CONFLICT"];
 export const REVIEW_AFTER_TRIES=3;   // NOT_FOUND: something it needs may still be on its way from another device
 
@@ -35,6 +35,11 @@ export function dependsOn(item){
   if(item.type==="cashmove"&&item.move&&item.move.reverses) return ["cashmove:"+item.move.reverses];
   // a payment collected from a customer needs the customer in the cloud first (foreign key)
   if(item.type==="collection"&&item.col&&item.col.cust) return ["cust:"+item.col.cust];
+  // a purchase needs its supplier and the products of its lines; a cancel its purchase; a payment its supplier, its invoice
+  // and the payment it reverses
+  if(item.type==="purchase"&&item.purchase){const p=item.purchase;return [...(p.supplierId?["supplier:"+p.supplierId]:[]),...new Set((p.lines||[]).map(l=>"prod:"+l.p))]}
+  if(item.type==="pcancel") return ["purchase:"+item.id];
+  if(item.type==="spay"&&item.pay){const x=item.pay;return ["supplier:"+x.supplierId,...(x.purchaseId?["purchase:"+x.purchaseId]:[]),...(x.reverses?["spay:"+x.reverses]:[])]}
   return [];
 }
 /* The record an item stands for when others wait on it (products too, which merge instead of being replaced) */
@@ -71,6 +76,8 @@ export const UPLOAD_PERMISSIONS={
   settings:["manage_settings"],logo:["manage_settings"],event:["manage_settings"],eventdel:["manage_settings"],
   // section 3m: payments collected from customers, held bills, orders (RPC hangtag_save_order checks create_order)
   collection:["collect_credit"],held:["create_sale"],helddel:["create_sale"],order:["create_order"],
+  // suppliers and purchases (section 3l); cancelling a purchase also needs manage_inventory (checked by the use case and hangtag_cancel_purchase)
+  supplier:["create_purchase","manage_inventory"],purchase:["create_purchase"],pcancel:["create_purchase"],spay:["create_purchase"],
 };
 /* May someone with these permissions upload this item? (unknown kinds: yes) */
 export const uploadAllowed=(item,has)=>{const need=item&&UPLOAD_PERMISSIONS[item.type];return !need||need.some(p=>has(p))};

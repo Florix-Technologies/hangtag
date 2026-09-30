@@ -34,6 +34,10 @@ export const saveSyncReview=()=>storage.set("hangtag_sync_review",store.syncRevi
 export const savePayPending=()=>{ if(store.payPending) storage.set("hangtag_pay_pending",store.payPending); else storage.remove("hangtag_pay_pending"); };
 export const saveCashMoves=()=>storage.set("rc_cash_moves",store.cashMoves);
 export const saveDayCloses=()=>storage.set("rc_day_closes",store.dayCloses);
+/* suppliers, purchases from them and later payments to them (section 3l), by id */
+export const saveSuppliers=()=>storage.set("rc_suppliers",store.suppliers);
+export const savePurchases=()=>storage.set("rc_purchases",store.purchases);
+export const saveSupplierPays=()=>storage.set("rc_supplier_pays",store.supplierPays);
 export const saveDeliveryQueue=()=>storage.set("hangtag_delivery_queue",store.deliveryQueue);
 export const saveSettings=()=>storage.set("rc_settings",store.settings);
 export const saveLogo=()=>storage.set("rc_logo",store.logo||"");

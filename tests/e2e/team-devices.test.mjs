@@ -202,7 +202,7 @@ try {
   check('no live updates for a member\'s phone (it polls)', await B.run('return !sbRealtimeChannel'));
 
   console.log('--- what a cashier may and may not do ---');
-  check('Reports hidden; Sell, Stock, Products, Customers shown', !(await B.vis('.nav [data-tab="report"]')) && await B.vis('.nav [data-tab="sell"]') && await B.vis('.nav [data-tab="products"]'));
+  check('Reports hidden; Sell, Stock, Products, Customers shown (Products may sit behind More on a phone)', !(await B.vis('.nav [data-tab="report"]')) && await B.vis('.nav [data-tab="sell"]') && await B.run('return tabOpen("products")&&tabOpen("stock")&&tabOpen("customers")&&!tabOpen("report")'));
   await B.run('setTab("report")'); await sleep(100);
   check('...and Reports can\'t be opened', (await B.run('return prefs.tab')) !== 'report');
   await B.run('setTab("products")'); await sleep(200);
@@ -240,7 +240,7 @@ try {
     && !polled.some((p) => /hangtag_(images|products|variants|sales|sale_items|payments|stock_moves)$/.test(p)), polled);
   B.sbRequests.length = 0;
   await B.run('await memberPoll()');
-  check('nothing new: the check downloads nothing', B.sbRequests.every((x) => /rpc\/hangtag_(touch_device|shop_changes)$|hangtag_(members|roles)$/.test(x.path)), B.sbRequests.map((x) => x.path));
+  check('nothing new: the check downloads nothing', B.sbRequests.every((x) => /rpc\/hangtag_(touch_device|shop_changes|purchase_changes|order_changes)$|hangtag_(members|roles)$/.test(x.path)), B.sbRequests.map((x) => x.path));
 
   console.log('--- the cashier\'s cash drawer (no Reports tab) ---');
   await B.click('#acctBtn'); await sleep(100);
@@ -352,7 +352,7 @@ try {
   const F = await phone('kitchen');
   await F.goto('http://localhost:3210/', { waitUntil: 'domcontentloaded' });
   await staffSignIn(F, 'kiran', 'kitchen-pass-1');
-  check('kitchen: signed in, no tab, no till: "Nothing to open here yet"', await F.until('authUser&&sbStatus==="connected"&&isMember()', 20000) && await F.vis('#v-none')
+  check('kitchen: signed in, no tab, no till: "Nothing to open here yet"', await F.until('authUser&&sbStatus==="connected"&&isMember()&&!$("#v-none").hidden', 20000) && await F.vis('#v-none')
     && !(await F.vis('#v-sell')) && !(await F.vis('.nav [data-tab="sell"]')) && !(await F.vis('#billBar')) && /Nothing to open here yet/.test(await F.text('#v-none') || ''));
 } catch (e) { fails++; console.log('FAIL exception', e && e.stack || e); }
 finally { await browser.close(); }

@@ -42,7 +42,7 @@ export function installKeyboard(){
     if(e.key==="Escape"){
       if(store.scan){closeScanner();e.preventDefault();return}
       if(!$("#acctMenu").hidden)return;
-      if($("#modalHost").innerHTML){if(store.editor||store.billImport)return; /* the product editor only closes with Cancel or ×, so work is never lost by accident */ if(store.payState)payClosed();store.payState=null;store.lineDisc=null;closeModal();e.preventDefault();return}
+      if($("#modalHost").innerHTML){if(store.editor||store.billImport||store.purchaseForm||store.prodImport||store.quickProduct||(store.supplierView&&store.supplierView.form))return; /* the product editor only closes with Cancel or ×, so work is never lost by accident */ if(store.payState)payClosed();store.payState=null;store.lineDisc=null;closeModal();e.preventDefault();return}
       if(store.pick&&store.pick.target==="exchange"){store.pick=null;renderReturnSheet();e.preventDefault();return}
       if(store.pick||store.billOpen||$("#sheetHost").innerHTML){store.retState=null;closeSheets();e.preventDefault()}hideTip();return;
     }

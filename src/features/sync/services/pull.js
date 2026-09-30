@@ -11,13 +11,14 @@ import { use } from '../../../shared/di/services.js';
 import { toast } from '../../../shared/components/toast.js';
 import { dayKey } from '../../../shared/formatting/dates.js';
 import { saveCashMoves, saveCatalog, saveCustomers, saveDayCloses, saveEvents, saveImgs, saveLogo, saveMoves, saveReturns, saveSettings } from '../../../shared/state/persistence.js';
-import { saveCollections, saveHeldCarts, saveOrders } from '../../../shared/state/persistence.js';
+import { saveCollections, saveHeldCarts, saveOrders, savePurchases, saveSupplierPays, saveSuppliers } from '../../../shared/state/persistence.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { logger } from '../../../shared/logging/logger.js';
 import { can, isMember } from '../../shop/services/access.js';
 
 /* ---------- pulls (cloud is the truth, except for work still waiting in this device's queue) ---------- */
 let seen = null;   // a member's phone: the shop's fingerprints its data matches (null: not known yet; see pullShopChanges)
+let seenPurchases = null;   // …and the fingerprint of its suppliers, purchases and supplier payments (hangtag_purchase_changes)
 
 export const pendingIds = type => new Set(store.sbOfflineQueue.filter(q=>q.type===type).map(q=>q.id || (q.move&&q.move.id) || (q.ret&&q.ret.id) || (q.cust&&q.cust.id) || (q.ev&&q.ev.id)));
 /* opts.images: false = leave the photos as they are (a member's phone downloads them only when they changed) */
@@ -51,8 +52,10 @@ export async function pullCatalogFromSupabase(remoteIsTruth = false, opts = {}){
 export async function pullMoves(){
   const list = await use("cloud").fetchMoves();
   const pending = pendingIds("move"), next = {};
+  // the stock records of a purchase (or its cancel) still on its way go up with it, so they stay too
+  const withPurchase = new Set([...pendingIds("purchase"), ...pendingIds("pcancel")]);
   list.forEach(m => { next[m.id] = m; });
-  Object.values(store.moves).forEach(m => { if(pending.has(m.id)) next[m.id] = m; });
+  Object.values(store.moves).forEach(m => { if(pending.has(m.id) || (m.imp && withPurchase.has(m.imp))) next[m.id] = m; });
   store.moves = next; saveMoves();
 }
 export async function pullReturns(){
@@ -86,6 +89,21 @@ export async function pullEvents(){
   Object.values(store.events || {}).forEach(e => { if(pending.has(e.id)) next[e.id] = e; });
   store.events = next; saveEvents();
 }
+/* Suppliers, purchases and later payments to suppliers (section 3l) from every device of the shop; those still waiting to
+   upload from this device stay as they are. An older database (schema.sql not re-run yet) or a failed download leaves this
+   device's copy alone → false */
+export async function pullPurchases(){
+  const cloud = use("cloud");
+  let sups, purs, pays;
+  try{ [sups, purs, pays] = await Promise.all([cloud.fetchSuppliers(), cloud.fetchPurchases(), cloud.fetchSupplierPayments()]); }
+  catch(e){ logger.warn("Suppliers and purchases not downloaded:", e); return false; }
+  const ps = pendingIds("supplier"), pp = new Set([...pendingIds("purchase"), ...pendingIds("pcancel")]), px = pendingIds("spay"), S = {}, P = {}, X = {};
+  sups.forEach(s => { S[s.id] = s; }); Object.values(store.suppliers || {}).forEach(s => { if(ps.has(s.id)) S[s.id] = s; });
+  purs.forEach(p => { P[p.id] = p; }); Object.values(store.purchases || {}).forEach(p => { if(pp.has(p.id)) P[p.id] = p; });
+  pays.forEach(x => { X[x.id] = x; }); Object.values(store.supplierPays || {}).forEach(x => { if(px.has(x.id)) X[x.id] = x; });
+  store.suppliers = S; saveSuppliers(); store.purchases = P; savePurchases(); store.supplierPays = X; saveSupplierPays();
+  return true;
+}
 /* Settings and the receipt logo (both kept in hangtag_meta; a change still waiting to upload wins — also one made while
    the download was on its way) */
 export async function pullSettings(){
@@ -106,6 +124,7 @@ export async function pullFromSupabase(showToast = true){
   try{
     // a member's phone notes where the shop stands first, so its next look (every 30 s) fetches only what changed after
     const marks = isMember() ? await use("cloud").shopChanges().catch(() => null) : null;
+    const pmarks = isMember() ? await use("cloud").purchaseChanges().catch(() => null) : null;
     await pullCatalogFromSupabase();
     await pullMoves();
     await pullReturns();
@@ -114,9 +133,10 @@ export async function pullFromSupabase(showToast = true){
     await pullCash();
     // orders, held bills and payments collected (section 3m): a database without them yet doesn't stop the rest
     await pullOrders().catch(e => logger.warn("Orders and credit not downloaded:", e));
+    await pullPurchases();
     await pullSettings();
     await pullSales();
-    if(isMember()) seen = marks;
+    if(isMember()){ seen = marks; seenPurchases = pmarks; }
     markSynced();
     renderAll();
     if(showToast) toast("Everything is up to date.");
@@ -146,7 +166,7 @@ function addRemoteSale(days, s){
    fingerprint per part of the shop (hangtag_shop_changes) and downloads only the parts whose fingerprint moved: photos
    only when a photo changed, and of the bills only those saved since its last look (plus which are cancelled). The full
    download stays for connecting and "Refresh". */
-export const forgetShopChanges = () => { seen = null; };
+export const forgetShopChanges = () => { seen = null; seenPurchases = null; };
 const MARGIN_MS = 120000;   // bills saved by a long upload that began before the last look still come along
 const isoMinus = (t, ms) => { const x = Date.parse(String(t || "").replace(/(\.\d{3})\d+/, "$1")); return Number.isFinite(x) ? new Date(x - ms).toISOString() : null; };
 /* → the parts downloaded (e.g. ["sales","customers"]); [] when nothing changed */
@@ -156,6 +176,8 @@ export async function pullShopChanges(){
   const now = await cloud.shopChanges();
   if(!seen){ await pullFromSupabase(false); return ["all"]; }   // not known what this phone's copy matches: once, everything
   const was = seen, parts = ["catalog", "images", "moves", "returns", "customers", "events", "cash", "settings", "sales"].filter(k => now[k] !== was[k]);
+  const pnow = await cloud.purchaseChanges().catch(() => null);
+  if(pnow != null && pnow !== seenPurchases) parts.push("purchases");
   if(!parts.length) return [];
   store.syncing = true; renderSync();
   try{
@@ -167,6 +189,7 @@ export async function pullShopChanges(){
     if(parts.includes("events")) await pullEvents();
     if(parts.includes("cash")) await pullCash();
     if(parts.includes("settings")) await pullSettings();
+    if(parts.includes("purchases") && await pullPurchases()) seenPurchases = pnow;
     if(parts.includes("sales")) await pullNewSales(was, now);
     seen = now;
     markSynced();
@@ -220,6 +243,14 @@ export async function pushLocalToSupabase(){
   // payments collected from customers (added once: sending one the cloud has changes nothing); orders upload on their own
   // version and held bills are short-lived, so neither is sent again here
   if(can("collect_credit")) Object.values(store.collections || {}).forEach(c => enqueue({ type:"collection", id:c.id, col:c }));
+  // suppliers, purchases (a cancelled one: saved, then cancelled) and supplier payments (reversals after what they reverse)
+  Object.values(store.suppliers || {}).forEach(s => enqueue({ type:"supplier", id:s.id, sup:s }));
+  Object.values(store.purchases || {}).sort((x, y) => x.t - y.t).forEach(p => {
+    const posted = { ...p, status:"posted" }; delete posted.cancelReason; delete posted.cancelledAt;
+    enqueue({ type:"purchase", id:p.id, purchase:posted, moves:Object.values(store.moves).filter(m => m.imp === p.id && m.type === "RESTOCK") });
+    if(p.status === "cancelled") enqueue({ type:"pcancel", id:p.id, reason:p.cancelReason || "Cancelled", t:p.cancelledAt || Date.now(), dev:p.dev || store.dev });
+  });
+  Object.values(store.supplierPays || {}).sort((x, y) => (x.reverses ? 1 : 0) - (y.reverses ? 1 : 0)).forEach(x => enqueue({ type:"spay", id:x.id, pay:x }));
   enqueue({ type:"settings" });
   if(store.logo) enqueue({ type:"logo" });
   renderSync();

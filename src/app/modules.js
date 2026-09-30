@@ -21,8 +21,11 @@ import { renderProducts } from '../features/products/pages/products-page.js';
 import { openSettings } from '../features/shop/components/settings-modal.js';
 import { openNavMore } from './navigation.js';
 import { ORDERS_MODULE } from '../features/orders/module.js';
+import { INVENTORY_SUBVIEWS, renderInventoryPart } from '../features/inventory/components/inventory-views.js';
 import { renderOrdersPart } from '../features/orders/pages/orders-page.js';
 import { storage } from '../shared/state/persistence.js';
+import { products } from '../features/products/services/catalog.js';
+import { unitOf } from '../domain/catalog/units.js';
 
 let installed = false;
 export function installModules(){
@@ -35,13 +38,17 @@ export function installModules(){
   ORDERS_MODULE.submodules.forEach((m, i) => registerSubview("orders", { id: m.id, label: m.label, order: 10 * (i + 1), caps: m.capability ? [m.capability] : [], perms: m.permissions, render: host => renderOrdersPart(host, m.id) }));
   registerModule({ id: "stock", render: () => renderSubviews("stock") });
   registerSubview("stock", { id: "levels", label: "Stock", order: 10, main: true, render: () => renderStock() });
+  // Inventory (T2): purchases, suppliers and stock count, for the roles that use them
+  INVENTORY_SUBVIEWS.forEach((d, i) => registerSubview("stock", { id: d.id, label: d.label, order: 20 + 10 * i, perms: d.perms, render: host => renderInventoryPart(d, host) }));
   registerModule({ id: "report", render: renderReport });
   registerModule({ id: "customers", render: renderCustomers });
   // don't redraw the product list under someone typing in it (except its search box)
   registerModule({ id: "products", render(){ const a = document.activeElement; if(!(a && a.closest && a.closest("#v-products") && a.id !== "prodSearch")) renderProducts(); } });
   registerModule({ id: "settings", open: openSettings });
-  // Settings → Hardware: the weighing scale (T1), for shops that sell by weight or already set one up on this device
-  registerSettingsPart("hardware", { id: "scale", order: 20, html: () => hasCap("uses_weight") || storage.get("hangtag_scale", null) ? scaleSetupHTML() : "" });
+  // Settings → Hardware: the weighing scale (T1), for shops that sell by weight (the capability, or a product sold by the kg or
+  // litre) or that already set one up on this device
+  const weighs = () => hasCap("uses_weight") || !!storage.get("hangtag_scale", null) || products().some(p => /^(weight|volume)$/.test(unitOf(p.unit).kind));
+  registerSettingsPart("hardware", { id: "scale", order: 20, html: () => weighs() ? scaleSetupHTML() : "" });
   document.addEventListener("click", e => {
     if(onSubviewClick(e)) return;
     if(e.target && e.target.closest && e.target.closest("[data-navmore]")) openNavMore();

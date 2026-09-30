@@ -116,7 +116,7 @@ try {
     customers.c1={id:"c1",name:"Riya",phone:"9876543210",email:"",t:Date.now()};saveCustomers();enqueue({type:"cust",id:"c1",cust:customers.c1});
     cartCust={id:"c1",name:"Riya",phone:"9876543210"};addToLines(cart,v("Black/L"),2);addToLines(cart,v("White/M"),1);await checkout({method:"upi",ref:"412345678901"});await flushSbQueue();`);
   const sale = tbl('hangtag_sales')[0], items = tbl('hangtag_sale_items');
-  check('bill uploaded with number, customer and GST fields', sale && /^INV-\d{6}-001$/.test(sale.bill_no) && sale.customer_name === 'Riya' && sale.kind === 'sale', sale);
+  check('bill uploaded with number, customer and GST fields', sale && /^INV-\d{6}-[0-9A-Z]{3}001$/.test(sale.bill_no) && sale.customer_name === 'Riya' && sale.kind === 'sale', sale);
   check('bill lines uploaded with variant, colour and cost', items.length === 2 && items.every(i => i.variant_id && i.color && i.cost_price === 320), items.map(i => [i.variant_id, i.color, i.cost_price]));
   check('its payment uploaded with it (UPI, for the total)', JSON.stringify(tbl('hangtag_payments').map(p => [p.id, p.method, p.amount])) === JSON.stringify([[sale.id + ':upi', 'upi', sale.total]]), tbl('hangtag_payments'));
   // return and exchange, stock in, adjustment, settings

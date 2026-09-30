@@ -11,7 +11,8 @@ import { agoText, dtLong } from '../../../shared/formatting/dates.js';
 import { inrx } from '../../../shared/formatting/money.js';
 
 const TYPE={cashmove:"Cash entry",dayclose:"Day close",sale:"Bill",void:"Cancel / restore bill",return:"Return",prod:"Product",proddel:"Product removed",img:"Photo",move:"Stock change",cust:"Customer",
-  event:"Event",eventdel:"Event removed",settings:"Settings",logo:"Receipt logo",allsales:"All bills (full upload)"};
+  event:"Event",eventdel:"Event removed",settings:"Settings",logo:"Receipt logo",allsales:"All bills (full upload)",
+  supplier:"Supplier",purchase:"Purchase",pcancel:"Purchase cancelled",spay:"Supplier payment"};
 /* What a queued item is, in words */
 export function itemLabel(q){
   const what=TYPE[q.type]||q.type;
@@ -23,6 +24,9 @@ export function itemLabel(q){
   if(q.type==="cashmove"&&q.move) return `${what} ${inrx(q.move.amount)} · ${q.move.reason||""}`;
   if(q.type==="dayclose"&&q.close) return `${what} ${q.close.day} · counted ${inrx(q.close.counted)}`;
   if(q.type==="move"&&q.move) return `${what} ${q.move.q>0?"+":""}${q.move.q}`;
+  if(q.type==="supplier"&&q.sup) return `${what} ${q.sup.name}`;
+  if(q.type==="purchase"&&q.purchase) return `${what} ${[q.purchase.supplier,q.purchase.invoiceNo].filter(Boolean).join(" · ")} · ${inrx(q.purchase.total)}`;
+  if(q.type==="spay"&&q.pay) return `${what} ${q.pay.reverses?"reversal ":""}${inrx(q.pay.amount)}`;
   return what;
 }
 export function openSyncPanel(){ store.syncOpen=true; renderSyncPanel(); }

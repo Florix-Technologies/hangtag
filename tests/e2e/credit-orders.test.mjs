@@ -75,6 +75,7 @@ check('refunded to the account: what she owes goes down to ₹200, no book entry
 await run(`openCustHistory(${JSON.stringify(RIYA)})`); await sleep(200);
 await A.click('#modalHost [data-collect]'); await sleep(250);
 check('Collect payment: the amount owed is filled in', (await A.$eval('#colAmount', (e) => e.value)) === '200');
+await A.evaluate(() => { document.getElementById('toastHost').innerHTML = ''; });   // the return's toast sits over the form's buttons
 await A.click('#collectForm [data-colmethod="upi"]'); await sleep(200);
 await A.click('#collectForm [type=submit]'); await sleep(200);
 check('UPI without its reference is refused', /UTR/.test(await text('#colErr')));
@@ -105,8 +106,8 @@ await run('await flushSbQueue();cart=[];disc=null;cartCust=null;saveCart();rende
 check('in the cloud: removed', (await q(`SELECT count(*)::int n FROM public.hangtag_held_carts`))[0].n === 0);
 
 console.log('--- quotation → sales order → bill ---');
-await run('ordersView="quote";setTab("orders");renderAll()'); await sleep(200);
-await A.click('#ordersBody [data-ordnew="quote"]'); await sleep(300);
+await run('chooseSubview("orders","quote");setTab("orders");renderAll()'); await sleep(200);
+await A.click('[data-subalt="orders"] [data-ordnew="quote"]'); await sleep(300);
 await choose('#orderSheet [data-ofcust]', RIYA);
 await type('#ofQ', 'kurta'); await sleep(150);
 await A.click('#ofHits [data-ofadd]'); await sleep(200);
@@ -135,7 +136,7 @@ const so = (await q(`SELECT o.status, o.version, o.sale_ids, i.fulfilled_qty::fl
 check('in the cloud: completed, 3 delivered, the bill listed and pointing at the order', so && so.status === 'completed' && so.f === 3 && so.sale_ids.includes(S2.id) && so.sale_order === SO.id, so);
 
 console.log('--- expired quotations; a save on an old version ---');
-await run(`saveOrder({...newOrderDraft("quote",{}),cust:{id:${JSON.stringify(RIYA)},name:"Riya"},validUntil:"2020-01-01",items:[orderLine(${JSON.stringify(PID)},1)]});ordersView="quote";setTab("orders");renderAll()`); await sleep(300);
+await run(`saveOrder({...newOrderDraft("quote",{}),cust:{id:${JSON.stringify(RIYA)},name:"Riya"},validUntil:"2020-01-01",items:[orderLine(${JSON.stringify(PID)},1)]});chooseSubview("orders","quote");setTab("orders");renderAll()`); await sleep(300);
 check('an expired quotation is shown expired, with no Bill button', /Expired/.test(await text('#ordersList')) && (await A.$$('#ordersList [data-ordbill]')).length === 0);
 await run('await flushSbQueue()');
 const QX = await run('return ordersOf("quote").find(o=>o.validUntil==="2020-01-01")');

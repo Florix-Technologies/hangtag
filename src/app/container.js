@@ -31,7 +31,8 @@ import { createTeamClient } from '../infrastructure/team/team-client.js';
 import { createWeightScale } from '../infrastructure/hardware/weight-scale.js';
 import { createLocalFirstOrderRepository } from '../infrastructure/repositories/local-first-order-repository.js';
 import { createLocalFirstCreditRepository } from '../infrastructure/repositories/local-first-credit-repository.js';
-import { saveCollections, saveHeldCarts, saveOrders } from '../shared/state/persistence.js';
+import { createLocalFirstPurchaseRepository } from '../infrastructure/repositories/local-first-purchase-repository.js';
+import { saveCollections, saveHeldCarts, saveOrders, savePurchases, saveSupplierPays, saveSuppliers } from '../shared/state/persistence.js';
 
 /* Called first at start-up (app/main.js), before the state is restored from storage */
 export function installContainer(){
@@ -65,6 +66,8 @@ export function installContainer(){
   provide("cashRepository", createLocalFirstCashRepository({ store, persist: { saveCashMoves, saveDayCloses }, outbox: { enqueue } }));
   // A weighing scale on a cable (Web Serial, with this device's settings), else the weight is typed
   provide("weightScale", createWeightScale({ serial: typeof navigator !== "undefined" ? navigator.serial : null, getSettings: () => store.scale }));
+  // Suppliers, purchases (one RPC each, with their stock-in records) and payments to suppliers
+  provide("purchaseRepository", createLocalFirstPurchaseRepository({ store, persist: { saveSuppliers, savePurchases, saveSupplierPays, saveMoves, saveCashMoves, saveCatalog }, outbox: { enqueue }, invalidate }));
   provide("inventoryImportService", createLocalFirstStockImport({ store, cloud: cloudGateway, persist: { saveCatalog, saveMoves }, outbox: { flush: flushSbQueue }, invalidate }));
   // Customer credit, held bills and orders (section 3m)
   provide("orderRepository", createLocalFirstOrderRepository({ store, persist: { saveOrders, saveHeldCarts }, outbox }));

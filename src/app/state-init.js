@@ -45,6 +45,15 @@ export function initState(){
   store.ordersView = "";        // Orders tab: "held" | "quote" | "sales" ("": the first one this person has)
   store.orderForm = null;       // the quotation / sales order being edited
   store.collectForm = null;     // "Collect payment" from a customer: { cid, amount, method, ref, note, err }
+  store.suppliers = objOr(storage.get("rc_suppliers",{}),{});   // who the shop buys from (by id)
+  store.purchases = objOr(storage.get("rc_purchases",{}),{});   // purchases: a supplier's invoice entered line by line (by id)
+  store.supplierPays = objOr(storage.get("rc_supplier_pays",{}),{});   // later payments to suppliers and their reversals (by id)
+  store.invSub = "levels";      // Inventory: which part is open (levels, purchases, suppliers, count)
+  store.purchaseForm = null;    // the purchase entry sheet
+  store.supplierView = null;    // Inventory → Suppliers: the open supplier, its forms
+  store.stockCount = null;      // Inventory → Stock count: filter, typed counts, review
+  store.prodImport = null;      // Products → Import: the file, its rows checked
+  store.quickProduct = null;    // a new product made from an unknown barcode
   store.cashForm = null;        // the cash entry / day close sheet
   store.voidForm = null;        // cancelling a bill: its reason
   store.gstView = null;         // the GST filing view: { month } or { from, to }

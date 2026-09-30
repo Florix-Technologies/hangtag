@@ -14,6 +14,7 @@ import { ACCESS_LOST_TEXT, can, denied, isMember, notAllowedText, refreshAccess 
 import { deviceDocNo, nextBillNo } from '../../sales/services/totals.js';
 import { requestSignOut } from '../../../shared/ui/session-actions.js';
 import { orderRepository } from '../../orders/repositories/order-repository.js';
+import { purchaseItemOff, purchaseItemOn } from '../../inventory/services/purchase-state.js';
 
 /* Add work for the cloud; identical product uploads are merged so the queue stays short */
 
@@ -92,6 +93,14 @@ export async function sendItem(item){
     // the order as it is now, on the version this device last saw; the cloud's new version is kept for the next save
     const o = orderRepository().get(item.id);
     if(o){ const r = await cloud.saveOrder(o); orderRepository().saved(o.id, r.version); }
+  } else if(item.type === "supplier"){
+    await cloud.saveSupplier(item.sup);
+  } else if(item.type === "purchase"){
+    await cloud.savePurchase(item.purchase, item.moves);
+  } else if(item.type === "pcancel"){
+    await cloud.cancelPurchase(item.id, item.reason, item.dev, item.t);
+  } else if(item.type === "spay"){
+    await cloud.saveSupplierPayment(item.pay);
   } else if(item.type === "catdel"){
     // left over from the old size-only version: nothing to do with the new tables
   }
@@ -105,6 +114,7 @@ function toReview(item, err){
   store.syncReview = [...(store.syncReview||[]), { item, err: item.err, code: err && err.code || "", t: Date.now() }];
   saveSyncReview();
   if(item.type === "return" && item.ret && store.returnsMap[item.ret.id]){ delete store.returnsMap[item.ret.id]; saveReturns(); invalidate(); }
+  purchaseItemOff(item);   // a purchase, its cancel or a supplier payment: off this device's stock and books too
 }
 /* One pass over the queue; passes repeat while an upload unblocks items waiting for it */
 export async function flushSbQueueOnce(){
@@ -152,6 +162,7 @@ export function retryReview(index){
   store.syncReview = store.syncReview.filter((_, i) => i !== index); saveSyncReview();
   const item = { ...r.item, tries: 0 }; delete item.err;
   if(item.type === "return" && item.ret){ store.returnsMap[item.ret.id] = item.ret; saveReturns(); invalidate(); }
+  purchaseItemOn(item);
   enqueue(item); renderSync(); flushSbQueue();
   return true;
 }

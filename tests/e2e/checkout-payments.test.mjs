@@ -85,7 +85,7 @@ const s1 = await run(A, 'return lastSale');
 await run(A, 'closeSheets();await flushSbQueue()');
 const row1 = (await q(`SELECT * FROM public.hangtag_sales WHERE id='${s1.id}'`))[0];
 check('saved: subtotal, both discounts, taxable amount, CGST + SGST, round off, total, "split"',
-  row1 && row1.subtotal === 2498 && num(row1.discount) === 249.8 && num(row1.item_discount) === 199.8 && num(row1.bill_discount) === 50 && num(row1.taxable_amount) === 2248.2
+  row1 && num(row1.subtotal) === 2498 && num(row1.discount) === 249.8 && num(row1.item_discount) === 199.8 && num(row1.bill_discount) === 50 && num(row1.taxable_amount) === 2248.2
   && num(row1.cgst_amount) === 56.21 && num(row1.sgst_amount) === 56.21 && num(row1.igst_amount) === 0 && num(row1.round_off) === 0.38 && row1.total === 2361 && row1.gst_mode === 'intra' && row1.place_of_supply === '27' && row1.payment_method === 'split', row1);
 const it1 = await q(`SELECT line_no, discount_type, discount_value, discount_amount, bill_discount_share, gst_rate, hsn, line_total FROM public.hangtag_sale_items WHERE sale_id='${s1.id}' ORDER BY line_no`);
 check('saved lines: the line discount, each line\'s share of the bill discount, its GST rate and HSN', it1.length === 2 && it1[0].discount_type === 'percent' && num(it1[0].discount_value) === 10 && num(it1[0].discount_amount) === 199.8

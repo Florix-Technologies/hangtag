@@ -85,7 +85,7 @@ export function slowHTML(lines,R){
   return `<div class="vperf">${rows.map(r=>`<div class="vp-row">${thumb(r.p,"xs")}<span class="vp-n"><b>${esc(r.p.name)}</b></span><span class="vp-q">0 sold</span><span class="vp-a">${r.left} in stock</span></div>`).join("")}</div>`;
 }
 export function lowStockHTML(){
-  const rows=[];liveProducts().forEach(p=>variantsOf(p).forEach(v=>{const n=stockOf(v.id),lv=levelOf(n);if(lv!=="ok")rows.push({p,v,n,lv})}));
+  const rows=[];liveProducts().forEach(p=>variantsOf(p).forEach(v=>{const n=stockOf(v.id),lv=levelOf(n,p);if(lv!=="ok")rows.push({p,v,n,lv})}));
   rows.sort((a,b)=>a.n-b.n);
   if(!rows.length)return `<p class="okline">${ICON.ok}Nothing is running low.</p>`;
   return `<div class="alerts">${rows.slice(0,10).map(a=>`<button class="al ${a.lv}" data-stockin="${esc(a.p.id)}">${a.lv==="out"?ICON.out:ICON.warn}<b>${esc(a.p.name)}</b>${vLabel(a.v)?`<span class="szl">${esc(vLabel(a.v))}</span>`:""}<span class="st">${a.lv==="out"?"sold out":a.n+" left"}</span></button>`).join("")}${rows.length>10?`<button class="al" data-tab="stock">+${rows.length-10} more on Stock</button>`:""}</div>`;

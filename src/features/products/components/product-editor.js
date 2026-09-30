@@ -99,7 +99,7 @@ export function renderEditor(){
     </div>`:"";
   const simpleHTML=simple&&one?`<div class="pgrid">
       <label class="f"><span class="lab">SKU</span><input data-edf="sku" data-k="${esc(one.key)}" value="${esc(one.cell.sku)}" maxlength="40" placeholder="Optional" autocomplete="off"></label>
-      <label class="f"><span class="lab">Pieces in stock now</span><input type="number" inputmode="numeric" min="0" data-edf="stock" data-k="${esc(one.key)}" value="${esc(one.cell.stock)}" placeholder="0"></label>
+      <label class="f"><span class="lab">${unitOf(e.unit).id==="pcs"?"Pieces in stock now":"In stock now ("+esc(unitOf(e.unit).sym)+")"}</span><input type="number" inputmode="${decimalsOf(e.unit)?"decimal":"numeric"}" min="0" step="${decimalsOf(e.unit)?"any":"1"}" data-edf="stock" data-k="${esc(one.key)}" value="${esc(one.cell.stock)}" placeholder="0"></label>
       ${e.codesOn?`<label class="f full"><span class="lab">${codeName}</span><span class="coderow"><input data-edf="bc" data-k="${esc(one.key)}" value="${esc(one.cell.bc)}" maxlength="64" placeholder="Scan or type an existing code, or generate one" autocomplete="off"><button type="button" class="btn xs" data-edgen="${esc(one.key)}">Generate</button></span><span class="codeprev" data-prev="${esc(one.key)}">${codePreview(one.cell.bc,e.code)}</span></label>`:""}
     </div>`:"";
   const tableHTML=!simple?(e.opts.some(op=>op.v.length)?`<div class="tw vtab"><table class="vdet"><thead><tr>

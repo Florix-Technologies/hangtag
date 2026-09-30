@@ -115,8 +115,8 @@ check('confirm → stock added', await until('billImport&&billImport.step==="don
 // ---------- 2. what the database and the app now hold ----------
 const imp = await q1(`SELECT id, invoice_no, supplier_gstin, units, line_count, file_hash FROM public.hangtag_stock_imports`);
 const mv = await q1(`SELECT type, qty, import_id, note FROM public.hangtag_stock_moves WHERE import_id IS NOT NULL`);
-check('one import record with the invoice and 30 units', imp.length === 1 && imp[0].invoice_no === 'INV-1042' && imp[0].units === 30 && imp[0].line_count === 8, imp);
-check('stock went in as 8 RESTOCK moves in the ledger (no stock numbers written)', mv.length === 8 && mv.every((m) => m.type === 'RESTOCK' && m.import_id === imp[0].id) && mv.reduce((a, m) => a + m.qty, 0) === 30 && /Supplier bill INV-1042 · Ravi Textiles/.test(mv[0].note), mv);
+check('one import record with the invoice and 30 units', imp.length === 1 && imp[0].invoice_no === 'INV-1042' && +imp[0].units === 30 && imp[0].line_count === 8, imp);
+check('stock went in as 8 RESTOCK moves in the ledger (no stock numbers written)', mv.length === 8 && mv.every((m) => m.type === 'RESTOCK' && m.import_id === imp[0].id) && mv.reduce((a, m) => a + +m.qty, 0) === 30 && /Supplier bill INV-1042 · Ravi Textiles/.test(mv[0].note), mv);
 const kurti = await q1(`SELECT p.options, (SELECT json_agg(v.option_values ORDER BY v.sort_order) FROM public.hangtag_variants v WHERE v.owner_id = p.owner_id AND v.product_id = p.id) AS vs FROM public.hangtag_products p WHERE p.name = 'Kurti'`);
 check('new product Kurti with Colour × Size options and 3 variants', kurti.length === 1 && JSON.stringify(kurti[0].vs) === '[["Black","S"],["Black","M"],["White","S"]]', kurti);
 const dressOpts = (await q1(`SELECT options FROM public.hangtag_products WHERE name = 'Dress'`))[0].options;

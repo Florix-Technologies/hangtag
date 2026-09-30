@@ -149,7 +149,8 @@ try {
 
   // ================= an existing shop from before business types =================
   await pg.addUser({ id: LEGACY, email: LEGACY_EMAIL, provider: 'google', meta: { full_name: 'Old Shop' } });
-  await q(`INSERT INTO public.hangtag_profiles (id, email, full_name, shop_name, phone, city, state, business_type, onboarded_at) VALUES ($1,$2,'Old Owner','Old Threads','9876500000','Surat','Gujarat','Clothing boutique',now())`, [LEGACY, LEGACY_EMAIL]);
+  await q(`INSERT INTO public.hangtag_profiles (id, email, full_name, shop_name, phone, city, state, business_type, onboarded_at) VALUES ($1,$2,'Old Owner','Old Threads','9876500000','Surat','Gujarat','Clothing boutique',now())
+    ON CONFLICT (id) DO UPDATE SET full_name = EXCLUDED.full_name, shop_name = EXCLUDED.shop_name, phone = EXCLUDED.phone, city = EXCLUDED.city, state = EXCLUDED.state, business_type = EXCLUDED.business_type, onboarded_at = EXCLUDED.onboarded_at`, [LEGACY, LEGACY_EMAIL]);
   const L = await phone('legacy', { session: pg.session(LEGACY) });
   await L.goto('http://localhost:3210/', { waitUntil: 'networkidle0' });
   check('older shop: no setup screen, straight into the app', await L.until('sbStatus==="connected"') && await L.run('return document.getElementById("setupGate").hidden'));

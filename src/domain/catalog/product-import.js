@@ -38,7 +38,7 @@ export function importTemplateRows(){
   const head=IMPORT_COLUMNS.map(c=>c[1]);
   const row=o=>IMPORT_COLUMNS.map(([k])=>o[k]==null?"":o[k]);
   return [head,
-    row({name:"Cotton Tote Bag",cat:"Bags",brand:"Aura",sku:"TOTE-01",bc:"8901234567897",price:349,cost:180,gst:5,hsn:"4202",qty:25,unit:"pcs",low:5,desc:"Canvas, one size"}),
+    row({name:"Cotton Tote Bag",cat:"Bags",brand:"Aura",sku:"TOTE-01",bc:"8901234567890",price:349,cost:180,gst:5,hsn:"4202",qty:25,unit:"pcs",low:5,desc:"Canvas, one size"}),
     row({name:"Oversized Tee",cat:"T-shirts",opt1n:"Colour",opt1v:"Black",opt2n:"Size",opt2v:"M",sku:"TEE-BLK-M",price:599,cost:300,gst:5,hsn:"6109",qty:10,unit:"pcs",low:3}),
     row({name:"Oversized Tee",cat:"T-shirts",opt1n:"Colour",opt1v:"Black",opt2n:"Size",opt2v:"L",sku:"TEE-BLK-L",price:599,cost:300,gst:5,hsn:"6109",qty:8,unit:"pcs",low:3})];
 }

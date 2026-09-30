@@ -37,7 +37,7 @@ function sectionBody(key){
       // the shop's details and its type are the owner's; a member with manage_settings sees the type, and the stock alert
       return (member ? `<dl class="kv"><dt>Type of business</dt><dd>${esc(shopTypeLabel())}</dd></dl>` : '<form id="profileForm" class="authform" novalidate>' + profileFieldsHTML(store.profile || {}, "ps") +
         '<p id="profileErr" class="autherr" role="alert" hidden></p><div class="setactions"><button class="btn primary" type="submit" id="profileSave">Save changes</button></div></form>') + stockCashHTML();
-    case "capabilities": return capabilitiesHTML();
+    case "capabilities": return capabilitiesHTML() + settingsPartsHTML("capabilities");
     case "receipt": return receiptFormHTML() + receiptSetupHTML() + paymentsFormHTML();
     case "taxes": return taxFormsHTML();
     case "team": return teamEntryHTML();

@@ -141,10 +141,18 @@ export const TRACKING_KEYS = TRACKING_MODES.map(m => m.key);
 export function productFieldsFor(caps, product){
   const c = caps || {}, p = product || {}, cur = TRACKING_KEYS.includes(p.tracking) ? p.tracking : "none";
   const modes = TRACKING_KEYS.filter(k => k === "none" || (k === "serial" && c.uses_serials) || (k === "batch" && c.uses_batches) || k === cur);
-  return { variants: !!c.uses_variants || !!p.hasOpts, tracking: modes.length > 1, trackingModes: modes, expiry: !!c.uses_expiry, weight: !!c.uses_weight };
+  const expiry = !!c.uses_expiry || !!p.expiry;
+  return { variants: !!c.uses_variants || !!p.hasOpts, tracking: modes.length > 1 || expiry, trackingModes: modes, expiry, weight: !!c.uses_weight };
 }
 /* A product's tracking as typed: one of the modes, else none */
 export const cleanTracking = t => TRACKING_KEYS.includes(t) ? t : "none";
+/* The product form's "Track stock by" choices: the modes above, and "Batch with expiry date" (tracked by batch, each batch
+   with its expiry date) where the shop keeps expiry dates. fx: productFieldsFor(…) */
+export const EXPIRY_CHOICE = { key: "expiry", label: "Batch with expiry date" };
+export const trackingChoices = fx => [...TRACKING_MODES.filter(m => fx.trackingModes.includes(m.key)), ...(fx.expiry ? [EXPIRY_CHOICE] : [])];
+/* A product's choice ({ tracking, expiry }) and back */
+export const trackingChoiceOf = p => cleanTracking(p && p.tracking) === "batch" && p.expiry ? "expiry" : cleanTracking(p && p.tracking);
+export const trackingFromChoice = k => k === "expiry" ? { tracking: "batch", expiry: true } : { tracking: cleanTracking(k), expiry: false };
 
 /* ---------- navigation: is a module (or one of its sub-views) shown? ----------
    def: { caps: [any of these capabilities] (none: every business), perms: [any of these permissions] (none: everyone),

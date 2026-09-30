@@ -55,6 +55,7 @@ import { renderAll, setTab } from '../../shared/ui/render.js';
 import { logger } from '../../shared/logging/logger.js';
 import { creditOrdersChange, creditOrdersClick, creditOrdersInput, creditOrdersSubmit } from './credit-orders-events.js';
 import { inventoryChange, inventoryClick, inventoryInput, inventoryModalClose, inventorySubmit } from '../../features/inventory/components/inventory-views.js';
+import { trackingChange, trackingClick, trackingInput, trackingSubmit } from './tracking-events.js';
 
 /* Registered once at start-up (app/main.js). */
 export function installDomEvents(){
@@ -66,6 +67,7 @@ export function installDomEvents(){
     const re=t.closest("[data-repevent]");if(re){store.prefs.repEvent=re.dataset.repevent;store.showAllBills=false;savePrefs();closeModal();if(re.dataset.tab)setTab(re.dataset.tab);else renderReport();return}
     const tab=t.closest("[data-tab]");if(tab){closeModal();setTab(tab.dataset.tab);return}
     const tile=t.closest(".tile");if(tile){openPicker(tile.dataset.pid);return}
+    if(trackingClick(t))return;   // serial numbers at the till, a bill line's serials, an exchange's serial items
     // variant picker
     const cp=t.closest("[data-cellplus]");if(cp&&store.pick){const v=cp.dataset.cellplus;setPickQty(v,(store.pick.qty[v]||0)+1);return}
     const cm=t.closest("[data-cellminus]");if(cm&&store.pick){const v=cm.dataset.cellminus;setPickQty(v,(store.pick.qty[v]||0)-1);return}
@@ -208,6 +210,7 @@ export function installDomEvents(){
   document.addEventListener("input",e=>{
     const t=e.target;
     if(creditOrdersInput(t))return;
+    if(trackingInput(t))return;
     if(t.matches("[data-cellqty]")&&store.pick){const v=t.dataset.cellqty;setPickQty(v,t.value===""?0:t.value);return}
     if(t.matches("[data-disc]")){setBillDiscount({type:store.disc&&store.disc.type,value:t.value});updateBillTotals();return}
     if(t.id==="ldVal"){lineDiscountInput(t.value);return}
@@ -228,6 +231,7 @@ export function installDomEvents(){
   });
   document.addEventListener("submit",e=>{
     if(creditOrdersSubmit(e))return;
+    if(trackingSubmit(e))return;
     if(e.target.id==="custForm"){e.preventDefault();saveCustomerForm(e.target);return}
     if(e.target.id==="edForm"){e.preventDefault();return}
     if(e.target.id==="evForm"){e.preventDefault();submitEventForm(e.target);return}
@@ -238,6 +242,7 @@ export function installDomEvents(){
   document.addEventListener("change",async e=>{
     const t=e.target;
     if(creditOrdersChange(t))return;
+    if(trackingChange(t))return;
     if(t.id==="repFrom"||t.id==="repTo"){if(t.value){store.prefs[t.id==="repFrom"?"from":"to"]=t.value;store.prefs.period="custom";savePrefs();renderReport()}return}
     if(t.id==="sellCat"){store.sellCat=t.value;renderGrid();return}
     if(t.id==="sellAt"){chooseSellingAt(t.value);return}
@@ -269,6 +274,7 @@ export function installDomEvents(){
       const tg=t.dataset.edtoggle;if(tg){if(tg==="hasOpts")edToggleOptions(t.checked);else{store.editor.codesOn=t.checked;edFocusKeep(renderEditor)}return}
       if(t.matches("[data-edcode]")){store.editor.code=t.value==="qr"?"qr":"barcode";renderEditor();return}
       if(t.id==="edUnit"){store.editor.unit=t.value;edFocusKeep(renderEditor);return}
+      if(t.id==="edTracking"){store.editor.tracking=t.value;edFocusKeep(renderEditor);return}
       if(t.dataset.edf==="active"){const c=store.editor.cells[t.dataset.k];if(c){c.active=t.checked;const tr=t.closest("tr");if(tr)tr.classList.toggle("off",!t.checked)}return}
       if(t.matches("[data-edsel]")){store.editor.sel[t.dataset.edsel]=t.checked;edFocusKeep(renderEditor);return}
       if(t.matches("[data-edselall]")){edCombos().forEach(x=>{store.editor.sel[x.key]=t.checked});renderEditor();return}

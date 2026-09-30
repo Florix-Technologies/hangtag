@@ -6,6 +6,7 @@ import { dayKey } from '../../../shared/formatting/dates.js';
 import { ledgerEntries } from '../../../domain/inventory/stock-ledger.js';
 import { restocks } from '../../../domain/returns/return-value.js';
 import { roundQty } from '../../../domain/catalog/units.js';
+import { batchStates, serialStates } from '../../../domain/inventory/tracking.js';
 
 /* Quantities (2.5 kg, 3 pieces) are added up rounded to 3 decimals, so stock never drifts (0.1 + 0.2 kg is 0.3 kg) */
 const add=(m,k,q)=>{m[k]=roundQty((m[k]||0)+q)};
@@ -41,10 +42,14 @@ export function D(){
   Object.values(store.moves).forEach(m=>{if(m&&m.v)add(moved,m.v,roundQty(m.q))});
   // returns against a cancelled bill don't count (a bill with returns can't be cancelled; this keeps stock right if one arrives)
   rets.forEach(r=>{const s=saleById[r.sale];if(s&&s.void)r.items.forEach(it=>{const vid=resolve(it);if(vid&&restocks(it))add(returned,vid,-it.q)})});
-  let ledger=null;
+  let ledger=null,serials=null,batches=null;
+  const batchTracked=vid=>{const r=vIdx[vid];return !!r&&r.p.tracking==="batch"};
   store._d={sales,saleById,vIdx,resolve,sold,returned,retLine,retBySale,rets,moved,
     /* every stock change, oldest first (domain/inventory/stock-ledger.js), built when first asked for */
-    get ledger(){return ledger||(ledger=ledgerEntries({moves:store.moves,sales,returns:rets,resolve}))}};
+    get ledger(){return ledger||(ledger=ledgerEntries({moves:store.moves,sales,returns:rets,resolve}))},
+    /* every serial number's state, and every batch's quantity, from the same records (domain/inventory/tracking.js) */
+    get serials(){return serials||(serials=serialStates({moves:store.moves,sales,returns:rets,resolve}))},
+    get batches(){return batches||(batches=batchStates({moves:store.moves,sales,returns:rets,resolve,batchTracked}))}};
   return store._d;
 }
 /* The variant record { v, p } for a variant id, and whether it was ever sold or returned */

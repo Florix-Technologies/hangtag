@@ -26,12 +26,25 @@ export function mergeIntoQueue(queue,item){
   if(k){ const i=q.findIndex(x=>!x.sending&&itemKey(x)===k); if(i>-1){ q[i]=item; return q; } }
   q.push(item); return q;
 }
+/* Serial numbers and batches (section 3n): a stock-in brings them into the cloud ("sn:<serial>", "bt:<variant>|<batch>");
+   a bill, or a stock record taking them out, waits for the stock-in still on its way. Serials and batches as normalized
+   (upper case, trimmed), as every record keeps them. */
+const snKeys=list=>(list||[]).flatMap(x=>Array.isArray(x.sn)?x.sn.map(s=>"sn:"+String(s).trim().toUpperCase()):[]);
+const btKeys=(list,vid)=>(list||[]).flatMap(x=>Array.isArray(x.bt)?x.bt.map(a=>"bt:"+(vid||x.v)+"|"+String(a.b).trim().replace(/\s+/g," ").toUpperCase()):[]);
+const moveKeys=m=>[...snKeys([m]),...(m.b?["bt:"+m.v+"|"+String(m.b).trim().replace(/\s+/g," ").toUpperCase()]:[])];
+export function providesKeys(item){
+  if(!item) return [];
+  if(item.type==="move"&&item.move&&item.move.q>0) return moveKeys(item.move);
+  if(item.type==="purchase") return (item.moves||[]).flatMap(moveKeys);
+  return [];
+}
 /* Records an item needs in the cloud first */
 export function dependsOn(item){
   if(!item) return [];
+  if(item.type==="sale"&&item.sale) return [...snKeys(item.sale.items),...btKeys(item.sale.items)];
   if(item.type==="return"&&item.ret) return ["sale:"+item.ret.sale];
   if(item.type==="void") return ["sale:"+item.id];
-  if(item.type==="move"&&item.move&&item.move.p) return ["prod:"+item.move.p];
+  if(item.type==="move"&&item.move&&item.move.p) return ["prod:"+item.move.p,...(item.move.q<0?moveKeys(item.move):[])];
   if(item.type==="cashmove"&&item.move&&item.move.reverses) return ["cashmove:"+item.move.reverses];
   // a payment collected from a customer needs the customer in the cloud first (foreign key)
   if(item.type==="collection"&&item.col&&item.col.cust) return ["cust:"+item.col.cust];
@@ -47,7 +60,7 @@ export const recordKey=x=>itemKey(x)||(x&&x.type==="prod"&&x.id?"prod:"+x.id:nul
 /* Keys of records still waiting: the queue's items (except those done) and the review list */
 export function waitingKeys(queue,review,done){
   const s=new Set();
-  const add=x=>{const k=recordKey(x);if(k)s.add(k)};
+  const add=x=>{const k=recordKey(x);if(k)s.add(k);providesKeys(x).forEach(p=>s.add(p))};
   (queue||[]).forEach(x=>{if(!(done&&done.has(x)))add(x)});
   (review||[]).forEach(r=>add(r.item));
   return s;

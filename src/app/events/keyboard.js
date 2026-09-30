@@ -9,6 +9,7 @@ import { closeSheets } from '../../features/sales/components/bill-panel.js';
 import { addPicked, openPicker, pickRows, renderPicker, setPickQty } from '../../features/sales/components/variant-picker.js';
 import { renderGrid } from '../../features/sales/pages/sell-page.js';
 import { addOne } from '../../features/sales/services/cart.js';
+import { scanSerialToCart } from '../../features/sales/use-cases/scan-to-cart.js';
 import { findByCode, sellProducts, variantHits } from '../../features/sales/services/search.js';
 import { openPayment, completePayment } from '../../features/sales/components/payment-sheet.js';
 import { applyLineDiscount } from '../../features/sales/components/discount-sheet.js';
@@ -16,6 +17,7 @@ import { closeModal } from '../../shared/components/modal.js';
 import { toast } from '../../shared/components/toast.js';
 import { hideTip } from '../../shared/components/tooltip.js';
 import { $ } from '../../shared/dom.js';
+import { renderAll } from '../../shared/ui/render.js';
 
 export function runShortcut(e){
   const k=e.key.toLowerCase();
@@ -44,6 +46,7 @@ export function installKeyboard(){
       if(!$("#acctMenu").hidden)return;
       if($("#modalHost").innerHTML){if(store.editor||store.billImport||store.purchaseForm||store.prodImport||store.quickProduct||(store.supplierView&&store.supplierView.form))return; /* the product editor only closes with Cancel or ×, so work is never lost by accident */ if(store.payState)payClosed();store.payState=null;store.lineDisc=null;closeModal();e.preventDefault();return}
       if(store.pick&&store.pick.target==="exchange"){store.pick=null;renderReturnSheet();e.preventDefault();return}
+      if(store.snPick&&store.snPick.target==="exchange"){store.snPick=null;renderReturnSheet();e.preventDefault();return}
       if(store.pick||store.billOpen||$("#sheetHost").innerHTML){store.retState=null;closeSheets();e.preventDefault()}hideTip();return;
     }
     if(!$("#authGate").hidden||!$("#setupGate").hidden)return;
@@ -52,6 +55,8 @@ export function installKeyboard(){
       e.preventDefault();const q=e.target.value.trim();if(!q)return;
       const hit=findByCode(q)||(variantHits().length===1?variantHits()[0]:null);
       if(hit){addOne(hit.v.id);e.target.value="";store.sellQuery="";renderGrid();return}
+      // a serial number typed or scanned: that very piece goes on the bill
+      const sr=scanSerialToCart(q);if(sr){toast(sr.message);e.target.value="";store.sellQuery="";renderAll();return}
       const ps=sellProducts();if(ps.length===1){openPicker(ps[0].id);return}
       toast(`Nothing found for “${q}”.`);return;
     }
@@ -76,7 +81,8 @@ export function installKeyboard(){
     if(e.key==="Enter"&&!store.pick&&store.scanBuf.length>=3&&now-store.scanLast<100){
       e.preventDefault();const code=store.scanBuf;store.scanBuf="";clearTimeout(store.scanTimer);
       const hit=findByCode(code);
-      if(hit)addOne(hit.v.id);else toast(`No product with code ${code}.`);
+      const sr=hit?null:scanSerialToCart(code);
+      if(hit)addOne(hit.v.id);else if(sr){toast(sr.message);renderAll()}else toast(`No product with code ${code}.`);
       return;
     }
     handleKey(e);

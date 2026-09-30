@@ -11,7 +11,7 @@ import { uid } from '../../../shared/utils/ids.js';
 import { okColor } from '../../../shared/utils/colors.js';
 import { UPLOAD_PERMISSIONS } from '../../../domain/sync/queue-rules.js';
 import { canAny, denied, notAllowedText } from '../../shop/services/access.js';
-import { cleanTracking } from '../../../domain/shop/capabilities.js';
+import { cleanTracking, trackingFromChoice } from '../../../domain/shop/capabilities.js';
 import { decimalsOf, roundQty, unitId } from '../../../domain/catalog/units.js';
 
 /* draft: the editor state { id, name, cat, brand, desc, price, cost, color, archived, hsn, gst, unit, tracking, hasOpts, opts, cells, codesOn, code, img }
@@ -30,26 +30,34 @@ export function saveProduct({ draft }){
   const {name,price,cost,hsn,gst}=ok;
   // the unit it is sold in: stock counts keep its decimals (12.5 kg), whole numbers for pieces
   const old=repo.get(e.id), t=Date.now(), unit=unitId(e.unit), dp=decimalsOf(unit);
-  const variants=[], newMoves=[], delV=[], ids={};
+  // tracked by serial number or batch: its stock moves only with its serials / batches (Purchases, Stock in, bills), and how
+  // it is tracked changes only while it has no stock (pieces already in hand have no serials or batch to go by)
+  const trk=trackingFromChoice(e.tracking), wasTrk=cleanTracking(old&&old.tracking);
+  if(old&&trk.tracking!==wasTrk&&variantsOf(old,true).some(v=>stockOf(v.id)!==0)) return {error:`How ${old.name} is tracked can change only while it has no stock. It has ${variantsOf(old,true).reduce((a,v)=>a+Math.max(0,stockOf(v.id)),0)} in hand: sell or adjust it to 0 first.`};
+  const variants=[], newMoves=[], delV=[], ids={}; let bad=null;
   const fields=cell=>({sku:String(cell.sku||"").trim(),bc:cleanCode(cell.bc),price:numOrNull(cell.price),cost:numOrNull(cell.cost)});
   combos.forEach(({o,key,cell})=>{
     const id=cell.id||("v"+uid());ids[key]=id;
     variants.push({id,o:o.slice(),...fields(cell),active:cell.active!==false});
     const want=cell.stock===""||cell.stock==null?0:roundQty(+cell.stock,dp), cur=cell.exists?stockOf(id):0, dq=roundQty(want-cur);
+    if(dq&&trk.tracking!=="none") bad=bad||`Stock of a product tracked by ${trk.tracking==="serial"?"serial number":"batch"} comes in through Purchases or Stock in: leave the stock boxes as they are.`;
     if(dq) newMoves.push({id:(cell.exists?"m":"open:")+(cell.exists?uid():id),v:id,p:e.id,type:cell.exists?"ADJUST":"OPENING",q:dq,cost:null,note:cell.exists?"Changed in the product editor":"Opening stock",t,dev:store.dev});
   });
   removed.forEach(({cell})=>{
     if(kept.some(k=>k.cell===cell)){
       const cur=stockOf(cell.id);
       variants.push({id:cell.id,o:cell.o.slice(),...fields(cell),active:false});
+      if(cur>0&&wasTrk!=="none") bad=bad||`A variant with stock can't be removed from a product tracked by ${wasTrk==="serial"?"serial number":"batch"}: take its stock out first (Stock → Adjust).`;
       if(cur>0)newMoves.push({id:"m"+uid(),v:cell.id,p:e.id,type:"ADJUST",q:-cur,cost:null,note:"Variant removed in the product editor",t,dev:store.dev});
     }else delV.push(cell.id);
   });
+  if(bad) return {error:bad};
   if(newMoves.length&&!canAny(UPLOAD_PERMISSIONS.move)) return {error:notAllowedText("set stock")+" Leave the stock numbers as they are."};
   const opts=e.hasOpts?e.opts.map(op=>({n:cleanOptionName(op.n),v:op.v.slice()})):[];
   const product={id:e.id,name,cat:String(e.cat||"").trim(),brand:String(e.brand||"").trim(),desc:String(e.desc||"").trim(),price,cost,color:okColor(e.color),archived:!!e.archived,
     hsn,gst,code:e.codesOn?(e.code==="qr"?"qr":"barcode"):"",opts,variants,...(unit!=="pcs"?{unit}:{})};
-  const tracking=cleanTracking(e.tracking); if(tracking!=="none") product.tracking=tracking;   // serial | batch (none: not stored)
+  if(trk.tracking!=="none") product.tracking=trk.tracking;   // serial | batch (none: not stored)
+  if(trk.expiry) product.expiry=true;   // a batch-tracked product whose batches have expiry dates
   repo.save({product,isNew:!old,renamed:!!old&&old.name!==name,newMoves,deletedVariantIds:delV,image:e.img});
   const active=variants.filter(v=>v.active);
   return {created:!old,name,activeCount:active.length,variantCount:variants.length,ids};

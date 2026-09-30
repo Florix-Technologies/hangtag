@@ -9,6 +9,7 @@ import { saleGstSplit } from '../../domain/sales/gst.js';
 import { cleanTracking } from '../../domain/shop/capabilities.js';
 import { okColor } from '../../shared/utils/colors.js';
 import { roundQty, unitId } from '../../domain/catalog/units.js';
+import { normBatch, normSerial } from '../../domain/inventory/tracking.js';
 
 /* ---------- row <-> app shapes ---------- */
 
@@ -18,9 +19,14 @@ const rowToOv = o => Array.isArray(o) ? o.map(x => ({ n:x&&x.name||"", v:String(
 /* NUMERIC columns can arrive as strings */
 const num = v => v==null||v==="" ? null : +v;
 const numOr0 = v => +v || 0;
+/* serial numbers and batch allocations on stock records, bill lines and return lines (section 3n): app sn / bt <-> serials / batches */
+const snRow = sn => Array.isArray(sn) && sn.length ? sn.map(normSerial) : null;
+const btRow = bt => Array.isArray(bt) && bt.length ? bt.map(a => ({ b:normBatch(a.b), q:roundQty(a.q) })) : null;
+const rowSnBt = r => Object.assign({}, Array.isArray(r.serials) && r.serials.length ? { sn:r.serials.map(String) } : {},
+  Array.isArray(r.batches) && r.batches.length ? { bt:r.batches.map(a => ({ b:String(a&&a.b||""), q:roundQty(a&&a.q) })) } : {});
 export const rowToItem = i => Object.assign({ p:i.product_id, v:i.variant_id||undefined, n:i.product_name, c:i.color||"", s:i.size, vl:i.variant_label||"", ov:rowToOv(i.options), sku:i.sku||"", q:roundQty(i.quantity), price:i.unit_price, cost:i.cost_price==null?null:i.cost_price, ln:i.line_no },
   // the unit it was sold in (lines saved before units: pieces)
-  i.unit && i.unit !== "pcs" ? { u:i.unit } : {},
+  i.unit && i.unit !== "pcs" ? { u:i.unit } : {}, rowSnBt(i),
   // discounts and GST of the line (bills saved since line discounts)
   i.discount_type ? { disc:{ type:i.discount_type, value:numOr0(i.discount_value) } } : {},
   i.line_total!=null ? { dAmt:numOr0(i.discount_amount), bdAmt:numOr0(i.bill_discount_share), gst:numOr0(i.gst_rate), hsn:i.hsn||"", tx:num(i.taxable_value),
@@ -54,7 +60,8 @@ export function saleRow(s){
 export const saleItemRows = s => (s.items||[]).map((i,k)=>{ const d = normalizeDiscount(i.disc); return { sale_id:s.id, line_no:i.ln!=null?i.ln:k, product_id:i.p, variant_id:i.v||null, product_name:i.n,
   color:i.c||"", size:i.s==null?"":i.s, variant_label:i.vl||null, options:ovToRow(i.ov), sku:i.sku||null, quantity:i.q, unit_price:i.price, cost_price:i.cost==null?null:i.cost,
   discount_type:d?d.type:null, discount_value:d?d.value:null, discount_amount:i.dAmt||0, bill_discount_share:i.bdAmt||0, taxable_value:i.tx==null?null:i.tx,
-  gst_rate:i.gst==null?null:i.gst, cgst_amount:i.cgst||0, sgst_amount:i.sgst||0, igst_amount:i.igst||0, line_total:i.lt==null?null:i.lt, hsn:i.hsn||null }; });
+  gst_rate:i.gst==null?null:i.gst, cgst_amount:i.cgst||0, sgst_amount:i.sgst||0, igst_amount:i.igst||0, line_total:i.lt==null?null:i.lt, hsn:i.hsn||null,
+  serials:snRow(i.sn), batches:btRow(i.bt) }; });
 /* A bill's payments (one row per method; bills from before split payments have one) */
 export const paymentRows = s => paymentsOf(s).map(p => ({ id:p.id, sale_id:s.id, method:p.method, amount:p.amount,
   tendered:p.method==="cash" ? (p.received==null ? p.amount : p.received) : null, change_given:p.change||0, reference:p.ref||null, t:s.t, device_id:s.dev||store.dev,
@@ -73,18 +80,21 @@ export function optionsRow(p){
 }
 export const productRow = (p, idx) => ({ id:p.id, name:p.name, price:+p.price||0, color:okColor(p.color), sort_order:idx, category:p.cat||null, brand:p.brand||null,
   description:p.desc||null, cost_price:p.cost==null?null:p.cost, archived:!!p.archived, hsn:p.hsn||null, gst_rate:p.gst==null||p.gst===""?null:+p.gst,
-  code_type:p.code||null, options:optionsRow(p), tracking:cleanTracking(p.tracking), unit:unitId(p.unit), low_stock:p.low==null||p.low===""?null:Math.round(+p.low), updated_at:new Date().toISOString() });
+  code_type:p.code||null, options:optionsRow(p), tracking:cleanTracking(p.tracking), unit:unitId(p.unit), low_stock:p.low==null||p.low===""?null:Math.round(+p.low), tracks_expiry:!!p.expiry, updated_at:new Date().toISOString() });
 export const variantRows = p => variantsOf(p,true).map((v,k)=>({ id:v.id, product_id:p.id, option_values:Array.isArray(v.o)?v.o.slice():[],
   ...(cs => ({ color:cs.c, size:cs.s }))(legacyCS(p.opts, v.o)), sku:v.sku||null, barcode:v.bc||null,
   price:v.price==null?null:v.price, cost_price:v.cost==null?null:v.cost, active:v.active!==false, sort_order:k, updated_at:new Date().toISOString() }));
-export const moveRow = m => ({ id:m.id, variant_id:m.v, product_id:m.p, type:m.type, qty:roundQty(m.q), cost_price:m.cost==null?null:m.cost, note:m.note||null, t:m.t, device_id:m.dev||store.dev, import_id:m.imp||null });
-export const rowToMove = r => ({ id:r.id, v:r.variant_id, p:r.product_id, type:r.type, q:roundQty(r.qty), cost:r.cost_price, note:r.note||"", t:Number(r.t), dev:r.device_id, ...(r.import_id ? { imp:r.import_id } : {}), ...(r.user_id ? { user:r.user_id } : {}) });
+export const moveRow = m => ({ id:m.id, variant_id:m.v, product_id:m.p, type:m.type, qty:roundQty(m.q), cost_price:m.cost==null?null:m.cost, note:m.note||null, t:m.t, device_id:m.dev||store.dev, import_id:m.imp||null,
+  serials:snRow(m.sn), batch_no:m.b ? normBatch(m.b) : null, expiry:m.b && m.exp ? m.exp : null });
+export const rowToMove = r => ({ id:r.id, v:r.variant_id, p:r.product_id, type:r.type, q:roundQty(r.qty), cost:r.cost_price, note:r.note||"", t:Number(r.t), dev:r.device_id, ...(r.import_id ? { imp:r.import_id } : {}), ...(r.user_id ? { user:r.user_id } : {}),
+  ...rowSnBt(r), ...(r.batch_no ? { b:r.batch_no } : {}), ...(r.batch_no && r.expiry ? { exp:dateOnly(r.expiry) } : {}) });
 /* A return (credit note) and its lines; amounts have paise. Lines keep the GST reversed and whether the piece went back on the shelf. */
 export const returnRow = r => ({ id:r.id, sale_id:r.sale, t:r.t, kind:r.kind||"return", exchange_id:r.ex||null, refund_amount:r.refund||0, refund_method:r.pay||null,
   value:r.value||0, round_off:r.ro||0, credit_no:r.no||null, note:r.note||null, device_id:r.dev||store.dev });
 export const returnItemRows = r => r.items.map((i,k)=>({ return_id:r.id, line_no:k, sale_id:r.sale, sale_line_no:i.ln, variant_id:i.v||null, product_id:i.p, product_name:i.n,
   color:i.c||"", size:i.s==null?"":i.s, variant_label:i.vl||null, options:ovToRow(i.ov), sku:i.sku||null, quantity:i.q, unit_price:i.price, value:i.value||0, cost_price:i.cost==null?null:i.cost,
-  restock:i.restock!==false, taxable_value:i.tx==null?null:i.tx, gst_rate:i.gst==null?null:i.gst, cgst_amount:i.cgst||0, sgst_amount:i.sgst||0, igst_amount:i.igst||0, hsn:i.hsn||null }));
+  restock:i.restock!==false, taxable_value:i.tx==null?null:i.tx, gst_rate:i.gst==null?null:i.gst, cgst_amount:i.cgst||0, sgst_amount:i.sgst||0, igst_amount:i.igst||0, hsn:i.hsn||null,
+  serials:snRow(i.sn), batches:btRow(i.bt) }));
 /* One return for RPC hangtag_save_return */
 export const returnArgs = r => ({ p_return:returnRow(r), p_items:returnItemRows(r) });
 export const custRow = c => ({ id:c.id, name:c.name, phone:c.phone||null, email:c.email||null, gstin:c.gstin||null, customer_type:c.type==='business'?'business':'individual', created_at:new Date(c.t||Date.now()).toISOString(), updated_at:new Date().toISOString() });
@@ -95,7 +105,7 @@ export function rowToProduct(p){
   const o = p.options || {};
   const base = { id:p.id, name:p.name, cat:p.category||"", brand:p.brand||"", desc:p.description||"", price:p.price, cost:p.cost_price==null?null:p.cost_price,
     color:p.color, archived:!!p.archived, hsn:p.hsn||"", gst:p.gst_rate==null?null:+p.gst_rate, code:p.code_type||"", variants:[], ...(unitId(p.unit) !== "pcs" ? { unit:p.unit } : {}),
-    ...(cleanTracking(p.tracking) !== "none" ? { tracking:p.tracking } : {}), ...(p.low_stock!=null ? { low:+p.low_stock } : {}) };
+    ...(cleanTracking(p.tracking) !== "none" ? { tracking:p.tracking } : {}), ...(p.low_stock!=null ? { low:+p.low_stock } : {}), ...(p.tracks_expiry ? { expiry:true } : {}) };
   if(Array.isArray(o.opts)) return { ...base, opts:o.opts.map(x => ({ n:String(x&&x.name||""), v:Array.isArray(x&&x.values)?x.values.map(String):[] })) };
   return { ...base, colors:Array.isArray(o.colors)?o.colors:undefined, sizes:Array.isArray(o.sizes)?o.sizes:undefined };
 }
@@ -103,7 +113,7 @@ export const rowToVariant = v => ({ id:v.id, o:Array.isArray(v.option_values)?v.
   price:v.price==null?null:v.price, cost:v.cost_price==null?null:v.cost_price, active:v.active!==false });
 export const rowToReturnItem = i => Object.assign({ ln:i.sale_line_no, v:i.variant_id||undefined, p:i.product_id, n:i.product_name,
   c:i.color||"", s:i.size, vl:i.variant_label||"", ov:rowToOv(i.options), sku:i.sku||"", q:roundQty(i.quantity), price:numOr0(i.unit_price), value:numOr0(i.value), cost:i.cost_price==null?null:i.cost_price },
-  i.restock===false ? { restock:false } : {}, i.unit && i.unit !== "pcs" ? { u:i.unit } : {},
+  i.restock===false ? { restock:false } : {}, i.unit && i.unit !== "pcs" ? { u:i.unit } : {}, rowSnBt(i),
   // the GST reversed on the line (returns saved since credit notes)
   i.taxable_value!=null ? { tx:num(i.taxable_value), gst:numOr0(i.gst_rate), cgst:numOr0(i.cgst_amount), sgst:numOr0(i.sgst_amount), igst:numOr0(i.igst_amount), hsn:i.hsn||"" } : {});
 export const rowToReturn = (r, items) => Object.assign({ id:r.id, sale:r.sale_id, t:Number(r.t), kind:r.kind||"return", ex:r.exchange_id||null, refund:numOr0(r.refund_amount),

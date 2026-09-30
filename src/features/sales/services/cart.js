@@ -3,7 +3,7 @@
 import { legacyCS, optionSnapshot } from '../../../domain/catalog/options.js';
 import { store } from '../../../shared/state/store.js';
 import { vCost, vLabel, vPrice } from '../../../domain/catalog/variants.js';
-import { stockOf } from '../../inventory/services/stock.js';
+import { isSerialV, sellableOf } from '../../inventory/services/tracking.js';
 import { vRec } from '../../inventory/services/ledger.js';
 import { toast } from '../../../shared/components/toast.js';
 import { saveCart } from '../../../shared/state/persistence.js';
@@ -14,7 +14,11 @@ import { pcsOf } from '../../../domain/sales/sale.js';
 
 export const cartQtyV=vid=>sumQty(store.cart.filter(c=>c.v===vid).map(c=>c.q));
 export const cartQtyP=pid=>sumQty(store.cart.filter(c=>c.p===pid).map(c=>c.q));
-export const availOf=vid=>roundQty(stockOf(vid)-cartQtyV(vid));
+/* What more of a variant can go on the bill: what can be sold now (serials ready to sell; batches not expired, unless the shop
+   sells expired stock) less what the bill has */
+export const availOf=vid=>roundQty(sellableOf(vid)-cartQtyV(vid));
+/* Serial numbers on a set of bill lines (the cart, or an exchange's new items) */
+export const serialsOnLines=lines=>new Set((lines||[]).flatMap(c=>Array.isArray(c.sn)?c.sn:[]));
 /* Items on the bill: pieces, and one per line sold by weight or length */
 export const cartPcs=()=>pcsOf({items:store.cart});
 /* "3 pieces", or "2 items" when a line is sold by weight or length */
@@ -31,8 +35,25 @@ export function addToLines(lines,vid,q){
     // the unit it is sold in (kept on the bill line: a bill never changes when the product does)
     ...(u!=="pcs"?{u}:{})});
 }
+/* Serial numbers for a variant on bill lines: its line gets them (one piece each; a serial already there isn't added twice) */
+export function addSerials(lines,vid,serials){
+  const r=vRec(vid); if(!r||!(serials||[]).length) return;
+  let ex=lines.find(c=>c.v===vid);
+  if(!ex){ addToLines(lines,vid,serials.length); ex=lines.find(c=>c.v===vid); ex.sn=[]; ex.q=0; }
+  const sn=Array.isArray(ex.sn)?ex.sn:(ex.sn=[]);
+  serials.forEach(x=>{ if(!sn.includes(x)) sn.push(x); });
+  ex.q=sn.length;
+}
+/* Takes serial sn off bill line i (the line goes when it was the last) */
+export function removeSerial(lines,i,sn){
+  const c=lines[i]; if(!c||!Array.isArray(c.sn)) return;
+  c.sn=c.sn.filter(x=>x!==sn); c.q=c.sn.length;
+  if(!c.q) lines.splice(i,1);
+}
 export function addOne(vid){
   const r=vRec(vid); if(!r) return;
+  // tracked by serial number: the pieces are chosen by their serials
+  if(isSerialV(vid)){ if(availOf(vid)<=0){ toast(`${r.p.name} ${vLabel(r.v)} is sold out.`); return; } serialHook(r.p.id,vid,"cart"); return; }
   // sold by weight or volume: ask for the weight (typed, or read from the scale) instead of adding one
   if(isWeighed(r.p.unit)){ if(availOf(vid)<=0){ toast(`${r.p.name} ${vLabel(r.v)} is sold out.`); return; } weighHook(vid); return; }
   if(availOf(vid)<=0){ toast(`${r.p.name} ${vLabel(r.v)} is sold out.`); return; }
@@ -57,3 +78,7 @@ export function removeLine(i){
 /* The weight dialog (features/sales/components/weigh-dialog.js) registers itself here, so the cart doesn't import a component */
 let weighHook=()=>{};
 export const onWeigh=fn=>{weighHook=fn||(()=>{})};
+/* …and so does the serial number picker (features/sales/components/serial-picker.js): (productId, variantId, target) */
+let serialHook=()=>{};
+export const onSerialPick=fn=>{serialHook=fn||(()=>{})};
+export const pickSerials=(pid,vid,target)=>serialHook(pid,vid,target||"cart");

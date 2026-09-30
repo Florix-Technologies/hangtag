@@ -56,7 +56,7 @@ await db.exec(NEW); await db.exec(NEW);
 console.log('=== schema runs twice; report ===');
 {
   const rep = await report(db);
-  check('migration report: 40 rows, all ok on an empty shop', rep.length === 40 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: 46 rows, all ok on an empty shop', rep.length === 46 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
 }
 
 console.log('=== verified payments ===');

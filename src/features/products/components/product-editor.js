@@ -26,13 +26,13 @@ import { renderAll } from '../../../shared/ui/render.js';
 import { COLORS, okColor, swatchOf } from '../../../shared/utils/colors.js';
 import { uid } from '../../../shared/utils/ids.js';
 import { refuse } from '../../shop/services/access.js';
-import { TRACKING_MODES, cleanTracking, productFieldsFor } from '../../../domain/shop/capabilities.js';
+import { productFieldsFor, trackingChoiceOf, trackingChoices, trackingFromChoice } from '../../../domain/shop/capabilities.js';
 import { shopCaps } from '../../shop/services/shop-caps.js';
 
 import { UNITS, decimalsOf, unitId, unitOf } from '../../../domain/catalog/units.js';
 
 /* ---------- product editor ----------
-   store.editor = { isNew, id, name, cat, brand, desc, price, cost, color, img, archived, hsn, gst, unit (what it is sold by: pcs, kg…), tracking (none|serial|batch),
+   store.editor = { isNew, id, name, cat, brand, desc, price, cost, color, img, archived, hsn, gst, unit (what it is sold by: pcs, kg…), tracking (none|serial|batch|expiry: batch with expiry dates),
                     hasOpts, opts, cells, codesOn, code, sel:{ [cellKey]: true } (rows ticked for stickers), addName, err }
    opts/cells follow domain/catalog/options.js (editorState). A simple product has no options and one cell (key ""). */
 
@@ -45,7 +45,7 @@ export function openEditor(pid){
   const e={isNew:!p,id:p?p.id:"p"+uid(),name:p?p.name:"",cat:p?p.cat||"":"",brand:p?p.brand||"":"",desc:p?p.desc||"":"",price:p?String(p.price):"",cost:p&&p.cost!=null?String(p.cost):"",
     color:p?okColor(p.color):COLORS[products().length%COLORS.length],img:undefined,archived:p?!!p.archived:false,hsn:p?p.hsn||"":"",gst:p&&p.gst!=null?String(p.gst):"",unit:unitId(p&&p.unit),
     hasOpts:!!(p&&p.opts&&p.opts.length),opts:st.opts,cells:st.cells,codesOn:!!(p&&p.code),code:p&&p.code?p.code:"barcode",sel:{},addName:"",err:"",
-    tracking:cleanTracking(p&&p.tracking)};
+    tracking:trackingChoiceOf(p)};
   store.editor=e;renderEditor();
   const n=$("#edName");if(n&&e.isNew)n.focus();
 }
@@ -54,6 +54,8 @@ export const edCombos=()=>editorCombos(store.editor);
 const cellByKey=k=>store.editor.cells[k];
 const pieces=()=>edCombos().reduce((a,x)=>a+Math.max(0,Math.round(+x.cell.stock||0)),0);
 
+/* Tracked by serial number or batch: its stock only moves with serials / batches (Purchases, Stock in, bills) */
+const tracked=e=>trackingFromChoice(e.tracking).tracking!=="none";
 /* ---------- rendering ---------- */
 function codePreview(code,type){
   if(!code)return "";
@@ -76,7 +78,7 @@ function rowHTML(x,e){
     <td class="ck"><input type="checkbox" data-edsel="${k}"${e.sel[x.key]?" checked":""} aria-label="Select ${esc(lab)} for stickers"></td>
     <th>${esc(lab)}${c.exists?"":` <small class="new">new</small>`}</th>
     <td class="ck"><input type="checkbox" data-edf="active" data-k="${k}"${c.active!==false?" checked":""} aria-label="${esc(lab)} on sale"></td>
-    <td><input type="number" inputmode="${decimalsOf(e.unit)?"decimal":"numeric"}" min="0" step="${decimalsOf(e.unit)?"any":"1"}" data-edf="stock" data-k="${k}" value="${esc(c.stock)}" placeholder="0" aria-label="Stock ${esc(lab)}"></td>
+    <td><input type="number" inputmode="${decimalsOf(e.unit)?"decimal":"numeric"}" min="0" step="${decimalsOf(e.unit)?"any":"1"}" data-edf="stock" data-k="${k}" value="${esc(c.stock)}" placeholder="0" aria-label="Stock ${esc(lab)}"${tracked(e)?" disabled":""}></td>
     <td><input data-edf="sku" data-k="${k}" value="${esc(c.sku)}" maxlength="40" placeholder="—" aria-label="SKU ${esc(lab)}"></td>
     ${e.codesOn?`<td class="codecell"><div class="coderow"><input data-edf="bc" data-k="${k}" value="${esc(c.bc)}" maxlength="64" placeholder="Scan or type" aria-label="${e.code==="qr"?"QR code":"Barcode"} ${esc(lab)}"><button type="button" class="btn xs" data-edgen="${k}">Generate</button></div><div class="codeprev" data-prev="${k}">${codePreview(c.bc,e.code)}</div></td>`:""}
     <td><input type="number" inputmode="numeric" min="0" data-edf="price" data-k="${k}" value="${esc(c.price)}" placeholder="${inherit("price")}" aria-label="Price ${esc(lab)}"></td>
@@ -90,16 +92,17 @@ export function renderEditor(){
   const codeName=e.code==="qr"?"QR code":"Barcode";
   const soldAny=!e.isNew&&variantsOf(prod(e.id),true).some(v=>hasHistory(v.id));
   const nSel=combos.filter(x=>e.sel[x.key]).length;
-  const fx=productFieldsFor(shopCaps(),{hasOpts:e.hasOpts,tracking:e.tracking});   // the fields this shop uses
+  const fx=productFieldsFor(shopCaps(),{hasOpts:e.hasOpts,...trackingFromChoice(e.tracking)});   // the fields this shop uses
   const stockNote=e.isNew?"":`<p class="note">Changing a stock number here records a stock adjustment, so history is kept. For new deliveries use Stock in on the Stock page.</p>`;
   const trackHTML=fx.tracking||fx.expiry||fx.weight?`<div class="edsec edcap" data-edcap><h4>Stock tracking</h4>
-      ${fx.tracking?`<div class="pgrid"><label class="f"><span class="lab">Track pieces by</span><select data-ed="tracking" id="edTracking">${TRACKING_MODES.filter(m=>fx.trackingModes.includes(m.key)).map(m=>`<option value="${m.key}"${m.key===cleanTracking(e.tracking)?" selected":""}>${esc(m.label)}</option>`).join("")}</select><span class="fhint">Serial: each piece has its own serial or IMEI number. Batch: stock kept by batch or lot number.</span></label></div>`:""}
-      ${fx.expiry?`<p class="capnote" data-capnote="expiry">Expiry dates are kept with each batch${fx.trackingModes.includes("batch")?": track this product by batch when it has an expiry date":""}.</p>`:""}
+      ${fx.tracking?`<div class="pgrid"><label class="f"><span class="lab">Track stock by</span><select data-ed="tracking" id="edTracking">${trackingChoices(fx).map(m=>`<option value="${m.key}"${m.key===e.tracking?" selected":""}>${esc(m.label)}</option>`).join("")}</select><span class="fhint">Serial: each piece has its own serial or IMEI number. Batch: stock kept by batch or lot number${fx.expiry?", with its expiry date if you choose it":""}.</span></label></div>`:""}
+      ${fx.expiry?`<p class="capnote" data-capnote="expiry">Expiry dates are kept with each batch: choose “Batch with expiry date” for a product that expires.</p>`:""}
+      ${tracked(e)?`<p class="capnote" data-capnote="tracked">Stock of this product comes in through Purchases or Stock in, with its ${trackingFromChoice(e.tracking).tracking==="serial"?"serial numbers":"batch number"}, and leaves on bills; the stock boxes here are read-only.</p>`:""}
       ${fx.weight?`<p class="capnote" data-capnote="weight">Sold loose by weight or volume? Set the price for one kg (or litre) and sell any amount, typed in or read from the weighing scale. Packed items with a fixed weight are sold by the piece.</p>`:""}
     </div>`:"";
   const simpleHTML=simple&&one?`<div class="pgrid">
       <label class="f"><span class="lab">SKU</span><input data-edf="sku" data-k="${esc(one.key)}" value="${esc(one.cell.sku)}" maxlength="40" placeholder="Optional" autocomplete="off"></label>
-      <label class="f"><span class="lab">${unitOf(e.unit).id==="pcs"?"Pieces in stock now":"In stock now ("+esc(unitOf(e.unit).sym)+")"}</span><input type="number" inputmode="${decimalsOf(e.unit)?"decimal":"numeric"}" min="0" step="${decimalsOf(e.unit)?"any":"1"}" data-edf="stock" data-k="${esc(one.key)}" value="${esc(one.cell.stock)}" placeholder="0"></label>
+      <label class="f"><span class="lab">${unitOf(e.unit).id==="pcs"?"Pieces in stock now":"In stock now ("+esc(unitOf(e.unit).sym)+")"}</span><input type="number" inputmode="${decimalsOf(e.unit)?"decimal":"numeric"}" min="0" step="${decimalsOf(e.unit)?"any":"1"}" data-edf="stock" data-k="${esc(one.key)}" value="${esc(one.cell.stock)}" placeholder="0"${tracked(e)?" disabled":""}></label>
       ${e.codesOn?`<label class="f full"><span class="lab">${codeName}</span><span class="coderow"><input data-edf="bc" data-k="${esc(one.key)}" value="${esc(one.cell.bc)}" maxlength="64" placeholder="Scan or type an existing code, or generate one" autocomplete="off"><button type="button" class="btn xs" data-edgen="${esc(one.key)}">Generate</button></span><span class="codeprev" data-prev="${esc(one.key)}">${codePreview(one.cell.bc,e.code)}</span></label>`:""}
     </div>`:"";
   const tableHTML=!simple?(e.opts.some(op=>op.v.length)?`<div class="tw vtab"><table class="vdet"><thead><tr>

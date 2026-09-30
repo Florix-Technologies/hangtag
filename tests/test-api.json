@@ -166,7 +166,23 @@
   "recordSupplierPayment",
   "cancelPurchase",
   "suppliersList",
-  "purchasesList"
+  "purchasesList",
+  "addPurchaseLine",
+  "addSerials",
+  "addWeighed",
+  "batchQty",
+  "expiryOf",
+  "openPurchaseEntry",
+  "plusDays",
+  "recordReturn",
+  "renderPurchaseEntry",
+  "saveCapabilities",
+  "saveExpirySettings",
+  "scanSerialToCart",
+  "sellableOf",
+  "serialsOf",
+  "serialState",
+  "stockRepository"
  ],
  "state": [
   "access",
@@ -214,6 +230,10 @@
   "syncReview",
   "scale",
   "ordersView",
-  "syncReview"
+  "syncReview",
+  "lastCheckout",
+  "purchaseForm",
+  "snPick",
+  "trackView"
  ]
 }

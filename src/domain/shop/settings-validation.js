@@ -24,6 +24,12 @@ export function checkPaymentSettings(input,ready){
   }
   return {patch:{upiId:String(input.upiId||"").trim(),payExpiry:exp,autoSend}};
 }
+/* input: { expiryDays, sellExpired } — days of warning before a batch expires (0-365), and whether expired stock may be sold */
+export function checkExpirySettings(input){
+  const d=+String(input.expiryDays==null?"":input.expiryDays).trim();
+  if(String(input.expiryDays==null?"":input.expiryDays).trim()===""||!Number.isInteger(d)||d<0||d>365) return {error:"Warn from 0 to 365 days before expiry (a whole number)."};
+  return {patch:{expiryDays:d,sellExpired:!!input.sellExpired}};
+}
 /* input: { b2clLimit } — the invoice value above which an inter-state B2C invoice is "B2C large" */
 export function checkGstSettings(input){
   const n=+input.b2clLimit;

@@ -3036,7 +3036,622 @@ END $$;
 -- ------------------------------------------------------------------------------
 -- 3n. Serials, batches, expiry (W2-A)
 -- ------------------------------------------------------------------------------
--- (reserved: this batch's SQL goes here)
+--   Serial numbers and batches ride on the records that already make stock (section 3b): nothing is a second stock.
+--   · A stock record (hangtag_stock_moves) may name the serials of its pieces (serials: one per piece, whole quantity) or its
+--     batch (batch_no, with the batch's expiry date): a record adding stock brings them in; one taking stock out writes them
+--     off (a cancelled purchase, "pcx:" records: cancels them) or takes from that batch.
+--   · A bill line names the serials it sold (serials) and what it took from each batch (batches: [{ "b", "q" }]); a return
+--     line the serials coming back and the batches they go back into.
+--   · hangtag_serials: one row per serial number of the shop (unique in the shop), its state — IN_STOCK, SOLD, RETURNED (back
+--     on the shelf), DAMAGED (written off, or returned not for resale), CANCELLED (its purchase was cancelled) — and where it
+--     came from, which bill sold it and which return brought it back. Kept only by the triggers below, from those records;
+--     the app reads it. A serial can't be sold twice: a bill line naming one that isn't ready to sell is refused, on any
+--     device; cancelling the bill puts it back, restoring the bill needs it still free.
+--   · hangtag_batches: one row per batch of a variant (its expiry date, the stock-in that created it). A batch's stock is
+--     worked out from the records (public.hangtag_batch_left); a record taking stock out of a batch can't take more than it
+--     has. A batch keeps one expiry date.
+--   · hangtag_products.tracks_expiry: its batches keep expiry dates (the app asks for them). What is "expiring soon" and
+--     whether expired stock may be sold are the shop's settings (hangtag_meta 'settings': expiryDays, sellExpired).
+--   Records saved before (no serials or batches) are untouched. Serials and batch numbers are kept in capitals, trimmed.
+ALTER TABLE public.hangtag_products ADD COLUMN IF NOT EXISTS tracks_expiry BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE public.hangtag_stock_moves ADD COLUMN IF NOT EXISTS serials TEXT[];
+ALTER TABLE public.hangtag_stock_moves ADD COLUMN IF NOT EXISTS batch_no TEXT;
+ALTER TABLE public.hangtag_stock_moves ADD COLUMN IF NOT EXISTS expiry DATE;
+ALTER TABLE public.hangtag_sale_items ADD COLUMN IF NOT EXISTS serials TEXT[];
+ALTER TABLE public.hangtag_sale_items ADD COLUMN IF NOT EXISTS batches JSONB;
+ALTER TABLE public.hangtag_return_items ADD COLUMN IF NOT EXISTS serials TEXT[];
+ALTER TABLE public.hangtag_return_items ADD COLUMN IF NOT EXISTS batches JSONB;
+ALTER TABLE public.hangtag_stock_moves DROP CONSTRAINT IF EXISTS hangtag_stock_moves_batch_check;
+ALTER TABLE public.hangtag_stock_moves ADD CONSTRAINT hangtag_stock_moves_batch_check CHECK ((batch_no IS NULL OR batch_no ~ '^[A-Z0-9][A-Z0-9 ./_:#-]{0,39}$')
+    AND (expiry IS NULL OR batch_no IS NOT NULL) AND (serials IS NULL OR batch_no IS NULL));
+CREATE INDEX IF NOT EXISTS idx_hangtag_moves_batch ON public.hangtag_stock_moves (owner_id, variant_id, batch_no) WHERE batch_no IS NOT NULL;
+
+-- (a) The serial register and the batches (written only by the triggers below)
+CREATE TABLE IF NOT EXISTS public.hangtag_serials (
+    owner_id UUID NOT NULL DEFAULT public.hangtag_shop_id() REFERENCES auth.users(id) ON DELETE CASCADE,
+    serial TEXT NOT NULL CHECK (serial ~ '^[A-Z0-9][A-Z0-9./_:#-]{0,59}$'),
+    variant_id TEXT NOT NULL,
+    product_id TEXT,
+    status TEXT NOT NULL CHECK (status IN ('IN_STOCK','SOLD','RETURNED','DAMAGED','CANCELLED')),
+    move_id TEXT,                                  -- the stock record that brought it in
+    import_id TEXT,                                -- its purchase (or supplier bill)
+    sale_id TEXT,                                  -- the bill that sold it (kept after a return, for its history)
+    sale_line_no INTEGER,
+    return_id TEXT,                                -- the return that brought it back
+    out_move_id TEXT,                              -- the stock record that wrote it off or cancelled it
+    t BIGINT,                                      -- when it last changed (the record's time, ms)
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (owner_id, serial),
+    CONSTRAINT hangtag_serials_sold_check CHECK (status <> 'SOLD' OR sale_id IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS idx_hangtag_serials_variant ON public.hangtag_serials (owner_id, variant_id, status);
+CREATE INDEX IF NOT EXISTS idx_hangtag_serials_sale ON public.hangtag_serials (owner_id, sale_id) WHERE sale_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS public.hangtag_batches (
+    owner_id UUID NOT NULL DEFAULT public.hangtag_shop_id() REFERENCES auth.users(id) ON DELETE CASCADE,
+    variant_id TEXT NOT NULL,
+    batch_no TEXT NOT NULL CHECK (batch_no ~ '^[A-Z0-9][A-Z0-9 ./_:#-]{0,39}$'),
+    product_id TEXT,
+    expiry DATE,
+    move_id TEXT,                                  -- the stock record that first brought it in
+    import_id TEXT,                                -- its purchase (or supplier bill)
+    t BIGINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (owner_id, variant_id, batch_no)
+);
+CREATE INDEX IF NOT EXISTS idx_hangtag_batches_expiry ON public.hangtag_batches (owner_id, expiry) WHERE expiry IS NOT NULL;
+
+-- A batch's stock now: its stock records, less what bills that aren't cancelled took from it, plus returns put back on the shelf
+CREATE OR REPLACE FUNCTION public.hangtag_batch_left(p_owner UUID, p_variant TEXT, p_batch TEXT)
+RETURNS NUMERIC LANGUAGE sql STABLE SET search_path = '' AS $$
+    SELECT COALESCE((SELECT sum(m.qty) FROM public.hangtag_stock_moves m WHERE m.owner_id = p_owner AND m.variant_id = p_variant AND m.batch_no = p_batch), 0)
+         - COALESCE((SELECT sum((a ->> 'q')::NUMERIC) FROM public.hangtag_sale_items i
+                       JOIN public.hangtag_sales s ON s.owner_id = i.owner_id AND s.id = i.sale_id AND NOT s.is_void
+                       CROSS JOIN LATERAL jsonb_array_elements(i.batches) a
+                      WHERE i.owner_id = p_owner AND i.variant_id = p_variant AND i.batches IS NOT NULL AND a ->> 'b' = p_batch), 0)
+         + COALESCE((SELECT sum((a ->> 'q')::NUMERIC) FROM public.hangtag_return_items r
+                       JOIN public.hangtag_sales s ON s.owner_id = r.owner_id AND s.id = r.sale_id AND NOT s.is_void
+                       CROSS JOIN LATERAL jsonb_array_elements(r.batches) a
+                      WHERE r.owner_id = p_owner AND r.variant_id = p_variant AND r.restock AND r.batches IS NOT NULL AND a ->> 'b' = p_batch), 0)
+$$;
+
+-- (b) The shape of serials and batches on a record: one serial per piece (whole pieces, each once, in capitals); a line's
+--     batches add up to its quantity. They never change once saved (an upload sent twice changes nothing).
+CREATE OR REPLACE FUNCTION public.hangtag_tracking_shape()
+RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
+DECLARE
+    q NUMERIC;
+    n INT;
+    s TEXT;
+    a JSONB;
+    tot NUMERIC := 0;
+BEGIN
+    IF NEW.serials IS NOT NULL AND cardinality(NEW.serials) = 0 THEN NEW.serials := NULL; END IF;
+    IF TG_TABLE_NAME = 'hangtag_stock_moves' THEN q := abs(NEW.qty); ELSE q := NEW.quantity; END IF;
+    IF NEW.serials IS NOT NULL THEN
+        n := cardinality(NEW.serials);
+        IF q <> trunc(q) OR n <> q THEN
+            RAISE EXCEPTION '% piece(s) but % serial number(s): one serial number per piece.', trim_scale(q), n USING ERRCODE = 'check_violation';
+        END IF;
+        FOREACH s IN ARRAY NEW.serials LOOP
+            IF s IS NULL OR s !~ '^[A-Z0-9][A-Z0-9./_:#-]{0,59}$' THEN
+                RAISE EXCEPTION '"%" isn''t a serial number (letters, digits and . / _ : # -, up to 60, in capitals).', left(COALESCE(s, ''), 60) USING ERRCODE = 'check_violation';
+            END IF;
+        END LOOP;
+        IF (SELECT count(DISTINCT x) FROM unnest(NEW.serials) x) <> n THEN
+            RAISE EXCEPTION 'A serial number is on this record twice.' USING ERRCODE = 'check_violation';
+        END IF;
+    END IF;
+    IF TG_TABLE_NAME <> 'hangtag_stock_moves' THEN
+        IF NEW.batches IS NOT NULL AND jsonb_typeof(NEW.batches) = 'array' AND jsonb_array_length(NEW.batches) = 0 THEN NEW.batches := NULL; END IF;
+        IF NEW.batches IS NOT NULL THEN
+            IF jsonb_typeof(NEW.batches) <> 'array' THEN RAISE EXCEPTION 'A line''s batches are a list.' USING ERRCODE = 'check_violation'; END IF;
+            FOR a IN SELECT x FROM jsonb_array_elements(NEW.batches) x LOOP
+                IF jsonb_typeof(a) <> 'object' OR COALESCE(a ->> 'b', '') !~ '^[A-Z0-9][A-Z0-9 ./_:#-]{0,39}$' OR jsonb_typeof(a -> 'q') IS DISTINCT FROM 'number'
+                   OR (a ->> 'q')::NUMERIC <= 0 THEN
+                    RAISE EXCEPTION 'Each batch on a line needs its number and a quantity above 0.' USING ERRCODE = 'check_violation';
+                END IF;
+                tot := tot + (a ->> 'q')::NUMERIC;
+            END LOOP;
+            IF round(tot, 3) <> round(q, 3) THEN
+                RAISE EXCEPTION 'The batches of a line come to % but the line has %.', trim_scale(round(tot, 3)), trim_scale(q) USING ERRCODE = 'check_violation';
+            END IF;
+        END IF;
+    END IF;
+    IF TG_OP = 'UPDATE' THEN
+        IF NEW.serials IS DISTINCT FROM OLD.serials THEN
+            RAISE EXCEPTION 'The serial numbers of a saved record don''t change.' USING ERRCODE = 'check_violation';
+        END IF;
+        IF TG_TABLE_NAME = 'hangtag_stock_moves' THEN
+            IF NEW.batch_no IS DISTINCT FROM OLD.batch_no OR NEW.expiry IS DISTINCT FROM OLD.expiry THEN
+                RAISE EXCEPTION 'The batch of a saved stock record doesn''t change.' USING ERRCODE = 'check_violation';
+            END IF;
+        ELSIF NEW.batches IS DISTINCT FROM OLD.batches THEN
+            RAISE EXCEPTION 'The batches of a saved line don''t change.' USING ERRCODE = 'check_violation';
+        END IF;
+    END IF;
+    RETURN NEW;
+END $$;
+DO $$
+DECLARE t TEXT;
+BEGIN
+    FOREACH t IN ARRAY ARRAY['hangtag_stock_moves','hangtag_sale_items','hangtag_return_items'] LOOP
+        EXECUTE format('DROP TRIGGER IF EXISTS hangtag_tracking_shape ON public.%I', t);
+        EXECUTE format('CREATE TRIGGER hangtag_tracking_shape BEFORE INSERT OR UPDATE ON public.%I FOR EACH ROW EXECUTE FUNCTION public.hangtag_tracking_shape()', t);
+    END LOOP;
+END $$;
+
+-- (c) Stock records: serials in (unique: one not already in stock or on a bill; one written off or cancelled before may come
+--     back) or out (only pieces in stock, of that variant); a batch created with its first stock-in (one expiry date), and
+--     never taken below zero. SECURITY DEFINER: only these triggers write the register; the owner comes from the record,
+--     which row security has already checked.
+CREATE OR REPLACE FUNCTION public.hangtag_track_move()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    s TEXT;
+    cur public.hangtag_serials;
+    known DATE;
+    left_now NUMERIC;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        -- a stock record removed (the owner, or its variant deleted): its serials go with it
+        IF OLD.serials IS NOT NULL THEN
+            IF OLD.qty > 0 THEN
+                UPDATE public.hangtag_serials SET status = 'CANCELLED', out_move_id = OLD.id, updated_at = NOW()
+                 WHERE owner_id = OLD.owner_id AND serial = ANY (OLD.serials) AND move_id = OLD.id AND status IN ('IN_STOCK','RETURNED');
+            ELSE
+                UPDATE public.hangtag_serials SET status = 'IN_STOCK', out_move_id = NULL, updated_at = NOW()
+                 WHERE owner_id = OLD.owner_id AND serial = ANY (OLD.serials) AND out_move_id = OLD.id AND status IN ('DAMAGED','CANCELLED');
+            END IF;
+        END IF;
+        RETURN NULL;
+    END IF;
+    IF NEW.serials IS NOT NULL THEN
+        FOREACH s IN ARRAY NEW.serials LOOP
+            SELECT * INTO cur FROM public.hangtag_serials WHERE owner_id = NEW.owner_id AND serial = s FOR UPDATE;
+            IF NEW.qty > 0 THEN
+                IF FOUND AND cur.status IN ('IN_STOCK','RETURNED') THEN
+                    RAISE EXCEPTION 'Serial % is already in stock.', s USING ERRCODE = 'unique_violation';
+                ELSIF FOUND AND cur.status = 'SOLD' THEN
+                    RAISE EXCEPTION 'Serial % is on a bill (sold). Take it back with a return instead.', s USING ERRCODE = 'unique_violation';
+                END IF;
+                INSERT INTO public.hangtag_serials (owner_id, serial, variant_id, product_id, status, move_id, import_id, t)
+                VALUES (NEW.owner_id, s, NEW.variant_id, NEW.product_id, 'IN_STOCK', NEW.id, NEW.import_id, NEW.t)
+                ON CONFLICT (owner_id, serial) DO UPDATE SET variant_id = EXCLUDED.variant_id, product_id = EXCLUDED.product_id, status = 'IN_STOCK',
+                    move_id = EXCLUDED.move_id, import_id = EXCLUDED.import_id, sale_id = NULL, sale_line_no = NULL, return_id = NULL, out_move_id = NULL,
+                    t = EXCLUDED.t, updated_at = NOW();
+            ELSE
+                IF NOT FOUND OR cur.variant_id <> NEW.variant_id OR cur.status NOT IN ('IN_STOCK','RETURNED') THEN
+                    RAISE EXCEPTION 'Serial % isn''t in stock%.', s, CASE WHEN FOUND AND cur.status = 'SOLD' THEN ' (it is sold)' ELSE '' END USING ERRCODE = 'check_violation';
+                END IF;
+                UPDATE public.hangtag_serials SET status = CASE WHEN NEW.id LIKE 'pcx:%' THEN 'CANCELLED' ELSE 'DAMAGED' END, out_move_id = NEW.id, t = NEW.t, updated_at = NOW()
+                 WHERE owner_id = NEW.owner_id AND serial = s;
+            END IF;
+        END LOOP;
+    END IF;
+    IF NEW.batch_no IS NOT NULL THEN
+        IF NEW.qty > 0 THEN
+            INSERT INTO public.hangtag_batches (owner_id, variant_id, batch_no, product_id, expiry, move_id, import_id, t)
+            VALUES (NEW.owner_id, NEW.variant_id, NEW.batch_no, NEW.product_id, NEW.expiry, NEW.id, NEW.import_id, NEW.t)
+            ON CONFLICT (owner_id, variant_id, batch_no) DO NOTHING;
+            SELECT expiry INTO known FROM public.hangtag_batches WHERE owner_id = NEW.owner_id AND variant_id = NEW.variant_id AND batch_no = NEW.batch_no;
+            IF NEW.expiry IS NOT NULL THEN
+                IF known IS NULL THEN
+                    UPDATE public.hangtag_batches SET expiry = NEW.expiry WHERE owner_id = NEW.owner_id AND variant_id = NEW.variant_id AND batch_no = NEW.batch_no;
+                ELSIF known <> NEW.expiry THEN
+                    RAISE EXCEPTION 'Batch % already has the expiry date %.', NEW.batch_no, known USING ERRCODE = 'check_violation';
+                END IF;
+            END IF;
+        ELSIF NEW.qty < 0 THEN
+            IF NOT EXISTS (SELECT 1 FROM public.hangtag_batches WHERE owner_id = NEW.owner_id AND variant_id = NEW.variant_id AND batch_no = NEW.batch_no) THEN
+                RAISE EXCEPTION 'Batch % of this item isn''t in stock.', NEW.batch_no USING ERRCODE = 'check_violation';
+            END IF;
+            left_now := public.hangtag_batch_left(NEW.owner_id, NEW.variant_id, NEW.batch_no);
+            IF left_now < 0 THEN
+                RAISE EXCEPTION 'Batch % has only % left.', NEW.batch_no, trim_scale(left_now - NEW.qty) USING ERRCODE = 'check_violation';
+            END IF;
+        END IF;
+    END IF;
+    RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_track_move ON public.hangtag_stock_moves;
+CREATE TRIGGER hangtag_track_move AFTER INSERT OR DELETE ON public.hangtag_stock_moves FOR EACH ROW EXECUTE FUNCTION public.hangtag_track_move();
+
+-- (d) Bill lines: each serial sold must be of the line's variant and ready to sell (in stock or back from a return); a bill
+--     line removed puts its serials back
+CREATE OR REPLACE FUNCTION public.hangtag_track_sale_item()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    s TEXT;
+    cur public.hangtag_serials;
+    sale public.hangtag_sales;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        IF OLD.serials IS NOT NULL THEN
+            UPDATE public.hangtag_serials SET status = 'IN_STOCK', sale_id = NULL, sale_line_no = NULL, updated_at = NOW()
+             WHERE owner_id = OLD.owner_id AND sale_id = OLD.sale_id AND sale_line_no = OLD.line_no AND status = 'SOLD';
+        END IF;
+        RETURN NULL;
+    END IF;
+    IF NEW.serials IS NULL THEN RETURN NULL; END IF;
+    SELECT * INTO sale FROM public.hangtag_sales WHERE owner_id = NEW.owner_id AND id = NEW.sale_id;
+    IF NOT FOUND OR sale.is_void THEN RETURN NULL; END IF;   -- a bill saved already cancelled sells nothing
+    FOREACH s IN ARRAY NEW.serials LOOP
+        SELECT * INTO cur FROM public.hangtag_serials WHERE owner_id = NEW.owner_id AND serial = s FOR UPDATE;
+        IF NOT FOUND OR cur.variant_id IS DISTINCT FROM NEW.variant_id THEN
+            RAISE EXCEPTION 'Serial % isn''t in stock for %.', s, NEW.product_name USING ERRCODE = 'check_violation';
+        END IF;
+        IF cur.status NOT IN ('IN_STOCK','RETURNED') THEN
+            RAISE EXCEPTION 'Serial % is %: it can''t be sold again.', s, CASE cur.status WHEN 'SOLD' THEN 'already sold' WHEN 'DAMAGED' THEN 'written off' ELSE 'cancelled' END
+                USING ERRCODE = 'unique_violation';
+        END IF;
+        UPDATE public.hangtag_serials SET status = 'SOLD', sale_id = NEW.sale_id, sale_line_no = NEW.line_no, return_id = NULL, t = sale.timestamp, updated_at = NOW()
+         WHERE owner_id = NEW.owner_id AND serial = s;
+    END LOOP;
+    RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_track_sale_item ON public.hangtag_sale_items;
+CREATE TRIGGER hangtag_track_sale_item AFTER INSERT OR DELETE ON public.hangtag_sale_items FOR EACH ROW EXECUTE FUNCTION public.hangtag_track_sale_item();
+
+-- (e) Cancelling a bill puts its serials back in stock; restoring it sells them again — only while they are still free
+CREATE OR REPLACE FUNCTION public.hangtag_track_sale_status()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    i RECORD;
+    s TEXT;
+    cur public.hangtag_serials;
+BEGIN
+    IF NEW.is_void THEN
+        UPDATE public.hangtag_serials SET status = 'IN_STOCK', sale_id = NULL, sale_line_no = NULL, updated_at = NOW()
+         WHERE owner_id = NEW.owner_id AND sale_id = NEW.id AND status = 'SOLD';
+        RETURN NULL;
+    END IF;
+    FOR i IN SELECT line_no, variant_id, serials FROM public.hangtag_sale_items WHERE owner_id = NEW.owner_id AND sale_id = NEW.id AND serials IS NOT NULL LOOP
+        FOREACH s IN ARRAY i.serials LOOP
+            SELECT * INTO cur FROM public.hangtag_serials WHERE owner_id = NEW.owner_id AND serial = s FOR UPDATE;
+            IF NOT FOUND OR cur.variant_id IS DISTINCT FROM i.variant_id OR cur.status NOT IN ('IN_STOCK','RETURNED') THEN
+                RAISE EXCEPTION 'Serial % of bill % was sold again or isn''t in stock any more, so the bill can''t be restored.', s, COALESCE(NEW.bill_no, NEW.id)
+                    USING ERRCODE = 'check_violation';
+            END IF;
+            UPDATE public.hangtag_serials SET status = 'SOLD', sale_id = NEW.id, sale_line_no = i.line_no, return_id = NULL, t = NEW.timestamp, updated_at = NOW()
+             WHERE owner_id = NEW.owner_id AND serial = s;
+        END LOOP;
+    END LOOP;
+    RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_track_sale_status ON public.hangtag_sales;
+CREATE TRIGGER hangtag_track_sale_status AFTER UPDATE OF is_void ON public.hangtag_sales
+    FOR EACH ROW WHEN (OLD.is_void IS DISTINCT FROM NEW.is_void) EXECUTE FUNCTION public.hangtag_track_sale_status();
+
+-- (f) Return lines: only serials sold on that bill line and not back already; they come back on the shelf (RETURNED) or, not
+--     for resale, written off (DAMAGED). The batches a line goes back into: batches it took from, never more than it took.
+CREATE OR REPLACE FUNCTION public.hangtag_track_return_item()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    s TEXT;
+    cur public.hangtag_serials;
+    line public.hangtag_sale_items;
+    a JSONB;
+    took NUMERIC;
+    back NUMERIC;
+    rt BIGINT;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        IF OLD.serials IS NOT NULL THEN
+            UPDATE public.hangtag_serials SET status = 'SOLD', return_id = NULL, updated_at = NOW()
+             WHERE owner_id = OLD.owner_id AND serial = ANY (OLD.serials) AND return_id = OLD.return_id AND status IN ('RETURNED','DAMAGED');
+        END IF;
+        RETURN NULL;
+    END IF;
+    IF NEW.serials IS NULL AND NEW.batches IS NULL THEN RETURN NULL; END IF;
+    SELECT * INTO line FROM public.hangtag_sale_items WHERE owner_id = NEW.owner_id AND sale_id = NEW.sale_id AND line_no = NEW.sale_line_no;
+    SELECT t INTO rt FROM public.hangtag_returns WHERE owner_id = NEW.owner_id AND id = NEW.return_id;
+    IF NEW.serials IS NOT NULL THEN
+        FOREACH s IN ARRAY NEW.serials LOOP
+            IF line.serials IS NULL OR NOT (s = ANY (line.serials)) THEN
+                RAISE EXCEPTION 'Serial % wasn''t sold on that bill line.', s USING ERRCODE = 'check_violation';
+            END IF;
+            SELECT * INTO cur FROM public.hangtag_serials WHERE owner_id = NEW.owner_id AND serial = s FOR UPDATE;
+            IF NOT FOUND OR cur.status <> 'SOLD' OR cur.sale_id IS DISTINCT FROM NEW.sale_id THEN
+                RAISE EXCEPTION 'Serial % has already come back, or isn''t on that bill any more.', s USING ERRCODE = 'check_violation';
+            END IF;
+            UPDATE public.hangtag_serials SET status = CASE WHEN NEW.restock THEN 'RETURNED' ELSE 'DAMAGED' END, return_id = NEW.return_id, t = rt, updated_at = NOW()
+             WHERE owner_id = NEW.owner_id AND serial = s;
+        END LOOP;
+    END IF;
+    IF NEW.batches IS NOT NULL THEN
+        FOR a IN SELECT x FROM jsonb_array_elements(NEW.batches) x LOOP
+            SELECT COALESCE(sum((y ->> 'q')::NUMERIC), 0) INTO took FROM jsonb_array_elements(COALESCE(line.batches, '[]'::jsonb)) y WHERE y ->> 'b' = a ->> 'b';
+            SELECT COALESCE(sum((y ->> 'q')::NUMERIC), 0) INTO back FROM public.hangtag_return_items r CROSS JOIN LATERAL jsonb_array_elements(r.batches) y
+             WHERE r.owner_id = NEW.owner_id AND r.sale_id = NEW.sale_id AND r.sale_line_no = NEW.sale_line_no AND r.batches IS NOT NULL AND y ->> 'b' = a ->> 'b';
+            IF back > took THEN
+                RAISE EXCEPTION 'More of batch % would come back than that bill line took from it (%).', a ->> 'b', trim_scale(took) USING ERRCODE = 'check_violation';
+            END IF;
+        END LOOP;
+    END IF;
+    RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_track_return_item ON public.hangtag_return_items;
+CREATE TRIGGER hangtag_track_return_item AFTER INSERT OR DELETE ON public.hangtag_return_items FOR EACH ROW EXECUTE FUNCTION public.hangtag_track_return_item();
+
+-- (g) Saving bills (as section 3m) now keeps each line's serials and batches
+CREATE OR REPLACE FUNCTION public.hangtag_save_sales(p_bills JSONB)
+RETURNS JSONB LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+DECLARE
+    uid UUID := public.hangtag_shop_id();
+    member BOOLEAN;
+    b JSONB;
+    s public.hangtag_sales;
+    voided BOOLEAN;
+    due NUMERIC;
+    paid NUMERIC;
+    n INT := 0;
+BEGIN
+    IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Sign in to save bills.' USING ERRCODE = '42501'; END IF;
+    IF uid IS NULL OR NOT public.hangtag_can('create_sale') THEN RAISE EXCEPTION 'Not allowed to save bills.' USING ERRCODE = '42501'; END IF;
+    member := uid <> auth.uid();
+    FOR b IN SELECT * FROM jsonb_array_elements(COALESCE(p_bills, '[]'::jsonb)) LOOP
+        s := jsonb_populate_record(NULL::public.hangtag_sales, b -> 'sale');
+        IF COALESCE(s.id, '') = '' THEN RAISE EXCEPTION 'A bill has no id.' USING ERRCODE = '22023'; END IF;
+        IF member AND EXISTS (SELECT 1 FROM public.hangtag_sales x WHERE x.owner_id = uid AND x.id = s.id) THEN n := n + 1; CONTINUE; END IF;
+        INSERT INTO public.hangtag_sales (id, timestamp, subtotal, discount, total, payment_method, device_id, is_void, bill_no,
+            customer_id, customer_name, customer_phone, tax_rate, tax_amount, tax_inclusive, kind, exchange_id, credit,
+            item_discount, bill_discount, bill_discount_type, bill_discount_value, taxable_amount, cgst_amount, sgst_amount, igst_amount,
+            round_off, gst_mode, place_of_supply, customer_gstin, customer_type, event_id, due_amount, order_id)
+        VALUES (s.id, s.timestamp, COALESCE(s.subtotal, 0), COALESCE(s.discount, 0), COALESCE(s.total, 0), s.payment_method, s.device_id,
+            COALESCE(s.is_void, FALSE), s.bill_no, s.customer_id, s.customer_name, s.customer_phone, COALESCE(s.tax_rate, 0),
+            COALESCE(s.tax_amount, 0), COALESCE(s.tax_inclusive, TRUE), COALESCE(s.kind, 'sale'), s.exchange_id, COALESCE(s.credit, 0),
+            COALESCE(s.item_discount, 0), COALESCE(s.bill_discount, 0), s.bill_discount_type, s.bill_discount_value, s.taxable_amount,
+            COALESCE(s.cgst_amount, 0), COALESCE(s.sgst_amount, 0), COALESCE(s.igst_amount, 0), COALESCE(s.round_off, 0),
+            s.gst_mode, s.place_of_supply, s.customer_gstin, s.customer_type, s.event_id, COALESCE(s.due_amount, 0), s.order_id)
+        ON CONFLICT (owner_id, id) DO UPDATE SET timestamp = EXCLUDED.timestamp, subtotal = EXCLUDED.subtotal, discount = EXCLUDED.discount,
+            total = EXCLUDED.total, payment_method = EXCLUDED.payment_method, device_id = EXCLUDED.device_id, is_void = EXCLUDED.is_void, void_reason = CASE WHEN EXCLUDED.is_void THEN hangtag_sales.void_reason END,
+            bill_no = EXCLUDED.bill_no, customer_id = EXCLUDED.customer_id, customer_name = EXCLUDED.customer_name,
+            customer_phone = EXCLUDED.customer_phone, tax_rate = EXCLUDED.tax_rate, tax_amount = EXCLUDED.tax_amount,
+            tax_inclusive = EXCLUDED.tax_inclusive, kind = EXCLUDED.kind, exchange_id = EXCLUDED.exchange_id, credit = EXCLUDED.credit,
+            item_discount = EXCLUDED.item_discount, bill_discount = EXCLUDED.bill_discount, bill_discount_type = EXCLUDED.bill_discount_type,
+            bill_discount_value = EXCLUDED.bill_discount_value, taxable_amount = EXCLUDED.taxable_amount, cgst_amount = EXCLUDED.cgst_amount,
+            sgst_amount = EXCLUDED.sgst_amount, igst_amount = EXCLUDED.igst_amount, round_off = EXCLUDED.round_off, gst_mode = EXCLUDED.gst_mode,
+            place_of_supply = EXCLUDED.place_of_supply, customer_gstin = EXCLUDED.customer_gstin, customer_type = EXCLUDED.customer_type,
+            event_id = EXCLUDED.event_id, due_amount = EXCLUDED.due_amount, order_id = EXCLUDED.order_id;
+        INSERT INTO public.hangtag_sale_items (sale_id, line_no, product_id, product_name, size, quantity, unit_price, variant_id, color, sku,
+            cost_price, variant_label, options, discount_type, discount_value, discount_amount, bill_discount_share, taxable_value, gst_rate,
+            cgst_amount, sgst_amount, igst_amount, line_total, hsn, serials, batches)
+        SELECT s.id, i.line_no, i.product_id, i.product_name, COALESCE(i.size, ''), COALESCE(i.quantity, 1), COALESCE(i.unit_price, 0),
+            i.variant_id, COALESCE(i.color, ''), i.sku, i.cost_price, i.variant_label, i.options, i.discount_type, i.discount_value,
+            COALESCE(i.discount_amount, 0), COALESCE(i.bill_discount_share, 0), i.taxable_value, i.gst_rate, COALESCE(i.cgst_amount, 0),
+            COALESCE(i.sgst_amount, 0), COALESCE(i.igst_amount, 0), i.line_total, i.hsn, i.serials, i.batches
+        FROM jsonb_populate_recordset(NULL::public.hangtag_sale_items, COALESCE(b -> 'items', '[]'::jsonb)) i
+        ON CONFLICT (owner_id, sale_id, line_no) DO UPDATE SET product_id = EXCLUDED.product_id, product_name = EXCLUDED.product_name,
+            size = EXCLUDED.size, quantity = EXCLUDED.quantity, unit_price = EXCLUDED.unit_price, variant_id = EXCLUDED.variant_id,
+            color = EXCLUDED.color, sku = EXCLUDED.sku, cost_price = EXCLUDED.cost_price, variant_label = EXCLUDED.variant_label,
+            options = EXCLUDED.options, discount_type = EXCLUDED.discount_type, discount_value = EXCLUDED.discount_value,
+            discount_amount = EXCLUDED.discount_amount, bill_discount_share = EXCLUDED.bill_discount_share, taxable_value = EXCLUDED.taxable_value,
+            gst_rate = EXCLUDED.gst_rate, cgst_amount = EXCLUDED.cgst_amount, sgst_amount = EXCLUDED.sgst_amount,
+            igst_amount = EXCLUDED.igst_amount, line_total = EXCLUDED.line_total, hsn = EXCLUDED.hsn, serials = EXCLUDED.serials, batches = EXCLUDED.batches;
+        SELECT x.is_void, GREATEST(x.total - x.credit - x.due_amount, 0) INTO voided, due FROM public.hangtag_sales x WHERE x.owner_id = uid AND x.id = s.id;
+        DELETE FROM public.hangtag_payments p WHERE p.owner_id = uid AND p.sale_id = s.id
+           AND p.id NOT IN (SELECT y ->> 'id' FROM jsonb_array_elements(COALESCE(b -> 'payments', '[]'::jsonb)) y);
+        INSERT INTO public.hangtag_payments (id, sale_id, method, amount, tendered, change_given, reference, status, t, device_id,
+            verification, via, intent_id, provider_payment_id, card_last4)
+        SELECT p.id, s.id, p.method, p.amount, p.tendered, COALESCE(p.change_given, 0), NULLIF(btrim(p.reference), ''),
+            CASE WHEN voided THEN 'cancelled' ELSE 'completed' END, COALESCE(p.t, s.timestamp), p.device_id,
+            COALESCE(p.verification, 'recorded'), p.via, p.intent_id, p.provider_payment_id, NULLIF(btrim(p.card_last4), '')
+        FROM jsonb_populate_recordset(NULL::public.hangtag_payments, COALESCE(b -> 'payments', '[]'::jsonb)) p
+        ON CONFLICT (owner_id, id) DO UPDATE SET method = EXCLUDED.method, amount = EXCLUDED.amount, tendered = EXCLUDED.tendered,
+            change_given = EXCLUDED.change_given, reference = EXCLUDED.reference, status = EXCLUDED.status, t = EXCLUDED.t,
+            device_id = EXCLUDED.device_id, via = EXCLUDED.via, card_last4 = EXCLUDED.card_last4,
+            -- a payment the provider verified (section 3h) stays verified when the phone uploads the bill again
+            verification = CASE WHEN hangtag_payments.verification = 'verified' THEN 'verified' ELSE EXCLUDED.verification END,
+            intent_id = COALESCE(EXCLUDED.intent_id, hangtag_payments.intent_id),
+            provider_payment_id = COALESCE(EXCLUDED.provider_payment_id, hangtag_payments.provider_payment_id);
+        SELECT COALESCE(SUM(amount), 0) INTO paid FROM public.hangtag_payments WHERE owner_id = uid AND sale_id = s.id;
+        IF paid <> due THEN
+            RAISE EXCEPTION 'The payments on bill % come to % but % is due', COALESCE(s.bill_no, s.id), paid, due USING ERRCODE = 'check_violation';
+        END IF;
+        n := n + 1;
+    END LOOP;
+    RETURN jsonb_build_object('status', 'saved', 'bills', n);
+END $$;
+REVOKE ALL ON FUNCTION public.hangtag_save_sales(JSONB) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.hangtag_save_sales(JSONB) TO authenticated;
+
+-- (h) Saving a return (as section 3g) now keeps each line's serials and batches
+CREATE OR REPLACE FUNCTION public.hangtag_save_return(p_return JSONB, p_items JSONB)
+RETURNS JSONB LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+DECLARE
+    uid UUID := public.hangtag_shop_id();
+    r public.hangtag_returns;
+    voided BOOLEAN;
+    lines_value NUMERIC;
+    n INT;
+BEGIN
+    IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Sign in to save returns.' USING ERRCODE = '42501'; END IF;
+    IF uid IS NULL OR NOT public.hangtag_can('perform_return') THEN RAISE EXCEPTION 'Not allowed to save returns.' USING ERRCODE = '42501'; END IF;
+    r := jsonb_populate_record(NULL::public.hangtag_returns, p_return);
+    IF COALESCE(r.id, '') = '' THEN RAISE EXCEPTION 'A return has no id.' USING ERRCODE = '22023'; END IF;
+    -- a team member only adds returns: one already saved stays exactly as it is (its retry saves nothing new)
+    IF uid <> auth.uid() AND EXISTS (SELECT 1 FROM public.hangtag_returns x WHERE x.owner_id = uid AND x.id = r.id) THEN
+        RETURN jsonb_build_object('status', 'saved', 'return', r.id, 'lines', (SELECT count(*) FROM public.hangtag_return_items i WHERE i.owner_id = uid AND i.return_id = r.id));
+    END IF;
+    SELECT is_void INTO voided FROM public.hangtag_sales WHERE owner_id = uid AND id = r.sale_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Bill % was not found', r.sale_id USING ERRCODE = 'foreign_key_violation';
+    END IF;
+    IF voided THEN
+        RAISE EXCEPTION 'That bill is cancelled, so it can''t have a return' USING ERRCODE = 'check_violation';
+    END IF;
+    INSERT INTO public.hangtag_returns (id, sale_id, t, kind, exchange_id, refund_amount, refund_method, value, round_off, credit_no, note, device_id)
+    VALUES (r.id, r.sale_id, r.t, COALESCE(r.kind, 'return'), r.exchange_id, COALESCE(r.refund_amount, 0), r.refund_method, COALESCE(r.value, 0),
+        COALESCE(r.round_off, 0), r.credit_no, r.note, r.device_id)
+    ON CONFLICT (owner_id, id) DO UPDATE SET sale_id = EXCLUDED.sale_id, t = EXCLUDED.t, kind = EXCLUDED.kind, exchange_id = EXCLUDED.exchange_id,
+        refund_amount = EXCLUDED.refund_amount, refund_method = EXCLUDED.refund_method, value = EXCLUDED.value, round_off = EXCLUDED.round_off,
+        credit_no = EXCLUDED.credit_no, note = EXCLUDED.note, device_id = EXCLUDED.device_id;
+    DELETE FROM public.hangtag_return_items i WHERE i.owner_id = uid AND i.return_id = r.id
+       AND i.line_no NOT IN (SELECT (y ->> 'line_no')::int FROM jsonb_array_elements(COALESCE(p_items, '[]'::jsonb)) y);
+    INSERT INTO public.hangtag_return_items (return_id, line_no, sale_id, sale_line_no, variant_id, product_id, product_name, color, size, sku,
+        quantity, unit_price, value, cost_price, variant_label, options, restock, taxable_value, gst_rate, cgst_amount, sgst_amount, igst_amount, hsn, serials, batches)
+    SELECT r.id, i.line_no, r.sale_id, i.sale_line_no, i.variant_id, i.product_id, i.product_name, COALESCE(i.color, ''), COALESCE(i.size, ''), i.sku,
+        i.quantity, COALESCE(i.unit_price, 0), COALESCE(i.value, 0), i.cost_price, i.variant_label, i.options, COALESCE(i.restock, TRUE), i.taxable_value,
+        i.gst_rate, COALESCE(i.cgst_amount, 0), COALESCE(i.sgst_amount, 0), COALESCE(i.igst_amount, 0), i.hsn, i.serials, i.batches
+    FROM jsonb_populate_recordset(NULL::public.hangtag_return_items, COALESCE(p_items, '[]'::jsonb)) i
+    ON CONFLICT (owner_id, return_id, line_no) DO UPDATE SET sale_id = EXCLUDED.sale_id, sale_line_no = EXCLUDED.sale_line_no,
+        variant_id = EXCLUDED.variant_id, product_id = EXCLUDED.product_id, product_name = EXCLUDED.product_name, color = EXCLUDED.color,
+        size = EXCLUDED.size, sku = EXCLUDED.sku, quantity = EXCLUDED.quantity, unit_price = EXCLUDED.unit_price, value = EXCLUDED.value,
+        cost_price = EXCLUDED.cost_price, variant_label = EXCLUDED.variant_label, options = EXCLUDED.options, restock = EXCLUDED.restock,
+        taxable_value = EXCLUDED.taxable_value, gst_rate = EXCLUDED.gst_rate, cgst_amount = EXCLUDED.cgst_amount, sgst_amount = EXCLUDED.sgst_amount,
+        igst_amount = EXCLUDED.igst_amount, hsn = EXCLUDED.hsn, serials = EXCLUDED.serials, batches = EXCLUDED.batches;
+    SELECT count(*), COALESCE(SUM(value), 0) INTO n, lines_value FROM public.hangtag_return_items WHERE owner_id = uid AND return_id = r.id;
+    IF n = 0 THEN RAISE EXCEPTION 'A return needs at least one line' USING ERRCODE = 'check_violation'; END IF;
+    IF COALESCE(r.value, 0) <> lines_value + COALESCE(r.round_off, 0) THEN
+        RAISE EXCEPTION 'Return % is worth % but its lines come to %', COALESCE(r.credit_no, r.id), r.value, lines_value + COALESCE(r.round_off, 0)
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN jsonb_build_object('status', 'saved', 'return', r.id, 'lines', n);
+END $$;
+REVOKE ALL ON FUNCTION public.hangtag_save_return(JSONB, JSONB) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.hangtag_save_return(JSONB, JSONB) TO authenticated;
+
+-- (i) Saving a purchase (as section 3l): its stock-in records carry their serials, or their batch and expiry date. p_tracking
+--     stays accepted and unused (the stock-in records carry everything).
+CREATE OR REPLACE FUNCTION public.hangtag_save_purchase(p_purchase JSONB, p_moves JSONB, p_tracking JSONB DEFAULT NULL)
+RETURNS JSONB LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+DECLARE
+    uid UUID := public.hangtag_shop_id(); pid TEXT := btrim(COALESCE(p_purchase ->> 'id', ''));
+    lines JSONB := COALESCE(p_purchase -> 'lines', '[]'::jsonb); sid TEXT := NULLIF(btrim(COALESCE(p_purchase ->> 'supplier_id', '')), '');
+    sub NUMERIC := round(COALESCE((p_purchase ->> 'subtotal')::NUMERIC, 0), 2); tax NUMERIC := round(COALESCE((p_purchase ->> 'tax_amount')::NUMERIC, 0), 2);
+    l_sub NUMERIC; l_tax NUMERIC; l_q NUMERIC; n_m INT; m_q NUMERIC; bad BOOLEAN; s_name TEXT; s_gstin TEXT;
+BEGIN
+    IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Sign in to record purchases.' USING ERRCODE = '42501'; END IF;
+    IF uid IS NULL OR NOT public.hangtag_can('create_purchase') THEN RAISE EXCEPTION 'Not allowed to record purchases.' USING ERRCODE = '42501'; END IF;
+    IF pid = '' OR char_length(pid) > 58 THEN RAISE EXCEPTION 'The purchase has no id.' USING ERRCODE = '22023'; END IF;
+    IF EXISTS (SELECT 1 FROM public.hangtag_stock_imports WHERE owner_id = uid AND id = pid) THEN
+        RETURN jsonb_build_object('status', 'already_saved', 'purchase_id', pid);
+    END IF;
+    IF jsonb_typeof(lines) <> 'array' OR jsonb_array_length(lines) = 0 THEN RAISE EXCEPTION 'A purchase needs at least one line.' USING ERRCODE = '23514'; END IF;
+    IF jsonb_typeof(COALESCE(p_moves, 'null'::jsonb)) <> 'array' OR jsonb_array_length(p_moves) = 0 THEN RAISE EXCEPTION 'A purchase needs its stock-in lines.' USING ERRCODE = '23514'; END IF;
+    SELECT COALESCE(sum(round((x ->> 'tx')::NUMERIC, 2)), 0), COALESCE(sum(round((x ->> 'tax')::NUMERIC, 2)), 0), COALESCE(sum((x ->> 'q')::NUMERIC), 0)
+      INTO l_sub, l_tax, l_q FROM jsonb_array_elements(lines) x;
+    IF l_sub <> sub OR l_tax <> tax THEN RAISE EXCEPTION 'The purchase lines don''t add up to its subtotal and GST.' USING ERRCODE = '23514'; END IF;
+    SELECT count(*), COALESCE(sum((x ->> 'qty')::NUMERIC), 0), COALESCE(bool_or(COALESCE((x ->> 'qty')::NUMERIC, 0) <= 0 OR COALESCE((x ->> 'cost_price')::NUMERIC, 0) < 0), FALSE)
+      INTO n_m, m_q, bad FROM jsonb_array_elements(p_moves) x;
+    IF bad THEN RAISE EXCEPTION 'Every line needs a quantity more than 0 and a cost of ₹0 or more.' USING ERRCODE = '23514'; END IF;
+    IF m_q <> l_q THEN RAISE EXCEPTION 'The stock-in lines don''t match the purchase lines.' USING ERRCODE = '23514'; END IF;
+    IF sid IS NOT NULL THEN SELECT name, gstin INTO s_name, s_gstin FROM public.hangtag_suppliers WHERE owner_id = uid AND id = sid; END IF;
+    INSERT INTO public.hangtag_stock_imports (id, kind, supplier_id, supplier_name, supplier_gstin, invoice_no, invoice_date, t, line_count, units, amount,
+                                              subtotal, tax_amount, total_amount, paid_amount, payment_method, status, note, lines, device_id)
+    VALUES (pid, 'purchase', sid, COALESCE(NULLIF(btrim(p_purchase ->> 'supplier_name'), ''), s_name), COALESCE(NULLIF(btrim(p_purchase ->> 'supplier_gstin'), ''), s_gstin),
+            NULLIF(btrim(COALESCE(p_purchase ->> 'invoice_no', '')), ''), NULLIF(p_purchase ->> 'invoice_date', '')::DATE,
+            COALESCE((p_purchase ->> 't')::BIGINT, (extract(epoch FROM now()) * 1000)::BIGINT), jsonb_array_length(lines), m_q,
+            round(COALESCE((p_purchase ->> 'total_amount')::NUMERIC, 0), 2), sub, tax, round(COALESCE((p_purchase ->> 'total_amount')::NUMERIC, 0), 2),
+            round(COALESCE((p_purchase ->> 'paid_amount')::NUMERIC, 0), 2), NULLIF(p_purchase ->> 'payment_method', ''), 'posted',
+            NULLIF(left(btrim(COALESCE(p_purchase ->> 'note', '')), 200), ''), lines, p_purchase ->> 'device_id');
+    INSERT INTO public.hangtag_stock_moves (id, variant_id, product_id, type, qty, cost_price, note, t, device_id, import_id, serials, batch_no, expiry)
+    SELECT x ->> 'id', x ->> 'variant_id', x ->> 'product_id', 'RESTOCK', (x ->> 'qty')::NUMERIC, round((x ->> 'cost_price')::NUMERIC)::INTEGER, left(x ->> 'note', 200),
+           COALESCE((x ->> 't')::BIGINT, (p_purchase ->> 't')::BIGINT, (extract(epoch FROM now()) * 1000)::BIGINT), COALESCE(x ->> 'device_id', p_purchase ->> 'device_id'), pid,
+           CASE WHEN jsonb_typeof(x -> 'serials') = 'array' THEN ARRAY(SELECT jsonb_array_elements_text(x -> 'serials')) END,
+           NULLIF(x ->> 'batch_no', ''), NULLIF(x ->> 'expiry', '')::DATE
+    FROM jsonb_array_elements(p_moves) x
+    ON CONFLICT (owner_id, id) DO NOTHING;   -- a stock-in record already sent on its own (a full re-upload) stays as it is
+    RETURN jsonb_build_object('status', 'saved', 'purchase_id', pid, 'moves', n_m);
+END $$;
+
+-- (j) Cancelling a purchase (as section 3l): its serials and batch stock leave with it — refused while one of its serials is
+--     sold (or written off) or its batch no longer holds what it brought in
+CREATE OR REPLACE FUNCTION public.hangtag_cancel_purchase(p_id TEXT, p_reason TEXT, p_device TEXT DEFAULT NULL, p_t BIGINT DEFAULT NULL)
+RETURNS JSONB LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+DECLARE uid UUID := public.hangtag_shop_id(); p RECORD; why TEXT := btrim(COALESCE(p_reason, '')); n INT;
+BEGIN
+    IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Sign in to cancel purchases.' USING ERRCODE = '42501'; END IF;
+    IF uid IS NULL OR NOT public.hangtag_can('create_purchase') OR NOT public.hangtag_can('manage_inventory') THEN
+        RAISE EXCEPTION 'Not allowed to cancel purchases.' USING ERRCODE = '42501';
+    END IF;
+    SELECT id, status INTO p FROM public.hangtag_stock_imports WHERE owner_id = uid AND id = p_id AND kind = 'purchase';
+    IF NOT FOUND THEN RAISE EXCEPTION 'That purchase isn''t in the cloud yet.' USING ERRCODE = '23503'; END IF;
+    IF p.status = 'cancelled' THEN RETURN jsonb_build_object('status', 'already_cancelled', 'purchase_id', p_id); END IF;
+    IF char_length(why) < 3 THEN RAISE EXCEPTION 'Say why the purchase is cancelled (at least 3 characters).' USING ERRCODE = '23514'; END IF;
+    PERFORM set_config('hangtag.cancel_purchase', p_id, true);
+    UPDATE public.hangtag_stock_imports SET status = 'cancelled', cancel_reason = left(why, 200), cancelled_at = now() WHERE owner_id = uid AND id = p_id;
+    PERFORM set_config('hangtag.cancel_purchase', '', true);
+    INSERT INTO public.hangtag_stock_moves (id, variant_id, product_id, type, qty, cost_price, note, t, device_id, import_id, serials, batch_no)
+    SELECT 'pcx:' || m.id, m.variant_id, m.product_id, 'ADJUST', -m.qty, NULL, left('Purchase cancelled: ' || why, 200), COALESCE(p_t, (extract(epoch FROM now()) * 1000)::BIGINT), p_device, p_id,
+           m.serials, m.batch_no
+    FROM public.hangtag_stock_moves m WHERE m.owner_id = uid AND m.import_id = p_id AND m.type = 'RESTOCK'
+    ON CONFLICT DO NOTHING;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    RETURN jsonb_build_object('status', 'cancelled', 'purchase_id', p_id, 'moves', n);
+END $$;
+REVOKE ALL ON FUNCTION public.hangtag_save_purchase(JSONB, JSONB, JSONB), public.hangtag_cancel_purchase(TEXT, TEXT, TEXT, BIGINT) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.hangtag_save_purchase(JSONB, JSONB, JSONB), public.hangtag_cancel_purchase(TEXT, TEXT, TEXT, BIGINT) TO authenticated;
+
+-- (k) Audit (section 3i (e)), as before, and now: a serial assigned (in), sold, returned, written off, cancelled or back in
+--     stock; a batch created; every stock record with serials or a batch (not only adjustments). The summary keeps at most 20
+--     entries of a list (serial numbers).
+CREATE OR REPLACE FUNCTION public.hangtag_audit()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    r JSONB;
+    o JSONB;
+    shop UUID;
+    act TEXT := lower(TG_OP);
+    changed TEXT[];
+    dev TEXT;
+    summary JSONB;
+    keep CONSTANT TEXT[] := ARRAY['status','name','username','role','label','permissions','type','qty','amount','reason','category',
+        'reverses','refund_amount','refund_method','value','credit_no','bill_no','total','is_void','void_reason','kind','sale_id',
+        'variant_id','product_id','note','day','scope','expected','counted','difference','archived','platform','user_id',
+        'start_date','end_date','method','credit','discount','quantity','unit_price','line_no','return_id',
+        'serial','serials','batch_no','batches','expiry','import_id','move_id','out_move_id'];
+BEGIN
+    IF TG_OP = 'DELETE' THEN r := to_jsonb(OLD); ELSE r := to_jsonb(NEW); END IF;
+    shop := COALESCE(r ->> 'owner_id', r ->> 'shop_id')::UUID;
+    IF shop IS NULL OR NOT EXISTS (SELECT 1 FROM auth.users u WHERE u.id = shop) THEN RETURN NULL; END IF;
+    IF TG_OP = 'UPDATE' THEN
+        o := to_jsonb(OLD);
+        SELECT array_agg(k ORDER BY k) INTO changed FROM jsonb_object_keys(r) k
+         WHERE k NOT IN ('updated_at','last_seen_at','created_at','changed_by') AND (r -> k) IS DISTINCT FROM (o -> k);
+        IF changed IS NULL THEN RETURN NULL; END IF;
+        act := CASE
+            WHEN TG_TABLE_NAME = 'hangtag_sales' AND 'is_void' = ANY (changed) THEN CASE WHEN (r ->> 'is_void')::BOOLEAN THEN 'void' ELSE 'restore' END
+            WHEN TG_TABLE_NAME = 'hangtag_products' AND 'archived' = ANY (changed) THEN CASE WHEN (r ->> 'archived')::BOOLEAN THEN 'archive' ELSE 'unarchive' END
+            WHEN TG_TABLE_NAME = 'hangtag_devices' AND 'status' = ANY (changed) AND r ->> 'status' = 'revoked' THEN 'revoke'
+            WHEN TG_TABLE_NAME = 'hangtag_members' AND 'status' = ANY (changed) THEN CASE WHEN r ->> 'status' = 'disabled' THEN 'disable' ELSE 'enable' END
+            WHEN TG_TABLE_NAME = 'hangtag_members' AND 'access_reset_at' = ANY (changed) THEN 'reset'
+            WHEN TG_TABLE_NAME = 'hangtag_serials' AND 'status' = ANY (changed) THEN CASE r ->> 'status' WHEN 'SOLD' THEN 'sold' WHEN 'RETURNED' THEN 'returned'
+                WHEN 'DAMAGED' THEN 'written_off' WHEN 'CANCELLED' THEN 'cancelled' ELSE 'in_stock' END
+            ELSE 'update' END;
+    END IF;
+    -- the member's device that made the change (the owner has none: then the device the row names, if any)
+    SELECT d.id INTO dev FROM public.hangtag_devices d
+     WHERE d.key_hash = public.hangtag_request_device() AND d.user_id = auth.uid() AND d.status = 'active';
+    SELECT COALESCE(jsonb_object_agg(e.key, CASE WHEN jsonb_typeof(e.value) = 'string' THEN to_jsonb(left(e.value #>> '{}', 80))
+            WHEN jsonb_typeof(e.value) = 'array' AND jsonb_array_length(e.value) > 20 THEN (SELECT jsonb_agg(x.v) FROM jsonb_array_elements(e.value) WITH ORDINALITY x(v, i) WHERE x.i <= 20)
+            ELSE e.value END), '{}'::jsonb)
+      INTO summary FROM jsonb_each(r) e WHERE e.key = ANY (keep) AND e.value <> 'null'::jsonb;
+    IF changed IS NOT NULL THEN summary := summary || jsonb_build_object('changed', to_jsonb(changed[1:20])); END IF;
+    INSERT INTO public.hangtag_audit_log (owner_id, user_id, device_id, action, entity, entity_id, summary)
+    VALUES (shop, COALESCE(auth.uid(), (r ->> 'changed_by')::UUID, (r ->> 'created_by')::UUID), left(COALESCE(dev, r ->> 'device_id'), 80), act,
+            regexp_replace(TG_TABLE_NAME, '^hangtag_', ''),
+            left(CASE TG_TABLE_NAME WHEN 'hangtag_serials' THEN r ->> 'serial' WHEN 'hangtag_batches' THEN (r ->> 'batch_no') || ' · ' || (r ->> 'variant_id')
+                 ELSE COALESCE(r ->> 'id', r ->> 'user_id', r ->> 'role') END, 100), summary);
+    RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_audit ON public.hangtag_stock_moves;
+CREATE TRIGGER hangtag_audit AFTER INSERT ON public.hangtag_stock_moves FOR EACH ROW
+    WHEN (NEW.type = 'ADJUST' OR NEW.batch_no IS NOT NULL OR NEW.serials IS NOT NULL) EXECUTE FUNCTION public.hangtag_audit();
+DROP TRIGGER IF EXISTS hangtag_audit ON public.hangtag_serials;
+CREATE TRIGGER hangtag_audit AFTER INSERT ON public.hangtag_serials FOR EACH ROW EXECUTE FUNCTION public.hangtag_audit();
+DROP TRIGGER IF EXISTS hangtag_audit_change ON public.hangtag_serials;
+CREATE TRIGGER hangtag_audit_change AFTER UPDATE OF status ON public.hangtag_serials FOR EACH ROW
+    WHEN (OLD.status IS DISTINCT FROM NEW.status) EXECUTE FUNCTION public.hangtag_audit();
+DROP TRIGGER IF EXISTS hangtag_audit ON public.hangtag_batches;
+CREATE TRIGGER hangtag_audit AFTER INSERT ON public.hangtag_batches FOR EACH ROW EXECUTE FUNCTION public.hangtag_audit();
+
+-- (l) Who may use them: the register and the batches are read by the shop (row security, section 5) and written only here
+REVOKE ALL ON TABLE public.hangtag_serials, public.hangtag_batches FROM anon, authenticated;
+GRANT SELECT ON TABLE public.hangtag_serials, public.hangtag_batches TO authenticated;
+REVOKE ALL ON FUNCTION public.hangtag_batch_left(UUID, TEXT, TEXT), public.hangtag_tracking_shape(), public.hangtag_track_move(), public.hangtag_track_sale_item(),
+    public.hangtag_track_sale_status(), public.hangtag_track_return_item() FROM PUBLIC, anon, authenticated;
 
 -- ------------------------------------------------------------------------------
 -- 3o. Restaurant: tables, sessions, table orders, kitchen (W2-B)
@@ -3110,7 +3725,9 @@ BEGIN
         ('hangtag_orders',          'create_order,create_sale,manage_kitchen,view_reports', '-'),
         ('hangtag_order_items',     'create_order,create_sale,manage_kitchen,view_reports', '-'),
 
-        -- tables of section 3n
+        -- tables of section 3n (written only by the database's triggers)
+        ('hangtag_serials',         'create_sale,view_reports,manage_inventory,create_purchase,perform_return', '-'),
+        ('hangtag_batches',         'create_sale,view_reports,manage_inventory,create_purchase,perform_return', '-'),
 
         -- tables of section 3o
 
@@ -3438,4 +4055,34 @@ SELECT check_name, value, expected, value = expected AS ok FROM (
            (SELECT count(*) FROM public.hangtag_stock_imports p WHERE p.kind = 'purchase' AND p.paid_amount + COALESCE((SELECT sum(CASE WHEN x.reverses IS NULL THEN x.amount ELSE -x.amount END)
               FROM public.hangtag_supplier_payments x WHERE x.owner_id = p.owner_id AND x.purchase_id = p.id), 0) <= p.total_amount)::bigint,
            (SELECT count(*) FROM public.hangtag_stock_imports p WHERE p.kind = 'purchase')::bigint
+    UNION ALL
+    SELECT 50, 'Serial numbers in a known state (one row per serial of a shop)',
+           (SELECT count(*) FROM public.hangtag_serials WHERE status IN ('IN_STOCK','SOLD','RETURNED','DAMAGED','CANCELLED'))::bigint,
+           (SELECT count(*) FROM public.hangtag_serials)::bigint
+    UNION ALL
+    SELECT 51, 'Serials sold are on a bill line that isn''t cancelled',
+           (SELECT count(*) FROM public.hangtag_serials x WHERE x.status = 'SOLD' AND EXISTS (SELECT 1 FROM public.hangtag_sales s
+              JOIN public.hangtag_sale_items i ON i.owner_id = s.owner_id AND i.sale_id = s.id
+              WHERE s.owner_id = x.owner_id AND s.id = x.sale_id AND NOT s.is_void AND i.line_no = x.sale_line_no AND x.serial = ANY (i.serials)))::bigint,
+           (SELECT count(*) FROM public.hangtag_serials WHERE status = 'SOLD')::bigint
+    UNION ALL
+    SELECT 52, 'Stock records with serial numbers: one per piece',
+           (SELECT count(*) FROM public.hangtag_stock_moves m WHERE m.serials IS NOT NULL AND cardinality(m.serials) = abs(m.qty))::bigint,
+           (SELECT count(*) FROM public.hangtag_stock_moves m WHERE m.serials IS NOT NULL)::bigint
+    UNION ALL
+    SELECT 53, 'Bill lines with serial numbers: one per piece, each in the register',
+           (SELECT count(*) FROM public.hangtag_sale_items i WHERE i.serials IS NOT NULL AND cardinality(i.serials) = i.quantity
+              AND NOT EXISTS (SELECT 1 FROM unnest(i.serials) z WHERE NOT EXISTS (SELECT 1 FROM public.hangtag_serials x WHERE x.owner_id = i.owner_id AND x.serial = z)))::bigint,
+           (SELECT count(*) FROM public.hangtag_sale_items i WHERE i.serials IS NOT NULL)::bigint
+    UNION ALL
+    SELECT 54, 'Batches never below zero',
+           (SELECT count(*) FROM public.hangtag_batches b WHERE public.hangtag_batch_left(b.owner_id, b.variant_id, b.batch_no) >= 0)::bigint,
+           (SELECT count(*) FROM public.hangtag_batches)::bigint
+    UNION ALL
+    SELECT 55, 'Bill lines taking from batches that exist, exactly the line''s quantity',
+           (SELECT count(*) FROM public.hangtag_sale_items i WHERE i.batches IS NOT NULL
+              AND (SELECT sum((a ->> 'q')::NUMERIC) FROM jsonb_array_elements(i.batches) a) = i.quantity
+              AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(i.batches) a WHERE NOT EXISTS (SELECT 1 FROM public.hangtag_batches b
+                  WHERE b.owner_id = i.owner_id AND b.variant_id = i.variant_id AND b.batch_no = a ->> 'b')))::bigint,
+           (SELECT count(*) FROM public.hangtag_sale_items i WHERE i.batches IS NOT NULL)::bigint
 ) r ORDER BY n;

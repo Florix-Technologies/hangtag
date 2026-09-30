@@ -3,12 +3,13 @@
 import { store } from '../../../shared/state/store.js';
 import { use } from '../../../shared/di/services.js';
 import { blankReviewLine, newReviewLines, planImport, prepareLines, reviewReasons } from '../../../domain/inventory/bill-import.js';
-import { products } from '../../products/services/catalog.js';
 import { pullFromSupabase } from '../../sync/services/pull.js';
 import { logger } from '../../../shared/logging/logger.js';
 import { uid } from '../../../shared/utils/ids.js';
 import { AppError, ERROR_CODES } from '../../../shared/errors/app-error.js';
 import { can, notAllowedText } from '../../shop/services/access.js';
+import { trackingOfP } from '../services/tracking.js';
+import { prod, products } from '../../products/services/catalog.js';
 
 /* The file's fingerprint and any earlier import of the same file ({ fileHash, dups }) */
 export async function fingerprintBill(file){
@@ -37,7 +38,12 @@ export function refreshLine(l){
 const noteFor = b => ["Supplier bill", b.invoiceNo, b.supplier].filter(Boolean).join(" · ").replace("Supplier bill · ", "Supplier bill ");
 /* What the reviewed bill would add: { newProducts, updatedProducts, newVariants, moves, summary, errors } */
 export function planSupplierBill(b){
-  return planImport(b.lines, products(), { uid, now: Date.now(), deviceId: store.dev, importId: b.importId, note: noteFor(b), colorIndex: products().length });
+  const plan = planImport(b.lines, products(), { uid, now: Date.now(), deviceId: store.dev, importId: b.importId, note: noteFor(b), colorIndex: products().length });
+  // a product tracked by serial number or batch takes stock only with its serials / batch: through Purchases
+  b.lines.forEach(l => { const t = l.include !== false && l.action !== "skip" && l.targetProductId ? trackingOfP(prod(l.targetProductId)) : "none";
+    if(t !== "none") plan.errors.push({ lineId: l.id, message: `this product is tracked by ${t === "serial" ? "serial number" : "batch"}: enter these pieces through Inventory → Purchases, with their ${t === "serial" ? "serial numbers" : "batch"}, and skip the line here.` }); });
+  if(plan.errors.length) plan.moves = [];
+  return plan;
 }
 /* Saves the bill in one step. Throws an AppError (CONFLICT with details.kind for a likely repeat, unless allowDuplicate;
    PERMISSION when a team member's role can't add supplier bills, or can't add the new products the bill needs). */

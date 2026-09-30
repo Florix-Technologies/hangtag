@@ -8,6 +8,7 @@
 // later from the customer's page); needs collect_credit.
 // The sale completes only when the payments add up to the grand total (domain/sales/payments.js).
 import { DUE, INTENT_LABELS, PAY_LABELS, PAY_METHODS, PROVIDER_VIA, paymentProgress, settlePayments } from '../../../domain/sales/payments.js';
+import { trackSaleLines } from '../../inventory/services/tracking.js';
 import { toPaise, toRupees } from '../../../domain/sales/paise.js';
 import { upiPayUri } from '../../../domain/sales/upi.js';
 import { store } from '../../../shared/state/store.js';
@@ -36,6 +37,8 @@ const blankState=method=>({mode:"single",method:PAY_METHODS.includes(method)?met
 export function openPayment(method){
   if(!store.cart.length||refuse("create_sale","take payments")) return;
   const bad=billDiscountError(); if(bad){ toast(bad); return; }
+  // serial numbers chosen for every serial-tracked line, and enough unexpired batch stock (checked again when it completes)
+  const tk=trackSaleLines(store.cart); if(tk.error){ toast(tk.error); return; }
   // a provider payment was still open for this bill when the app closed: show it again rather than start over
   if(store.payPending&&!store.payState&&resumePayment()) return;
   store.payState=blankState(method);

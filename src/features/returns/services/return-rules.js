@@ -28,5 +28,7 @@ export function exAvail(vid){
   const R=store.retState, s=R&&D().saleById[R.sid];
   return s?exchangeAvail(s,R.q,R.nfr,R.newItems,vid):stockOf(vid);
 }
+/* Serials of bill line ln that earlier returns took back */
+export const returnedSerials=(s,ln)=>new Set((D().retBySale[s.id]||[]).flatMap(r=>(r.items||[]).filter(i=>i.ln===ln&&Array.isArray(i.sn)).flatMap(i=>i.sn)));
 /* The next credit note number: this device's own series that day, like bill numbers (CN-260929-K3F001) */
 export const creditNoteNo=t=>nextDocNo("CN-",D().rets,t,store.dev);

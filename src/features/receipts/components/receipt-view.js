@@ -40,7 +40,7 @@ function receipt80(I){
   if(I.buyer) h+=row("Customer",esc(I.buyer.name)+(I.buyer.phone?" · "+esc(I.buyer.phone):""))+(I.buyer.gstin?row("Customer GSTIN",esc(I.buyer.gstin)):"");
   if(I.placeOfSupply&&I.gstMode==="inter") h+=row("Place of supply",esc(I.placeOfSupply.name));
   if(I.status==="cancelled") h+=`<div class="r-void">CANCELLED</div>`;
-  h+=`</div><table class="r-items"><thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>${I.lines.map(l=>`<tr><td><b>${esc(l.name)}</b>${l.variant||l.sku?`<span>${esc([l.variant,l.sku].filter(Boolean).join(" · "))}</span>`:""}${l.discount?`<span>Discount${l.discountLabel?" "+esc(l.discountLabel):""} −${inrx(l.discount)}</span>`:""}</td><td>${qtyOf(l)}</td><td>${rateOf(l)}</td><td>${inrx(l.gross)}</td></tr>`).join("")}</tbody></table>`;
+  h+=`</div><table class="r-items"><thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>${I.lines.map(l=>`<tr><td><b>${esc(l.name)}</b>${l.variant||l.sku?`<span>${esc([l.variant,l.sku].filter(Boolean).join(" · "))}</span>`:""}${trackText(l)}${l.discount?`<span>Discount${l.discountLabel?" "+esc(l.discountLabel):""} −${inrx(l.discount)}</span>`:""}</td><td>${qtyOf(l)}</td><td>${rateOf(l)}</td><td>${inrx(l.gross)}</td></tr>`).join("")}</tbody></table>`;
   h+=totalsHTML(I);
   return h+`${I.footer?`<p class="r-foot">${esc(I.footer)}</p>`:""}</div>`;
 }
@@ -51,7 +51,7 @@ function invoiceA4(I){
   if(I.status==="cancelled") h+=`<div class="r-void">CANCELLED — not a valid invoice</div>`;
   h+=`<div class="i-party"><span class="i-lab">Bill to</span>${I.buyer?`<b>${esc(I.buyer.name)}</b>${I.buyer.business?" <small>(business)</small>":""}${I.buyer.phone?`<span>${esc(I.buyer.phone)}</span>`:""}${I.buyer.email?`<span>${esc(I.buyer.email)}</span>`:""}${I.buyer.gstin?`<span>GSTIN ${esc(I.buyer.gstin)}</span>`:""}`:"<b>Walk-in customer</b>"}</div>`;
   const heads=["#","Item",...(hsn?["HSN"]:[]),"Qty","Rate","Discount",...(tax?["Taxable","GST",...(inter?["IGST"]:["CGST","SGST"])]:[]),"Amount"];
-  h+=`<table class="r-items i-table"><thead><tr>${heads.map(x=>`<th>${x}</th>`).join("")}</tr></thead><tbody>${I.lines.map(l=>`<tr><td>${l.sl}</td><td><b>${esc(l.name)}</b>${l.variant||l.sku?`<span>${esc([l.variant,l.sku].filter(Boolean).join(" · "))}</span>`:""}</td>${hsn?`<td>${esc(l.hsn)}</td>`:""}<td>${qtyOf(l)}</td><td>${rateOf(l)}</td><td>${l.discount||l.billDiscount?"−"+inrx(l.discount+l.billDiscount):"—"}</td>`+
+  h+=`<table class="r-items i-table"><thead><tr>${heads.map(x=>`<th>${x}</th>`).join("")}</tr></thead><tbody>${I.lines.map(l=>`<tr><td>${l.sl}</td><td><b>${esc(l.name)}</b>${l.variant||l.sku?`<span>${esc([l.variant,l.sku].filter(Boolean).join(" · "))}</span>`:""}${trackText(l)}</td>${hsn?`<td>${esc(l.hsn)}</td>`:""}<td>${qtyOf(l)}</td><td>${rateOf(l)}</td><td>${l.discount||l.billDiscount?"−"+inrx(l.discount+l.billDiscount):"—"}</td>`+
     (tax?`<td>${inrx(l.taxable)}</td><td>${pct(l.gstRate)}</td>${inter?`<td>${inrx(l.igst)}</td>`:`<td>${inrx(l.cgst)}</td><td>${inrx(l.sgst)}</td>`}`:"")+`<td>${l.total!=null?inrx(l.total):inrx(l.gross)}</td></tr>`).join("")}</tbody></table>`;
   h+=`<div class="i-foot"><div class="i-left">`;
   if(I.taxSummary.length) h+=`<table class="i-tax"><thead><tr><th>GST rate</th><th>Taxable</th>${inter?"<th>IGST</th>":"<th>CGST</th><th>SGST</th>"}<th>Total GST</th></tr></thead><tbody>${I.taxSummary.map(r=>`<tr><td>${r.rate!=null?pct(r.rate):"—"}</td><td>${inrx(r.taxable)}</td>${inter?`<td>${inrx(r.igst)}</td>`:`<td>${inrx(r.cgst)}</td><td>${inrx(r.sgst)}</td>`}<td>${inrx(r.tax)}</td></tr>`).join("")}</tbody></table>`;
@@ -62,6 +62,8 @@ function invoiceA4(I){
   return h+`${I.footer?`<p class="r-foot">${esc(I.footer)}</p>`:""}<p class="i-gen">Computer-generated invoice.</p></div>`;
 }
 /* s: a saved bill; paper: "80mm" | "a4" */
+/* serial numbers and batches of a line, under the item */
+const trackText=l=>(l.serials?`<span>SN ${esc(l.serials)}</span>`:"")+(l.batch?`<span>Batch ${esc(l.batch)}</span>`:"");
 export function receiptHTML(s,paper){ const I=invoiceFor(s); return paper==="a4"?invoiceA4(I):receipt80(I); }
 export const RECEIPT_CSS=`*{box-sizing:border-box}body{margin:0;font-family:"Instrument Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#000;background:#fff}
 .rcpt{width:72mm;margin:0 auto;padding:2mm 0;font-size:11.5px;line-height:1.35;position:relative}.rcpt.a4{width:auto;max-width:190mm;font-size:12.5px;padding:10mm 0}

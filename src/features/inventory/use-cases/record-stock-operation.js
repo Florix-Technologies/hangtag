@@ -1,6 +1,7 @@
 // RecordStockOperation: stock in (pieces received, optional cost) or stock adjustment (counted number, with a reason).
 import { store } from '../../../shared/state/store.js';
-import { buildStockMoves, stockInNote } from '../../../domain/inventory/stock-operation.js';
+import { buildStockMoves, buildTrackedMoves, stockInNote } from '../../../domain/inventory/stock-operation.js';
+import { batchOf, expiryKept, serialState, today, trackingOfP } from '../services/tracking.js';
 import { dayKey } from '../../../shared/formatting/dates.js';
 import { vCost } from '../../../domain/catalog/variants.js';
 import { vRec } from '../services/ledger.js';
@@ -27,4 +28,25 @@ export function recordStockOperation(op){
   if(!adj&&built.cost!=null&&op.setCost){ built.moves.forEach(m=>{const r=vRec(m.v);if(r&&vCost(r.p,r.v)!==built.cost){r.v.cost=built.cost;costChanged=true}}); }
   stockRepository().record({moves:built.moves,changedProductId:costChanged?op.productId:null});
   return {moves:built.moves,pieces:sumQty(built.moves.map(m=>m.q))};
+}
+
+/* Stock in / adjustment of a product tracked by serial number or batch (domain buildTrackedMoves): op as above, with rows
+   instead of values (serials typed, serials written off, batch number / expiry / quantity, or counted per batch).
+   → { error } or { moves, pieces } */
+export function recordTrackedStockOperation(op){
+  const no=denied("manage_inventory","add or adjust stock"); if(no) return no;
+  const p=prod(op.productId); if(!p) return {error:"That product isn't in the catalog any more."};
+  const adj=op.kind==="adjust";
+  if(!adj&&op.received&&op.received>dayKey(Date.now())) return {error:"The date received can't be in the future."};
+  const costRaw=adj?"":String(op.costRaw||"").trim(), cost=costRaw===""?null:Math.round(+costRaw);
+  if(cost!=null&&(isNaN(cost)||cost<0)) return {error:"Enter a valid cost per piece, or leave it empty."};
+  if(!adj&&cost!=null&&op.setCost&&!can("manage_products")) return {error:notAllowedText("change cost prices")+" Untick the cost price box."};
+  const note=adj?op.note:stockInNote({supplier:op.supplier,ref:op.ref,received:op.received,note:op.note,today:dayKey(Date.now())});
+  const b=buildTrackedMoves({kind:op.kind,productId:p.id,tracking:trackingOfP(p),expiry:expiryKept(p),unit:p.unit,cost,reason:op.reason,note,now:Date.now(),deviceId:store.dev,today:today()},
+    op.rows,{serialState,batchOf},()=>"m"+uid());
+  if(b.error) return b;
+  let costChanged=false;
+  if(!adj&&cost!=null&&op.setCost) b.moves.forEach(m=>{const r=vRec(m.v);if(r&&vCost(r.p,r.v)!==cost){r.v.cost=cost;costChanged=true}});
+  stockRepository().record({moves:b.moves,changedProductId:costChanged?p.id:null});
+  return {moves:b.moves,pieces:sumQty(b.moves.map(m=>m.q))};
 }

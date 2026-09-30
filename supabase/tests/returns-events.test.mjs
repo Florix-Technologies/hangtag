@@ -71,7 +71,7 @@ console.log('=== upgrade: existing returns keep their values, now with paise ===
   const r1 = (await rows(db, A, `SELECT refund_amount, value, round_off, credit_no FROM public.hangtag_returns WHERE id = 'r1'`))[0];
   check('an existing return keeps its value and refund', num(r1.refund_amount) === 500 && num(r1.value) === 500 && num(r1.round_off) === 0 && r1.credit_no === null, r1);
   const rep = await report(db);
-  check('migration report: 40 rows, all ok (incl. returns never exceed bought, return values, event bills, verified payments, receipts once, cash reversals, team members and devices, business types and capabilities)', rep.length === 40 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
+  check('migration report: 46 rows, all ok (incl. returns never exceed bought, return values, event bills, verified payments, receipts once, cash reversals, team members and devices, business types and capabilities)', rep.length === 46 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
   await db.close();
 }
 

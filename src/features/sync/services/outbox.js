@@ -13,6 +13,7 @@ import { toast } from '../../../shared/components/toast.js';
 import { ACCESS_LOST_TEXT, can, denied, isMember, notAllowedText, refreshAccess } from '../../shop/services/access.js';
 import { deviceDocNo, nextBillNo } from '../../sales/services/totals.js';
 import { requestSignOut } from '../../../shared/ui/session-actions.js';
+import { orderRepository } from '../../orders/repositories/order-repository.js';
 
 /* Add work for the cloud; identical product uploads are merged so the queue stays short */
 
@@ -81,6 +82,16 @@ export async function sendItem(item){
     await cloud.saveLogo(store.logo || "");
   } else if(item.type === "allsales"){
     await cloud.saveAllSales(D().sales);
+  } else if(item.type === "collection"){
+    await cloud.saveCollection(item.col);
+  } else if(item.type === "held"){
+    await cloud.saveHeldCart(item.held);
+  } else if(item.type === "helddel"){
+    await cloud.deleteHeldCart(item.id);
+  } else if(item.type === "order"){
+    // the order as it is now, on the version this device last saw; the cloud's new version is kept for the next save
+    const o = orderRepository().get(item.id);
+    if(o){ const r = await cloud.saveOrder(o); orderRepository().saved(o.id, r.version); }
   } else if(item.type === "catdel"){
     // left over from the old size-only version: nothing to do with the new tables
   }

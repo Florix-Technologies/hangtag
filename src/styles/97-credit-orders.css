@@ -1,0 +1,61 @@
+/* Customer credit, held bills, quotations and sales orders (section 3m) */
+html[data-notabs~="orders"] .nav [data-tab="orders"],
+html[data-noperm~="create_order"] :is([data-ordnew],[data-ordfromcart],[data-ordconvert],[data-ofsave]),
+html[data-noperm~="collect_credit"] :is([data-collect],[data-paymode="credit"]){display:none!important}
+
+/* Orders tab */
+.oseg{margin:0 0 14px}
+.otools{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
+.olist{display:flex;flex-direction:column;gap:8px}
+.ocard{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:14px;background:var(--bg)}
+.oc-main{display:flex;flex-direction:column;min-width:0;text-align:left;background:none;border:0;padding:0;color:inherit;font:inherit;cursor:pointer}
+.oc-main b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.oc-main small{color:var(--ink-3);font-size:12.5px}
+.oc-side{display:flex;flex-direction:column;align-items:flex-end;gap:4px;text-align:right}
+.oc-acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.ostat{display:inline-block;font-size:11.5px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--wash);color:var(--ink-2)}
+.ostat-sent,.ostat-confirmed{background:var(--accent-soft);color:var(--accent)}
+.ostat-accepted,.ostat-completed,.ostat-converted{background:var(--good-soft);color:var(--good-ink)}
+.ostat-partial{background:var(--warn-soft);color:var(--warn-ink)}
+.ostat-expired,.ostat-cancelled{background:var(--crit-soft);color:var(--crit)}
+
+/* Order editor */
+.sheet.ordersheet{max-width:680px}
+.olines{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
+.oline{display:grid;grid-template-columns:minmax(0,1fr) 72px 96px 130px 84px auto;gap:8px;align-items:end;padding:8px 0;border-bottom:1px dashed var(--line)}
+.oline.bad{background:var(--crit-soft);border-radius:8px}
+.oline .f{margin:0}
+.oline input,.oline select{width:100%;min-width:0}
+.ol-n{display:flex;flex-direction:column;min-width:0;align-self:center}
+.ol-n small{color:var(--ink-3);font-size:12px}
+.ol-t{align-self:center;text-align:right;font-weight:700}
+.ol-dw{display:flex;gap:4px}
+.ol-dw select{width:52px;flex:none}
+.osearch{margin:4px 0}
+.ohits{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+.ohit{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;text-align:left;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:inherit;font:inherit;cursor:pointer}
+.ohit span{color:var(--ink-3);font-size:12.5px}
+@media (max-width:640px){
+  .oline{grid-template-columns:1fr 1fr 1fr;grid-template-areas:"n n n" "q p d" "t t x"}
+  .ol-n{grid-area:n}.ol-q{grid-area:q}.ol-p{grid-area:p}.ol-d{grid-area:d}.ol-t{grid-area:t;text-align:left}
+}
+
+/* The bill: from an order, save as quotation */
+.ordline{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 16px;border-bottom:1px solid var(--line);font-size:13px;background:var(--accent-soft)}
+.bp-quote{display:block;margin:8px auto 0}
+
+/* Payment: Credit */
+.paycred{margin:0 0 10px}
+.paycred.bad{color:var(--crit)}
+
+/* A customer's account */
+.tmini.acct .owes b,.cc-side small.owes{color:var(--crit)}
+.cc-side small.owes{font-weight:700}
+.acctact{margin:0 0 10px}
+.acents{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+.acent{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:8px;align-items:center;padding:8px 10px;border:1px solid var(--line);border-radius:10px;font-size:13.5px}
+.acent.off{opacity:.55}
+.acent.off .ae-a{text-decoration:line-through}
+.ae-w{display:flex;flex-direction:column;min-width:0}
+.ae-w small,.ae-a small{color:var(--ink-3);font-size:12px}
+.ae-a{display:flex;flex-direction:column;align-items:flex-end;font-weight:700}

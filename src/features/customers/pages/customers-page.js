@@ -5,7 +5,8 @@ import { custStats } from '../services/customer-stats.js';
 import { customerRepository } from '../repositories/customer-repository.js';
 import { $, esc } from '../../../shared/dom.js';
 import { dayKey, dayLab } from '../../../shared/formatting/dates.js';
-import { inr } from '../../../shared/formatting/money.js';
+import { inr, inrx } from '../../../shared/formatting/money.js';
+import { outstandingAll } from '../services/customer-account.js';
 import { initials } from '../../../shared/utils/text.js';
 
 export function renderCustomers(){
@@ -18,9 +19,9 @@ export function renderCustomers(){
 }
 export function renderCustomerList(){
   const box=$("#custList"); if(!box) return;
-  const st=custStats(), all=customerRepository().list(), q=store.custPageQ||"", list=searchCustomers(all,q,st);
+  const st=custStats(), all=customerRepository().list(), q=store.custPageQ||"", list=searchCustomers(all,q,st), owed=outstandingAll();
   box.innerHTML=!all.length?`<div class="empty"><b>No customers yet</b><p>Add them here, or from the bill while selling. Their bills show up in their history.</p></div>`
     :`<p class="note">${list.length} of ${all.length} customer${all.length===1?"":"s"}</p>`+(list.length?list.map(c=>{const s=st[c.id]||{bills:0,total:0,last:0};return `<button class="custcard" data-custhist="${esc(c.id)}"><span class="avatar">${esc(initials(c.name))}</span>
       <span class="cc-main"><b>${esc(c.name)}${c.type==="business"?`<span class="ctype">Business</span>`:""}</b><small>${esc(c.phone||c.email||"No mobile")}</small></span>
-      <span class="cc-side"><b>${s.bills?inr(s.total):""}</b><small>${s.bills?s.bills+" bill"+(s.bills===1?"":"s")+(s.last?" · "+esc(dayLab(dayKey(s.last))):""):"No bills yet"}</small></span></button>`}).join(""):`<p class="muted">No customer matches “${esc(q)}”.</p>`);
+      <span class="cc-side"><b>${s.bills?inr(s.total):""}</b><small>${s.bills?s.bills+" bill"+(s.bills===1?"":"s")+(s.last?" · "+esc(dayLab(dayKey(s.last))):""):"No bills yet"}</small>${owed[c.id]>0?`<small class="owes">Owes ${inrx(owed[c.id])}</small>`:""}</span></button>`}).join(""):`<p class="muted">No customer matches “${esc(q)}”.</p>`);
 }

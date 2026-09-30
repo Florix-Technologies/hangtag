@@ -21,7 +21,7 @@ export const persistLocal=()=>{
   return ok;
 };
 export const savePend=()=>storage.set("rc_pend",store.pend);
-export const saveCart=()=>{storage.set("rc_cart",store.cart);storage.set("rc_disc",store.disc);storage.set("rc_cartcust",store.cartCust)};
+export const saveCart=()=>{storage.set("rc_cart",store.cart);storage.set("rc_disc",store.disc);storage.set("rc_cartcust",store.cartCust);if(store.cartOrder)storage.set("rc_cartorder",store.cartOrder);else if(store.cartOrder!==undefined)storage.remove("rc_cartorder")};
 export const savePrefs=()=>storage.set("rc_prefs",store.prefs);
 export const saveSbQueue=()=>storage.set("hangtag_sb_queue",store.sbOfflineQueue);
 export const saveCatalog=()=>storage.set("rc_catalog",store.catalog);
@@ -44,3 +44,7 @@ export const saveProfile=()=>storage.set("hangtag_profile",store.profile);
 export const saveLastSync=()=>storage.set("hangtag_last_sync",store.lastSyncAt);
 /* A team member's role and permissions in its shop (null for the owner), kept per account so the till knows them offline */
 export const saveAccess=()=>{ if(store.access) storage.set("hangtag_access",store.access); else storage.remove("hangtag_access"); };
+/* Customer credit, held bills and orders (section 3m): kept per account on this device until uploaded */
+export const saveCollections=()=>storage.set("rc_collections",store.collections);
+export const saveHeldCarts=()=>storage.set("rc_held",store.heldCarts);
+export const saveOrders=()=>storage.set("rc_orders",store.orders);

@@ -7,7 +7,9 @@ import { inFilter } from '../../../domain/events/event.js';
 import { store } from '../../../shared/state/store.js';
 
 /* filter: "" every bill, "store", or an event id (returns follow their bill; cash entries carry the event they were made at) */
-export const shopTransactions=(filter="")=>{const d=D(),ok=s=>inFilter(s||{},filter);return financialTransactions(d.sales.filter(ok),d.rets.filter(r=>ok(d.saleById[r.sale])),Object.values(store.cashMoves||{}).filter(ok))};
+/* Payments customers made towards what they owe (section 3m), named after the customer (made at the store: no event) */
+export const collectionsForBooks=(ok=()=>true)=>Object.values(store.collections||{}).filter(ok).map(c=>({...c,custName:((store.customers||{})[c.cust]||{}).name||""}));
+export const shopTransactions=(filter="")=>{const d=D(),ok=s=>inFilter(s||{},filter);return financialTransactions(d.sales.filter(ok),d.rets.filter(r=>ok(d.saleById[r.sale])),Object.values(store.cashMoves||{}).filter(ok),collectionsForBooks(ok))};
 /* Days "yyyy-mm-dd" → { from, to } in ms (the whole of both days) */
 export const dayBounds=(from,to)=>({from:parseDay(from).getTime(),to:parseDay(to).getTime()+864e5-1});
 /* The books for the Reports page's period and event filter */

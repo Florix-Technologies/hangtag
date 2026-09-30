@@ -259,3 +259,27 @@
  *   The next settled reading (a scale still settling, or nothing within the time, is an error).
  * @property {(line: string, unit?: string) => ({value, unit, stable}|null)} feed  Gives the manual provider a reading, as a scale would print it.
  */
+
+/**
+ * "orderRepository": orders (quotations, sales orders, table orders) and held bills. Implementation:
+ * infrastructure/repositories/local-first-order-repository.js (this device first, then the upload queue: "order" →
+ * cloud.saveOrder (RPC hangtag_save_order, optimistic concurrency), "held" / "helddel" → hangtag_held_carts).
+ * Reach it through features/orders/repositories/order-repository.js. Nothing here changes stock.
+ * @typedef {Object} OrderRepositoryPort
+ * @property {() => Object[]} list  Also get(id).
+ * @property {(o: Object) => Object} save  Keeps the order here and queues its upload (the whole order, as it is when it uploads).
+ * @property {(id: string, version: number) => void} saved  The version the cloud holds after an upload.
+ * @property {() => Object[]} heldList  Also getHeld(id).
+ * @property {(h: {id, name, data: {cart, disc, cust, order?, note?}, t, dev}) => Object} hold
+ * @property {(id: string) => (Object|null)} removeHeld  Recalled or thrown away: removed here and in the cloud.
+ */
+
+/**
+ * "creditRepository": payments customers make towards what they owe. Implementation:
+ * infrastructure/repositories/local-first-credit-repository.js ("collection" uploads → hangtag_collections; the database
+ * posts each to the cash or bank book). Reach it through features/customers/repositories/credit-repository.js.
+ * @typedef {Object} CreditRepositoryPort
+ * @property {() => Object[]} list  Also get(id).
+ * @property {(c: {id, cust, amount, method, ref?, verification, note?, t, dev}) => Object} record
+ * @property {(id: string) => (Object|null)} cancel  Owner only (the database refuses anyone else).
+ */

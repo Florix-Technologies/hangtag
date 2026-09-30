@@ -11,7 +11,10 @@ import { sumP, toPaise, toRupees, tooPrecise } from './paise.js';
 import { inrx } from '../../shared/formatting/money.js';
 
 export const PAY_METHODS=["cash","upi","card"];
-export const PAY_LABELS={cash:"Cash",upi:"UPI",card:"Card"};
+export const PAY_LABELS={cash:"Cash",upi:"UPI",card:"Card",due:"On account"};
+/* The part of a bill left on a saved customer's account (paid later: domain/customers/credit.js). Never money in the drawer
+   or the bank, so it is not a payment: the bill keeps it as dueAmt. A return may also be refunded to the account ("due"). */
+export const DUE="due";
 /* How a UPI or card part is taken: by hand, or through the payment provider */
 export const PAY_VIA={upi:["manual","qr"],card:["terminal","link"]};
 export const VIA_LABELS={manual:"UPI (checked by hand)",qr:"UPI QR (verified)",terminal:"Card machine",link:"Card link (verified)"};
@@ -53,13 +56,25 @@ const REF_NEEDED={upi:"Enter the UPI transaction reference (UTR) from the custom
 
 /* Checks the parts of a payment against the amount due (rupees).
    allocations: [{ method, amount, received? (cash handed over), ref?, via?, last4? (card), intent? ({ id, status, amount, paymentId }) }]
-   — empty or zero amounts are left out.
-   → { ok: true, payments: [{ method, amount, verification, received?, change?, ref?, via?, last4?, intent?, providerRef? }], paid, received, change }
+   — empty or zero amounts are left out. One part may be { method: "due", amount }: left on the customer's account, only
+   when opts.customer (the bill has a saved customer); the rest must still add up exactly.
+   → { ok: true, payments: [{ method, amount, verification, received?, change?, ref?, via?, last4?, intent?, providerRef? }], paid, received, change,
+       onAccount? (only when part is left on account) }
    or { error, method?, field?, paid, balance } (nothing is recorded) */
-export function settlePayments(due,allocations){
-  const D=toPaise(due), list=(allocations||[]).filter(a=>a&&amountOf(a.amount)!==0), seen=new Set();
-  let paid=0;
-  const fail=(error,a,field)=>({error,method:a&&a.method,field,paid:toRupees(paid),balance:toRupees(Math.max(0,D-paid))});
+export function settlePayments(due,allocations,opts){
+  const D=toPaise(due), all=(allocations||[]).filter(a=>a&&amountOf(a.amount)!==0), seen=new Set();
+  const list=all.filter(a=>a.method!==DUE), acctParts=all.filter(a=>a.method===DUE);
+  let paid=0, acct=0;
+  const fail=(error,a,field)=>({error,method:a&&a.method,field,paid:toRupees(paid),balance:toRupees(Math.max(0,D-paid-acct))});
+  if(acctParts.length>1) return fail("The amount on account is there twice. Put all of it on one line.",acctParts[1],"amount");
+  if(acctParts.length){
+    const a=acctParts[0], v=amountOf(a.amount);
+    if(!Number.isFinite(v)) return fail("Enter the amount on account as a number.",a,"amount");
+    if(v<0) return fail("The amount on account can't be negative.",a,"amount");
+    if(tooPrecise(v)) return fail("Use at most 2 decimal places.",a,"amount");
+    if(!(opts&&opts.customer)) return fail("Add a saved customer to the bill to put part of it on their account.",a,"customer");
+    acct=toPaise(v);
+  }
   for(const a of list){
     const v=amountOf(a.amount);
     if(!PAY_METHODS.includes(a.method)) return fail("Choose cash, UPI or card.",a,"method");
@@ -72,8 +87,8 @@ export function settlePayments(due,allocations){
     paid+=toPaise(v);
   }
   // the amounts first (they're typed first), then how each part was confirmed
-  if(paid<D) return fail(`${inrx(toRupees(D-paid))} still to pay.`,null,"amount");
-  if(paid>D) return fail(`That's ${inrx(toRupees(paid-D))} more than the bill.`,null,"amount");
+  if(paid+acct<D) return fail(`${inrx(toRupees(D-paid-acct))} still to pay.`,null,"amount");
+  if(paid+acct>D) return fail(`That's ${inrx(toRupees(paid+acct-D))} more than the bill.`,null,"amount");
   for(const a of list){
     const v=amountOf(a.amount);
     if(PROVIDER_VIA.includes(viaOf(a))){
@@ -108,19 +123,23 @@ export function settlePayments(due,allocations){
     }
     payments.push(p);
   }
-  return {ok:true,payments,paid:toRupees(paid),received:toRupees(received),change:toRupees(change)};
+  return {ok:true,payments,paid:toRupees(paid),received:toRupees(received),change:toRupees(change),...(acct?{onAccount:toRupees(acct)}:{})};
 }
-/* Live figures for the payment screen: paid so far, balance still due, more than due, change from cash handed over */
+/* Live figures for the payment screen: paid so far, balance still due, more than due, change from cash handed over, and
+   the part left on the customer's account */
 export function paymentProgress(due,allocations){
-  const D=toPaise(due), list=(allocations||[]).filter(Boolean);
-  const paid=sumP(list.map(a=>{const v=amountOf(a.amount);return Number.isFinite(v)&&v>0?toPaise(v):0}));
+  const D=toPaise(due), all=(allocations||[]).filter(Boolean), list=all.filter(a=>a.method!==DUE);
+  const pos=a=>{const v=amountOf(a.amount);return Number.isFinite(v)&&v>0?toPaise(v):0};
+  const paid=sumP(list.map(pos)), acct=sumP(all.filter(a=>a.method===DUE).map(pos));
   const cash=list.find(a=>a.method==="cash"), cp=cash?toPaise(amountOf(cash.amount))||0:0, got=cash?toPaise(amountOf(cash.received))||0:0;
-  return {paid:toRupees(paid),balance:toRupees(Math.max(0,D-paid)),over:toRupees(Math.max(0,paid-D)),change:toRupees(got>cp&&cp>0?got-cp:0)};
+  return {paid:toRupees(paid),balance:toRupees(Math.max(0,D-paid-acct)),over:toRupees(Math.max(0,paid+acct-D)),change:toRupees(got>cp&&cp>0?got-cp:0),...(acct?{onAccount:toRupees(acct)}:{})};
 }
+/* What a bill left on the customer's account (0 for bills without one) */
+export const dueAmtOf=sale=>sale&&+sale.dueAmt>0?+sale.dueAmt:0;
 /* A bill's payments. Bills saved before split payments have one method for everything that was due. */
 export function paymentsOf(sale){
   if(Array.isArray(sale.payments)) return sale.payments;
-  const due=Math.max(0,toPaise(sale.total)-toPaise(sale.credit));
+  const due=Math.max(0,toPaise(sale.total)-toPaise(sale.credit)-toPaise(dueAmtOf(sale)));
   return due>0&&PAY_METHODS.includes(sale.pay)?[{id:paymentId(sale.id,sale.pay),method:sale.pay,amount:toRupees(due)}]:[];
 }
 /* How a payment was confirmed. Payments saved before verification was kept count as recorded. */
@@ -128,8 +147,9 @@ export const verificationOf=p=>p&&p.verification||"recorded";
 /* The bill's UPI parts still checked only by hand (a bill with any is labelled "Unverified") */
 export const unverifiedPayments=sale=>paymentsOf(sale).filter(p=>verificationOf(p)==="unverified");
 export const isUnverified=sale=>!sale.void&&unverifiedPayments(sale).length>0;
-/* "Cash", "UPI + Card" … */
+/* "Cash", "UPI + Card", "Cash + On account" … */
 export function payLabel(sale){
-  const ps=paymentsOf(sale);
-  return ps.length?ps.map(p=>PAY_LABELS[p.method]||p.method).join(" + "):sale.pay==="split"?"Split":(PAY_LABELS[sale.pay]||sale.pay||"");
+  const ps=paymentsOf(sale), acct=dueAmtOf(sale)>0?[PAY_LABELS.due]:[];
+  if(!ps.length&&acct.length) return acct[0];
+  return ps.length?[...ps.map(p=>PAY_LABELS[p.method]||p.method),...acct].join(" + "):sale.pay==="split"?"Split":(PAY_LABELS[sale.pay]||sale.pay||"");
 }

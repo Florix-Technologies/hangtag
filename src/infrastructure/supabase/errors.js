@@ -14,6 +14,8 @@ export function toAppError(e){
   // hangtag_doc_no_check: another bill (credit note) of the shop already has this number; the message says which
   if(code === "23505" && /^(Bill|Credit note) number .+ is already used/.test(msg)) return new AppError(C.CONFLICT, msg, { cause: e, details: { code, kind: "number" } });
   if(code === "23505" || /duplicate key/i.test(msg)) return make(C.CONFLICT, "Something with the same SKU, barcode or number is already saved.");
+  // hangtag_save_order: the order was changed on another device since this one saw it (its message says which)
+  if(code === "40001") return make(C.CONFLICT, msg || "This was changed on another device.");
   if(code === "PGRST301" || code === "401" || AUTH.test(msg)) return make(C.AUTH, "Your sign-in has expired. Sign in again.");
   // hangtag_import_stock: this bill (same file, or same supplier + invoice number) was added before
   if(/HANGTAG_DUPLICATE_(FILE|INVOICE)/.test(msg)){

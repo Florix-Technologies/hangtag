@@ -36,6 +36,9 @@ export function openBook(kind){
     const reversed=e.moveId&&Object.values(store.cashMoves||{}).some(m=>m.reverses===e.moveId);
     if(cash&&e.moveId) return `<div class="bkrow" data-entry="${esc(e.id)}"><span class="bk-w"><b>${esc(CASH_MOVE_LABELS[{cash_in:"in",cash_out:"out",expense:"expense",opening:"opening",reversal:"reversal"}[e.type]]||e.type)}</b><small>${esc(when(e.t))} · ${esc(e.reason||"")}${e.category?" · "+esc(e.category):""}${reversed?` · <span class="btag">Reversed</span>`:""}${e.type!=="reversal"&&!reversed?` <button type="button" class="link xs" data-cashform="reverse:${esc(e.moveId)}">Reverse</button>`:""}</small></span>`+
       `<span class="bk-a ${e.in?"in":"out"}">${e.in?"+"+inrx(e.in):"−"+inrx(e.out)}</span><span class="bk-b">${inrx(e.balance)}</span></div>`;
+    // a payment a customer made towards what they owe (no bill): opens the customer
+    if(e.collectionId) return `<button class="bkrow${off?" off":""}" data-custhist="${esc(e.customerId||"")}" data-entry="${esc(e.id)}"><span class="bk-w"><b>Payment from ${esc(e.customerName||"a customer")}</b><small>${esc(when(e.t))} · ${PAY_LABELS[e.method]||esc(e.method)} collected${e.ref?" · ref "+esc(e.ref):""}${e.verification==="unverified"?` · <span class="btag warn">Unverified</span>`:""}${off?` · <span class="btag">Cancelled</span>`:""}</small></span>`+
+      `<span class="bk-a in">+${inrx(e.in)}</span>${cash?`<span class="bk-b">${inrx(e.balance)}</span>`:""}</button>`;
     const what=cash?(e.type==="cash_refund"?"Cash refund":"Cash sale")+(e.type==="cash_sale"&&e.change?` · received ${inrx(e.received)}, change ${inrx(e.change)}`:"")
       :`${PAY_LABELS[e.method]||esc(e.method)} ${e.type==="refund"?"refund":"received"}${e.ref?" · ref "+esc(e.ref):""}${e.verification==="unverified"?` · <span class="btag warn">Unverified</span>`:e.verification==="verified"?` · <span class="btag ok">Verified</span>`:""}`;
     return `<button class="bkrow${off?" off":""}" data-billview="${esc(e.saleId)}" data-entry="${esc(e.id)}"><span class="bk-w"><b>${esc(e.billNo||"Bill")}</b><small>${esc(when(e.t))} · ${what}${off?` · <span class="btag">Cancelled</span>`:""}</small></span>`+
@@ -43,9 +46,9 @@ export function openBook(kind){
   };
   const sum=cash?`<div class="bookkpis">${kv("Opening",inrx(B.opening))}${kv("Cash sales",inrx(B.cashSales))}${kv("Cash refunds","−"+inrx(B.refunds))}${kv("Closing",inrx(B.closing),"hl")}</div>
       <div class="bookkpis">${kv("Opening float",inrx(B.openingFloat))}${kv("Cash in",inrx(B.cashIn))}${kv("Cash out","−"+inrx(B.cashOut))}${kv("Expenses","−"+inrx(B.expenses))}</div>
-      <p class="note">Cash received ${inrx(B.received)} · change given ${inrx(B.changeGiven)}. Cash sales count what stays in the drawer.</p>`
+      <p class="note">Cash received ${inrx(B.received)} · change given ${inrx(B.changeGiven)}. Cash sales count what stays in the drawer.${B.collections?` Collected from customers who owed: <b>${inrx(B.collections)}</b>.`:""}</p>`
     :`<div class="bookkpis">${kv("UPI received",inrx(B.upiIn))}${kv("Card received",inrx(B.cardIn))}${kv("Refunds","−"+inrx(B.refunds))}${kv("Net",inrx(B.net),"hl")}</div>
-      <p class="note">Verified by the payment provider ${inrx(B.verifiedIn)}${B.upiUnverified?` · UPI checked by hand, not yet verified: <b>${inrx(B.upiUnverified)}</b>`:""}</p>`;
+      <p class="note">Verified by the payment provider ${inrx(B.verifiedIn)}${B.upiUnverified?` · UPI checked by hand, not yet verified: <b>${inrx(B.upiUnverified)}</b>`:""}${B.collections?` · collected from customers who owed: <b>${inrx(B.collections)}</b>`:""}</p>`;
   $("#modalHost").innerHTML=`<div class="scrim" data-modal-scrim><div class="sheet booksheet" id="bookSheet" data-bookkind="${kind}" role="dialog" aria-modal="true" aria-labelledby="bookT">
     <div class="sh-head"><div class="sh-t"><h3 id="bookT">${cash?"Cash book":"Bank book"}</h3><p>${esc(R.label)}${cash?"":" · UPI and card"}</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
     ${sum}

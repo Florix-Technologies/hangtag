@@ -129,7 +129,7 @@ check('saving the same bill again (a retry) duplicates nothing', !r.err && await
 const b2 = bill('b2', [{ q: 1, price: 1000, rate: 0 }], { gst: { mode: 'none' }, pays: [{ method: 'card', amount: 1000, ref: 'APPR123' }] });
 const bad = (payments) => billArgs({ ...b2, payments });
 r = await saveRaw(db, A, [bad([{ id: 'b2:card', method: 'card', amount: 600 }])]);
-check('underpayment is refused and the bill is not saved', /come to 600(\.00)? but 1000 is due/.test(r.err || '') && await n(db, A, 'hangtag_sales', `WHERE id='b2'`) === 0, r.err);
+check('underpayment is refused and the bill is not saved', /come to 600(\.00)? but 1000(\.00)? is due/.test(r.err || '') && await n(db, A, 'hangtag_sales', `WHERE id='b2'`) === 0, r.err);
 r = await saveRaw(db, A, [bad([{ id: 'b2:card', method: 'card', amount: 700 }, { id: 'b2:upi', method: 'upi', amount: 400 }])]);
 check('overpayment is refused', /would come to 1100/.test(r.err || '') && await n(db, A, 'hangtag_sales', `WHERE id='b2'`) === 0, r.err);
 r = await saveRaw(db, A, [bad([{ id: 'b2:cash', method: 'cash', amount: 500 }, { id: 'b2:cash', method: 'cash', amount: 500 }])]);

@@ -38,6 +38,13 @@ export function initState(){
   if(!Array.isArray(store.deliveryQueue)) store.deliveryQueue=[];
   store.cashMoves = objOr(storage.get("rc_cash_moves",{}),{});   // cash without a bill: opening float, cash in / out, expenses (by id)
   store.dayCloses = objOr(storage.get("rc_day_closes",{}),{});   // day closes: expected, counted, difference (by id)
+  store.collections = objOr(storage.get("rc_collections",{}),{});   // payments customers made towards what they owe (by id)
+  store.heldCarts = objOr(storage.get("rc_held",{}),{});           // bills put aside to finish later, on any till (by id)
+  store.orders = objOr(storage.get("rc_orders",{}),{});            // quotations and sales orders (by id)
+  store.cartOrder = objOr(storage.get("rc_cartorder",null),null);  // the order the bill being rung up comes from: { id, no, kind }
+  store.ordersView = "";        // Orders tab: "held" | "quote" | "sales" ("": the first one this person has)
+  store.orderForm = null;       // the quotation / sales order being edited
+  store.collectForm = null;     // "Collect payment" from a customer: { cid, amount, method, ref, note, err }
   store.cashForm = null;        // the cash entry / day close sheet
   store.voidForm = null;        // cancelling a bill: its reason
   store.gstView = null;         // the GST filing view: { month } or { from, to }

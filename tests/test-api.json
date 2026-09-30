@@ -141,7 +141,19 @@
   "newSaleRecord",
   "recordSale",
   "numberTaken",
-  "openSyncPanel"
+  "openSyncPanel",
+  "setBillCustomer",
+  "accountOf",
+  "listHeldCarts",
+  "ordersOf",
+  "todayKey",
+  "orderById",
+  "billPanelHTML",
+  "saveOrder",
+  "newOrderDraft",
+  "orderLine",
+  "setOrderStatus",
+  "pullOrders"
  ],
  "state": [
   "access",
@@ -187,6 +199,8 @@
   "team",
   "weigh",
   "syncReview",
-  "scale"
+  "scale",
+  "ordersView",
+  "syncReview"
  ]
 }

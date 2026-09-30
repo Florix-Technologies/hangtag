@@ -20,6 +20,8 @@ import { renderCustomers } from '../features/customers/pages/customers-page.js';
 import { renderProducts } from '../features/products/pages/products-page.js';
 import { openSettings } from '../features/shop/components/settings-modal.js';
 import { openNavMore } from './navigation.js';
+import { ORDERS_MODULE } from '../features/orders/module.js';
+import { renderOrdersPart } from '../features/orders/pages/orders-page.js';
 import { storage } from '../shared/state/persistence.js';
 
 let installed = false;
@@ -29,6 +31,8 @@ export function installModules(){
   registerModule({ id: "home", render: renderHome });
   registerModule({ id: "sell", render(){ renderGrid(); renderBill(); } });
   registerModule({ id: "orders", render: () => renderSubviews("orders") });
+  // Orders (T3): held bills for every shop; quotations and sales orders where the shop uses them
+  ORDERS_MODULE.submodules.forEach((m, i) => registerSubview("orders", { id: m.id, label: m.label, order: 10 * (i + 1), caps: m.capability ? [m.capability] : [], perms: m.permissions, render: host => renderOrdersPart(host, m.id) }));
   registerModule({ id: "stock", render: () => renderSubviews("stock") });
   registerSubview("stock", { id: "levels", label: "Stock", order: 10, main: true, render: () => renderStock() });
   registerModule({ id: "report", render: renderReport });

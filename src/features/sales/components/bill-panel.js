@@ -75,7 +75,7 @@ export function billPanelHTML(where){
   const pcs=cartPcs(),T=billTotals(store.cart,store.disc),empty=!store.cart.length,err=empty?"":billDiscountError();
   return `<div class="bp">
     <div class="bp-head"><div><div class="eyebrow">Bill ${esc(billNo())}</div><div class="bp-title">${empty?"New bill":esc(itemsText(pcs))}</div></div><div class="bp-hact">${billHoldHTML(empty)}${empty?"":`<button class="link" data-act="clear">Clear</button>`}${where==="sheet"?`<button class="iconbtn" data-act="closesheet" aria-label="Close bill">${ICON.x}</button>`:""}</div></div>
-    ${custLineHTML()}${billOrderHTML()}
+    ${custLineHTML()}${billOrderHTML()}${store.cartTable&&store.cart.length?`<div class="ordline"><span>Bill of table <b>${esc(store.cartTable.name||"")}</b></span></div>`:""}
     <div class="bp-items">${empty?emptyBillHTML():store.cart.map((c,i)=>lineHTML(c,i,T.lines[i])).join("")}</div>
     <div class="bp-foot">
       ${sumRow("Subtotal",inr(T.sub))}${discountRowsHTML({itemDisc:T.itemDisc,billDisc:0})}

@@ -44,7 +44,7 @@ export const CAPABILITIES = [
   { key: "uses_table_qr", label: "Table QR", help: "A QR code on each table.", group: "restaurant", needs: "uses_tables" },
   { key: "uses_customer_ordering", label: "Customer table ordering", help: "Guests order from their own phone by scanning the table's QR.", group: "restaurant", needs: "uses_table_qr" },
   { key: "uses_server_ordering", label: "Server ordering", help: "Servers take orders at the table on their phone.", group: "restaurant", needs: "uses_tables" },
-  { key: "uses_kitchen", label: "Kitchen", help: "A kitchen screen with the orders to prepare.", group: "restaurant" },
+  { key: "uses_kitchen", label: "Kitchen", help: "A kitchen screen with the orders to prepare.", group: "restaurant", needs: "uses_tables" },
 ];
 export const CAP_KEYS = CAPABILITIES.map(c => c.key);
 export const CAP_LABELS = Object.fromEntries(CAPABILITIES.map(c => [c.key, c.label]));

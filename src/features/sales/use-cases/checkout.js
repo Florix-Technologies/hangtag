@@ -22,6 +22,7 @@ import { can, canAny, denied, notAllowedText, userId } from '../../shop/services
 import { CANCEL_BILL } from '../../../domain/shop/permissions.js';
 import { fulfilFromSale } from '../../orders/use-cases/orders.js';
 import { restoreSerialError, trackSaleLines } from '../../inventory/services/tracking.js';
+import { closeTableForSale } from '../../restaurant/use-cases/tables.js';
 
 /* A complete bill record, or { error } when a discount is too big or the payments don't settle it.
    lines: bill lines · billDisc: the bill discount · pay: a method ("cash" | "upi" | "card") or one part without its amount
@@ -49,6 +50,7 @@ export function newSaleRecord(lines,billDisc,pay,extra){
     taxable:T.taxable,tax:T.tax,cgst:T.cgst,sgst:T.sgst,igst:T.igst,taxRate:T.rate||0,taxIncl:T.incl,
     gst:{mode:g.mode,pos:g.pos,shopState:g.shopState,b2b:g.b2b},roundOff:T.roundOff,total:T.total,credit,
     kind:x.kind||"sale",ex:x.ex||null,...(ev?{event:ev}:{}),...(S.onAccount>0?{dueAmt:S.onAccount}:{}),...(x.order?{order:x.order}:{}),
+    ...(x.table?{table:x.table,session:x.session||null}:{}),
     pay:S.payments.length>1?"split":S.payments.length?S.payments[0].method:S.onAccount>0?"credit":(whole&&whole.method||"cash"),
     payments:S.payments.map(p=>({id:paymentId(id,p.method),...p})),dev:store.dev,...(userId()?{user:userId()}:{}),
     cust:bc?{id:bc.id||null,name:bc.name,phone:bc.phone||"",...(bc.gstin?{gstin:bc.gstin}:{}),...(bc.type==="business"?{type:"business"}:{})}:null};
@@ -74,13 +76,16 @@ export async function checkout(pay,opts){
   // a bill from a quotation / sales order: the order then counts what it delivered (create_order, as for saving it)
   const ord=store.cartOrder&&store.cartOrder.id&&store.cart.some(c=>c.ord===store.cartOrder.id)?store.cartOrder.id:null;
   if(ord&&!can("create_order")) return {error:notAllowedText("bill orders")};
-  const sale=newSaleRecord(store.cart,store.disc,pay,Object.assign(o.id?{id:o.id}:{},ord?{order:ord}:{}));
+  // a restaurant table's bill: paying it closes the table's session (the table is free again)
+  const tbl=store.cartTable&&store.cartTable.table?store.cartTable:null;
+  const sale=newSaleRecord(store.cart,store.disc,pay,Object.assign(o.id?{id:o.id}:{},ord?{order:ord}:{},tbl?{table:tbl.table,session:(tbl.sessions||[])[0]||null}:{}));
   if(sale.error) return sale;
   store.lastCheckout=Date.now();
   store.cart=[]; store.disc=null; store.cartCust=null; store.cartOrder=null; store.payState=null; saveCart();
   store.lastSale=sale;
   recordSale(sale);
   if(ord) fulfilFromSale(sale);
+  if(tbl) closeTableForSale(sale,tbl);
   // the receipt goes out by itself on the channels the shop turned on (unless turned off for this sale)
   if(o.send!==false) queueAutoDelivery(sale);
   // a device still set to an event that was closed (or removed) sold this bill at the store: it now sells at the store

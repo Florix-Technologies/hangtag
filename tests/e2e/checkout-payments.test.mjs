@@ -76,7 +76,9 @@ check('split: overpaid — refused (only cash gives change)', /₹139 more than 
 await typeIn(A, '[data-payf="amt:card"]', '');
 await A.click('[data-payrest="upi"]'); await sleep(150);
 await A.type('[data-payf="ref:upi"]', '412345678901'); await sleep(100);
-check('split: "Rest" puts the balance on UPI; paid in full, change ₹200', /Paid ₹2,361 Balance ₹0 Change ₹200/.test(await text(A, '#payLive .paylive')) && (await A.$eval('[data-payf="amt:upi"]', (i) => i.value)) === '1361' && !(await A.$eval('#payDone', (b) => b.disabled)));
+check('split: "Rest" puts the balance on UPI; explicit receipt confirmation is still required', /Paid ₹2,361 Balance ₹0 Change ₹200/.test(await text(A, '#payLive .paylive')) && (await A.$eval('[data-payf="amt:upi"]', (i) => i.value)) === '1361' && await A.$eval('#payDone', (b) => b.disabled));
+await A.click('[data-upireceived]'); await sleep(100);
+check('after checking the customer screen, Complete is enabled', !(await A.$eval('#payDone', (b) => b.disabled)));
 await A.screenshot({ path: H.ARTIFACTS + '/pay1_split_desktop.png' });
 await A.click('#payDone'); await sleep(300);
 check('sale completed: Payment successful, the split and the change to give', await vis(A, '#sheetHost [data-paid]') && /Cash ₹1,000 \+ UPI ₹1,361/.test(await text(A, '.paid-sub')) && /Give change ₹200/.test(await text(A, '[data-change]')), await text(A, '.paid-sub'));
@@ -117,7 +119,7 @@ check("the customer's history shows the bill and how it was paid", await run(A, 
 
 // ---------- 3. the existing checkout(method) API still pays the whole bill in one method ----------
 await sleep(700);
-const api = await run(A, `addOne(${JSON.stringify(CAP)});const s=await checkout({method:"upi",ref:"412345678901"});closeSheets();await flushSbQueue();return {pay:s.pay,payments:s.payments,total:s.total,cust:s.cust}`);
+const api = await run(A, `addOne(${JSON.stringify(CAP)});const s=await checkout({method:"upi",ref:"412345678901",confirmed:true});closeSheets();await flushSbQueue();return {pay:s.pay,payments:s.payments,total:s.total,cust:s.cust}`);
 check('checkout({ method: "upi", ref }) still pays the whole bill in one method: one UPI payment for the total, walk-in', api.pay === 'upi' && api.payments.length === 1 && api.payments[0].amount === api.total && api.total === 525 && api.cust === null, api);
 
 // ---------- 4. phone: bill sheet → UPI with reference; cash with a quick amount and change ----------
@@ -133,8 +135,10 @@ check('phone: 10% bill discount', /Bill discount 10% −₹99\.90/.test(await te
 await A.tap('#sheetHost [data-pay="upi"]'); await sleep(250);
 check('phone: the payment screen opens on UPI over the bill', await vis(A, '#paySheet') && (await A.$eval('[data-paymode="upi"]', (b) => b.getAttribute('aria-pressed'))) === 'true');
 await A.screenshot({ path: H.ARTIFACTS + '/pay2_upi_phone.png' });
-await A.type('[data-payf="ref:upi"]', 'UTR 998877'); await A.tap('#payDone'); await sleep(300);
-check('phone: UPI sale done', await vis(A, '#sheetHost [data-paid]') && /UPI · ref UTR 998877/.test(await text(A, '.paid-sub')), await text(A, '.paid-sub'));
+check('phone: UTR is optional but Complete waits for “Mark payment received”', await A.$eval('#payDone', (b) => b.disabled) && /optional/.test(await text(A, '#paySheet .payfields')));
+await A.$eval('[data-upireceived]', (b) => b.click()); await sleep(200);
+await A.$eval('#payDone', (b) => b.click()); await sleep(600);
+check('phone: manual UPI sale completes without a UTR and is marked Unverified', await vis(A, '#sheetHost [data-paid]') && /UPI/.test(await text(A, '.paid-sub')) && /unverified/i.test(await text(A, '.paid-sub')), await text(A, '.paid-sub'));
 await run(A, 'closeSheets()'); await sleep(700);
 await run(A, `addOne(${JSON.stringify(CAP)});renderAll()`); await sleep(150);
 await A.tap('#billBar [data-pay="cash"]'); await sleep(250);

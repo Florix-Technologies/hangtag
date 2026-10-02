@@ -32,6 +32,7 @@ import { applyCatalogMigration } from '../features/products/services/catalog.js'
 import { initSupabase, memberPoll } from '../features/sync/services/connection.js';
 import { isMember } from '../features/shop/services/access.js';
 import { flushSbQueue } from '../features/sync/services/outbox.js';
+import { sendPendingDocs } from '../features/inventory/use-cases/import-supplier-bill.js';
 
 installContainer();    // ports first: everything below may use them
 installNavigation();   // the render bus (shared/ui/render.js) now reaches this app shell
@@ -58,6 +59,8 @@ installAutoDelivery();
 // provider, and receipts waiting to go out are sent
 onConnected(async()=>{ await loadPayConfig(true); resumePayment(); await checkUnverified(true); });
 onConnected(()=>processDeliveryQueue());
+// …and supplier bills' originals that couldn't reach the cloud yet go up (kept on this device until then)
+onConnected(()=>{ if(Object.keys(store.pendingDocs||{}).length) sendPendingDocs(); });
 renderAll();
 // Sign in, then connect to the cloud database
 

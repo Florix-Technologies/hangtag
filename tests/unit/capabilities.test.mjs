@@ -67,7 +67,7 @@ check('the settings defaults hold no capability choices (no data migration neede
 check('7 grocery + serial numbers', capsFor('grocery', { uses_serials: true }).uses_serials && capsFor('grocery', { uses_serials: true }).uses_batches);
 check('7 restaurant + batch and expiry', (() => { const c = capsFor('restaurant', { uses_batches: true, uses_expiry: true }); return c.uses_batches && c.uses_expiry && c.uses_tables; })());
 check('7 a default switched off stays off', !capsFor('retail', { uses_variants: false }).uses_variants && !capsFor('electronics', { uses_serials: false }).uses_serials);
-check('7 one that builds on another is off while that one is (Table QR, customer ordering need tables)', (() => { const c = capsFor('restaurant', { uses_tables: false }); return !c.uses_table_qr && !c.uses_customer_ordering && !c.uses_server_ordering && c.uses_kitchen; })());
+check('7 restaurant features that build on tables are all off while tables are off', (() => { const c = capsFor('restaurant', { uses_tables: false }); return !c.uses_table_qr && !c.uses_customer_ordering && !c.uses_server_ordering && !c.uses_kitchen; })());
 check('7 only differences from the type\'s defaults are stored', eq(capOverridesAfter('retail', {}, { uses_variants: true, uses_serials: true }).overrides, { uses_serials: true })
   && eq(capOverridesAfter('retail', { uses_serials: true }, { uses_serials: false }).overrides, {}));
 check('7 an unknown capability or a value that isn\'t on/off is refused', /Unknown capability/.test(capOverridesAfter('retail', {}, { uses_magic: true }).error)
@@ -81,7 +81,7 @@ check('7 stored choices are cleaned (unknown keys and non-booleans dropped)', eq
     && g[0].label === 'Recommended for Grocery' && eq(h[0].caps.map((c) => c.key).sort(), RESTAURANT.slice().sort()));
   check('every capability listed once', BUSINESS_TYPE_KEYS.every((t) => eq(capSections(t).flatMap((s) => s.caps.map((c) => c.key)).sort(), CAP_KEYS.slice().sort())));
   check('restaurant capabilities folded away for a retail shop (open once one is switched on)', r.find((s) => s.key === 'restaurant').open === false
-    && capSections('retail', capsFor('retail', { uses_kitchen: true })).find((s) => s.key === 'restaurant').open === true);
+    && capSections('retail', capsFor('retail', { uses_tables: true })).find((s) => s.key === 'restaurant').open === true);
 }
 
 // ---------- 6: persistence and sync ----------

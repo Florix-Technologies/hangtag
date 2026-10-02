@@ -9,7 +9,7 @@
 
 export const CHANNELS = ["email", "whatsapp", "sms"];
 export const CHANNEL_LABELS = { email: "email", whatsapp: "WhatsApp", sms: "SMS" };
-export const LIMITS = { saleId: 64, sms: 300, whatsapp: 4000, lines: 200 };
+export const LIMITS = { saleId: 64, receiptUrl: 500, sms: 300, whatsapp: 4000, lines: 200 };
 /* Messages one shop can send per hour (a runaway loop or a leaked session can't spam customers) */
 export const MAX_PER_HOUR = 60;
 /* What the function reads of a bill, its lines, its payments and the shop (with the caller's session) */
@@ -202,11 +202,21 @@ export function newToken() {
   crypto.getRandomValues(b);
   return btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
-/* The public page that shows one bill, from RECEIPT_URL (e.g. https://shop.example/receipt.html); the token goes after
-   "#", so it never reaches a server log. "" when RECEIPT_URL isn't set (messages then go without a link). */
+/* The public receipt page configured on the server. Production must use HTTPS; loopback HTTP is allowed for local testing.
+   It must name receipt.html and carry no credentials, query or fragment. */
+export function requestedReceiptBase(value) {
+  const raw = str(value).trim();
+  if (!raw || raw.length > LIMITS.receiptUrl) return "";
+  try {
+    const u = new URL(raw);
+    const loopback = u.hostname === "localhost" || u.hostname === "127.0.0.1" || u.hostname === "[::1]";
+    if ((u.protocol !== "https:" && !(u.protocol === "http:" && loopback)) || u.username || u.password || u.search || u.hash || !/\/receipt\.html$/.test(u.pathname)) return "";
+    return u.href;
+  } catch { return ""; }
+}
+/* Only the deployment's fixed RECEIPT_URL is trusted. The token goes after "#", so it never reaches the static host or its logs. */
 export function receiptBase(env) {
-  const u = str(env.RECEIPT_URL).trim();
-  return /^https:\/\/[^\s#?]+$/.test(u) ? u : "";
+  return requestedReceiptBase(env && env.RECEIPT_URL);
 }
 export const linkUrl = (base, token) => (base && token ? base + "#" + token : "");
 export const linkRow = ({ ownerId, saleId, token, now = Date.now() }) =>

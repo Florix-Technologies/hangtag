@@ -28,6 +28,10 @@ import { products } from '../features/products/services/catalog.js';
 import { unitOf } from '../domain/catalog/units.js';
 import { expirySettingsHTML } from '../features/inventory/components/expiry-settings.js';
 import { trackingOfP } from '../features/inventory/services/tracking.js';
+import { renderTablesPage } from '../features/restaurant/pages/tables-page.js';
+import { renderKitchenPage } from '../features/restaurant/pages/kitchen-page.js';
+import { mayWorkTables } from '../features/restaurant/services/restaurant-state.js';
+import { installRestaurantTimers } from './events/restaurant-events.js';
 
 let installed = false;
 export function installModules(){
@@ -54,6 +58,11 @@ export function installModules(){
   // Settings → Capabilities → Expiry (Wave 2): for shops that keep expiry dates or batches
   const expires = () => hasCap("uses_expiry") || hasCap("uses_batches") || products().some(p => trackingOfP(p) === "batch");
   registerSettingsPart("capabilities", { id: "expiry", order: 20, perms: ["manage_settings"], html: () => expires() ? expirySettingsHTML() : "" });
+  // Restaurant (W2-B): the tables (a till, or servers ordering on their phones) and the kitchen screen — only with the shop's
+  // table / kitchen capabilities (the registry adds them to these modules by itself)
+  registerModule({ id: "tables", label: "Tables", order: 32, phone: 25, caps: ["uses_tables"], perms: ["create_sale", "create_order", "manage_tables", "manage_settings"], available: mayWorkTables, render: renderTablesPage });
+  registerModule({ id: "kitchen", label: "Kitchen", order: 34, phone: 26, caps: ["uses_kitchen"], perms: ["manage_kitchen"], render: renderKitchenPage });
+  installRestaurantTimers();
   document.addEventListener("click", e => {
     if(onSubviewClick(e)) return;
     if(e.target && e.target.closest && e.target.closest("[data-navmore]")) openNavMore();

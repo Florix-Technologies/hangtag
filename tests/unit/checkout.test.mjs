@@ -76,13 +76,15 @@ check('the order is: subtotal → discount → taxable → GST → round off →
 check('cash, exact: received = amount, no change', eq(settlePayments(1049, [{ method: 'cash', amount: 1049 }]), { ok: true, payments: [{ method: 'cash', amount: 1049, received: 1049, change: 0, verification: 'recorded' }], paid: 1049, received: 1049, change: 0 }));
 check('cash with ₹2,000 handed over: change ₹951', settlePayments(1049, [{ method: 'cash', amount: 1049, received: 2000 }]).change === 951);
 check('cash handed over is less than the amount → refused', settlePayments(1049, [{ method: 'cash', amount: 1049, received: 1000 }]).error === 'Cash received is less than the cash amount.');
-check('UPI checked by hand, with its reference (no change): unverified', eq(settlePayments(500, [{ method: 'upi', amount: 500, ref: ' 412345678901 ' }]).payments, [{ method: 'upi', amount: 500, via: 'manual', verification: 'unverified', ref: '412345678901' }]));
+check('UPI checked by hand, explicitly marked received (reference optional): unverified', eq(settlePayments(500, [{ method: 'upi', amount: 500, ref: ' 412345678901 ', confirmed: true }]).payments, [{ method: 'upi', amount: 500, via: 'manual', verification: 'unverified', ref: '412345678901' }])
+  && settlePayments(500, [{ method: 'upi', amount: 500 }]).field === 'confirmed');
 check('card on a card machine: its reference is required (spec 006 FR-015), then recorded', settlePayments(500, [{ method: 'card', amount: 500 }]).field === 'ref' && eq(settlePayments(500, [{ method: 'card', amount: 500, ref: 'A1' }]).payments, [{ method: 'card', amount: 500, via: 'terminal', verification: 'recorded', ref: 'A1' }]));
 check('a wrong amount: short or over the bill', settlePayments(1000, [{ method: 'upi', amount: 900, ref: 'U1' }]).error === '₹100 still to pay.' && settlePayments(1000, [{ method: 'upi', amount: 1100, ref: 'U1' }]).error === "That's ₹100 more than the bill.");
 check('a bad reference is refused', !!checkReference('x'.repeat(41)) && !!checkReference('<script>') && checkReference('UTR-12/34') === null && settlePayments(10, [{ method: 'upi', amount: 10, ref: '<b>' }]).field === 'ref');
 // split payments
 // UPI and card parts carry their references (required for UPI checked by hand and the card machine)
-const split = (list, due = 1000) => settlePayments(due, list.map((a) => (a.method === 'upi' || a.method === 'card') && a.ref === undefined ? { ...a, ref: 'R' + a.method } : a));
+const split = (list, due = 1000) => settlePayments(due, list.map((a) => a.method === 'upi' ? { confirmed: true, ...(a.ref === undefined ? { ref: 'Rupi' } : {}), ...a }
+  : a.method === 'card' && a.ref === undefined ? { ...a, ref: 'Rcard' } : a));
 check('split: cash + UPI', split([{ method: 'cash', amount: 400 }, { method: 'upi', amount: 600 }]).ok);
 check('split: cash + card', split([{ method: 'cash', amount: 250.5 }, { method: 'card', amount: 749.5 }]).ok);
 check('split: UPI + card', split([{ method: 'upi', amount: 1 }, { method: 'card', amount: 999 }]).ok);
@@ -154,7 +156,7 @@ store.cartCust = { id: 'c1', name: 'Blr Traders', phone: '' };
 const b2b = newSaleRecord(store.cart, store.disc, [{ method: 'upi', amount: 1000, ref: 'U77' }, { method: 'card', amount: 'x' }]);
 check('split with a bad amount is refused', b2b.error === 'Enter the Card amount as a number.');
 const due = billTotals(store.cart, store.disc).total;
-const sale2 = newSaleRecord(store.cart, store.disc, [{ method: 'upi', amount: 1000, ref: 'U77' }, { method: 'cash', amount: due - 1000, received: due - 900 }]);
+  const sale2 = newSaleRecord(store.cart, store.disc, [{ method: 'upi', amount: 1000, ref: 'U77', confirmed: true }, { method: 'cash', amount: due - 1000, received: due - 900 }]);
 check('customer from another state with a GSTIN: IGST, the customer GSTIN kept on the bill, split UPI + cash with change', sale2.gst.mode === 'inter' && sale2.gst.pos === '29' && sale2.gst.b2b && sale2.cgst === 0 && sale2.igst > 0
   && sale2.cust.gstin === '29ABCDE1234F1Z5' && sale2.cust.type === 'business' && sale2.pay === 'split' && sale2.payments.length === 2 && sale2.payments[1].change === 100, sale2);
 check('an incorrect split total never makes a bill', newSaleRecord(store.cart, store.disc, [{ method: 'upi', amount: 1, ref: 'U1' }]).error === `₹${(due - 1).toLocaleString('en-IN')} still to pay.`);

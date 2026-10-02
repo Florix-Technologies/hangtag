@@ -58,7 +58,7 @@ Deno.serve(async (req) => {
   const owner = !shopId ? null : shopId === user.id ? user : ((await admin.auth.admin.getUserById(shopId)).data || { user: null }).user;
   const allowed = !!shopId && allowedToSend(user, env(), owner);
   if (r.action === "channels") return reply(200, { ok: true, channels: configuredChannels(allowed ? env() : {}) });
-  if (!allowed || !shopId) return reply(503, { ok: false, error: "not_configured", message: "Sending bills isn't turned on for this account." });
+  if (!shopId) return reply(403, { ok: false, error: "forbidden", message: "This account isn't connected to a shop." });
   const shop: string = shopId;
   if (shop !== user.id && r.action !== "refresh") {
     const { data: can } = await db.rpc("hangtag_can", { p: SEND_PERMISSION });
@@ -68,23 +68,25 @@ Deno.serve(async (req) => {
   // the bill's secure link: reused while it works, otherwise a new one (written by this function only)
   const billLink = async (saleId: string) => {
     const base = receiptBase(env());
-    if (!base) return "";
+    if (!base) return null;
     const { data: rows } = await admin.from("hangtag_invoice_links").select("token,revoked_at,expires_at").eq("owner_id", shop).eq("sale_id", saleId)
       .is("revoked_at", null).order("created_at", { ascending: false }).limit(1);
     const cur = (rows || [])[0];
-    if (cur && liveLink(cur) && Date.parse(cur.expires_at) - Date.now() > 30 * 864e5) return linkUrl(base, cur.token);
+    if (cur && liveLink(cur) && Date.parse(cur.expires_at) - Date.now() > 30 * 864e5)
+      return { url: linkUrl(base, cur.token), token: cur.token, expiresAt: cur.expires_at };
     const row = linkRow({ ownerId: shop, saleId, token: newToken() });
     const { error } = await admin.from("hangtag_invoice_links").insert(row);
-    if (error) { console.error("send-receipt: couldn't save the invoice link:", error.message); return ""; }
-    return linkUrl(base, row.token);
+    if (error) { console.error("send-receipt: couldn't save the invoice link:", error.message); return null; }
+    return { url: linkUrl(base, row.token), token: row.token, expiresAt: row.expires_at };
   };
   if (r.action === "link") {
     const { data: s } = await db.from("hangtag_sales").select("id").eq("id", r.saleId).maybeSingle();   // the caller's own bill
     if (!s) return reply(404, { ok: false, error: "not_found", message: "That bill isn't in the cloud yet. Try again once it has uploaded." });
     const link = await billLink(r.saleId);
     if (!link) return reply(503, { ok: false, error: "not_configured", message: "Invoice links aren't set up yet (RECEIPT_URL)." });
-    return reply(200, { ok: true, url: link });
+    return reply(200, { ok: true, ...link });
   }
+  if (!allowed) return reply(503, { ok: false, error: "not_configured", message: "Sending bills isn't turned on for this account." });
   if (r.action === "refresh") {
     const { data: rows } = await db.from("hangtag_deliveries").select("id,channel,provider,provider_message_id,status").eq("sale_id", r.saleId).eq("status", "sent").limit(20);
     let updated = 0;
@@ -128,8 +130,8 @@ Deno.serve(async (req) => {
     if (p && p.status !== "pending") return reply(200, { ok: true, status: p.status, already: true, channel: r.channel, recipient: p.recipient, provider: p.provider, provider_message_id: p.provider_message_id });
     if (p) return reply(409, { ok: false, error: "busy", message: "This receipt is being sent already." });
   }
-  const link = r.channel === "email" ? "" : await billLink(sale.id);
-  const message = billMessage(r.channel, { sale, items: items.data || [], payments: payments.data || [], shop: profile.data || {}, customer, link,
+  const link = r.channel === "email" ? null : await billLink(sale.id);
+  const message = billMessage(r.channel, { sale, items: items.data || [], payments: payments.data || [], shop: profile.data || {}, customer, link: link && link.url || "",
     linkParam: String(Deno.env.get("WHATSAPP_LINK_PARAM") || "").toLowerCase() === "on" });
 
   // written by the function only (the app can read these rows, not write them). Take a place first, then count: if two

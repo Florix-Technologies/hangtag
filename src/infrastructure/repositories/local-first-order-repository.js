@@ -12,6 +12,12 @@ export function createLocalFirstOrderRepository({ store, persist, outbox }){
     list: () => Object.values(orders()),
     get: id => orders()[id] || null,
     save(o){ orders()[o.id] = o; persist.saveOrders(); outbox.enqueue({ type: "order", id: o.id }); return o; },
+    /* A table order's step in the kitchen (or cancelled): kept here and sent on its own ("ostatus" → RPC hangtag_order_status:
+       the kitchen moves an order along, it never edits it) */
+    setStatus(id, status, t){ const o = orders()[id]; if(!o) return null; orders()[id] = { ...o, status, updatedT: t }; persist.saveOrders(); outbox.enqueue({ type: "ostatus", id, status }); return orders()[id]; },
+    /* Paying a table bill retires all of that session's tickets locally. The sale's database trigger performs the same
+       transition atomically in the cloud, so this consequence is not a second queued/permissioned kitchen action. */
+    closeSessionOrders(sessionIds, t){ const ids=new Set(sessionIds||[]); let n=0; Object.values(orders()).forEach(o=>{ if(o.kind==="table"&&ids.has(o.sessionId)&&!["served","cancelled"].includes(o.status)){ orders()[o.id]={...o,status:"served",updatedT:t}; n++; } }); if(n) persist.saveOrders(); return n; },
     /* The cloud took a save: the version it holds now (the next save is made on it) */
     saved(id, version){ const o = orders()[id]; if(o && version > (+o.version || 0)){ o.version = version; persist.saveOrders(); } },
     heldList: () => Object.values(held()),

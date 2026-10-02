@@ -74,7 +74,8 @@ const counts = async () => (await q1(`SELECT (SELECT count(*) FROM public.hangta
 
 // ---------- 1. PDF upload → review ----------
 await run('setTab("stock")'); await sleep(200);
-await A.click('.vh-acts [data-act="billimport"]'); await sleep(200);
+await run('setTab("stock");renderAll()'); await sleep(150);
+await A.$eval('#v-stock .vh-acts [data-act="billimport"]', (b) => b.click()); await sleep(200);
 check('Stock page has "Upload bill"; it offers camera, gallery and PDF', (await A.$$('.bi-pick input[data-bifile]')).length === 3
   && !!(await A.$('.bi-pick input[capture="environment"]')) && !!(await A.$('.bi-pick input[accept^="application/pdf"]')));
 await A.screenshot({ path: H.ARTIFACTS + '/bi1_pick.png' });
@@ -175,7 +176,7 @@ await run('billImport=null;closeModal()');
 // ---------- 6. the reading service isn't set up ----------
 await A.click('.vh-acts [data-act="billimport"]'); await sleep(200);
 await (await A.$('.bi-pick input[accept^="application/pdf"]')).uploadFile(PDF2);
-check('no API key on the server → a plain message and "enter by hand"', await until('billImport&&billImport.step==="pick"&&billImport.err') && /isn't set up yet/.test(await A.$eval('.billimp', (e) => e.textContent)) && !!(await A.$('[data-bi="manual"]')));
+check('no API key on the server → the original stays attached and "enter by hand" is offered', await until('billImport&&billImport.step==="failed"&&billImport.err', 30000) && /isn't set up yet/.test(await A.$eval('.billimp', (e) => e.textContent)) && !!(await A.$('[data-bi="manual"]')));
 
 await browser.close(); await pg.db.close();
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');

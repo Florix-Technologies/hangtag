@@ -16,9 +16,6 @@ html.gated body{overflow:hidden}
 .authcard button:disabled{opacity:.6;cursor:progress}
 .author{display:flex;align-items:center;gap:12px;margin:18px 0 14px;color:var(--ink-3);font-size:12.5px;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
 .author::before,.author::after{content:"";flex:1;height:1px;background:var(--line)}
-.authtabs{display:flex;gap:3px;background:var(--wash);padding:4px;border-radius:12px;margin-bottom:16px}
-.authtabs button{flex:1;display:flex;align-items:center;justify-content:center;padding:9px 6px;border-radius:9px;font-weight:600;font-size:14.5px;color:var(--ink-2)}
-.authtabs button[aria-pressed="true"]{background:var(--bg);color:var(--ink);box-shadow:0 0 0 1px var(--line),var(--shadow-sm)}
 .authfine .link{font-size:13px;padding:0 2px}
 .authform{display:flex;flex-direction:column;gap:12px;text-align:left}
 .authform .f input,.authform .f select,.authform .f textarea{font-size:16px;padding:11px 12px}
@@ -26,7 +23,8 @@ html.gated body{overflow:hidden}
 .authlinks{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px 10px;margin-top:10px;min-height:8px}
 .authlinks .link{font-size:13.5px}
 .emailchip{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--wash);font-size:14px;font-weight:600;color:var(--ink);word-break:break-all}
-.authfine{margin:16px 0 0;color:var(--ink-3);font-size:12.5px;line-height:1.5;text-align:center}
+.authfine{margin:14px 0 0;color:var(--ink-3);font-size:12.5px;line-height:1.5;text-align:center}
+.authfine+.authfine{margin-top:7px}
 .authnote{margin:14px 0 0;padding:10px 12px;border-radius:10px;background:var(--good-soft);color:var(--good-ink);font-size:13.5px;line-height:1.45}
 .autherr{margin:14px 0 0;padding:10px 12px;border-radius:10px;background:var(--crit-soft);color:var(--crit);font-size:13.5px;line-height:1.45}
 .authcenter{text-align:center;margin-top:12px}
@@ -67,4 +65,3 @@ html.gated body{overflow:hidden}
 .kv dt{color:var(--ink-3)} .kv dd{margin:0;word-break:break-all}
 @media (max-width:520px){.kv{grid-template-columns:1fr}.kv dd{margin-bottom:6px}}
 .setactions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
-

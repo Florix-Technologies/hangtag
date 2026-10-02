@@ -5,7 +5,7 @@ import { DUE, payLabel, paymentProgress, paymentsOf, settlePayments } from '../.
 import { checkCollection, collectionLabel, customerAccount, dueRefundRoom, outstandingByCustomer } from '../../src/domain/customers/credit.js';
 import { bankBook, cashBook, financialTransactions, reconcileSale } from '../../src/domain/finance/books.js';
 import { FINAL, ORDER_NEXT, ORDER_STATUSES, canMove, cartBlock, checkHold, checkOrder, convertQuote, fulfil, heldName, isExpired, isFinal, nextStatuses, orderCartLines,
-  orderCheckout, orderDeviceCode, orderNo, remaining, shownStatus, soldFromOrder } from '../../src/domain/orders/orders.js';
+  orderCheckout, orderDeviceCode, orderNo, remaining, shownStatus, soldFromOrder, statusLabel } from '../../src/domain/orders/orders.js';
 import { collectionRow, heldRow, orderArgs, rowToCollection, rowToHeld, rowToOrder, rowToOrderItem, rowToSale, saleRow } from '../../src/infrastructure/supabase/mappers.js';
 import { UPLOAD_PERMISSIONS, dependsOn, uploadAllowed } from '../../src/domain/sync/queue-rules.js';
 import { TAB_PERMISSIONS, roleCan } from '../../src/domain/shop/permissions.js';
@@ -87,11 +87,12 @@ const collections = [{ id: 'k1', cust: 'c1', amount: 200, method: 'cash', t: 500
     && !canMove('quote', 'converted', 'draft') && !canMove('quote', 'cancelled', 'draft') && !canMove('sales', 'completed', 'partial') && canMove('sales', 'confirmed', 'partial') && !canMove('sales', 'partial', 'confirmed'));
   check('every kind lists its statuses, first and final ones', ORDER_STATUSES.quote.length === 6 && ORDER_STATUSES.sales.length === 5 && ORDER_STATUSES.table.includes('preparing')
     && Object.keys(ORDER_NEXT.sales).every((s) => ORDER_STATUSES.sales.includes(s)) && FINAL.sales.includes('completed') && isFinal({ kind: 'quote', status: 'converted' }) && !isFinal({ kind: 'sales', status: 'partial' }));
+  check('sales order lifecycle is labelled Pending → Confirmed → Partly fulfilled → Fulfilled', ['draft', 'confirmed', 'partial', 'completed'].map((s) => statusLabel('sales', s)).join('|') === 'Pending|Confirmed|Partly fulfilled|Fulfilled');
   check('the editor offers only moves a person makes (not converted / partial / completed)', eq(nextStatuses({ kind: 'sales', status: 'confirmed' }), ['confirmed', 'cancelled']) && eq(nextStatuses({ kind: 'quote', status: 'draft' }), ['draft', 'sent', 'accepted', 'cancelled', 'expired']));
   const q = { kind: 'quote', status: 'sent', validUntil: '2026-09-28' };
   check('expired: a draft or sent quotation past its date', isExpired(q, '2026-09-29') && !isExpired(q, '2026-09-28') && shownStatus(q, '2026-09-30') === 'expired' && !isExpired({ ...q, status: 'accepted' }, '2026-10-30'));
   const o = { kind: 'quote', status: 'draft', cust: { id: 'c1', name: 'Riya' }, billDisc: { type: 'percent', value: 10 },
-    items: [{ ln: 0, name: 'Tee', q: 2, price: 500, gst: 5, disc: { type: 'fixed', value: 100 } }, { ln: 1, name: 'Cap', q: 1.5, price: 200, gst: 12 }] };
+    items: [{ ln: 0, name: 'Tee', q: 2, price: 500, gst: 5, disc: { type: 'fixed', value: 100 } }, { ln: 1, name: 'Rice', q: 1.5, u: 'kg', price: 200, gst: 12 }] };
   const T = orderCheckout(o, { mode: 'intra', inclusive: true });
   check('order totals: the one bill calculation (line and bill discounts, GST in prices)', T.sub === 1300 && T.itemDisc === 100 && T.billDisc === 120 && T.total === 1080 && T.cgst > 0 && T.lines.length === 2, T);
   check('order checks: customer, lines, quantity (3 decimals), price, discounts', checkOrder(o) === null && checkOrder({ ...o, cust: null }).field === 'customer' && checkOrder({ ...o, items: [] }).field === 'items'
@@ -101,14 +102,15 @@ const collections = [{ id: 'k1', cust: 'c1', amount: 200, method: 'cash', t: 500
 }
 // ---------- orders: conversion, billing, partial delivery ----------
 {
-  const q = { id: 'q1', kind: 'quote', no: 'QT-1', status: 'accepted', cust: { id: 'c1', name: 'Riya' }, notes: 'Blue ones', validUntil: '2026-10-10', billDisc: null, version: 3,
-    items: [{ ln: 0, p: 'p1', v: 'p1:a', name: 'Tee', q: 3, price: 500 }, { ln: 4, p: 'p2', v: 'p2:', name: 'Cap', q: 2, price: 200, disc: { type: 'percent', value: 10 } }] };
+  const q = { id: 'q1', kind: 'quote', no: 'QT-1', status: 'accepted', cust: { id: 'c1', name: 'Riya', email: 'riya@example.com', gstin: '27ABCDE1234F1Z5' }, notes: 'Blue ones', terms: 'Net 15', validUntil: '2026-10-10', billDisc: null, version: 3,
+    items: [{ ln: 0, p: 'p1', v: 'p1:a', name: 'Tee', q: 3, u: 'pcs', price: 500, gst: 5 }, { ln: 4, p: 'p2', v: 'p2:', name: 'Rice', q: 2.5, u: 'kg', price: 200, gst: 12, disc: { type: 'percent', value: 10 } }] };
   const r = convertQuote(q, { id: 'so1', no: 'SO-1', t: 10, dev: 'd1' }, '2026-10-01');
-  check('a quotation becomes a sales order: lines copied (renumbered, nothing delivered), confirmed; the quotation is converted', r.order.kind === 'sales' && r.order.status === 'confirmed' && r.order.items.length === 2
-    && r.order.items[1].ln === 1 && r.order.items[1].disc.value === 10 && r.order.items.every((l) => l.fq === 0) && r.order.version === 0 && /From quotation QT-1/.test(r.order.notes)
+  check('a quotation becomes a pending sales order with every commercial field preserved; the quotation is converted', r.order.kind === 'sales' && r.order.status === 'draft' && r.order.items.length === 2
+    && r.order.items[1].ln === 1 && r.order.items[1].disc.value === 10 && r.order.items[1].u === 'kg' && r.order.items[1].gst === 12 && r.order.items.every((l) => l.fq === 0)
+    && r.order.version === 0 && r.order.notes === 'Blue ones' && r.order.terms === 'Net 15' && r.order.quoteId === 'q1' && r.order.quoteNo === 'QT-1' && r.order.cust.email === 'riya@example.com'
     && r.quote.status === 'converted' && r.quote.convertedTo === 'so1');
   check('an expired or final quotation doesn\'t convert', !!convertQuote({ ...q, status: 'sent', validUntil: '2026-09-01' }, { id: 'x' }, '2026-10-01').error && !!convertQuote(r.quote, { id: 'x' }, '2026-10-01').error && !!convertQuote(r.order, { id: 'x' }, '2026-10-01').error);
-  const so = r.order;
+  const so = { ...r.order, status: 'confirmed' };
   check('what can go on a bill: a draft sales order must be confirmed; a final one or one fully delivered can\'t', cartBlock({ ...so, status: 'draft' }, '2026-10-01') === 'Confirm the sales order first.' && cartBlock(so, '2026-10-01') === null
     && !!cartBlock({ ...so, status: 'cancelled' }, '2026-10-01') && !!cartBlock(null) && !!cartBlock({ ...so, kind: 'table' }));
   const { lines, skipped } = orderCartLines(so, (v) => (v === 'p1:a' ? 2 : v === 'p2:' ? 5 : null));
@@ -119,7 +121,7 @@ const collections = [{ id: 'k1', cust: 'c1', amount: 200, method: 'cash', t: 500
   check('what a bill delivered, per order line', eq(soldFromOrder(sale, 'so1'), { 0: 2, 1: 2 }));
   const part = fulfil(so, soldFromOrder(sale, 'so1'), 's9', 20);
   check('partly delivered: the order counts it and lists the bill', part.status === 'partial' && part.items[0].fq === 2 && part.items[1].fq === 2 && remaining(part.items[0]) === 1 && eq(part.saleIds, ['s9']) && so.items[0].fq === 0);
-  const done = fulfil(part, { 0: 5 }, 's10', 30);
+  const done = fulfil(part, { 0: 5, 1: 0.5 }, 's10', 30);
   check('completed when everything is delivered (never more than ordered)', done.status === 'completed' && done.items[0].fq === 3 && eq(done.saleIds, ['s9', 's10']));
   const qb = fulfil(q, { 0: 1 }, 's11', 40);
   check('a quotation billed straight away is converted (to the bill)', qb.status === 'converted' && qb.convertedTo === 's11');
@@ -133,10 +135,10 @@ const collections = [{ id: 'k1', cust: 'c1', amount: 200, method: 'cash', t: 500
   check('collection rows round trip', eq(rowToCollection({ ...collectionRow(c), amount: '250.00' }), c));
   const h = { id: 'h1', name: 'Riya', data: { cart: [{ v: 'p1:', q: 1 }], disc: null, cust: null }, t: 7, dev: 'd1' };
   check('held bill rows round trip', eq(rowToHeld(heldRow(h)), h));
-  const o = { id: 'o1', kind: 'sales', no: 'SO-1', status: 'partial', cust: { id: 'c1', name: 'Riya', phone: '98' }, billDisc: { type: 'percent', value: 5 }, notes: 'n', validUntil: '', source: 'staff',
-    convertedTo: null, saleIds: ['s1'], version: 4, t: 1, updatedT: 2, dev: 'd1', items: [{ ln: 0, p: 'p1', v: 'p1:', name: 'Tee', vl: 'M', q: 1.5, price: 500, gst: 5, fq: 1, disc: { type: 'fixed', value: 10 } }] };
+  const o = { id: 'o1', kind: 'sales', no: 'SO-1', status: 'partial', cust: { id: 'c1', name: 'Riya', phone: '98', email: 'r@example.com', gstin: '27ABCDE1234F1Z5', type: 'business' }, billDisc: { type: 'percent', value: 5 }, notes: 'n', terms: 'Net 15', validUntil: '', source: 'staff',
+    convertedTo: null, quoteId: 'q1', quoteNo: 'QT-1', saleIds: ['s1'], version: 4, t: 1, updatedT: 2, dev: 'd1', items: [{ ln: 0, p: 'p1', v: 'p1:', name: 'Rice', vl: 'M', q: 1.5, u: 'kg', price: 500, gst: 5, fq: 1, disc: { type: 'fixed', value: 10 } }] };
   const A = orderArgs(o);
-  check('order → RPC arguments (the version this device saw, lines with delivered quantities)', A.p_order.version === 4 && A.p_order.customer_id === 'c1' && A.p_order.sale_ids[0] === 's1' && A.p_items[0].qty === 1.5 && A.p_items[0].fulfilled_qty === 1 && A.p_items[0].line_no === 0);
+  check('order → RPC arguments preserve customer, terms, quote provenance, unit and delivered quantities', A.p_order.version === 4 && A.p_order.customer_id === 'c1' && A.p_order.customer.email === 'r@example.com' && A.p_order.terms === 'Net 15' && A.p_order.quote_id === 'q1' && A.p_order.sale_ids[0] === 's1' && A.p_items[0].unit === 'kg' && A.p_items[0].qty === 1.5 && A.p_items[0].fulfilled_qty === 1 && A.p_items[0].line_no === 0);
   const back = rowToOrder({ ...A.p_order, bill_disc: A.p_order.bill_disc, customer: A.p_order.customer }, A.p_items.map((i) => rowToOrderItem({ ...i, qty: String(i.qty), price: '500.00' })));
   check('order rows round trip', eq(back, o), back);
   const s = { id: 's1', t: 1, items: [], sub: 1000, disc: 0, total: 1000, credit: 0, dueAmt: 600, order: 'o1', pay: 'cash', dev: 'd1', payments: [], cust: { id: 'c1', name: 'Riya', phone: '' } };
@@ -247,11 +249,18 @@ const ownerAgain = () => { store.access = null; };
   store.cart = [{ v: 'p2:', p: 'p2', name: 'Cap', q: 1, price: 200 }]; store.cartCust = null; store.disc = null;
   const h2 = holdCart('Second queue');
   check('a name given is kept', h2.held.name === 'Second queue' && discardHeld(h2.held.id).ok && !listHeldCarts().length && !!discardHeld('nope').error);
+  store.cart = [{ v: 'p1:', p: 'p1', name: 'Tee', q: 1, price: 500 }]; store.cartTable = { table: 't1', name: 'T1', sessions: ['ts1'] };
+  check('a table bill cannot be held, so a later unrelated sale can never inherit and close its table session', /table bill can't be held/.test(holdCart().error || '')
+    && store.cart.length === 1 && store.cartTable.table === 't1' && !listHeldCarts().length);
+  store.cartTable = null;
 }
 // quotations and sales orders
 {
   check('the Orders module for the navigation registry: held bills for everyone, quotations and sales orders by capability', ORDERS_MODULE.submodules.map((m) => m.id + ':' + (m.capability || '')).join(',') === 'held:,quote:uses_quotations,sales:uses_sales_orders'
     && orderViews(() => true).length === 3 && orderViews((c) => c !== 'uses_quotations').map((v) => v.id).join() === 'held,sales');
+  store.settings.caps = { uses_quotations: false, uses_sales_orders: false };
+  check('direct order use cases enforce disabled capabilities', /switched off/.test(OU.saveOrder(OU.newOrderDraft('quote', {})).error || ''));
+  delete store.settings.caps;
   member('cashier', ['view_products', 'create_sale', 'perform_return', 'collect_credit']);
   check('saving a quotation needs create_order', !!OU.saveOrder(OU.newOrderDraft('quote', {})).error && !OU.ordersOf('quote').length);
   ownerAgain();
@@ -275,9 +284,18 @@ const ownerAgain = () => { store.access = null; };
   // a line removed and a new one added: numbers aren't reused
   r = OU.saveOrder({ ...OU.orderById(quote.id), items: [OU.orderById(quote.id).items[1], OU.orderLine('p1:', 1)] });
   check('lines keep their numbers; a new line gets the next unused one', r.order.items.map((l) => l.ln).join() === '1,2', r.order.items);
+  const dup = OU.duplicateQuotation(quote.id);
+  check('duplicate makes a fresh draft quotation with the same customer, lines and commercial terms', dup.order.id !== quote.id && dup.order.no !== quote.no && dup.order.status === 'draft' && dup.order.cust.id === quote.cust.id && dup.order.items.length === r.order.items.length && dup.order.items.every((l) => l.fq === 0));
+  store.settings.caps = { uses_sales_orders: false };
+  check('conversion enforces the sales-order capability at the use-case boundary', /switched off/.test(OU.convertToSalesOrder(quote.id).error || '') && OU.orderById(quote.id).status !== 'converted');
+  delete store.settings.caps;
+  const orderedSold = D().sold['p1:'] || 0;
   const cv = OU.convertToSalesOrder(quote.id);
-  check('converted: a confirmed sales order SO-, the quotation converted (both queued)', cv.order.kind === 'sales' && cv.order.status === 'confirmed' && /^SO-/.test(cv.order.no) && OU.orderById(quote.id).status === 'converted' && q('order').length === 2);
+  check('converted: a pending sales order SO-, the quotation converted (both queued)', cv.order.kind === 'sales' && cv.order.status === 'draft' && /^SO-/.test(cv.order.no) && OU.orderById(quote.id).status === 'converted' && q('order').length === 3);
   check('a converted quotation can\'t change any more', !!OU.saveOrder({ ...OU.orderById(quote.id), notes: 'x' }).error);
+  check('a pending sales order cannot be billed', /Confirm/.test(OU.orderToCart(cv.order.id).error || ''));
+  const confirmed = OU.setOrderStatus(cv.order.id, 'confirmed');
+  check('the pending order can be confirmed without touching stock', confirmed.order.status === 'confirmed' && (D().sold['p1:'] || 0) === orderedSold);
   // billing a sales order in parts: stock of Cap is 1 (2 ordered)
   store.cart = [{ v: 'p1:', p: 'p1', name: 'Tee', q: 1, price: 1 }];
   check('an order goes only onto an empty bill', /Finish, hold or clear/.test(OU.orderToCart(cv.order.id).error));
@@ -331,6 +349,7 @@ const ownerAgain = () => { store.access = null; };
 {
   const OP = await import('../../src/features/orders/pages/orders-page.js');
   const OE = await import('../../src/features/orders/components/order-editor.js');
+  const QD = await import('../../src/features/orders/components/quotation-document.js');
   const CA = await import('../../src/features/customers/components/customer-account.js');
   const PS = await import('../../src/features/sales/components/payment-sheet.js');
   const BP = await import('../../src/features/sales/components/bill-panel.js');
@@ -340,9 +359,14 @@ const ownerAgain = () => { store.access = null; };
   check("Orders → Held bills: another till's held bill with Recall", /data-heldrecall="hx"/.test(el.innerHTML) && /Other till/.test(el.innerHTML));
   const so = OU.ordersOf('sales')[0];
   OE.openOrderEditor(so.id);
-  check('the editor draws an order: customer, lines, totals, read-only once completed', /data-ofcust/.test(el.innerHTML) && /ofTotals/.test(el.innerHTML) && !/data-ofsave/.test(el.innerHTML) && /Completed/.test(el.innerHTML), el.innerHTML.slice(0, 300));
+  check('the editor draws an order: customer, lines, totals, read-only once fulfilled', /data-ofcust/.test(el.innerHTML) && /ofTotals/.test(el.innerHTML) && !/data-ofsave/.test(el.innerHTML) && /Fulfilled/.test(el.innerHTML), el.innerHTML.slice(0, 300));
   OE.openOrderEditor(null, 'quote', false);
   check('a new quotation: the product search and Save', /id="ofQ"/.test(el.innerHTML) && /data-ofsave/.test(el.innerHTML) && /Valid until/.test(el.innerHTML));
+  const quoteDoc = OU.ordersOf('quote').find((x) => x.status !== 'converted');
+  if(quoteDoc){
+    const h = QD.quotationHTML({ ...quoteDoc, notes: 'Handle carefully', terms: 'Payment in 15 days' });
+    check('quotation preview is headed QUOTATION, carries its commercial fields, and is never an invoice', /<h1>QUOTATION<\/h1>/.test(h) && /Valid until/.test(h) && /Unit price/.test(h) && /Discount/.test(h) && /Taxable/.test(h) && /GST/.test(h) && /Terms &amp; conditions/.test(h) && !/TAX INVOICE|<h1>INVOICE<\/h1>/i.test(h));
+  }
   check('typing a search lists matching items', OE.orderFormInput({ id: 'ofQ', value: 'tee', dataset: {}, closest: () => el }) && store.orderForm.q === 'tee');
   store.orderForm = null;
   const acc = CA.accountHTML('c1');

@@ -101,6 +101,14 @@ export async function sendItem(item){
     await cloud.cancelPurchase(item.id, item.reason, item.dev, item.t);
   } else if(item.type === "spay"){
     await cloud.saveSupplierPayment(item.pay);
+  } else if(item.type === "table"){
+    await cloud.saveTable(item.table);
+  } else if(item.type === "tsession"){
+    await cloud.saveTableSession(item.session);
+  } else if(item.type === "ostatus"){
+    // a table order moved along by the kitchen: the cloud's new version is kept for this device's next save of it
+    const r = await cloud.setOrderStatus(item.id, item.status);
+    if(r.version) orderRepository().saved(item.id, r.version);
   } else if(item.type === "catdel"){
     // left over from the old size-only version: nothing to do with the new tables
   }

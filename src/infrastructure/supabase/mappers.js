@@ -36,6 +36,7 @@ export function rowToSale(s, items, payments){
     tax:numOr0(s.tax_amount), taxRate:s.tax_rate==null?0:+s.tax_rate, taxIncl:s.tax_inclusive!==false, credit:s.credit||0,
     kind:s.kind||"sale", ex:s.exchange_id||null, pay:s.payment_method, dev:s.device_id, void:s.is_void, ...(s.event_id ? { event:s.event_id } : {}), ...(s.is_void && s.void_reason ? { voidReason:s.void_reason } : {}), ...(s.user_id ? { user:s.user_id } : {}),
     ...(+s.due_amount > 0 ? { dueAmt:+s.due_amount } : {}), ...(s.order_id ? { order:s.order_id } : {}),
+    ...(s.table_id ? { table:s.table_id, session:s.session_id||null } : {}),
     cust:s.customer_id||s.customer_name?Object.assign({id:s.customer_id||null,name:s.customer_name||"",phone:s.customer_phone||""},
       s.customer_gstin?{gstin:s.customer_gstin}:{}, s.customer_type==="business"?{type:"business"}:{}):null };
   if(s.gst_mode) Object.assign(sale, { itemDisc:numOr0(s.item_discount), billDiscAmt:numOr0(s.bill_discount),
@@ -55,7 +56,9 @@ export function saleRow(s){
     round_off:s.roundOff||0, gst_mode:g.mode, place_of_supply:s.gst&&s.gst.pos||null,
     customer_gstin:s.cust&&s.cust.gstin||null, customer_type:s.cust?(s.cust.type==="business"?"business":"individual"):null, event_id:s.event||null,
     // the part left on the customer's account, and the quotation / sales order the bill was made from (section 3m)
-    due_amount:+s.dueAmt>0 ? +s.dueAmt : 0, order_id:s.order||null };
+    due_amount:+s.dueAmt>0 ? +s.dueAmt : 0, order_id:s.order||null,
+    // the restaurant table (and its session) the bill was for (section 3o)
+    table_id:s.table||null, session_id:s.table&&s.session||null };
 }
 export const saleItemRows = s => (s.items||[]).map((i,k)=>{ const d = normalizeDiscount(i.disc); return { sale_id:s.id, line_no:i.ln!=null?i.ln:k, product_id:i.p, variant_id:i.v||null, product_name:i.n,
   color:i.c||"", size:i.s==null?"":i.s, variant_label:i.vl||null, options:ovToRow(i.ov), sku:i.sku||null, quantity:i.q, unit_price:i.price, cost_price:i.cost==null?null:i.cost,
@@ -138,7 +141,7 @@ export const rowToCustomer = r => ({ id:r.id, name:r.name, phone:r.phone||"", em
 
 /* ---------- supplier bill imports ---------- */
 export const rowToImport = r => ({ id:r.id, fileHash:r.file_hash||"", fileName:r.file_name||"", supplier:r.supplier_name||"", gstin:r.supplier_gstin||"",
-  invoiceNo:r.invoice_no||"", invoiceDate:r.invoice_date||"", units:r.units||0, t:Date.parse(r.created_at)||0 });
+  invoiceNo:r.invoice_no||"", invoiceDate:r.invoice_date||"", units:r.units||0, t:Date.parse(r.created_at)||0, ...(r.document_path?{doc:r.document_path}:{}) });
 /* The plan (domain/inventory/bill-import.js planImport) + bill details → the arguments of RPC hangtag_import_stock.
    meta: { id, fileHash, fileName, fileType, supplier, gstin, invoiceNo, invoiceDate, amount, lines, extraction, allowDuplicate } */
 export function toRpcArgs(plan, meta, sortStart = 0){
@@ -157,7 +160,10 @@ export function toRpcArgs(plan, meta, sortStart = 0){
   return {
     p_import: { id:meta.id, file_hash:meta.fileHash||null, file_name:meta.fileName||null, file_type:meta.fileType||null, supplier_name:meta.supplier||null,
       supplier_gstin:meta.gstin||null, invoice_no:meta.invoiceNo||null, invoice_date:/^\d{4}-\d{2}-\d{2}$/.test(meta.invoiceDate||"")?meta.invoiceDate:null,
-      line_count:plan.summary.lines, amount:meta.amount==null?null:meta.amount, lines:meta.lines||[], extraction:meta.extraction||null, device_id:store.dev },
+      line_count:plan.summary.lines, amount:meta.amount==null?null:meta.amount, lines:meta.lines||[], extraction:meta.extraction||null, device_id:store.dev,
+      // section 3p: the original in the cloud, and — with a supplier chosen — the bill recorded as a purchase from them
+      document_path:meta.documentPath||null,
+      ...(meta.purchase ? { kind:"purchase", supplier_id:meta.purchase.supplierId, subtotal:meta.purchase.sub, tax_amount:meta.purchase.tax, total_amount:meta.purchase.total, t:plan.moves[0] ? plan.moves[0].t : Date.now() } : {}) },
     p_products: products, p_variants: variants, p_moves: moves, p_allow_duplicate: !!meta.allowDuplicate,
   };
 }
@@ -184,22 +190,23 @@ export const rowToHeld = r => Object.assign({ id:r.id, name:r.name||"", data:r.d
    device last saw in the cloud (0 for a new order) */
 /* a DATE column: "yyyy-mm-dd" (PostgREST sends the text; a Date object is read as the local day) */
 const dateOnly = v => v instanceof Date ? v.getFullYear()+"-"+String(v.getMonth()+1).padStart(2,"0")+"-"+String(v.getDate()).padStart(2,"0") : v ? String(v).slice(0,10) : "";
-const orderCust = c => c ? Object.assign({ id:c.id||null, name:c.name||"", phone:c.phone||"" }, c.gstin ? { gstin:c.gstin } : {}, c.type==="business" ? { type:"business" } : {}) : null;
+const orderCust = c => c ? Object.assign({ id:c.id||null, name:c.name||"", phone:c.phone||"" }, c.email ? { email:c.email } : {}, c.gstin ? { gstin:c.gstin } : {}, c.type==="business" ? { type:"business" } : {}) : null;
 export const orderArgs = o => ({
   p_order: { id:o.id, kind:o.kind, no:o.no||null, status:o.status, customer_id:o.cust&&o.cust.id||null, customer:orderCust(o.cust), bill_disc:normalizeDiscount(o.billDisc)||null,
-    notes:o.notes||null, valid_until:o.validUntil||null, table_id:o.tableId||null, session_id:o.sessionId||null, source:o.source==="customer"?"customer":"staff",
-    converted_to:o.convertedTo||null, sale_ids:(o.saleIds||[]).slice(), version:+o.version||0, t:o.t, updated_t:o.updatedT||o.t, device_id:o.dev||store.dev },
+    notes:o.notes||null, terms:o.terms||null, valid_until:o.validUntil||null, table_id:o.tableId||null, session_id:o.sessionId||null, source:o.source==="customer"?"customer":"staff",
+    converted_to:o.convertedTo||null, quote_id:o.quoteId||null, quote_no:o.quoteNo||null, sale_ids:(o.saleIds||[]).slice(), version:+o.version||0, t:o.t, updated_t:o.updatedT||o.t, device_id:o.dev||store.dev },
   p_items: (o.items||[]).map((l,k) => { const d = normalizeDiscount(l.disc); return { line_no:l.ln!=null?l.ln:k, product_id:l.p||null, variant_id:l.v||null, name:l.name,
-    variant_label:l.vl||null, qty:+l.q, price:+l.price||0, disc:d||null, gst_rate:l.gst==null||l.gst===""?null:+l.gst, note:l.note||null, fulfilled_qty:+l.fq||0,
+    variant_label:l.vl||null, unit:l.u||"pcs", qty:+l.q, price:+l.price||0, disc:d||null, gst_rate:l.gst==null||l.gst===""?null:+l.gst, note:l.note||null, fulfilled_qty:+l.fq||0,
     serials:Array.isArray(l.serials)&&l.serials.length?l.serials.slice():null }; }),
 });
 export const rowToOrderItem = i => Object.assign({ ln:i.line_no, p:i.product_id||null, v:i.variant_id||null, name:i.name, vl:i.variant_label||"", q:+i.qty, price:+i.price,
   gst:i.gst_rate==null?null:+i.gst_rate, fq:+i.fulfilled_qty||0 }, i.disc&&normalizeDiscount(i.disc) ? { disc:normalizeDiscount(i.disc) } : {}, i.note ? { note:i.note } : {},
+  i.unit&&i.unit!=="pcs" ? { u:i.unit } : {},
   Array.isArray(i.serials)&&i.serials.length ? { serials:i.serials.slice() } : {});
 export const rowToOrder = (r, items) => Object.assign({ id:r.id, kind:r.kind, no:r.no||"", status:r.status, cust:r.customer&&typeof r.customer==="object"&&r.customer.name
     ? orderCust(r.customer) : r.customer_id ? { id:r.customer_id, name:"", phone:"" } : null,
-  billDisc:normalizeDiscount(r.bill_disc)||null, notes:r.notes||"", validUntil:dateOnly(r.valid_until), source:r.source||"staff",
-  convertedTo:r.converted_to||null, saleIds:Array.isArray(r.sale_ids)?r.sale_ids.slice():[], version:+r.version||1, t:Number(r.t), updatedT:Number(r.updated_t||r.t),
+  billDisc:normalizeDiscount(r.bill_disc)||null, notes:r.notes||"", terms:r.terms||"", validUntil:dateOnly(r.valid_until), source:r.source||"staff",
+  convertedTo:r.converted_to||null, quoteId:r.quote_id||null, quoteNo:r.quote_no||"", saleIds:Array.isArray(r.sale_ids)?r.sale_ids.slice():[], version:+r.version||1, t:Number(r.t), updatedT:Number(r.updated_t||r.t),
   dev:r.device_id||"", items:(items||[]).slice().sort((a,b)=>a.ln-b.ln) },
   r.table_id ? { tableId:r.table_id } : {}, r.session_id ? { sessionId:r.session_id } : {}, r.user_id ? { user:r.user_id } : {});
 /* ---------- suppliers, purchases and payments to suppliers (section 3l) ---------- */
@@ -226,8 +233,20 @@ export const rowToPurchase = r => Object.assign({ id:r.id, kind:"purchase", supp
   invoiceNo:r.invoice_no||"", invoiceDate:r.invoice_date?String(r.invoice_date).slice(0,10):"", t:Number(r.t)||Date.parse(r.created_at)||0,
   lines:Array.isArray(r.lines) ? r.lines.map(l => ({ ...l, q:+l.q, cost:+l.cost, gst:+l.gst||0, tx:+l.tx, tax:+l.tax, total:+l.total })) : [],
   sub:+r.subtotal||0, tax:+r.tax_amount||0, total:+r.total_amount||0, paid:+r.paid_amount||0, method:r.payment_method||null, status:r.status==="cancelled"?"cancelled":"posted",
-  note:r.note||"", dev:r.device_id||"" }, r.status === "cancelled" ? { cancelReason:r.cancel_reason||"", cancelledAt:Date.parse(r.cancelled_at)||0 } : {}, r.user_id ? { user:r.user_id } : {});
+  note:r.note||"", dev:r.device_id||"" }, r.status === "cancelled" ? { cancelReason:r.cancel_reason||"", cancelledAt:Date.parse(r.cancelled_at)||0 } : {}, r.user_id ? { user:r.user_id } : {},
+  // a purchase entered from a supplier bill's photo or PDF keeps the original (section 3p)
+  r.document_path ? { doc:r.document_path } : {}, r.file_name ? { fileName:r.file_name } : {});
 export const supplierPaymentRow = x => ({ id:x.id, supplier_id:x.supplierId, purchase_id:x.purchaseId||null, amount:x.amount, method:x.method, reference:x.ref||null,
   note:x.note||null, reverses:x.reverses||null, t:x.t, device_id:x.dev||store.dev });
 export const rowToSupplierPayment = r => Object.assign({ id:r.id, supplierId:r.supplier_id, purchaseId:r.purchase_id||null, amount:+r.amount, method:r.method, ref:r.reference||"",
   note:r.note||"", t:Number(r.t)||0, dev:r.device_id||"" }, r.reverses ? { reverses:r.reverses } : {}, r.user_id ? { user:r.user_id } : {});
+
+/* ---------- a restaurant's tables and their sessions (section 3o) ---------- */
+export const tableRow = t => ({ id:t.id, name:t.name, area:t.area||null, seats:t.seats==null||t.seats===""?null:+t.seats, sort_order:+t.sort||0, active:t.active!==false,
+  qr_token:t.qr, updated_at:new Date().toISOString() });
+export const rowToTable = r => ({ id:r.id, name:r.name, area:r.area||"", seats:r.seats==null?null:+r.seats, sort:+r.sort_order||0, active:r.active!==false, qr:r.qr_token||"",
+  t:Date.parse(r.created_at)||0 });
+export const sessionRow = s => ({ id:s.id, table_id:s.table, status:s.status, opened_t:s.t, closed_t:s.closedT||null, sale_id:s.sale||null, guests:s.guests==null?null:+s.guests,
+  device_id:s.dev||store.dev, updated_at:new Date().toISOString() });
+export const rowToSession = r => Object.assign({ id:r.id, table:r.table_id, status:r.status, t:Number(r.opened_t)||0, dev:r.device_id||"" },
+  r.closed_t ? { closedT:Number(r.closed_t) } : {}, r.sale_id ? { sale:r.sale_id } : {}, r.guests != null ? { guests:+r.guests } : {}, r.user_id ? { user:r.user_id } : {});

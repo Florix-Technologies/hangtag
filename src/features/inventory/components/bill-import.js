@@ -2,7 +2,9 @@
 // Nothing reaches stock until "Confirm & Add to Inventory"; the save is one all-or-nothing step in the cloud.
 import { store } from '../../../shared/state/store.js';
 import { variantsOf } from '../../../domain/catalog/variants.js';
-import { addBlankLine, confirmSupplierBill, fingerprintBill, invoiceDuplicates, planSupplierBill, readSupplierBill, refreshLine } from '../use-cases/import-supplier-bill.js';
+import { addBlankLine, billDocumentLink, confirmSupplierBill, fingerprintBill, invoiceDuplicates, keepBillDocument, planSupplierBill, readSupplierBill, refreshLine } from '../use-cases/import-supplier-bill.js';
+import { suppliersList } from '../services/purchase-state.js';
+import { IMPORT_UNITS } from '../../../domain/catalog/product-import.js';
 import { liveProducts, prod } from '../../products/services/catalog.js';
 import { closeModal } from '../../../shared/components/modal.js';
 import { toast } from '../../../shared/components/toast.js';
@@ -15,8 +17,9 @@ import { renderAll } from '../../../shared/ui/render.js';
 import { uid } from '../../../shared/utils/ids.js';
 import { refuse } from '../../shop/services/access.js';
 
-/* store.billImport = { step: "pick"|"busy"|"dup"|"review"|"summary"|"done", file, fileHash, dups, ext, importId,
-     supplier, gstin, invoiceNo, invoiceDate, lines, filter, plan, invDups, conflict, err, busy, result } */
+/* store.billImport = { step: "pick"|"busy"|"dup"|"failed"|"review"|"summary"|"done", file, fileHash, dups, ext, importId,
+     doc ({ local, cloud, path }: where the original is kept), supplier, gstin, supplierId (recorded as a purchase from them),
+     invoiceNo, invoiceDate, lines, filter, plan, invDups, conflict, err, busy, result } */
 const B = () => store.billImport;
 const numOr = v => { const t = String(v == null ? "" : v).trim().replace(/[₹,%\s]/g, ""); return t === "" || !Number.isFinite(+t) ? null : +t; };
 const fmtDate = t => { try{ return dtLong(t); }catch{ return ""; } };
@@ -60,11 +63,21 @@ export function renderBillImport(){
   if(b.step === "dup") return shell("Add stock from a supplier bill", esc(b.file ? b.file.name : ""),
     dupHTML(b.dups, "The same file was") + `<p class="note">Adding it again would count the same stock twice.</p>`,
     `<div class="sh-acts"><button class="btn sm" data-bi="cancel">Cancel</button><button class="btn sm primary" data-bi="continue">Continue anyway</button></div>`);
+  // reading failed: the bill is kept; read it again, or enter its lines by hand (the original stays attached)
+  if(b.step === "failed") return shell("The bill couldn't be read", esc(b.file ? b.file.name : ""),
+    `<p class="autherr" role="alert">${esc(b.err)}</p>${docHTML(b)}`,
+    `<div class="sh-acts"><button class="btn sm" data-bi="another">Choose another file</button><button class="btn sm" data-bi="manual">Enter the lines by hand</button><button class="btn sm primary" data-bi="retry">Try reading again</button></div>`);
   if(b.step === "review") return renderReview();
   if(b.step === "summary") return renderSummary();
   if(b.step === "done") return shell("Stock added", "", `<div class="bi-busy">${ICON.ok}<b>Stock added: ${b.result.units} piece${b.result.units === 1 ? "" : "s"}${b.invoiceNo ? " from " + esc(b.invoiceNo) : ""}.</b>
-      <span class="note">${b.result.products ? `${b.result.products} new product${b.result.products === 1 ? "" : "s"} · ` : ""}${b.result.variants ? `${b.result.variants} new variant${b.result.variants === 1 ? "" : "s"} · ` : ""}It shows in Stock history as “Supplier bill”.</span></div>`,
+      <span class="note">${b.result.products ? `${b.result.products} new product${b.result.products === 1 ? "" : "s"} · ` : ""}${b.result.variants ? `${b.result.variants} new variant${b.result.variants === 1 ? "" : "s"} · ` : ""}${b.result.purchase ? `Recorded as a purchase from ${esc(b.result.purchase)} (Inventory → Purchases).` : "It shows in Stock history as “Supplier bill”."}</span></div>`,
     `<div class="sh-acts"><button class="btn sm primary" data-bi="close">Done</button></div>`);
+}
+/* Where the original is kept */
+function docHTML(b){
+  if(!b.file) return "";
+  const d = b.doc || {};
+  return `<p class="note bi-doc">Original: <b>${esc(b.file.name || "bill")}</b> · ${d.cloud ? "saved in the cloud ✓" : d.local ? "kept on this device (it goes to the cloud when it can)" : "kept while this screen is open"} <button type="button" class="link xs" data-bi="viewdoc">View</button></p>`;
 }
 
 /* ---------- review ---------- */
@@ -86,6 +99,14 @@ function pickerHTML(l){
   return `<div class="bi-grid"><label class="wide">Product<select data-bipick="${esc(l.id)}"><option value="">Choose a product…</option>${ps.map(x => `<option value="${esc(x.id)}"${p && x.id === p.id ? " selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>
     ${p && (p.opts || []).length ? `<label class="wide">Variant<select data-bivar="${esc(l.id)}"><option value="">Choose…</option>${variantsOf(p).map(v => `<option value="${esc(v.id)}"${v.id === l.targetVariantId && l.action === "existing" ? " selected" : ""}>${esc((v.o || []).join(" / "))}</option>`).join("")}<option value="__new"${l.action === "new-variant" ? " selected" : ""}>+ New variant from this line's options</option></select></label>` : ""}</div>`;
 }
+/* A line of a product tracked by serial number (its serials, one per piece) or by batch (its batch and expiry date) */
+function trackHTML(l){
+  const id = esc(l.id);
+  if(l.tracking === "serial") return `<label class="bi-trk">Serial numbers <small>(one per piece: ${esc(l.qty == null ? "?" : l.qty)})</small><textarea data-bif="snText" data-line="${id}" rows="2" placeholder="One per line, or a range like SN001..SN010">${esc(l.snText || "")}</textarea></label>`;
+  if(l.tracking === "batch") return `<div class="bi-grid bi-trk"><label>Batch no.<input data-bif="bno" data-line="${id}" value="${esc(l.bno || "")}" maxlength="40" autocomplete="off"></label>
+    <label>Expiry${l.expiry ? "" : " <small>(optional)</small>"}<input type="date" data-bif="bexp" data-line="${id}" value="${esc(l.bexp || "")}"></label></div>`;
+  return "";
+}
 function lineHTML(l){
   if(l.include === false) return `<div class="bi-line skip" id="bi-${esc(l.id)}"><div class="bi-top"><span>${esc(l.name || "Line")} · removed</span><button type="button" class="btn xs" data-bi="restore" data-line="${esc(l.id)}">Undo</button></div></div>`;
   const nr = l.needsReview && !l.confirmed, id = esc(l.id);
@@ -96,7 +117,8 @@ function lineHTML(l){
     ${nr && l.reasons.length ? `<p class="bi-reasons">${l.reasons.map(esc).join(" · ")}</p>` : ""}
     <div class="bi-grid">
       ${f("name", "Product", l.name, ' maxlength="120" autocomplete="off"')}
-      ${f("qty", "Quantity", l.qty, ' type="number" inputmode="numeric" min="1"')}
+      ${f("qty", l.dp ? "Quantity (" + esc((IMPORT_UNITS.find(u => u[0] === (prod(l.targetProductId) || l).unit) || ["", "kg"])[1]) + ")" : "Quantity", l.qty, ` type="number" inputmode="${l.dp ? "decimal" : "numeric"}" min="0" step="${l.dp ? "any" : "1"}"`)}
+      ${l.action === "new-product" ? `<label>Unit<select data-bif="unit" data-line="${id}">${IMPORT_UNITS.map(([c, lab]) => `<option value="${esc(c)}"${(l.unit || "pcs") === c ? " selected" : ""}>${esc(lab)}</option>`).join("")}</select></label>` : ""}
       ${f("unitCost", "Cost ₹ / piece", l.unitCost, ' type="number" inputmode="decimal" min="0"')}
       ${f("sellPrice", "Selling price ₹", l.sellPrice, ' type="number" inputmode="numeric" min="0" placeholder="for new items"')}
       ${f("gst", "GST %", l.gst, ' type="number" inputmode="decimal" min="0" max="100"')}
@@ -112,6 +134,7 @@ function lineHTML(l){
       ${l.action !== "new-product" ? `<button type="button" class="btn xs" data-bi="newprod" data-line="${id}">Create new product</button>` : ""}
       <button type="button" class="btn xs" data-bi="pick" data-line="${id}">${l.picking ? "Hide" : "Pick another product"}</button></div>
     ${l.picking ? pickerHTML(l) : ""}
+    ${trackHTML(l)}
     <div class="bi-acts">${nr ? `<button type="button" class="btn xs primary" data-bi="confirm" data-line="${id}">Confirm line</button>` : ""}<button type="button" class="btn xs" data-bi="remove" data-line="${id}">Remove line</button></div>
   </div>`;
 }
@@ -127,12 +150,14 @@ function renderReview(){
       <label class="f"><span class="lab">Supplier GSTIN</span><input data-bih="gstin" value="${esc(b.gstin)}" maxlength="15"></label>
       <label class="f"><span class="lab">Invoice no.</span><input data-bih="invoiceNo" value="${esc(b.invoiceNo)}" maxlength="40"></label>
       <label class="f"><span class="lab">Invoice date</span><input type="date" data-bih="invoiceDate" value="${esc(b.invoiceDate)}"></label>
+      <label class="f"><span class="lab">Record as a purchase from</span><select data-bisup><option value="">— Not a purchase (stock in only) —</option>${suppliersList().map(s => `<option value="${esc(s.id)}"${s.id === b.supplierId ? " selected" : ""}>${esc(s.name)}</option>`).join("")}</select></label>
     </div>
+    ${docHTML(b)}
     <div class="bi-filter" role="group" aria-label="Show">${chips.map(([k, l]) => `<button type="button" class="btn xs" data-bifilter="${k}" aria-pressed="${b.filter === k}">${l}</button>`).join("")}
       ${nr ? `<button type="button" class="btn xs" data-bi="confirmall">Confirm all ${nr}</button>` : ""}</div>
     <div class="bi-lines" id="biLines">${list.length ? list.map(lineHTML).join("") : `<p class="note">No lines here.</p>`}</div>
     <p><button type="button" class="btn xs ghost" data-bi="addline">+ Add a line</button></p>`,
-    `<span class="note">${inc.reduce((a, l) => a + (Number.isInteger(l.qty) && l.qty > 0 ? l.qty : 0), 0)} pieces on ${inc.length} line${inc.length === 1 ? "" : "s"}</span>
+    `<span class="note">${Math.round(inc.reduce((a, l) => a + (Number.isFinite(l.qty) && l.qty > 0 ? l.qty : 0), 0) * 1000) / 1000} units on ${inc.length} line${inc.length === 1 ? "" : "s"}</span>
     <div class="sh-acts"><button class="btn sm" data-bi="cancel">Cancel</button><button class="btn sm primary" data-bi="tosummary"${inc.length ? "" : " disabled"}>Review summary</button></div>`);
 }
 function rerenderLine(l){
@@ -161,6 +186,11 @@ async function chooseFile(file){
   const b = B(); if(!b || !file) return;
   b.file = file; b.err = ""; b.step = "busy"; b.busy = "Checking the bill…"; renderBillImport();
   try{
+    // Keep the original before hashing or extraction: either may fail and the selected bill must still be recoverable.
+    b.busy = "Keeping the bill…"; renderBillImport();
+    b.doc = await keepBillDocument(b.importId, file);
+    if(B() !== b) return;
+    b.busy = "Checking the bill…"; renderBillImport();
     const f = await fingerprintBill(file);
     if(B() !== b) return;
     b.fileHash = f.fileHash; b.dups = f.dups;
@@ -176,14 +206,19 @@ async function extract(){
     b.ext = r.ext; b.lines = r.lines;
     b.supplier = (r.ext.supplier && r.ext.supplier.name) || ""; b.gstin = (r.ext.supplier && r.ext.supplier.gstin) || "";
     b.invoiceNo = (r.ext.invoice && r.ext.invoice.number) || ""; b.invoiceDate = (r.ext.invoice && r.ext.invoice.date) || "";
+    // a supplier the shop already has (by GSTIN, else by name): the bill is recorded as a purchase from them (it can be changed)
+    const g = String(b.gstin || "").trim().toUpperCase(), nm = String(b.supplier || "").trim().toLowerCase();
+    const known = suppliersList().find(s => (g && s.gstin && s.gstin.toUpperCase() === g) || (nm && s.name.toLowerCase() === nm));
+    if(known && !b.supplierId) b.supplierId = known.id;
     if(!b.lines.length){ b.lines = [addBlankLine()]; toast("No product lines were found. Add them by hand."); }
     b.step = "review"; b.filter = b.lines.some(l => l.needsReview) ? "review" : "all"; renderBillImport();
   }catch(e){
     logger.warn("Bill reading failed:", e);
     if(B() !== b) return;
-    b.step = "pick";
-    b.err = isAppError(e) && e.code === ERROR_CODES.NOT_CONFIGURED ? "Reading bills isn't set up yet (the extract-bill function needs its API key). You can enter the lines by hand."
-      : (isAppError(e) ? e.message : "The bill couldn't be read.") + " You can try another photo, or enter the lines by hand.";
+    // the bill stays: read it again, enter its lines by hand (it stays attached), or choose another file
+    b.step = "failed";
+    b.err = isAppError(e) && e.code === ERROR_CODES.NOT_CONFIGURED ? "Reading bills isn't set up yet (the extract-bill function needs its API key). Enter the lines by hand: the bill stays attached."
+      : (isAppError(e) ? e.message : "The bill couldn't be read.") + " Try reading it again, or enter the lines by hand: the bill stays attached.";
     renderBillImport();
   }
 }
@@ -198,7 +233,8 @@ async function commit(allowDuplicate){
   b.saving = true; b.err = ""; b.step = "busy"; b.busy = "Adding stock…"; renderBillImport();
   try{
     const res = await confirmSupplierBill(b, b.plan, { allowDuplicate });
-    b.result = { units: b.plan.summary.units, products: b.plan.summary.productsToCreate, variants: b.plan.summary.variantsToCreate, status: res && res.status };
+    const sup = b.supplierId && suppliersList(true).find(s => s.id === b.supplierId);
+    b.result = { units: b.plan.summary.units, products: b.plan.summary.productsToCreate, variants: b.plan.summary.variantsToCreate, status: res && res.status, purchase: sup ? sup.name : "" };
     b.step = "done"; renderAll(); renderBillImport();
     toast(`Stock added: ${b.plan.summary.units} piece${b.plan.summary.units === 1 ? "" : "s"}${b.invoiceNo ? " from " + b.invoiceNo : ""}.`);
   }catch(e){
@@ -223,6 +259,11 @@ export function billImportClick(t){
     case "cancel": if(b.step === "review" && b.lines.length > 1 && !confirm("Close without adding this bill? Your review will be lost.")) return true; store.billImport = null; closeModal(); break;
     case "close": store.billImport = null; closeModal(); break;
     case "continue": extract(); break;
+    case "retry": extract(); break;
+    case "another": b.step = "pick"; b.err = ""; b.file = null; b.doc = null; b.fileHash = ""; b.importId = "imp" + uid(); renderBillImport(); break;
+    case "viewdoc": billDocumentLink(b.importId, b.doc && b.doc.cloud ? b.doc.path : "").then(r => {
+        const url = r.url || (b.file ? URL.createObjectURL(b.file) : ""); if(url) window.open(url, "_blank", "noopener"); else toast(r.error || "The original isn't available."); }); break;
+    // by hand: the chosen file (if any) stays attached to the bill
     case "manual": b.lines = [addBlankLine()]; b.ext = null; b.step = "review"; renderBillImport(); break;
     case "addline": { const n = addBlankLine(); b.lines.push(n); b.filter = "all"; renderReview(); const x = document.querySelector(`#bi-${CSS.escape(n.id)} input`); if(x) x.focus(); break; }
     case "confirmall": b.lines.forEach(x => { if(x.include !== false) x.confirmed = true; }); renderReview(); break;
@@ -233,8 +274,8 @@ export function billImportClick(t){
     case "confirm": if(l){ l.confirmed = true; rerenderLine(l); } break;
     case "remove": if(l){ l.include = false; rerenderLine(l); } break;
     case "restore": if(l){ l.include = true; rerenderLine(l); } break;
-    case "existing": if(l){ l.decided = true; l.action = "existing"; l.targetProductId = l.match.productId; l.targetVariantId = l.match.variantId; rerenderLine(l); } break;
-    case "newprod": if(l){ l.decided = true; l.action = "new-product"; l.targetProductId = ""; l.targetVariantId = ""; rerenderLine(l); } break;
+    case "existing": if(l){ l.decided = true; l.action = "existing"; l.targetProductId = l.match.productId; l.targetVariantId = l.match.variantId; refreshLine(l); rerenderLine(l); } break;
+    case "newprod": if(l){ l.decided = true; l.action = "new-product"; l.targetProductId = ""; l.targetVariantId = ""; refreshLine(l); rerenderLine(l); } break;
     case "pick": if(l){ l.picking = !l.picking; rerenderLine(l); } break;
     case "addopt": if(l){ l.options.push({ n: "", v: "" }); rerenderLine(l); const ins = document.querySelectorAll(`#bi-${CSS.escape(l.id)} [data-biopt]`); if(ins.length) ins[ins.length - 2].focus(); } break;
     case "rmopt": if(l){ l.options.splice(+el.dataset.i, 1); refreshLine(l); rerenderLine(l); } break;
@@ -264,13 +305,15 @@ export async function billImportChange(t){
     l.decided = true; l.targetProductId = p ? p.id : "";
     if(p && !(p.opts || []).length){ l.action = "existing"; l.targetVariantId = (variantsOf(p)[0] || {}).id || ""; }
     else { l.action = p ? "" : l.action; l.targetVariantId = ""; }
-    rerenderLine(l); return true;
+    refreshLine(l); rerenderLine(l); return true;
   }
   if(t.dataset.bivar){
     const l = lineOf(t.dataset.bivar); if(!l) return true;
     l.decided = true;
     if(t.value === "__new"){ l.action = "new-variant"; l.targetVariantId = ""; } else { l.action = t.value ? "existing" : ""; l.targetVariantId = t.value; }
-    rerenderLine(l); return true;
+    refreshLine(l); rerenderLine(l); return true;
   }
+  // the bill recorded as a purchase from this supplier (or not)
+  if(t.matches("[data-bisup]")){ b.supplierId = t.value; return true; }
   return false;
 }

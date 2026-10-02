@@ -3656,7 +3656,676 @@ REVOKE ALL ON FUNCTION public.hangtag_batch_left(UUID, TEXT, TEXT), public.hangt
 -- ------------------------------------------------------------------------------
 -- 3o. Restaurant: tables, sessions, table orders, kitchen (W2-B)
 -- ------------------------------------------------------------------------------
--- (reserved: this batch's SQL goes here)
+--   A restaurant's tables, the sessions at them (guests seated until their bill is paid) and the kitchen. Nothing here is a
+--   second billing engine: a table's orders are orders of kind 'table' (section 3m: new → accepted → preparing → ready →
+--   served, or cancelled), they never change stock, and the bill is the ordinary bill (hangtag_sales, now with the table
+--   and session it was for); paying it closes the session, so the table is free again.
+--   · hangtag_tables: name, area, seats, in use or not, and qr_token — what the table's QR code carries: it identifies the
+--     shop's table and nothing else (no password or key). A new token makes the old QR stop working.
+--   · hangtag_table_sessions: open → billing → closed (with the bill). A closed session stays closed.
+--   · RPC hangtag_order_status: the kitchen moves a table order along (forward only; any step not yet served can be
+--     cancelled) without being able to edit it; a step another screen already passed changes nothing.
+--   · Guests ordering from the table's QR (no sign-in): RPC hangtag_table_menu (the menu: names, options, prices — never
+--     stock, costs, suppliers or anything else of the shop) and RPC hangtag_place_table_order (a table order for the
+--     table's session, priced from the catalog, at most 10 orders per table in 10 minutes). Both only while the shop has
+--     the capabilities on (public.hangtag_cap_on: the business type's defaults with the shop's own choices, section 3j).
+-- (a) Tables and their sessions
+CREATE TABLE IF NOT EXISTS public.hangtag_tables (
+    owner_id UUID NOT NULL DEFAULT public.hangtag_shop_id() REFERENCES auth.users(id) ON DELETE CASCADE,
+    id TEXT NOT NULL CHECK (char_length(id) BETWEEN 1 AND 64),
+    name TEXT NOT NULL CHECK (char_length(btrim(name)) BETWEEN 1 AND 20),
+    area TEXT CHECK (area IS NULL OR char_length(area) <= 30),
+    seats INTEGER CHECK (seats IS NULL OR seats BETWEEN 1 AND 99),
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    qr_token TEXT NOT NULL CHECK (qr_token ~ '^[A-Za-z0-9_-]{32,64}$'),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (owner_id, id),
+    CONSTRAINT hangtag_tables_qr_key UNIQUE (qr_token)
+);
+-- a name is used once among the tables in use
+CREATE UNIQUE INDEX IF NOT EXISTS uq_hangtag_tables_name ON public.hangtag_tables (owner_id, lower(btrim(name))) WHERE active;
+CREATE TABLE IF NOT EXISTS public.hangtag_table_sessions (
+    owner_id UUID NOT NULL DEFAULT public.hangtag_shop_id() REFERENCES auth.users(id) ON DELETE CASCADE,
+    id TEXT NOT NULL CHECK (char_length(id) BETWEEN 1 AND 64),
+    table_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','billing','closed')),
+    opened_t BIGINT NOT NULL,
+    closed_t BIGINT,
+    sale_id TEXT,
+    guests INTEGER CHECK (guests IS NULL OR guests BETWEEN 1 AND 99),
+    device_id TEXT,
+    user_id UUID DEFAULT auth.uid(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (owner_id, id),
+    CONSTRAINT hangtag_table_sessions_table_fkey FOREIGN KEY (owner_id, table_id) REFERENCES public.hangtag_tables (owner_id, id),
+    CONSTRAINT hangtag_table_sessions_closed_check CHECK ((status = 'closed') = (closed_t IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_hangtag_table_sessions_live ON public.hangtag_table_sessions (owner_id, table_id) WHERE status <> 'closed';
+CREATE INDEX IF NOT EXISTS idx_hangtag_table_sessions_closed ON public.hangtag_table_sessions (owner_id, closed_t) WHERE closed_t IS NOT NULL;
+DROP TRIGGER IF EXISTS hangtag_stamp_user_id ON public.hangtag_table_sessions;
+CREATE TRIGGER hangtag_stamp_user_id BEFORE INSERT ON public.hangtag_table_sessions FOR EACH ROW EXECUTE FUNCTION public.hangtag_stamp_user_id();
+-- a closed session stays as it was closed (a phone uploading an older copy changes nothing); a session keeps its table
+CREATE OR REPLACE FUNCTION public.hangtag_session_check()
+RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
+BEGIN
+    IF OLD.status = 'closed' THEN RETURN OLD; END IF;
+    IF NEW.table_id <> OLD.table_id THEN RAISE EXCEPTION 'A table session keeps its table.' USING ERRCODE = 'check_violation'; END IF;
+    NEW.user_id := OLD.user_id;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_session_check ON public.hangtag_table_sessions;
+CREATE TRIGGER hangtag_session_check BEFORE UPDATE ON public.hangtag_table_sessions FOR EACH ROW EXECUTE FUNCTION public.hangtag_session_check();
+-- the orders of a table's session are found by it
+CREATE INDEX IF NOT EXISTS idx_hangtag_orders_session ON public.hangtag_orders (owner_id, session_id) WHERE session_id IS NOT NULL;
+
+-- (b) Bills of a table: the table and session they were for
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS table_id TEXT;
+ALTER TABLE public.hangtag_sales ADD COLUMN IF NOT EXISTS session_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_hangtag_sales_session ON public.hangtag_sales (owner_id, session_id) WHERE session_id IS NOT NULL;
+-- Saving bills (as section 3n) now keeps the table and session of a table's bill
+CREATE OR REPLACE FUNCTION public.hangtag_save_sales(p_bills JSONB)
+RETURNS JSONB LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+DECLARE
+    uid UUID := public.hangtag_shop_id();
+    member BOOLEAN;
+    b JSONB;
+    s public.hangtag_sales;
+    voided BOOLEAN;
+    due NUMERIC;
+    paid NUMERIC;
+    n INT := 0;
+BEGIN
+    IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Sign in to save bills.' USING ERRCODE = '42501'; END IF;
+    IF uid IS NULL OR NOT public.hangtag_can('create_sale') THEN RAISE EXCEPTION 'Not allowed to save bills.' USING ERRCODE = '42501'; END IF;
+    member := uid <> auth.uid();
+    FOR b IN SELECT * FROM jsonb_array_elements(COALESCE(p_bills, '[]'::jsonb)) LOOP
+        s := jsonb_populate_record(NULL::public.hangtag_sales, b -> 'sale');
+        IF COALESCE(s.id, '') = '' THEN RAISE EXCEPTION 'A bill has no id.' USING ERRCODE = '22023'; END IF;
+        IF member AND EXISTS (SELECT 1 FROM public.hangtag_sales x WHERE x.owner_id = uid AND x.id = s.id) THEN n := n + 1; CONTINUE; END IF;
+        INSERT INTO public.hangtag_sales (id, timestamp, subtotal, discount, total, payment_method, device_id, is_void, bill_no,
+            customer_id, customer_name, customer_phone, tax_rate, tax_amount, tax_inclusive, kind, exchange_id, credit,
+            item_discount, bill_discount, bill_discount_type, bill_discount_value, taxable_amount, cgst_amount, sgst_amount, igst_amount,
+            round_off, gst_mode, place_of_supply, customer_gstin, customer_type, event_id, due_amount, order_id, table_id, session_id)
+        VALUES (s.id, s.timestamp, COALESCE(s.subtotal, 0), COALESCE(s.discount, 0), COALESCE(s.total, 0), s.payment_method, s.device_id,
+            COALESCE(s.is_void, FALSE), s.bill_no, s.customer_id, s.customer_name, s.customer_phone, COALESCE(s.tax_rate, 0),
+            COALESCE(s.tax_amount, 0), COALESCE(s.tax_inclusive, TRUE), COALESCE(s.kind, 'sale'), s.exchange_id, COALESCE(s.credit, 0),
+            COALESCE(s.item_discount, 0), COALESCE(s.bill_discount, 0), s.bill_discount_type, s.bill_discount_value, s.taxable_amount,
+            COALESCE(s.cgst_amount, 0), COALESCE(s.sgst_amount, 0), COALESCE(s.igst_amount, 0), COALESCE(s.round_off, 0),
+            s.gst_mode, s.place_of_supply, s.customer_gstin, s.customer_type, s.event_id, COALESCE(s.due_amount, 0), s.order_id, s.table_id, s.session_id)
+        ON CONFLICT (owner_id, id) DO UPDATE SET timestamp = EXCLUDED.timestamp, subtotal = EXCLUDED.subtotal, discount = EXCLUDED.discount,
+            total = EXCLUDED.total, payment_method = EXCLUDED.payment_method, device_id = EXCLUDED.device_id, is_void = EXCLUDED.is_void, void_reason = CASE WHEN EXCLUDED.is_void THEN hangtag_sales.void_reason END,
+            bill_no = EXCLUDED.bill_no, customer_id = EXCLUDED.customer_id, customer_name = EXCLUDED.customer_name,
+            customer_phone = EXCLUDED.customer_phone, tax_rate = EXCLUDED.tax_rate, tax_amount = EXCLUDED.tax_amount,
+            tax_inclusive = EXCLUDED.tax_inclusive, kind = EXCLUDED.kind, exchange_id = EXCLUDED.exchange_id, credit = EXCLUDED.credit,
+            item_discount = EXCLUDED.item_discount, bill_discount = EXCLUDED.bill_discount, bill_discount_type = EXCLUDED.bill_discount_type,
+            bill_discount_value = EXCLUDED.bill_discount_value, taxable_amount = EXCLUDED.taxable_amount, cgst_amount = EXCLUDED.cgst_amount,
+            sgst_amount = EXCLUDED.sgst_amount, igst_amount = EXCLUDED.igst_amount, round_off = EXCLUDED.round_off, gst_mode = EXCLUDED.gst_mode,
+            place_of_supply = EXCLUDED.place_of_supply, customer_gstin = EXCLUDED.customer_gstin, customer_type = EXCLUDED.customer_type,
+            event_id = EXCLUDED.event_id, due_amount = EXCLUDED.due_amount, order_id = EXCLUDED.order_id, table_id = EXCLUDED.table_id, session_id = EXCLUDED.session_id;
+        INSERT INTO public.hangtag_sale_items (sale_id, line_no, product_id, product_name, size, quantity, unit_price, variant_id, color, sku,
+            cost_price, variant_label, options, discount_type, discount_value, discount_amount, bill_discount_share, taxable_value, gst_rate,
+            cgst_amount, sgst_amount, igst_amount, line_total, hsn, serials, batches)
+        SELECT s.id, i.line_no, i.product_id, i.product_name, COALESCE(i.size, ''), COALESCE(i.quantity, 1), COALESCE(i.unit_price, 0),
+            i.variant_id, COALESCE(i.color, ''), i.sku, i.cost_price, i.variant_label, i.options, i.discount_type, i.discount_value,
+            COALESCE(i.discount_amount, 0), COALESCE(i.bill_discount_share, 0), i.taxable_value, i.gst_rate, COALESCE(i.cgst_amount, 0),
+            COALESCE(i.sgst_amount, 0), COALESCE(i.igst_amount, 0), i.line_total, i.hsn, i.serials, i.batches
+        FROM jsonb_populate_recordset(NULL::public.hangtag_sale_items, COALESCE(b -> 'items', '[]'::jsonb)) i
+        ON CONFLICT (owner_id, sale_id, line_no) DO UPDATE SET product_id = EXCLUDED.product_id, product_name = EXCLUDED.product_name,
+            size = EXCLUDED.size, quantity = EXCLUDED.quantity, unit_price = EXCLUDED.unit_price, variant_id = EXCLUDED.variant_id,
+            color = EXCLUDED.color, sku = EXCLUDED.sku, cost_price = EXCLUDED.cost_price, variant_label = EXCLUDED.variant_label,
+            options = EXCLUDED.options, discount_type = EXCLUDED.discount_type, discount_value = EXCLUDED.discount_value,
+            discount_amount = EXCLUDED.discount_amount, bill_discount_share = EXCLUDED.bill_discount_share, taxable_value = EXCLUDED.taxable_value,
+            gst_rate = EXCLUDED.gst_rate, cgst_amount = EXCLUDED.cgst_amount, sgst_amount = EXCLUDED.sgst_amount,
+            igst_amount = EXCLUDED.igst_amount, line_total = EXCLUDED.line_total, hsn = EXCLUDED.hsn, serials = EXCLUDED.serials, batches = EXCLUDED.batches;
+        SELECT x.is_void, GREATEST(x.total - x.credit - x.due_amount, 0) INTO voided, due FROM public.hangtag_sales x WHERE x.owner_id = uid AND x.id = s.id;
+        DELETE FROM public.hangtag_payments p WHERE p.owner_id = uid AND p.sale_id = s.id
+           AND p.id NOT IN (SELECT y ->> 'id' FROM jsonb_array_elements(COALESCE(b -> 'payments', '[]'::jsonb)) y);
+        INSERT INTO public.hangtag_payments (id, sale_id, method, amount, tendered, change_given, reference, status, t, device_id,
+            verification, via, intent_id, provider_payment_id, card_last4)
+        SELECT p.id, s.id, p.method, p.amount, p.tendered, COALESCE(p.change_given, 0), NULLIF(btrim(p.reference), ''),
+            CASE WHEN voided THEN 'cancelled' ELSE 'completed' END, COALESCE(p.t, s.timestamp), p.device_id,
+            COALESCE(p.verification, 'recorded'), p.via, p.intent_id, p.provider_payment_id, NULLIF(btrim(p.card_last4), '')
+        FROM jsonb_populate_recordset(NULL::public.hangtag_payments, COALESCE(b -> 'payments', '[]'::jsonb)) p
+        ON CONFLICT (owner_id, id) DO UPDATE SET method = EXCLUDED.method, amount = EXCLUDED.amount, tendered = EXCLUDED.tendered,
+            change_given = EXCLUDED.change_given, reference = EXCLUDED.reference, status = EXCLUDED.status, t = EXCLUDED.t,
+            device_id = EXCLUDED.device_id, via = EXCLUDED.via, card_last4 = EXCLUDED.card_last4,
+            -- a payment the provider verified (section 3h) stays verified when the phone uploads the bill again
+            verification = CASE WHEN hangtag_payments.verification = 'verified' THEN 'verified' ELSE EXCLUDED.verification END,
+            intent_id = COALESCE(EXCLUDED.intent_id, hangtag_payments.intent_id),
+            provider_payment_id = COALESCE(EXCLUDED.provider_payment_id, hangtag_payments.provider_payment_id);
+        SELECT COALESCE(SUM(amount), 0) INTO paid FROM public.hangtag_payments WHERE owner_id = uid AND sale_id = s.id;
+        IF paid <> due THEN
+            RAISE EXCEPTION 'The payments on bill % come to % but % is due', COALESCE(s.bill_no, s.id), paid, due USING ERRCODE = 'check_violation';
+        END IF;
+        n := n + 1;
+    END LOOP;
+    RETURN jsonb_build_object('status', 'saved', 'bills', n);
+END $$;
+REVOKE ALL ON FUNCTION public.hangtag_save_sales(JSONB) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.hangtag_save_sales(JSONB) TO authenticated;
+
+-- (c) Is a capability on for a shop? The business type's defaults (domain/shop/capabilities.js DEFAULT_CAPS: the restaurant
+--     ones are on for a hotel / restaurant) with the shop's own choices (hangtag_meta 'settings' value.caps), and one that
+--     builds on another is off while that one is (Table QR needs Table ordering; guests ordering needs Table QR; server
+--     ordering needs Table ordering). Only the restaurant capabilities are known here (the database checks only those).
+CREATE OR REPLACE FUNCTION public.hangtag_cap_on(p_owner UUID, p_cap TEXT)
+RETURNS BOOLEAN LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    kind TEXT;
+    caps JSONB;
+    v BOOLEAN;
+    need TEXT;
+BEGIN
+    SELECT CASE WHEN lower(btrim(COALESCE(business_type, ''))) = 'restaurant' OR lower(COALESCE(business_type, '')) ~ '(restaurant|hotel|cafe|café|food)'
+                THEN 'restaurant' ELSE 'other' END INTO kind
+      FROM public.hangtag_profiles WHERE id = p_owner;
+    SELECT m.value -> 'caps' INTO caps FROM public.hangtag_meta m WHERE m.owner_id = p_owner AND m.key = 'settings';
+    IF caps IS NOT NULL AND jsonb_typeof(caps) = 'object' AND jsonb_typeof(caps -> p_cap) = 'boolean' THEN v := (caps ->> p_cap)::BOOLEAN;
+    ELSE v := COALESCE(kind, 'other') = 'restaurant' AND p_cap IN ('uses_tables','uses_table_qr','uses_customer_ordering','uses_server_ordering','uses_kitchen');
+    END IF;
+    need := CASE p_cap WHEN 'uses_table_qr' THEN 'uses_tables' WHEN 'uses_customer_ordering' THEN 'uses_table_qr' WHEN 'uses_server_ordering' THEN 'uses_tables' END;
+    IF v AND need IS NOT NULL THEN v := public.hangtag_cap_on(p_owner, need); END IF;
+    RETURN COALESCE(v, FALSE);
+END $$;
+
+-- (d) The kitchen moves a table order along (or a server marks it served, or it is cancelled). Forward only: new →
+--     accepted → preparing → ready → served (a step may be skipped); any step not yet served can be cancelled. A step the
+--     order already passed (another screen was quicker) changes nothing. Kitchen steps need manage_kitchen or create_order;
+--     served and cancelled also send_to_kitchen. → { status, version }
+CREATE OR REPLACE FUNCTION public.hangtag_order_status(p_id TEXT, p_status TEXT)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    uid UUID := public.hangtag_shop_id();
+    o public.hangtag_orders;
+    flow CONSTANT TEXT[] := ARRAY['new','accepted','preparing','ready','served'];
+    a INT;
+    b INT;
+    ver INT;
+BEGIN
+    IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Sign in to change orders.' USING ERRCODE = '42501'; END IF;
+    IF uid IS NULL OR NOT (public.hangtag_can('manage_kitchen') OR public.hangtag_can('create_order') OR public.hangtag_can('send_to_kitchen')) THEN
+        RAISE EXCEPTION 'Not allowed to change table orders.' USING ERRCODE = '42501';
+    END IF;
+    IF p_status IN ('accepted','preparing','ready') AND NOT (public.hangtag_can('manage_kitchen') OR public.hangtag_can('create_order')) THEN
+        RAISE EXCEPTION 'Not allowed to move orders in the kitchen.' USING ERRCODE = '42501';
+    END IF;
+    IF p_status IS NULL OR NOT (p_status = ANY (flow) OR p_status = 'cancelled') THEN RAISE EXCEPTION 'Unknown step: %', p_status USING ERRCODE = '22023'; END IF;
+    SELECT * INTO o FROM public.hangtag_orders WHERE owner_id = uid AND id = p_id FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'That order isn''t in the cloud yet.' USING ERRCODE = '23503'; END IF;
+    IF o.kind <> 'table' THEN RAISE EXCEPTION 'Only table orders go through the kitchen.' USING ERRCODE = 'check_violation'; END IF;
+    a := array_position(flow, o.status); b := array_position(flow, p_status);
+    IF o.status = p_status OR o.status IN ('served','cancelled') OR (p_status <> 'cancelled' AND (a IS NULL OR b <= a)) THEN
+        RETURN jsonb_build_object('status', o.status, 'version', o.version, 'changed', false);
+    END IF;
+    UPDATE public.hangtag_orders SET status = p_status, version = version + 1, updated_t = (extract(epoch FROM now()) * 1000)::BIGINT, updated_at = NOW()
+     WHERE owner_id = uid AND id = p_id RETURNING version INTO ver;
+    RETURN jsonb_build_object('status', p_status, 'version', ver, 'changed', true);
+END $$;
+
+-- (e) Guests ordering from the table's QR code (no sign-in: the token is the table). The menu: what is on sale, with its
+--     options and price — nothing about stock, costs, suppliers, staff or money. → { ok, shop, table, ordering, items, categories }
+CREATE OR REPLACE FUNCTION public.hangtag_table_menu(p_token TEXT)
+RETURNS JSONB LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    tb public.hangtag_tables;
+    shop TEXT;
+    items JSONB;
+    cats JSONB;
+BEGIN
+    IF p_token IS NULL OR p_token !~ '^[A-Za-z0-9_-]{32,64}$' THEN
+        RETURN jsonb_build_object('ok', false, 'message', 'This table''s QR code isn''t valid. Please ask the staff.');
+    END IF;
+    SELECT * INTO tb FROM public.hangtag_tables WHERE qr_token = p_token AND active;
+    IF NOT FOUND OR NOT public.hangtag_cap_on(tb.owner_id, 'uses_table_qr') THEN
+        RETURN jsonb_build_object('ok', false, 'message', 'This QR code isn''t in use any more. Please ask the staff.');
+    END IF;
+    SELECT shop_name INTO shop FROM public.hangtag_profiles WHERE id = tb.owner_id;
+    SELECT COALESCE(jsonb_agg(x.j ORDER BY x.o), '[]'::jsonb) INTO items FROM (
+        SELECT jsonb_build_object('v', v.id, 'name', p.name,
+                   'vl', (SELECT string_agg(e.x, ' / ' ORDER BY e.o) FROM jsonb_array_elements_text(v.option_values) WITH ORDINALITY AS e(x, o)),
+                   'price', COALESCE(v.price, p.price), 'cat', NULLIF(btrim(COALESCE(p.category, '')), '')) AS j,
+               row_number() OVER (ORDER BY lower(COALESCE(p.category, 'zzz')), p.sort_order, lower(p.name), v.sort_order, v.id) AS o
+          FROM public.hangtag_products p JOIN public.hangtag_variants v ON v.owner_id = p.owner_id AND v.product_id = p.id
+         WHERE p.owner_id = tb.owner_id AND NOT p.archived AND v.active
+         LIMIT 1000) x;
+    SELECT COALESCE(jsonb_agg(c ORDER BY lower(c)), '[]'::jsonb) INTO cats FROM (
+        SELECT DISTINCT btrim(p.category) AS c FROM public.hangtag_products p WHERE p.owner_id = tb.owner_id AND NOT p.archived AND btrim(COALESCE(p.category, '')) <> '') z;
+    RETURN jsonb_build_object('ok', true, 'shop', COALESCE(NULLIF(btrim(shop), ''), 'Menu'), 'table', tb.name,
+        'ordering', public.hangtag_cap_on(tb.owner_id, 'uses_customer_ordering'), 'items', items, 'categories', cats);
+END $$;
+-- A guest's order: items [{ v (a variant on sale), q (1-50), note? }], priced from the catalog (never from the phone);
+-- it joins the table's session (a new one when nobody is seated). → { ok, order_no, table } or { ok: false, message }
+CREATE OR REPLACE FUNCTION public.hangtag_place_table_order(p_token TEXT, p_items JSONB, p_note TEXT DEFAULT NULL, p_name TEXT DEFAULT NULL, p_phone TEXT DEFAULT NULL)
+RETURNS JSONB LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    tb public.hangtag_tables;
+    sid TEXT;
+    oid TEXT := 'oq' || substr(md5(random()::text || clock_timestamp()::text), 1, 24);
+    now_ms BIGINT := (extract(epoch FROM now()) * 1000)::BIGINT;
+    it JSONB;
+    q NUMERIC;
+    vr RECORD;
+    ln INT := 0;
+    n INT;
+    no TEXT;
+    nm TEXT := left(btrim(regexp_replace(COALESCE(p_name, ''), '[[:cntrl:]]', ' ', 'g')), 60);
+    ph TEXT := left(regexp_replace(COALESCE(p_phone, ''), '[^0-9+]', '', 'g'), 15);
+BEGIN
+    IF p_token IS NULL OR p_token !~ '^[A-Za-z0-9_-]{32,64}$' THEN
+        RETURN jsonb_build_object('ok', false, 'message', 'This table''s QR code isn''t valid. Please ask the staff.');
+    END IF;
+    -- Serialize guest orders for this table. The lock covers throttling and session selection, so concurrent scans
+    -- cannot bypass the per-table rate limit or open duplicate QR sessions.
+    SELECT * INTO tb FROM public.hangtag_tables WHERE qr_token = p_token AND active FOR UPDATE;
+    IF NOT FOUND OR NOT public.hangtag_cap_on(tb.owner_id, 'uses_customer_ordering') THEN
+        RETURN jsonb_build_object('ok', false, 'message', 'Ordering from your phone isn''t available here. Please order with the staff.');
+    END IF;
+    IF jsonb_typeof(COALESCE(p_items, 'null'::jsonb)) <> 'array' OR jsonb_array_length(p_items) NOT BETWEEN 1 AND 50 THEN
+        RETURN jsonb_build_object('ok', false, 'message', 'Add from 1 to 50 items to your order.');
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM jsonb_array_elements(p_items) AS x(item)
+         GROUP BY x.item ->> 'v'
+        HAVING count(*) > 1
+    ) THEN
+        RETURN jsonb_build_object('ok', false, 'message', 'Choose each menu item only once.');
+    END IF;
+    IF (SELECT count(*) FROM public.hangtag_orders o WHERE o.owner_id = tb.owner_id AND o.table_id = tb.id AND o.source = 'customer' AND o.created_at > NOW() - interval '10 minutes') >= 10 THEN
+        RETURN jsonb_build_object('ok', false, 'message', 'Many orders came from this table just now. Please ask the staff.');
+    END IF;
+    -- Once staff start billing, the bill's line snapshot is already fixed. A new guest order must not be attached to that
+    -- session (or be closed by its sale without being charged).
+    IF EXISTS (SELECT 1 FROM public.hangtag_table_sessions s WHERE s.owner_id = tb.owner_id AND s.table_id = tb.id AND s.status = 'billing') THEN
+        RETURN jsonb_build_object('ok', false, 'message', 'This table is being billed. Please ask the staff.');
+    END IF;
+    SELECT s.id INTO sid FROM public.hangtag_table_sessions s WHERE s.owner_id = tb.owner_id AND s.table_id = tb.id AND s.status = 'open' ORDER BY s.opened_t LIMIT 1;
+    IF sid IS NULL THEN
+        sid := 'tsq' || substr(md5(random()::text || clock_timestamp()::text), 1, 24);
+        INSERT INTO public.hangtag_table_sessions (owner_id, id, table_id, status, opened_t, device_id) VALUES (tb.owner_id, sid, tb.id, 'open', now_ms, 'qr');
+    END IF;
+    SELECT count(*) + 1 INTO n FROM public.hangtag_orders o WHERE o.owner_id = tb.owner_id AND o.source = 'customer' AND o.created_at >= date_trunc('day', NOW());
+    no := 'QR-' || to_char(NOW() AT TIME ZONE 'Asia/Kolkata', 'YYMMDD') || '-' || lpad(n::text, 3, '0');
+    INSERT INTO public.hangtag_orders (owner_id, id, kind, no, status, customer, notes, table_id, session_id, source, version, t, updated_t, device_id, user_id)
+    VALUES (tb.owner_id, oid, 'table', no, 'new', CASE WHEN nm <> '' OR ph <> '' THEN jsonb_build_object('name', nm, 'phone', ph) END,
+            NULLIF(left(btrim(regexp_replace(COALESCE(p_note, ''), '[[:cntrl:]]', ' ', 'g')), 200), ''), tb.id, sid, 'customer', 1, now_ms, now_ms, 'qr', NULL);
+    FOR it IN SELECT x FROM jsonb_array_elements(p_items) x LOOP
+        q := CASE WHEN jsonb_typeof(it -> 'q') = 'number' THEN (it ->> 'q')::NUMERIC END;
+        IF q IS NULL OR q <= 0 OR q > 50 OR q <> round(q, 3) THEN RAISE EXCEPTION 'Choose from 1 to 50 of each item.' USING ERRCODE = 'check_violation'; END IF;
+        q := round(q, 3);
+        SELECT v.id, v.product_id, p.name, COALESCE(v.price, p.price) AS price, p.gst_rate,
+               (SELECT string_agg(e.x, ' / ' ORDER BY e.o) FROM jsonb_array_elements_text(v.option_values) WITH ORDINALITY AS e(x, o)) AS vl
+          INTO vr FROM public.hangtag_variants v JOIN public.hangtag_products p ON p.owner_id = v.owner_id AND p.id = v.product_id
+         WHERE v.owner_id = tb.owner_id AND v.id = it ->> 'v' AND v.active AND NOT p.archived;
+        IF NOT FOUND THEN RAISE EXCEPTION 'An item on your order isn''t available any more. Please look at the menu again.' USING ERRCODE = 'check_violation'; END IF;
+        INSERT INTO public.hangtag_order_items (owner_id, order_id, line_no, product_id, variant_id, name, variant_label, qty, price, gst_rate, note)
+        VALUES (tb.owner_id, oid, ln, vr.product_id, vr.id, vr.name, vr.vl, q, vr.price, vr.gst_rate,
+                NULLIF(left(btrim(regexp_replace(COALESCE(it ->> 'note', ''), '[[:cntrl:]]', ' ', 'g')), 120), ''));
+        ln := ln + 1;
+    END LOOP;
+    RETURN jsonb_build_object('ok', true, 'order_no', no, 'table', tb.name);
+END $$;
+
+-- (f) What changed in credit, held carts, orders and now tables (a team member's phone polls it: section 3i (h))
+CREATE OR REPLACE FUNCTION public.hangtag_order_changes()
+RETURNS JSONB LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
+    SELECT jsonb_build_object(
+        'orders', (SELECT count(*) || ':' || COALESCE(sum(hashtext(o.id || '|' || o.version::text || '|' || o.status)), 0) FROM public.hangtag_orders o),
+        'held', (SELECT count(*) || ':' || COALESCE(sum(hashtext(h.id || '|' || h.t::text)), 0) FROM public.hangtag_held_carts h),
+        'credit', (SELECT count(*) || ':' || COALESCE(sum(hashtext(c.id || '|' || c.status)), 0) FROM public.hangtag_collections c),
+        'tables', (SELECT count(*) || ':' || COALESCE(sum(hashtext(t.id || '|' || t.updated_at::text)), 0) FROM public.hangtag_tables t)
+                || '/' || (SELECT count(*) || ':' || COALESCE(sum(hashtext(s.id || '|' || s.status)), 0) FROM public.hangtag_table_sessions s WHERE s.status <> 'closed'))
+$$;
+
+-- (g) Audit (section 3i (e)): tables added, changed or removed; sessions opened and closed
+DROP TRIGGER IF EXISTS hangtag_audit ON public.hangtag_tables;
+CREATE TRIGGER hangtag_audit AFTER INSERT OR DELETE ON public.hangtag_tables FOR EACH ROW EXECUTE FUNCTION public.hangtag_audit();
+DROP TRIGGER IF EXISTS hangtag_audit_change ON public.hangtag_tables;
+CREATE TRIGGER hangtag_audit_change AFTER UPDATE ON public.hangtag_tables FOR EACH ROW WHEN (OLD.* IS DISTINCT FROM NEW.*) EXECUTE FUNCTION public.hangtag_audit();
+DROP TRIGGER IF EXISTS hangtag_audit_change ON public.hangtag_table_sessions;
+CREATE TRIGGER hangtag_audit_change AFTER UPDATE OF status ON public.hangtag_table_sessions FOR EACH ROW
+    WHEN (OLD.status IS DISTINCT FROM NEW.status) EXECUTE FUNCTION public.hangtag_audit();
+
+-- (h) Who may use them (row security: section 5): the shop reads its tables and sessions; tables are set up with
+--     manage_settings; sessions are opened and closed by whoever seats guests, takes orders or bills. Signed-out visitors
+--     reach only the two guest functions.
+REVOKE ALL ON TABLE public.hangtag_tables, public.hangtag_table_sessions FROM anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.hangtag_tables, public.hangtag_table_sessions TO authenticated;
+REVOKE ALL ON FUNCTION public.hangtag_order_status(TEXT, TEXT), public.hangtag_order_changes() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.hangtag_order_status(TEXT, TEXT), public.hangtag_order_changes() TO authenticated;
+REVOKE ALL ON FUNCTION public.hangtag_table_menu(TEXT), public.hangtag_place_table_order(TEXT, JSONB, TEXT, TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.hangtag_table_menu(TEXT), public.hangtag_place_table_order(TEXT, JSONB, TEXT, TEXT, TEXT) TO anon, authenticated;
+REVOKE ALL ON FUNCTION public.hangtag_cap_on(UUID, TEXT), public.hangtag_session_check() FROM PUBLIC, anon, authenticated;
+DO $$
+DECLARE t TEXT;
+BEGIN
+    FOREACH t IN ARRAY ARRAY['hangtag_tables','hangtag_table_sessions'] LOOP
+        BEGIN
+            EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I', t);
+        EXCEPTION WHEN OTHERS THEN
+            NULL; -- already added (or realtime not available)
+        END;
+    END LOOP;
+END $$;
+
+-- ------------------------------------------------------------------------------
+-- 3p. Wave 3 completion: commercial documents and supplier-bill originals
+-- ------------------------------------------------------------------------------
+-- Additive and rerunnable. Quotations and sales orders keep their commercial snapshots; imports still add stock only
+-- through ledger moves; table bills still use the existing billing engine.
+
+-- (a) Capabilities in database entry points. These are the same business defaults and dependencies as the client.
+CREATE OR REPLACE FUNCTION public.hangtag_cap_on(p_owner UUID, p_cap TEXT)
+RETURNS BOOLEAN LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE raw TEXT; kind TEXT; caps JSONB; v BOOLEAN; need TEXT;
+BEGIN
+    SELECT lower(btrim(COALESCE(business_type, ''))) INTO raw FROM public.hangtag_profiles WHERE id = p_owner;
+    kind := CASE
+        WHEN raw IN ('retail','grocery','restaurant','electronics','other') THEN raw
+        WHEN raw ~ '(restaurant|hotel|cafe|café|food)' THEN 'restaurant'
+        WHEN raw ~ '(grocer|kirana|supermarket)' THEN 'grocery'
+        WHEN raw ~ '(electronic|mobile)' THEN 'electronics'
+        WHEN raw = 'other' THEN 'other'
+        ELSE 'retail' END;
+    SELECT m.value -> 'caps' INTO caps FROM public.hangtag_meta m WHERE m.owner_id = p_owner AND m.key = 'settings';
+    IF caps IS NOT NULL AND jsonb_typeof(caps) = 'object' AND jsonb_typeof(caps -> p_cap) = 'boolean' THEN v := (caps ->> p_cap)::BOOLEAN;
+    ELSE v := CASE p_cap
+        WHEN 'uses_variants' THEN kind IN ('retail','grocery','electronics','other')
+        WHEN 'uses_serials' THEN kind = 'electronics'
+        WHEN 'uses_batches' THEN kind = 'grocery'
+        WHEN 'uses_expiry' THEN kind = 'grocery'
+        WHEN 'uses_weight' THEN kind = 'grocery'
+        WHEN 'uses_quotations' THEN kind IN ('retail','grocery','electronics')
+        WHEN 'uses_sales_orders' THEN kind IN ('retail','grocery','electronics')
+        WHEN 'uses_tables' THEN kind = 'restaurant'
+        WHEN 'uses_table_qr' THEN kind = 'restaurant'
+        WHEN 'uses_customer_ordering' THEN kind = 'restaurant'
+        WHEN 'uses_server_ordering' THEN kind = 'restaurant'
+        WHEN 'uses_kitchen' THEN kind = 'restaurant'
+        ELSE FALSE END;
+    END IF;
+    need := CASE p_cap WHEN 'uses_table_qr' THEN 'uses_tables' WHEN 'uses_customer_ordering' THEN 'uses_table_qr'
+        WHEN 'uses_server_ordering' THEN 'uses_tables' WHEN 'uses_kitchen' THEN 'uses_tables' END;
+    IF v AND need IS NOT NULL THEN v := public.hangtag_cap_on(p_owner, need); END IF;
+    RETURN COALESCE(v, FALSE);
+END $$;
+
+-- (b) Quotations and sales orders: terms, their source quotation, and the agreed unit on every line.
+ALTER TABLE public.hangtag_orders ADD COLUMN IF NOT EXISTS terms TEXT;
+ALTER TABLE public.hangtag_orders ADD COLUMN IF NOT EXISTS quote_id TEXT;
+ALTER TABLE public.hangtag_orders ADD COLUMN IF NOT EXISTS quote_no TEXT;
+ALTER TABLE public.hangtag_orders DROP CONSTRAINT IF EXISTS hangtag_orders_terms_check;
+ALTER TABLE public.hangtag_orders ADD CONSTRAINT hangtag_orders_terms_check CHECK (terms IS NULL OR char_length(terms) <= 2000) NOT VALID;
+ALTER TABLE public.hangtag_orders DROP CONSTRAINT IF EXISTS hangtag_orders_quote_check;
+ALTER TABLE public.hangtag_orders ADD CONSTRAINT hangtag_orders_quote_check CHECK ((quote_id IS NULL AND quote_no IS NULL) OR kind = 'sales') NOT VALID;
+ALTER TABLE public.hangtag_order_items ADD COLUMN IF NOT EXISTS unit TEXT NOT NULL DEFAULT 'pcs';
+UPDATE public.hangtag_order_items SET unit = 'pcs' WHERE unit IS NULL;
+ALTER TABLE public.hangtag_order_items DROP CONSTRAINT IF EXISTS hangtag_order_items_unit_check;
+ALTER TABLE public.hangtag_order_items ADD CONSTRAINT hangtag_order_items_unit_check CHECK (unit IN ('pcs','box','pack','dozen','kg','g','l','ml','m')) NOT VALID;
+
+CREATE OR REPLACE FUNCTION public.hangtag_save_order(p_order JSONB, p_items JSONB)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    uid UUID := public.hangtag_shop_id(); o public.hangtag_orders; cur public.hangtag_orders;
+    base INT := COALESCE(NULLIF(p_order ->> 'version', '')::INT, 0);
+    fp TEXT := md5((COALESCE(p_order, '{}'::jsonb) - 'version' - 'updated_t')::text || '|' || COALESCE(p_items, '[]'::jsonb)::text);
+    ver INT; n INT;
+BEGIN
+    IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Sign in to save orders.' USING ERRCODE = '42501'; END IF;
+    IF uid IS NULL OR NOT public.hangtag_can('create_order') THEN RAISE EXCEPTION 'Not allowed to save orders.' USING ERRCODE = '42501'; END IF;
+    o := jsonb_populate_record(NULL::public.hangtag_orders, p_order);
+    IF COALESCE(o.id, '') = '' THEN RAISE EXCEPTION 'An order has no id.' USING ERRCODE = '22023'; END IF;
+    IF o.kind = 'quote' AND NOT public.hangtag_cap_on(uid, 'uses_quotations') THEN RAISE EXCEPTION 'Quotations are switched off for this shop.' USING ERRCODE = '42501'; END IF;
+    IF o.kind = 'sales' AND NOT public.hangtag_cap_on(uid, 'uses_sales_orders') THEN RAISE EXCEPTION 'Sales orders are switched off for this shop.' USING ERRCODE = '42501'; END IF;
+    IF o.kind = 'table' AND NOT public.hangtag_cap_on(uid, 'uses_tables') THEN RAISE EXCEPTION 'Table ordering is switched off for this shop.' USING ERRCODE = '42501'; END IF;
+    IF o.kind <> 'table' AND (o.customer_id IS NULL OR COALESCE(btrim(o.customer ->> 'name'), '') = '') THEN RAISE EXCEPTION 'Choose the customer.' USING ERRCODE = 'check_violation'; END IF;
+    IF o.quote_id IS NOT NULL AND (o.kind <> 'sales' OR NOT EXISTS (SELECT 1 FROM public.hangtag_orders q WHERE q.owner_id = uid AND q.id = o.quote_id AND q.kind = 'quote')) THEN
+        RAISE EXCEPTION 'The source quotation was not found in this shop.' USING ERRCODE = 'foreign_key_violation';
+    END IF;
+    IF jsonb_typeof(COALESCE(p_items, '[]'::jsonb)) <> 'array' OR jsonb_array_length(COALESCE(p_items, '[]'::jsonb)) = 0 THEN RAISE EXCEPTION 'An order needs at least one line.' USING ERRCODE = 'check_violation'; END IF;
+    IF EXISTS (SELECT 1 FROM jsonb_populate_recordset(NULL::public.hangtag_order_items, p_items) i
+        WHERE i.qty <= 0 OR (i.unit IN ('pcs','box','pack','dozen','g','ml') AND i.qty <> trunc(i.qty))
+           OR (i.unit = 'm' AND i.qty <> round(i.qty, 2)) OR (i.unit IN ('kg','l') AND i.qty <> round(i.qty, 3))) THEN
+        RAISE EXCEPTION 'An order line has a quantity its unit cannot use.' USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT * INTO cur FROM public.hangtag_orders x WHERE x.owner_id = uid AND x.id = o.id FOR UPDATE;
+    IF FOUND THEN
+        IF cur.version <> base THEN
+            IF cur.version = base + 1 AND cur.save_hash = fp THEN RETURN jsonb_build_object('status', 'saved', 'order', cur.id, 'version', cur.version,
+                'lines', (SELECT count(*) FROM public.hangtag_order_items i WHERE i.owner_id = uid AND i.order_id = cur.id)); END IF;
+            RAISE EXCEPTION 'Order % was changed on another device (this phone had version %, the cloud has %). Discard this change and open the order again.',
+                COALESCE(cur.no, cur.id), base, cur.version USING ERRCODE = '40001';
+        END IF;
+        IF o.kind IS DISTINCT FROM cur.kind THEN RAISE EXCEPTION 'An order can''t change its kind.' USING ERRCODE = 'check_violation'; END IF;
+        IF cur.status IN ('cancelled','converted','completed','served') THEN RAISE EXCEPTION 'Order % is % and can''t be changed.', COALESCE(cur.no, cur.id), cur.status USING ERRCODE = 'check_violation'; END IF;
+        IF NOT public.hangtag_order_next_ok(cur.kind, cur.status, o.status) THEN RAISE EXCEPTION 'An order that is % can''t become %.', cur.status, o.status USING ERRCODE = 'check_violation'; END IF;
+        IF EXISTS (SELECT 1 FROM public.hangtag_order_items i LEFT JOIN jsonb_populate_recordset(NULL::public.hangtag_order_items, p_items) x ON x.line_no = i.line_no
+            WHERE i.owner_id = uid AND i.order_id = cur.id AND i.fulfilled_qty > 0 AND COALESCE(x.fulfilled_qty, 0) < i.fulfilled_qty) THEN
+            RAISE EXCEPTION 'What was already delivered on order % can''t be taken off it.', COALESCE(cur.no, cur.id) USING ERRCODE = 'check_violation';
+        END IF;
+        ver := cur.version + 1;
+        UPDATE public.hangtag_orders SET no=o.no,status=o.status,customer_id=o.customer_id,customer=o.customer,bill_disc=o.bill_disc,
+            notes=o.notes,terms=o.terms,valid_until=o.valid_until,table_id=o.table_id,session_id=o.session_id,converted_to=o.converted_to,
+            quote_id=o.quote_id,quote_no=o.quote_no,sale_ids=COALESCE(o.sale_ids,'{}'),version=ver,updated_t=o.updated_t,
+            device_id=o.device_id,save_hash=fp,updated_at=NOW() WHERE owner_id=uid AND id=cur.id;
+    ELSE
+        IF base <> 0 THEN RAISE EXCEPTION 'Order % is no longer in the cloud. Discard this change.', COALESCE(o.no,o.id) USING ERRCODE = '40001'; END IF;
+        ver := 1;
+        INSERT INTO public.hangtag_orders (owner_id,id,kind,no,status,customer_id,customer,bill_disc,notes,terms,valid_until,table_id,session_id,
+            source,converted_to,quote_id,quote_no,sale_ids,version,t,updated_t,device_id,user_id,save_hash)
+        VALUES (uid,o.id,o.kind,o.no,o.status,o.customer_id,o.customer,o.bill_disc,o.notes,o.terms,o.valid_until,o.table_id,o.session_id,
+            COALESCE(o.source,'staff'),o.converted_to,o.quote_id,o.quote_no,COALESCE(o.sale_ids,'{}'),ver,
+            COALESCE(o.t,(extract(epoch FROM now())*1000)::BIGINT),o.updated_t,o.device_id,auth.uid(),fp);
+    END IF;
+    DELETE FROM public.hangtag_order_items i WHERE i.owner_id=uid AND i.order_id=o.id
+       AND i.line_no NOT IN (SELECT (y->>'line_no')::INT FROM jsonb_array_elements(p_items) y);
+    INSERT INTO public.hangtag_order_items (owner_id,order_id,line_no,product_id,variant_id,name,variant_label,unit,qty,price,disc,gst_rate,note,fulfilled_qty,serials)
+    SELECT uid,o.id,i.line_no,i.product_id,i.variant_id,i.name,i.variant_label,COALESCE(i.unit,'pcs'),i.qty,COALESCE(i.price,0),i.disc,i.gst_rate,i.note,COALESCE(i.fulfilled_qty,0),i.serials
+      FROM jsonb_populate_recordset(NULL::public.hangtag_order_items,p_items) i
+    ON CONFLICT (owner_id,order_id,line_no) DO UPDATE SET product_id=EXCLUDED.product_id,variant_id=EXCLUDED.variant_id,name=EXCLUDED.name,
+        variant_label=EXCLUDED.variant_label,unit=EXCLUDED.unit,qty=EXCLUDED.qty,price=EXCLUDED.price,disc=EXCLUDED.disc,gst_rate=EXCLUDED.gst_rate,
+        note=EXCLUDED.note,fulfilled_qty=EXCLUDED.fulfilled_qty,serials=EXCLUDED.serials;
+    SELECT count(*) INTO n FROM public.hangtag_order_items i WHERE i.owner_id=uid AND i.order_id=o.id;
+    RETURN jsonb_build_object('status','saved','order',o.id,'version',ver,'lines',n);
+END $$;
+REVOKE ALL ON FUNCTION public.hangtag_save_order(JSONB, JSONB) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.hangtag_save_order(JSONB, JSONB) TO authenticated;
+
+-- (c) A supplier bill's original is private and belongs to the same shop folder as its import record.
+ALTER TABLE public.hangtag_stock_imports ADD COLUMN IF NOT EXISTS document_path TEXT;
+ALTER TABLE public.hangtag_stock_imports DROP CONSTRAINT IF EXISTS hangtag_stock_imports_document_check;
+ALTER TABLE public.hangtag_stock_imports ADD CONSTRAINT hangtag_stock_imports_document_check CHECK (document_path IS NULL OR
+    (char_length(document_path) BETWEEN 38 AND 300 AND split_part(document_path, '/', 1) = owner_id::TEXT)) NOT VALID;
+
+-- A saved purchase may acquire its original after a temporarily failed Storage upload. It cannot then be replaced.
+CREATE OR REPLACE FUNCTION public.hangtag_purchase_check()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        IF OLD.kind = 'purchase' AND EXISTS (SELECT 1 FROM auth.users u WHERE u.id = OLD.owner_id) THEN RAISE EXCEPTION 'A purchase can''t be removed. Cancel it instead.' USING ERRCODE = '42501'; END IF;
+        RETURN OLD;
+    END IF;
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.kind = 'purchase' THEN
+            IF auth.uid() IS NOT NULL THEN NEW.user_id := auth.uid(); END IF;
+            IF NEW.status <> 'posted' THEN RAISE EXCEPTION 'A new purchase is saved as posted.' USING ERRCODE = 'check_violation'; END IF;
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF OLD.kind = 'purchase' OR NEW.kind = 'purchase' THEN
+        IF (to_jsonb(NEW)-'status'-'cancel_reason'-'cancelled_at'-'document_path') IS DISTINCT FROM (to_jsonb(OLD)-'status'-'cancel_reason'-'cancelled_at'-'document_path') THEN
+            RAISE EXCEPTION 'A saved purchase can''t be changed. Cancel it and enter it again.' USING ERRCODE = '42501';
+        END IF;
+        IF OLD.document_path IS NOT NULL AND NEW.document_path IS DISTINCT FROM OLD.document_path THEN RAISE EXCEPTION 'A purchase''s original document can''t be replaced.' USING ERRCODE = '42501'; END IF;
+        IF (NEW.status,NEW.cancel_reason,NEW.cancelled_at) IS DISTINCT FROM (OLD.status,OLD.cancel_reason,OLD.cancelled_at)
+           AND (OLD.status <> 'posted' OR COALESCE(current_setting('hangtag.cancel_purchase',true),'') <> OLD.id) THEN
+            RAISE EXCEPTION 'A purchase is cancelled only with Cancel purchase (it takes its stock back), and only once.' USING ERRCODE = '42501';
+        END IF;
+    END IF;
+    RETURN NEW;
+END $$;
+
+-- Products/variants, tracked ledger moves, the purchase record and document link are one transaction. Section 3n's
+-- triggers remain the source of truth for serial and batch availability.
+CREATE OR REPLACE FUNCTION public.hangtag_import_stock(p_import JSONB, p_products JSONB, p_variants JSONB, p_moves JSONB, p_allow_duplicate BOOLEAN DEFAULT FALSE)
+RETURNS JSONB LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+DECLARE
+    uid UUID := public.hangtag_shop_id(); imp TEXT := p_import->>'id'; d RECORD; r JSONB;
+    n_p INT:=0; n_v INT:=0; n_m INT:=0; n_units NUMERIC:=0; q NUMERIC;
+    inv TEXT:=lower(btrim(COALESCE(p_import->>'invoice_no',''))); gst TEXT:=lower(btrim(COALESCE(p_import->>'supplier_gstin',''))); sup TEXT:=lower(btrim(COALESCE(p_import->>'supplier_name','')));
+    tr TEXT; u TEXT; dp INT; keeps_expiry BOOLEAN; sns TEXT[]; bno TEXT; bexp DATE;
+    k TEXT:=CASE WHEN p_import->>'kind'='purchase' THEN 'purchase' ELSE 'import' END;
+    sid TEXT:=NULLIF(btrim(COALESCE(p_import->>'supplier_id','')),''); ls JSONB:=COALESCE(p_import->'lines','[]'::jsonb);
+    sub NUMERIC:=round(COALESCE((p_import->>'subtotal')::NUMERIC,0),2); tax NUMERIC:=round(COALESCE((p_import->>'tax_amount')::NUMERIC,0),2);
+    tot NUMERIC:=round(COALESCE((p_import->>'total_amount')::NUMERIC,0),2); l_sub NUMERIC; l_tax NUMERIC; l_tot NUMERIC; l_q NUMERIC;
+    bad BOOLEAN; s_name TEXT; s_gstin TEXT;
+BEGIN
+    IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Sign in to add stock.' USING ERRCODE='42501'; END IF;
+    IF uid IS NULL OR NOT public.hangtag_can('create_purchase') THEN RAISE EXCEPTION 'Not allowed to add stock from supplier bills.' USING ERRCODE='42501'; END IF;
+    IF COALESCE(imp,'')='' THEN RAISE EXCEPTION 'The import has no id.' USING ERRCODE='22023'; END IF;
+    IF EXISTS (SELECT 1 FROM public.hangtag_stock_imports WHERE owner_id=uid AND id=imp) THEN RETURN jsonb_build_object('status','already_imported','import_id',imp); END IF;
+    IF NOT COALESCE(p_allow_duplicate,FALSE) THEN
+        SELECT id,created_at,invoice_no,supplier_name INTO d FROM public.hangtag_stock_imports WHERE owner_id=uid AND COALESCE(file_hash,'')<>'' AND file_hash=p_import->>'file_hash' ORDER BY created_at LIMIT 1;
+        IF FOUND THEN RAISE EXCEPTION 'HANGTAG_DUPLICATE_FILE' USING DETAIL=jsonb_build_object('id',d.id,'created_at',d.created_at,'invoice_no',d.invoice_no,'supplier_name',d.supplier_name)::TEXT; END IF;
+        IF inv<>'' THEN
+            SELECT id,created_at,invoice_no,supplier_name INTO d FROM public.hangtag_stock_imports i WHERE i.owner_id=uid AND lower(btrim(COALESCE(i.invoice_no,'')))=inv
+              AND CASE WHEN gst<>'' AND btrim(COALESCE(i.supplier_gstin,''))<>'' THEN lower(btrim(i.supplier_gstin))=gst ELSE lower(btrim(COALESCE(i.supplier_name,'')))=sup END ORDER BY created_at LIMIT 1;
+            IF FOUND THEN RAISE EXCEPTION 'HANGTAG_DUPLICATE_INVOICE' USING DETAIL=jsonb_build_object('id',d.id,'created_at',d.created_at,'invoice_no',d.invoice_no,'supplier_name',d.supplier_name)::TEXT; END IF;
+        END IF;
+    END IF;
+    FOR r IN SELECT * FROM jsonb_array_elements(COALESCE(p_products,'[]'::jsonb)) LOOP
+        IF r->>'mode'='update_options' THEN
+            IF NOT public.hangtag_cap_on(uid,'uses_variants') THEN RAISE EXCEPTION 'Product variants are switched off for this shop.' USING ERRCODE='42501'; END IF;
+            UPDATE public.hangtag_products SET options=r->'options',updated_at=NOW() WHERE owner_id=uid AND id=r->>'id';
+            IF NOT FOUND THEN RAISE EXCEPTION 'A product on this bill no longer exists. Check the bill again.' USING ERRCODE='23503'; END IF;
+        ELSE
+            tr:=COALESCE(NULLIF(r->>'tracking',''),'none'); u:=COALESCE(NULLIF(r->>'unit',''),'pcs');
+            IF jsonb_array_length(COALESCE(r->'options'->'opts','[]'::jsonb))>0 AND NOT public.hangtag_cap_on(uid,'uses_variants') THEN RAISE EXCEPTION 'Product variants are switched off for this shop.' USING ERRCODE='42501'; END IF;
+            IF u IN ('kg','g','l','ml','m') AND NOT public.hangtag_cap_on(uid,'uses_weight') THEN RAISE EXCEPTION 'Weight-based products are switched off for this shop.' USING ERRCODE='42501'; END IF;
+            IF tr='serial' AND NOT public.hangtag_cap_on(uid,'uses_serials') THEN RAISE EXCEPTION 'Serial tracking is switched off for this shop.' USING ERRCODE='42501'; END IF;
+            IF tr='batch' AND NOT public.hangtag_cap_on(uid,'uses_batches') THEN RAISE EXCEPTION 'Batch tracking is switched off for this shop.' USING ERRCODE='42501'; END IF;
+            IF COALESCE((r->>'tracks_expiry')::BOOLEAN,FALSE) AND NOT public.hangtag_cap_on(uid,'uses_expiry') THEN RAISE EXCEPTION 'Expiry tracking is switched off for this shop.' USING ERRCODE='42501'; END IF;
+            INSERT INTO public.hangtag_products (id,name,price,color,sort_order,category,brand,description,cost_price,archived,options,hsn,gst_rate,code_type,unit,tracking,tracks_expiry,low_stock)
+            VALUES (r->>'id',r->>'name',COALESCE((r->>'price')::INTEGER,0),COALESCE(r->>'color','#8E8A83'),COALESCE((r->>'sort_order')::INTEGER,0),
+                NULLIF(r->>'category',''),NULLIF(r->>'brand',''),NULLIF(r->>'description',''),(r->>'cost_price')::INTEGER,FALSE,COALESCE(r->'options','{}'::jsonb),
+                NULLIF(r->>'hsn',''),(r->>'gst_rate')::NUMERIC,NULLIF(r->>'code_type',''),u,tr,COALESCE((r->>'tracks_expiry')::BOOLEAN,FALSE),(r->>'low_stock')::NUMERIC);
+        END IF;
+        n_p:=n_p+1;
+    END LOOP;
+    FOR r IN SELECT * FROM jsonb_array_elements(COALESCE(p_variants,'[]'::jsonb)) LOOP
+        INSERT INTO public.hangtag_variants (id,product_id,option_values,color,size,sku,barcode,price,cost_price,active,sort_order)
+        VALUES (r->>'id',r->>'product_id',COALESCE(r->'option_values','[]'::jsonb),COALESCE(r->>'color',''),COALESCE(r->>'size',''),NULLIF(r->>'sku',''),NULLIF(r->>'barcode',''),
+            (r->>'price')::INTEGER,(r->>'cost_price')::INTEGER,COALESCE((r->>'active')::BOOLEAN,TRUE),COALESCE((r->>'sort_order')::INTEGER,0));
+        n_v:=n_v+1;
+    END LOOP;
+    FOR r IN SELECT * FROM jsonb_array_elements(COALESCE(p_moves,'[]'::jsonb)) LOOP
+        q:=round(COALESCE((r->>'qty')::NUMERIC,0),3); IF q<=0 THEN RAISE EXCEPTION 'Every line needs a quantity above 0.' USING ERRCODE='23514'; END IF;
+        SELECT p.tracking,p.tracks_expiry,p.unit INTO tr,keeps_expiry,u FROM public.hangtag_variants v JOIN public.hangtag_products p ON p.owner_id=v.owner_id AND p.id=v.product_id
+         WHERE v.owner_id=uid AND v.id=r->>'variant_id' AND p.id=r->>'product_id';
+        IF NOT FOUND THEN RAISE EXCEPTION 'A product or variant on this bill no longer exists.' USING ERRCODE='23503'; END IF;
+        dp:=CASE u WHEN 'kg' THEN 3 WHEN 'l' THEN 3 WHEN 'm' THEN 2 ELSE 0 END;
+        IF q<>round(q,dp) THEN RAISE EXCEPTION 'Quantity % has too many decimal places for %.',trim_scale(q),u USING ERRCODE='23514'; END IF;
+        sns:=CASE WHEN jsonb_typeof(r->'serials')='array' THEN ARRAY(SELECT jsonb_array_elements_text(r->'serials')) END;
+        bno:=NULLIF(upper(btrim(COALESCE(r->>'batch_no',''))),''); bexp:=NULLIF(r->>'expiry','')::DATE;
+        IF tr='serial' AND (sns IS NULL OR bno IS NOT NULL) THEN RAISE EXCEPTION 'A serial-tracked line needs one serial per piece and no batch.' USING ERRCODE='23514'; END IF;
+        IF tr='batch' AND (bno IS NULL OR sns IS NOT NULL OR (keeps_expiry AND bexp IS NULL)) THEN RAISE EXCEPTION 'A batch-tracked line needs its batch% and no serials.',CASE WHEN keeps_expiry THEN ' and expiry date' ELSE '' END USING ERRCODE='23514'; END IF;
+        IF tr='none' AND (sns IS NOT NULL OR bno IS NOT NULL OR bexp IS NOT NULL) THEN RAISE EXCEPTION 'This product is not tracked by serial or batch.' USING ERRCODE='23514'; END IF;
+        IF tr<>'batch' AND bexp IS NOT NULL THEN RAISE EXCEPTION 'Only a batch-tracked product has an expiry date.' USING ERRCODE='23514'; END IF;
+        INSERT INTO public.hangtag_stock_moves (id,variant_id,product_id,type,qty,cost_price,note,t,device_id,import_id,serials,batch_no,expiry)
+        VALUES (r->>'id',r->>'variant_id',r->>'product_id','RESTOCK',q,(r->>'cost_price')::INTEGER,LEFT(r->>'note',200),COALESCE((r->>'t')::BIGINT,(extract(epoch FROM now())*1000)::BIGINT),r->>'device_id',imp,sns,bno,bexp);
+        n_m:=n_m+1; n_units:=n_units+q;
+    END LOOP;
+    IF n_m=0 THEN RAISE EXCEPTION 'There is no stock to add.' USING ERRCODE='23514'; END IF;
+    IF k='purchase' THEN
+        IF sid IS NULL THEN RAISE EXCEPTION 'Choose the supplier for this purchase.' USING ERRCODE='23514'; END IF;
+        SELECT name,gstin INTO s_name,s_gstin FROM public.hangtag_suppliers WHERE owner_id=uid AND id=sid;
+        IF NOT FOUND THEN RAISE EXCEPTION 'That supplier was not found in this shop.' USING ERRCODE='23503'; END IF;
+        IF jsonb_typeof(ls)<>'array' OR jsonb_array_length(ls)<>n_m THEN RAISE EXCEPTION 'The purchase lines do not match its stock-in lines.' USING ERRCODE='23514'; END IF;
+        SELECT COALESCE(sum(round((x->>'tx')::NUMERIC,2)),0),COALESCE(sum(round((x->>'tax')::NUMERIC,2)),0),COALESCE(sum(round((x->>'total')::NUMERIC,2)),0),
+            COALESCE(sum((x->>'q')::NUMERIC),0),COALESCE(bool_or((x->>'q')::NUMERIC<=0 OR (x->>'cost')::NUMERIC<0 OR (x->>'gst')::NUMERIC NOT BETWEEN 0 AND 100),FALSE)
+          INTO l_sub,l_tax,l_tot,l_q,bad FROM jsonb_array_elements(ls) x;
+        IF bad OR l_sub<>sub OR l_tax<>tax OR l_tot<>tot OR tot<>sub+tax OR round(l_q,3)<>round(n_units,3) THEN RAISE EXCEPTION 'The purchase lines, subtotal, GST and stock quantities do not add up.' USING ERRCODE='23514'; END IF;
+    END IF;
+    INSERT INTO public.hangtag_stock_imports (id,kind,supplier_id,file_hash,file_name,file_type,document_path,supplier_name,supplier_gstin,invoice_no,invoice_date,t,line_count,units,amount,
+        subtotal,tax_amount,total_amount,paid_amount,payment_method,status,lines,extraction,device_id)
+    VALUES (imp,k,CASE WHEN k='purchase' THEN sid END,NULLIF(p_import->>'file_hash',''),p_import->>'file_name',p_import->>'file_type',NULLIF(p_import->>'document_path',''),
+        COALESCE(CASE WHEN k='purchase' THEN s_name END,NULLIF(p_import->>'supplier_name','')),COALESCE(CASE WHEN k='purchase' THEN s_gstin END,NULLIF(p_import->>'supplier_gstin','')),
+        NULLIF(p_import->>'invoice_no',''),NULLIF(p_import->>'invoice_date','')::DATE,COALESCE((p_import->>'t')::BIGINT,(extract(epoch FROM now())*1000)::BIGINT),
+        COALESCE((p_import->>'line_count')::INTEGER,n_m),n_units,COALESCE((p_import->>'amount')::NUMERIC,CASE WHEN k='purchase' THEN tot END),
+        CASE WHEN k='purchase' THEN sub END,CASE WHEN k='purchase' THEN tax END,CASE WHEN k='purchase' THEN tot END,0,NULL,'posted',ls,p_import->'extraction',p_import->>'device_id');
+    RETURN jsonb_build_object('status','imported','import_id',imp,'products',n_p,'variants',n_v,'moves',n_m,'units',n_units,'purchase',k='purchase');
+END $$;
+REVOKE ALL ON FUNCTION public.hangtag_import_stock(JSONB,JSONB,JSONB,JSONB,BOOLEAN) FROM PUBLIC,anon;
+GRANT EXECUTE ON FUNCTION public.hangtag_import_stock(JSONB,JSONB,JSONB,JSONB,BOOLEAN) TO authenticated;
+
+-- Private Storage is installed by Supabase, not by local PGlite. Dynamic SQL keeps the same schema runnable in both.
+DO $$
+BEGIN
+    IF to_regclass('storage.buckets') IS NOT NULL AND to_regclass('storage.objects') IS NOT NULL THEN
+        EXECUTE $sql$INSERT INTO storage.buckets (id,name,public,file_size_limit,allowed_mime_types) VALUES
+            ('hangtag-bills','hangtag-bills',FALSE,15728640,ARRAY['application/pdf','image/jpeg','image/png','image/webp','image/heic'])
+            ON CONFLICT (id) DO UPDATE SET public=FALSE,file_size_limit=EXCLUDED.file_size_limit,allowed_mime_types=EXCLUDED.allowed_mime_types$sql$;
+        EXECUTE 'DROP POLICY IF EXISTS "hangtag bills read" ON storage.objects';
+        EXECUTE 'DROP POLICY IF EXISTS "hangtag bills add" ON storage.objects';
+        EXECUTE 'DROP POLICY IF EXISTS "hangtag bills change" ON storage.objects';
+        EXECUTE $sql$CREATE POLICY "hangtag bills read" ON storage.objects FOR SELECT TO authenticated USING
+            (bucket_id='hangtag-bills' AND split_part(name,'/',1)=public.hangtag_shop_id()::text AND (public.hangtag_can('create_purchase') OR public.hangtag_can('manage_inventory') OR public.hangtag_can('view_reports')))$sql$;
+        EXECUTE $sql$CREATE POLICY "hangtag bills add" ON storage.objects FOR INSERT TO authenticated WITH CHECK
+            (bucket_id='hangtag-bills' AND split_part(name,'/',1)=public.hangtag_shop_id()::text AND public.hangtag_can('create_purchase'))$sql$;
+        EXECUTE $sql$CREATE POLICY "hangtag bills change" ON storage.objects FOR UPDATE TO authenticated USING
+            (bucket_id='hangtag-bills' AND split_part(name,'/',1)=public.hangtag_shop_id()::text AND public.hangtag_can('create_purchase')) WITH CHECK
+            (bucket_id='hangtag-bills' AND split_part(name,'/',1)=public.hangtag_shop_id()::text AND public.hangtag_can('create_purchase'))$sql$;
+    END IF;
+END $$;
+
+-- (d) A completed table bill closes every live session at that table and retires its kitchen tickets in the same database
+-- transaction as the bill. A cashier needs only create_sale; this is a consequence of the bill, not a second action.
+CREATE OR REPLACE FUNCTION public.hangtag_close_table_sale()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE now_ms BIGINT := (extract(epoch FROM now())*1000)::BIGINT;
+BEGIN
+    IF NEW.table_id IS NULL THEN RETURN NULL; END IF;
+    IF NOT EXISTS (SELECT 1 FROM public.hangtag_tables t WHERE t.owner_id=NEW.owner_id AND t.id=NEW.table_id) THEN RAISE EXCEPTION 'That table does not belong to this shop.' USING ERRCODE='foreign_key_violation'; END IF;
+    IF NEW.session_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.hangtag_table_sessions s WHERE s.owner_id=NEW.owner_id AND s.id=NEW.session_id AND s.table_id=NEW.table_id) THEN
+        RAISE EXCEPTION 'That table session does not belong to this table.' USING ERRCODE='foreign_key_violation';
+    END IF;
+    UPDATE public.hangtag_table_sessions SET status='closed',closed_t=COALESCE(closed_t,now_ms),sale_id=COALESCE(sale_id,NEW.id),updated_at=NOW()
+     WHERE owner_id=NEW.owner_id AND table_id=NEW.table_id AND status<>'closed';
+    UPDATE public.hangtag_orders o SET status='served',version=version+1,updated_t=now_ms,updated_at=NOW()
+     WHERE o.owner_id=NEW.owner_id AND o.kind='table' AND o.status NOT IN ('served','cancelled')
+       AND EXISTS (SELECT 1 FROM public.hangtag_table_sessions s WHERE s.owner_id=o.owner_id AND s.id=o.session_id AND s.sale_id=NEW.id);
+    RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_close_table_sale ON public.hangtag_sales;
+CREATE TRIGGER hangtag_close_table_sale AFTER INSERT OR UPDATE OF table_id,session_id ON public.hangtag_sales
+    FOR EACH ROW WHEN (NEW.table_id IS NOT NULL) EXECUTE FUNCTION public.hangtag_close_table_sale();
+
+CREATE OR REPLACE FUNCTION public.hangtag_order_status(p_id TEXT,p_status TEXT)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE uid UUID:=public.hangtag_shop_id(); o public.hangtag_orders; flow CONSTANT TEXT[]:=ARRAY['new','accepted','preparing','ready','served']; a INT; b INT; ver INT;
+BEGIN
+    IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Sign in to change orders.' USING ERRCODE='42501'; END IF;
+    IF uid IS NULL OR NOT public.hangtag_cap_on(uid,'uses_tables') THEN RAISE EXCEPTION 'Table ordering is switched off for this shop.' USING ERRCODE='42501'; END IF;
+    IF NOT (public.hangtag_can('manage_kitchen') OR public.hangtag_can('create_order') OR public.hangtag_can('send_to_kitchen')) THEN RAISE EXCEPTION 'Not allowed to change table orders.' USING ERRCODE='42501'; END IF;
+    IF p_status IN ('accepted','preparing','ready') AND (NOT public.hangtag_cap_on(uid,'uses_kitchen') OR NOT (public.hangtag_can('manage_kitchen') OR public.hangtag_can('create_order'))) THEN
+        RAISE EXCEPTION 'The kitchen is switched off or unavailable for this role.' USING ERRCODE='42501';
+    END IF;
+    IF p_status IS NULL OR NOT (p_status=ANY(flow) OR p_status='cancelled') THEN RAISE EXCEPTION 'Unknown step: %',p_status USING ERRCODE='22023'; END IF;
+    SELECT * INTO o FROM public.hangtag_orders WHERE owner_id=uid AND id=p_id FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'That order isn''t in the cloud yet.' USING ERRCODE='23503'; END IF;
+    IF o.kind<>'table' THEN RAISE EXCEPTION 'Only table orders go through the kitchen.' USING ERRCODE='check_violation'; END IF;
+    a:=array_position(flow,o.status); b:=array_position(flow,p_status);
+    IF o.status=p_status OR o.status IN ('served','cancelled') OR (p_status<>'cancelled' AND (a IS NULL OR b<=a)) THEN RETURN jsonb_build_object('status',o.status,'version',o.version,'changed',FALSE); END IF;
+    UPDATE public.hangtag_orders SET status=p_status,version=version+1,updated_t=(extract(epoch FROM now())*1000)::BIGINT,updated_at=NOW()
+     WHERE owner_id=uid AND id=p_id RETURNING version INTO ver;
+    RETURN jsonb_build_object('status',p_status,'version',ver,'changed',TRUE);
+END $$;
+REVOKE ALL ON FUNCTION public.hangtag_cap_on(UUID,TEXT),public.hangtag_close_table_sale() FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.hangtag_cap_on(UUID,TEXT) TO authenticated;
+REVOKE ALL ON FUNCTION public.hangtag_order_status(TEXT,TEXT) FROM PUBLIC,anon;
+GRANT EXECUTE ON FUNCTION public.hangtag_order_status(TEXT,TEXT) TO authenticated;
 
 -- ==============================================================================
 -- 4. Indexes for reports
@@ -3730,6 +4399,8 @@ BEGIN
         ('hangtag_batches',         'create_sale,view_reports,manage_inventory,create_purchase,perform_return', '-'),
 
         -- tables of section 3o
+        ('hangtag_tables',          '',                                             'manage_settings'),
+        ('hangtag_table_sessions',  '',                                             'manage_tables,create_order,create_sale|manage_tables,create_order,create_sale|owner'),
 
         ('hangtag_roles',           '',                                             'owner'),
         ('hangtag_audit_log',       'view_reports',                                 '-'),
@@ -4085,4 +4756,16 @@ SELECT check_name, value, expected, value = expected AS ok FROM (
               AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(i.batches) a WHERE NOT EXISTS (SELECT 1 FROM public.hangtag_batches b
                   WHERE b.owner_id = i.owner_id AND b.variant_id = i.variant_id AND b.batch_no = a ->> 'b')))::bigint,
            (SELECT count(*) FROM public.hangtag_sale_items i WHERE i.batches IS NOT NULL)::bigint
+    UNION ALL
+    SELECT 60, 'Tables with a QR code of their own',
+           (SELECT count(DISTINCT t.qr_token) FROM public.hangtag_tables t)::bigint,
+           (SELECT count(*) FROM public.hangtag_tables)::bigint
+    UNION ALL
+    SELECT 61, 'Table orders for a table that exists',
+           (SELECT count(*) FROM public.hangtag_orders o WHERE o.kind = 'table' AND EXISTS (SELECT 1 FROM public.hangtag_tables t WHERE t.owner_id = o.owner_id AND t.id = o.table_id))::bigint,
+           (SELECT count(*) FROM public.hangtag_orders o WHERE o.kind = 'table')::bigint
+    UNION ALL
+    SELECT 62, 'Closed table sessions with the bill that closed them',
+           (SELECT count(*) FROM public.hangtag_table_sessions s WHERE s.status = 'closed' AND s.sale_id IS NOT NULL)::bigint,
+           (SELECT count(*) FROM public.hangtag_table_sessions s WHERE s.status = 'closed')::bigint
 ) r ORDER BY n;

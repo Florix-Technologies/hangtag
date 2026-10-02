@@ -31,7 +31,7 @@ import { can, refuse } from '../../shop/services/access.js';
 
 const due=()=>billTotals(store.cart,store.disc).total;
 const blankState=method=>({mode:"single",method:PAY_METHODS.includes(method)?method:"cash",recv:"",ref:{upi:"",card:""},last4:"",amt:{cash:"",upi:"",card:""},
-  via:{upi:"manual",card:"terminal"},viaSet:{},pi:{},err:""});
+  via:{upi:"manual",card:"terminal"},viaSet:{},pi:{},upiReceived:false,err:""});
 /* store.payState = { mode: "single" | "split" | "credit" (the amounts in amt are paid now, the rest goes on account), method, recv (cash handed over), ref: { upi, card }, last4 (card), amt: { cash, upi, card },
      via: { upi: "manual"|"qr", card: "terminal"|"link" }, pi: { upi?, card? } (provider intents), saleId, err } */
 export function openPayment(method){
@@ -80,7 +80,8 @@ function accountPart(D){
 /* The parts of the payment as typed, for domain/sales/payments.js */
 export function allocations(){
   const s=store.payState, D=due();
-  const part=(m,amount)=>({method:m,amount,received:m==="cash"?s.recv:undefined,ref:s.ref[m],via:m==="cash"?undefined:s.via[m],last4:m==="card"?s.last4:undefined,intent:s.pi[m]});
+  const part=(m,amount)=>({method:m,amount,received:m==="cash"?s.recv:undefined,ref:s.ref[m],via:m==="cash"?undefined:s.via[m],last4:m==="card"?s.last4:undefined,intent:s.pi[m],
+    confirmed:m==="upi"&&s.via.upi==="manual"?!!s.upiReceived:undefined});
   if(s.mode==="single") return [part(s.method,D)];
   if(s.mode==="credit") return [...PAY_METHODS.map(m=>part(m,s.amt[m])),{method:DUE,amount:accountPart(D)}];
   return PAY_METHODS.map(m=>part(m,s.amt[m]));
@@ -120,12 +121,13 @@ function intentHTML(m){
   if(I.status==="unmatched") return `<div class="pi-box bad" data-pistate="unmatched"><p class="pi-st">${inrx(I.paidAmount)} arrived, not ${inrx(I.amount)}</p><p class="note">It isn't used on this bill. It's kept under Books → Unmatched receipts to refund or allocate.</p>${acts(again,byHand)}</div>`;
   return `<div class="pi-box bad" data-pistate="${esc(I.status)}"><p class="pi-st">${esc(INTENT_LABELS[I.status]||I.status)}</p><p class="note">Nothing was received for this ${what}.</p>${acts(again,byHand)}</div>`;
 }
-/* UPI checked by hand: the shop's own UPI QR with the amount, and the reference from the customer's phone */
+/* UPI checked by hand: show the shop's QR, then require the cashier's explicit confirmation; UTR is useful but optional. */
 function manualUpiHTML(amount,split){
   const s=store.payState, vpa=store.settings.upiId, uri=upiPayUri({vpa,name:store.profile&&store.profile.shop_name||"Shop",amount,note:"Bill "+billNo()});
-  return (uri&&!split?`<div class="pi-qr small">${qr(uri,180)}</div><p class="note">Pay to <b>${esc(vpa)}</b> · ${inrx(amount)}</p>`:!vpa&&!split?`<p class="note">Add your shop's UPI ID in Settings → Billing to show a QR with the amount here.</p>`:"")+
-    inp("ref:upi",`UPI reference (UTR) <small>(from the customer's payment screen)</small>`,s.ref.upi,'maxlength="40" required')+
-    (split?"":`<p class="note">Saved as <b>Unverified</b> until it's matched with your UPI provider's records.</p>`);
+  return (uri&&amount>0?`<div class="pi-qr small">${qr(uri,180)}</div><p class="note">Pay to <b>${esc(vpa)}</b> · ${inrx(amount)}</p>`:!vpa?`<p class="note">Add your shop's UPI ID in Settings → Billing to show the payment QR here.</p>`:split?`<p class="note">Enter the UPI amount to show its QR.</p>`:"")+
+    inp("ref:upi",`UPI reference (UTR) <small>(optional)</small>`,s.ref.upi,'maxlength="40"')+
+    `<button type="button" class="btn ${s.upiReceived?"ok":"primary"}" data-upireceived aria-pressed="${s.upiReceived}"${amount>0?"":" disabled"}>${s.upiReceived?"✓ Payment marked received":"Mark payment received"}</button>`+
+    `<p class="note">Check the customer's successful payment screen before marking it received. It is saved as <b>Unverified</b> for reconciliation${split?".":" until it is matched with the UPI records."}</p>`;
 }
 /* Card on a separate card machine: its approval/transaction reference; never the card number */
 function terminalHTML(split){
@@ -198,7 +200,7 @@ export function renderPayment(focus){
 export function payInput(t){
   const s=store.payState; if(!s) return;
   const f=t.dataset.payf, [k,m]=f.split(":");
-  if(k==="recv") s.recv=t.value; else if(k==="ref") s.ref[m]=t.value; else if(k==="last4") s.last4=t.value.replace(/\D/g,"").slice(0,4); else if(k==="amt") s.amt[m]=t.value;
+  if(k==="recv") s.recv=t.value; else if(k==="ref") s.ref[m]=t.value; else if(k==="last4") s.last4=t.value.replace(/\D/g,"").slice(0,4); else if(k==="amt"){ s.amt[m]=t.value; if(m==="upi") s.upiReceived=false; }
   if(k==="last4"&&t.value!==s.last4) t.value=s.last4;
   s.err=""; updatePayLive();
 }
@@ -210,6 +212,7 @@ function updatePayLive(){
 }
 export function payMode(k){
   const s=store.payState; if(!s) return;
+  if((s.mode==="single"?s.method:s.mode)!==k) s.upiReceived=false;
   if(k==="split"){ if(s.mode!=="split"){ s.mode="split"; if(!PAY_METHODS.some(m=>String(s.amt[m]).trim()))s.amt[s.method]=String(due()); } }
   // credit: nothing paid now unless amounts are typed (amounts carried over from split that pay it all are cleared)
   else if(k==="credit"){ if(s.mode!=="credit"){ if(accountPart(due())<=0) PAY_METHODS.forEach(m=>{ if(!isOpen(s.pi[m])&&!(s.pi[m]&&s.pi[m].status==="verified")) s.amt[m]=""; }); s.mode="credit"; } }
@@ -225,6 +228,7 @@ export function payVia(spec){
   const s=store.payState; if(!s) return;
   const [m,v]=spec.split(":"); if(!s.via[m]) return;
   if(s.via[m]!==v&&isOpen(s.pi[m])) cancelPart(m,true);
+  if(m==="upi"&&s.via[m]!==v) s.upiReceived=false;
   s.via[m]=v; s.viaSet[m]=true; s.err="";
   renderPayment(false); autoStart();
 }
@@ -232,11 +236,12 @@ export function payVia(spec){
 export function payRest(m){
   const s=store.payState; if(!s) return;
   const others=PAY_METHODS.filter(x=>x!==m).reduce((a,x)=>a+Math.max(0,toPaise(s.amt[x])),0), rest=toPaise(due())-others;
-  s.amt[m]=rest>0?String(toRupees(rest)):""; renderPayment(false);
+  s.amt[m]=rest>0?String(toRupees(rest)):""; if(m==="upi") s.upiReceived=false; renderPayment(false);
   const i=$(`#paySheet [data-payf="amt:${m}"]`); if(i) i.focus({preventScroll:true});
 }
 export function paySend(on){ const s=store.payState; if(s) s.send=!!on; }
 export function payQuick(v){ const s=store.payState; if(!s) return; s.recv=String(v); renderPayment(false); }
+export function payManualUpiReceived(){ const s=store.payState; if(!s||s.via.upi!=="manual"||!(partAmount("upi")>0)) return; s.upiReceived=true; s.err=""; renderPayment(false); }
 
 /* ---------- provider payments: start, watch, cancel ---------- */
 let pollT=null, tick=0;

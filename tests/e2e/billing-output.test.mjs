@@ -92,6 +92,7 @@ await A.click('[data-paymode="split"]'); await sleep(100);
 await A.$eval('[data-payf="amt:cash"]', (e) => { e.value = ''; e.dispatchEvent(new Event('input', { bubbles: true })); }); await A.type('[data-payf="amt:cash"]', '1000');
 await A.click('[data-payrest="upi"]'); await sleep(100);
 await A.type('[data-payf="ref:upi"]', '412345678901'); await sleep(100);
+await A.click('[data-upireceived]'); await sleep(100);
 await A.click('#payDone'); await sleep(400);
 const sid = await run('return lastSale.id');
 check('payment confirmed: the sheet offers Print, Download and Send to customer (Email, WhatsApp, SMS)', await vis('#sheetHost [data-paid]') && !!(await A.$(`#sheetHost [data-print="${sid}"]`)) && !!(await A.$(`#sheetHost [data-dlreceipt="${sid}"]`))

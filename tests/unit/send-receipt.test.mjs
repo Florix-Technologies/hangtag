@@ -5,7 +5,7 @@
 import fs from 'fs';
 import path from 'path';
 import { CHANNELS, ITEM_COLUMNS, LIMITS, MAX_PER_HOUR, PAYMENT_COLUMNS, PROFILE_COLUMNS, SALE_COLUMNS, allowedToSend, billMessage, billView, configuredChannels, deliveryOutcome, deliveryRow,
-  fromName, isEmail, mobileE164, providerConfig, recipientFor, reservationRow, rupees, validateRequest } from '../../supabase/functions/send-receipt/core.js';
+  fromName, isEmail, mobileE164, providerConfig, receiptBase, recipientFor, requestedReceiptBase, reservationRow, rupees, validateRequest } from '../../supabase/functions/send-receipt/core.js';
 import { deliver } from '../../supabase/functions/send-receipt/providers/index.js';
 
 let passed = 0, failed = 0;
@@ -22,6 +22,14 @@ check('message text, HTML, subject or a recipient in a request are ignored (the 
   eq(validateRequest({ action: 'send', channel: 'email', sale_id: 's1', to: 'x@evil.in', message: { subject: 'Account locked', html: '<a href="https://phish">', text: 'click' } }), { ok: true, action: 'send', channel: 'email', saleId: 's1', auto: false }));
 check('bad requests refused', validateRequest(null).status === 400 && validateRequest({ action: 'send', channel: 'fax', sale_id: 's' }).error === 'bad_channel'
   && validateRequest({ action: 'send', channel: 'sms' }).status === 400 && validateRequest({ action: 'send', channel: 'sms', sale_id: 'x'.repeat(LIMITS.saleId + 1) }).status === 400 && validateRequest({ action: 'nope' }).status === 400);
+const receiptPage = 'https://shop.example/app/receipt.html';
+check('a client cannot choose the receipt page used in customer messages', eq(validateRequest({ action: 'link', sale_id: 's1', receipt_url: receiptPage }), { ok: true, action: 'link', saleId: 's1' })
+  && eq(validateRequest({ action: 'send', channel: 'sms', sale_id: 's1', receipt_url: receiptPage }), { ok: true, action: 'send', channel: 'sms', saleId: 's1', auto: false }));
+check('receipt page refuses credentials, query/fragment, non-receipt paths and insecure public HTTP', !requestedReceiptBase('https://u:p@shop.example/receipt.html')
+  && !requestedReceiptBase('https://shop.example/receipt.html?q=1') && !requestedReceiptBase('https://shop.example/invoice.html')
+  && !requestedReceiptBase('http://shop.example/receipt.html') && requestedReceiptBase('http://localhost:4173/receipt.html') === 'http://localhost:4173/receipt.html');
+check('only the server-configured receipt URL is used', receiptBase({ RECEIPT_URL: 'https://bills.example/receipt.html' }) === 'https://bills.example/receipt.html'
+  && receiptBase({}) === '' && validateRequest({ action: 'link', sale_id: 's1', receipt_url: 'https://evil.test/receipt.html' }).receiptUrl == null);
 
 // ---------- providers set up from secrets ----------
 check('nothing set up → every channel off', eq(configuredChannels({}), { email: false, whatsapp: false, sms: false }));

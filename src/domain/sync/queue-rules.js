@@ -10,7 +10,7 @@
 //     by the database's rules won't fix itself by retrying: the item goes to the review list with the reason. Nothing is
 //     ever dropped silently; review items can be sent again, and all but bills can be discarded after review.
 export const ORDERED_TYPES=["sale","prod","allsales","event"];
-const ONE_PER_RECORD=["sale","return","cust","move","event","eventdel","void","cashmove","dayclose","collection","held","helddel","order","supplier","purchase","pcancel","spay"];
+const ONE_PER_RECORD=["sale","return","cust","move","event","eventdel","void","cashmove","dayclose","collection","held","helddel","order","supplier","purchase","pcancel","spay","table","tsession","ostatus"];
 const REVIEW_NOW=["VALIDATION","CONFLICT"];
 export const REVIEW_AFTER_TRIES=3;   // NOT_FOUND: something it needs may still be on its way from another device
 
@@ -52,6 +52,9 @@ export function dependsOn(item){
   // and the payment it reverses
   if(item.type==="purchase"&&item.purchase){const p=item.purchase;return [...(p.supplierId?["supplier:"+p.supplierId]:[]),...new Set((p.lines||[]).map(l=>"prod:"+l.p))]}
   if(item.type==="pcancel") return ["purchase:"+item.id];
+  // a restaurant (section 3o): a kitchen step needs its order in the cloud; a table order its table's session
+  if(item.type==="ostatus") return ["order:"+item.id];
+  if(item.type==="tsession"&&item.session) return ["table:"+item.session.table];
   if(item.type==="spay"&&item.pay){const x=item.pay;return ["supplier:"+x.supplierId,...(x.purchaseId?["purchase:"+x.purchaseId]:[]),...(x.reverses?["spay:"+x.reverses]:[])]}
   return [];
 }
@@ -91,6 +94,9 @@ export const UPLOAD_PERMISSIONS={
   collection:["collect_credit"],held:["create_sale"],helddel:["create_sale"],order:["create_order"],
   // suppliers and purchases (section 3l); cancelling a purchase also needs manage_inventory (checked by the use case and hangtag_cancel_purchase)
   supplier:["create_purchase","manage_inventory"],purchase:["create_purchase"],pcancel:["create_purchase"],spay:["create_purchase"],
+  // a restaurant (section 3o): tables are set up with the shop's settings; guests are seated by whoever takes their order;
+  // the kitchen moves orders along (RPC hangtag_order_status)
+  table:["manage_settings"],tsession:["manage_tables","create_order","create_sale"],ostatus:["manage_kitchen","create_order","send_to_kitchen"],
 };
 /* May someone with these permissions upload this item? (unknown kinds: yes) */
 export const uploadAllowed=(item,has)=>{const need=item&&UPLOAD_PERMISSIONS[item.type];return !need||need.some(p=>has(p))};

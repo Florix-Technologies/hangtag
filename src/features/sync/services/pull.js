@@ -11,7 +11,7 @@ import { use } from '../../../shared/di/services.js';
 import { toast } from '../../../shared/components/toast.js';
 import { dayKey } from '../../../shared/formatting/dates.js';
 import { saveCashMoves, saveCatalog, saveCustomers, saveDayCloses, saveEvents, saveImgs, saveLogo, saveMoves, saveReturns, saveSettings } from '../../../shared/state/persistence.js';
-import { saveCollections, saveHeldCarts, saveOrders, savePurchases, saveSupplierPays, saveSuppliers } from '../../../shared/state/persistence.js';
+import { saveCollections, saveHeldCarts, saveOrders, savePurchases, saveSupplierPays, saveSuppliers, saveTableSessions, saveTables } from '../../../shared/state/persistence.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { logger } from '../../../shared/logging/logger.js';
 import { can, isMember } from '../../shop/services/access.js';
@@ -270,22 +270,36 @@ const reviewIds = type => new Set((store.syncReview || []).filter(r => r.item &&
 export async function pullOrders(){
   const cloud = use("cloud");
   const [orders, held, cols] = await Promise.all([cloud.fetchOrders(), cloud.fetchHeldCarts(), cloud.fetchCollections()]);
-  const po = pendingIds("order"), ro = reviewIds("order"), ph = pendingIds("held"), pd = pendingIds("helddel"), pc = pendingIds("collection");
+  const po = new Set([...pendingIds("order"), ...pendingIds("ostatus")]), ro = reviewIds("order"), ph = pendingIds("held"), pd = pendingIds("helddel"), pc = pendingIds("collection");
   const O = {}, H = {}, C = {};
   orders.forEach(o => { O[o.id] = o; });
   Object.values(store.orders || {}).forEach(o => { if(po.has(o.id) || (!O[o.id] && ro.has(o.id))) O[o.id] = o; });
+  // a restaurant's tables and sessions (section 3o): a database without them yet doesn't stop the rest
+  await pullTables().catch(e => logger.warn("Tables not downloaded:", e));
   held.forEach(h => { if(!pd.has(h.id)) H[h.id] = h; });
   Object.values(store.heldCarts || {}).forEach(h => { if(ph.has(h.id)) H[h.id] = h; });
   cols.forEach(c => { C[c.id] = c; });
   Object.values(store.collections || {}).forEach(c => { if(pc.has(c.id) || !C[c.id]) C[c.id] = c; });
   store.orders = O; saveOrders(); store.heldCarts = H; saveHeldCarts(); store.collections = C; saveCollections();
 }
+/* A restaurant's tables and the sessions going on (and those closed lately), except what this device hasn't uploaded yet */
+export async function pullTables(){
+  const cloud = use("cloud");
+  const [tables, sessions] = await Promise.all([cloud.fetchTables(), cloud.fetchTableSessions()]);
+  const pt = pendingIds("table"), ps = pendingIds("tsession"), T = {}, S = {};
+  tables.forEach(t => { T[t.id] = t; });
+  Object.values(store.tables || {}).forEach(t => { if(pt.has(t.id)) T[t.id] = t; });
+  sessions.forEach(s => { S[s.id] = s; });
+  // this device's sessions: waiting to upload, or still going here though the cloud's list (open or recent) doesn't have them
+  Object.values(store.tableSessions || {}).forEach(s => { if(ps.has(s.id)) S[s.id] = s; });
+  store.tables = T; saveTables(); store.tableSessions = S; saveTableSessions();
+}
 /* A team member's phone (no live updates): orders, held bills and collections again only when their fingerprint moved */
 let seenOrders = null;
 export async function pullOrderChanges(){
   if(!store.sbClient || store.sbStatus !== "connected") return false;
   const now = await use("cloud").orderChanges(), was = seenOrders;
-  if(was && was.orders === now.orders && was.held === now.held && was.credit === now.credit) return false;
+  if(was && was.orders === now.orders && was.held === now.held && was.credit === now.credit && was.tables === now.tables) return false;
   await pullOrders(); seenOrders = now; renderAll();
   return true;
 }

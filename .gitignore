@@ -15,6 +15,7 @@ Thumbs.db
 *.swo
 .vscode/
 .idea/
+.claude/
 
 # Test output
 tests/.artifacts/

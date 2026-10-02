@@ -124,7 +124,7 @@ try {
   await A.click('#profileSave');
   check('the type changed to Hotel / Restaurant', await A.until('profile.business_type==="restaurant"&&!document.querySelector("#modalHost .settings")'));
   check('restaurant defaults (serial numbers kept as the shop chose)', await A.run(`const c=shopCaps();return c.uses_tables&&c.uses_kitchen&&c.uses_table_qr&&!c.uses_batches&&c.uses_serials`));
-  check('no Tables or Kitchen tab until those modules exist (no dead placeholders)', !(await A.tabs()).includes('tables') && !(await A.tabs()).includes('kitchen'));
+  check('restaurant modules appear when their capabilities are on', (await A.tabs()).includes('tables') && (await A.tabs()).includes('kitchen'));
   await A.run('openSettings()'); await sleep(200);
   check('Capabilities recommended for Hotel / Restaurant; Team & devices still there', /Recommended for Hotel \/ Restaurant/.test(await A.text('#capsForm .capgrp') || '') && await A.vis('#teamSec [data-team="open"]'));
   await A.run('closeSettings();openEditor(null)'); await sleep(200);

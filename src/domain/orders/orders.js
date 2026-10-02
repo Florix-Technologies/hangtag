@@ -12,6 +12,7 @@ import { computeCheckout } from '../sales/checkout-totals.js';
 import { checkBillDiscounts, normalizeDiscount } from '../sales/discounts.js';
 import { deviceCode, formatInvoiceNo } from '../sales/sale.js';
 import { tooPrecise } from '../sales/paise.js';
+import { checkQty, unitId } from '../catalog/units.js';
 
 export const ORDER_KINDS=["quote","sales","table"];
 export const KIND_LABELS={quote:"Quotation",sales:"Sales order",table:"Table order"};
@@ -22,6 +23,7 @@ export const ORDER_STATUSES={
 };
 export const STATUS_LABELS={draft:"Draft",sent:"Sent",accepted:"Accepted",expired:"Expired",cancelled:"Cancelled",converted:"Converted",
   confirmed:"Confirmed",partial:"Partly delivered",completed:"Completed",new:"New",preparing:"Preparing",ready:"Ready",served:"Served"};
+export const statusLabel=(kind,status)=>kind==="sales"&&status==="draft"?"Pending":kind==="sales"&&status==="partial"?"Partly fulfilled":kind==="sales"&&status==="completed"?"Fulfilled":STATUS_LABELS[status]||status;
 /* Where each status may go next (the same moves as the database's hangtag_order_next_ok) */
 export const ORDER_NEXT={
   quote:{draft:["sent","accepted","cancelled","converted","expired"],sent:["draft","accepted","cancelled","converted","expired"],accepted:["converted","cancelled"],
@@ -57,8 +59,8 @@ export function checkOrder(o){
   if(!items.length) return {error:"Add at least one item.",field:"items"};
   for(const [i,l] of items.entries()){
     if(!String(l.name||"").trim()) return {error:"A line has no name.",field:"items",line:i};
-    const q=+l.q, p=+l.price;
-    if(!qtyOk(q)) return {error:`${l.name}: enter a quantity above 0 (at most 3 decimals).`,field:"qty",line:i};
+    const q=+l.q, p=+l.price, qr=checkQty(l.q,unitId(l.u));
+    if(qr.error||!qtyOk(q)) return {error:`${l.name}: ${qr.error||"enter a quantity above 0 (at most 3 decimals)."}`,field:"qty",line:i};
     if(!(Number.isFinite(p)&&p>=0)||tooPrecise(p)) return {error:`${l.name}: enter a price of 0 or more (at most 2 decimals).`,field:"price",line:i};
     if(+l.fq>q) return {error:`${l.name}: ${l.fq} already delivered, so the quantity can't be less.`,field:"qty",line:i};
   }
@@ -66,6 +68,7 @@ export function checkOrder(o){
   if(bad) return {error:bad.error,field:bad.line==null?"billDisc":"disc",line:bad.line};
   if(o.validUntil&&!/^\d{4}-\d{2}-\d{2}$/.test(o.validUntil)) return {error:"Enter the validity date as a date.",field:"validUntil"};
   if(String(o.notes||"").length>500) return {error:"Notes can be at most 500 characters.",field:"notes"};
+  if(String(o.terms||"").length>2000) return {error:"Terms can be at most 2,000 characters.",field:"terms"};
   return null;
 }
 /* The order's figures, from the one bill calculation: gst = { mode, inclusive } (the customer's place of supply) */
@@ -80,7 +83,7 @@ export function cartBlock(o,today){
   if(!o) return "That order isn't on this device.";
   if(o.kind==="table") return "Table orders are billed from their table.";
   if(isExpired(o,today)) return `This quotation expired on ${o.validUntil}. Extend its validity first.`;
-  if(isFinal(o)) return `This ${KIND_LABELS[o.kind].toLowerCase()} is ${STATUS_LABELS[o.status].toLowerCase()}.`;
+  if(isFinal(o)) return `This ${KIND_LABELS[o.kind].toLowerCase()} is ${statusLabel(o.kind,o.status).toLowerCase()}.`;
   if(o.kind==="sales"&&o.status==="draft") return "Confirm the sales order first.";
   if(!openLines(o).length) return "Everything on this order is delivered.";
   return null;
@@ -91,9 +94,9 @@ export function cartBlock(o,today){
 export function convertQuote(q,{id,no,t,dev},today){
   if(!q||q.kind!=="quote") return {error:"Only a quotation can become a sales order."};
   if(isExpired(q,today)) return {error:`This quotation expired on ${q.validUntil}. Extend its validity first.`};
-  if(isFinal(q)) return {error:`This quotation is ${STATUS_LABELS[q.status].toLowerCase()}.`};
-  const order={id,kind:"sales",no,status:"confirmed",cust:q.cust?{...q.cust}:null,billDisc:q.billDisc?{...q.billDisc}:null,
-    notes:[q.notes,q.no?"From quotation "+q.no:""].filter(Boolean).join("\n").slice(0,500),validUntil:"",source:"staff",convertedTo:null,saleIds:[],
+  if(isFinal(q)) return {error:`This quotation is ${statusLabel(q.kind,q.status).toLowerCase()}.`};
+  const order={id,kind:"sales",no,status:"draft",cust:q.cust?{...q.cust}:null,billDisc:q.billDisc?{...q.billDisc}:null,
+    notes:q.notes||"",terms:q.terms||"",validUntil:"",source:"staff",convertedTo:null,quoteId:q.id,quoteNo:q.no||"",saleIds:[],
     version:0,t,updatedT:t,...(dev?{dev}:{}),items:(q.items||[]).map((l,k)=>({...l,ln:k,fq:0}))};
   return {order,quote:{...q,status:"converted",convertedTo:id,updatedT:t}};
 }
@@ -118,7 +121,7 @@ export function orderCartLines(o,avail){
     const q=Math.min(remaining(l),Math.max(0,a));
     if(!(q>0)){ skipped.push({name:l.name,why:"out of stock"}); return; }
     const d=normalizeDiscount(l.disc);
-    lines.push({v:l.v,p:l.p,name:l.name,vl:l.vl||"",q,price:+l.price,...(d?{disc:d}:{}),ord:o.id,oln:l.ln,...(q<remaining(l)?{short:remaining(l)-q}:{})});
+    lines.push({v:l.v,p:l.p,name:l.name,vl:l.vl||"",q,price:+l.price,...(l.u&&l.u!=="pcs"?{u:l.u}:{}),...(l.gst!=null?{gst:+l.gst}:{}),...(d?{disc:d}:{}),ord:o.id,oln:l.ln,...(q<remaining(l)?{short:remaining(l)-q}:{})});
   });
   return {lines,skipped};
 }

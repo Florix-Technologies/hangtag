@@ -7,12 +7,12 @@ import { sbFetchAll, sbOk } from './query.js';
 import { billArgs, cashMoveRow, custRow, dayCloseRow, eventRow, moveRow, productRow, returnArgs, roleRow, rowToCashMove, rowToCustomer, rowToDayClose, rowToDelivery, rowToDevice, rowToEvent, rowToImport, rowToItem, rowToMember, rowToMove, rowToPayment, rowToProduct, rowToReturn, rowToReturnItem, rowToRole, rowToSale, rowToVariant, variantRows } from './mappers.js';
 import { collectionRow, heldRow, orderArgs, rowToCollection, rowToHeld, rowToOrder, rowToOrderItem } from './mappers.js';
 import { purchaseArgs, rowToPurchase, rowToSupplier, rowToSupplierPayment, supplierPaymentRow, supplierRow } from './mappers.js';
+import { rowToSession, rowToTable, sessionRow, tableRow } from './mappers.js';
 
 /* deviceKey: () => this phone's team device key or "" (sent as x-hangtag-device by every client this makes; see client.js) */
 export function createCloudGateway({ getClient, url, key, storageKey, deviceKey }){
   const db = () => getClient();
   const table = t => db().from(t);
-
   const auth = {
     getSession: () => db().auth.getSession(),
     onAuthStateChange: cb => db().auth.onAuthStateChange(cb),
@@ -45,6 +45,7 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
     const E = (c, m) => new AppError(c, m, { cause: r.error, details: info });
     if(code === "not_configured") throw E(ERROR_CODES.NOT_CONFIGURED, msg || `${what} isn't set up yet.`);
     if(code === "unauthorized" || (!code && status === 401)) throw E(ERROR_CODES.AUTH, "Sign in again.");
+    if(code === "forbidden") throw E(ERROR_CODES.PERMISSION, msg || "Your role can't do that.");
     if(code === "provider_error") throw E(ERROR_CODES.DELIVERY, msg || "The provider didn't accept the request.");
     if(code === "conflict") throw E(ERROR_CODES.CONFLICT, msg || "That was already done.");
     if(code === "not_found") throw E(ERROR_CODES.NOT_FOUND, msg || "It wasn't found.");
@@ -71,12 +72,12 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
     auth,
     /* How an email signs in today: resolves the raw { data, error } of the RPC */
     signInMethods: email => db().rpc("hangtag_sign_in_methods", { p_email: email }),
-    /* Quick check that the database has the current tables (schema.sql has been run; the events table is the newest).
+    /* Quick check that the database has the current tables (schema.sql has been run; the table-ordering tables are newest).
        Resolves { error: null } or { error: AppError } — OUTDATED_DATABASE when the tables are missing. */
     async checkSchema(){
-      const { error } = await table('hangtag_events').select('id', { head: true, count: 'exact' });
+      const { error } = await table('hangtag_tables').select('id', { head: true, count: 'exact' });
       if(!error) return { error: null };
-      const missing = /hangtag_events|hangtag_payments|hangtag_stock_imports|hangtag_variants|PGRST205|42P01|does not exist|schema cache/i.test((error.code||"")+" "+(error.message||""));
+      const missing = /hangtag_tables|hangtag_table_sessions|hangtag_events|hangtag_payments|hangtag_stock_imports|hangtag_variants|PGRST205|42P01|does not exist|schema cache/i.test((error.code||"")+" "+(error.message||""));
       return { error: missing ? new AppError(ERROR_CODES.OUTDATED_DATABASE, "The database needs the latest update (schema.sql).", { cause: error }) : toAppError(error) };
     },
 
@@ -100,6 +101,8 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
       if(h.orders) ch = on(ch, '*', 'hangtag_orders', h.orders);
       if(h.held) ch = on(ch, '*', 'hangtag_held_carts', h.held);
       if(h.collections) ch = on(ch, '*', 'hangtag_collections', h.collections);
+      // section 3o: a restaurant's tables and sessions
+      if(h.tables){ ch = on(ch, '*', 'hangtag_tables', h.tables); ch = on(ch, '*', 'hangtag_table_sessions', h.tables); }
       return ch.subscribe(onStatus);
     },
     removeChannel: ch => db().removeChannel(ch),
@@ -271,6 +274,25 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
     },
     fetchHeldCarts: async () => (await sbFetchAll(db(), 'hangtag_held_carts', ['t','id'])).map(rowToHeld),
     fetchCollections: async () => (await sbFetchAll(db(), 'hangtag_collections', ['t','id'])).map(rowToCollection),
+    /* ---------- a restaurant's tables, their sessions, the kitchen (section 3o) ---------- */
+    async saveTable(t){ sbOk(await table('hangtag_tables').upsert(tableRow(t))); },
+    async saveTableSession(s){ sbOk(await table('hangtag_table_sessions').upsert(sessionRow(s))); },
+    fetchTables: async () => (await sbFetchAll(db(), 'hangtag_tables', ['sort_order','id'])).map(rowToTable),
+    /* sessions still going, and those closed in the last two days (a table's recent history) */
+    async fetchTableSessions(){
+      const since = Date.now() - 2 * 864e5, N = 1000, all = async where => { const out = [];
+        for(let from = 0; ; from += N){ const { data } = sbOk(await where(table('hangtag_table_sessions').select('*')).order('opened_t').order('id').range(from, from + N - 1));
+          out.push(...(data || [])); if(!data || data.length < N) break; }
+        return out; };
+      const [live, recent] = await Promise.all([all(q => q.neq('status', 'closed')), all(q => q.gte('closed_t', since))]);
+      const by = {}; [...live, ...recent].forEach(r => { by[r.id] = r; });
+      return Object.values(by).map(rowToSession);
+    },
+    /* A table order moved along by the kitchen (or served, or cancelled): RPC hangtag_order_status → { status, version } */
+    async setOrderStatus(id, status){
+      const { data } = sbOk(await db().rpc('hangtag_order_status', { p_id: id, p_status: status }));
+      return { status: data && data.status || status, version: data && +data.version || 0 };
+    },
     /* A member's poll: one fingerprint each for orders, held bills and collections (RPC hangtag_order_changes) */
     async orderChanges(){
       const r = await db().rpc('hangtag_order_changes');
@@ -291,6 +313,21 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
       if(r.error) throw toAppError(r.error);
       return r.data;
     },
+    /* A supplier bill's original (photo or PDF) in the shop's private folder of the "hangtag-bills" bucket (section 3p) */
+    async uploadBillDocument(path, blob, type){
+      const st = db().storage; if(!st) throw new AppError(ERROR_CODES.NOT_CONFIGURED, "File storage isn't available.");
+      const r = await st.from('hangtag-bills').upload(path, blob, { upsert: true, contentType: type || (blob && blob.type) || 'application/octet-stream' });
+      if(r.error) throw toAppError(r.error);
+      return path;
+    },
+    /* A private link to it, valid for an hour */
+    async billDocumentUrl(path){
+      const r = await db().storage.from('hangtag-bills').createSignedUrl(path, 3600);
+      if(r.error) throw toAppError(r.error);
+      return r.data && r.data.signedUrl || "";
+    },
+    /* A saved bill gets its original once the file reached the cloud after it */
+    async setImportDocument(id, path){ sbOk(await table('hangtag_stock_imports').update({ document_path: path }).eq('id', id)); },
 
     /* ---------- suppliers, purchases and payments to suppliers (schema.sql section 3l) ---------- */
     async saveSupplier(s){ sbOk(await table('hangtag_suppliers').upsert(supplierRow(s))); },

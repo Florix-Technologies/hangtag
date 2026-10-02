@@ -287,8 +287,8 @@ try {
   const D = await phone('manager');
   await D.goto('http://localhost:3210/', { waitUntil: 'domcontentloaded' });
   await D.until('!document.getElementById("authForms").hidden');
-  check('the sign-in screen has a Staff tab', await D.vis('[data-authtab="staff"]') && await D.vis('[data-authtab="signin"]') && await D.vis('[data-authtab="signup"]'));
-  await D.click('[data-authtab="staff"]'); await sleep(100);
+  check('the sign-in screen has a secondary Staff sign-in link and no mode tabs', await D.vis('#staffSwitch [data-switchto="staff"]') && !(await D.$('[data-authtab]')));
+  await D.click('#staffSwitch [data-switchto="staff"]'); await sleep(100);
   check('Staff: shop code, username and password; no Google, no email', await D.vis('#staffShop') && await D.vis('#staffUser') && await D.vis('#staffPass') && !(await D.vis('#authEmail')) && !(await D.vis('[data-provider="google"]')));
   await D.fill('#staffShop', core.shopCode(OWNER).toUpperCase()); await D.fill('#staffUser', 'meera'); await D.fill('#staffPass', 'wrong-pass-9');
   await D.click('#staffSubmit');
@@ -300,7 +300,7 @@ try {
     && await D.run('openSettings();return !document.getElementById("teamSec")&&/Signed in as Meera \\(Manager\\) at Aura Threads/.test(document.getElementById("setSub").textContent)'));
   await D.run('closeSettings();await requestSignOut()'); await sleep(300);
   check('signing out puts the key away (not sent any more)', await D.run('return !authUser&&localStorage.getItem("hangtag_device_key")===null'));
-  await D.click('[data-authtab="staff"]'); await sleep(100);
+  await D.click('#staffSwitch [data-switchto="staff"]'); await sleep(100);
   await D.fill('#staffShop', core.shopCode(OWNER)); await D.fill('#staffUser', 'meera'); await D.fill('#staffPass', 'counter-pass-1'); await D.click('#staffSubmit');
   check('signing in again reuses the phone\'s key: no second device', await D.until('authUser&&sbStatus==="connected"&&isMember()', 20000)
     && +(await q(`SELECT count(*) AS n FROM public.hangtag_devices WHERE user_id = $1`, [meera]))[0].n === 1 && teamCalls.filter((x) => x === 'register_device').length === 1, teamCalls);
@@ -325,7 +325,7 @@ try {
   check('saved to hangtag_roles for this shop', await A.until('team&&!team.busy&&!team.draft') && ((await q(`SELECT permissions FROM public.hangtag_roles WHERE owner_id = $1 AND role = 'cashier'`, [OWNER]))[0] || {}).permissions.includes('view_reports'));
   await A.screenshot({ path: H.ARTIFACTS + '/team4_roles.png' });
 
-  const staffSignIn = async (p, user, pw) => { await p.until('!document.getElementById("authForms").hidden'); await p.click('[data-authtab="staff"]'); await sleep(80);
+  const staffSignIn = async (p, user, pw) => { await p.until('!document.getElementById("authForms").hidden'); await p.click('#staffSwitch [data-switchto="staff"]'); await sleep(80);
     await p.fill('#staffShop', core.shopCode(OWNER)); await p.fill('#staffUser', user); await p.fill('#staffPass', pw); await p.click('#staffSubmit'); };
   console.log('--- reset access without a password: the phone is signed out and the old password dies ---');
   await A.run(`await teamService().createMember({name:"Sunil",username:"sunil",role:"cashier",password:"sunil-pass-1"})`);
@@ -333,7 +333,7 @@ try {
   const E = await phone('sunil');
   await E.goto('http://localhost:3210/', { waitUntil: 'domcontentloaded' });
   await staffSignIn(E, 'sunil', 'sunil-pass-1');
-  check('Sunil signs in on the Staff tab and the phone is registered', await E.until('authUser&&sbStatus==="connected"&&isMember()', 20000));
+  check('Sunil signs in through Staff sign-in and the phone is registered', await E.until('authUser&&sbStatus==="connected"&&isMember()', 20000));
   await A.run('openTeam("members")'); await A.until('team&&!team.loading&&team.members.some(m=>m.username==="sunil")');
   await A.click(`[data-team="reset:${sunil}"]`); await sleep(80); await A.click(`[data-team="reset:${sunil}"]`);
   check('the owner resets his access (no new password)', await A.until('team&&!team.busy') && (await q(`SELECT status FROM public.hangtag_devices WHERE user_id = $1`, [sunil])).every((d) => d.status === 'revoked'));

@@ -3,7 +3,7 @@
 // sync review shows it). Orders never change stock. A quotation becomes a sales order (its lines copied), and either goes
 // on the bill (what is left to deliver, at the order's prices) → the existing checkout → the bill keeps the order's id and
 // the order counts what was delivered (partly delivered / completed). The rules are in domain/orders/orders.js.
-import { FIRST_STATUS, KIND_LABELS, STATUS_LABELS, canMove, cartBlock, checkOrder, convertQuote, fulfil, isFinal, orderCartLines, orderCheckout, ORDER_PREFIX,
+import { FIRST_STATUS, KIND_LABELS, STATUS_LABELS, canMove, cartBlock, checkOrder, convertQuote, fulfil, isFinal, orderCartLines, orderCheckout, ORDER_PREFIX, quotePrefix,
   soldFromOrder } from '../../../domain/orders/orders.js';
 import { legacyCS, optionSnapshot } from '../../../domain/catalog/options.js';
 import { vCost, vLabel, vPrice } from '../../../domain/catalog/variants.js';
@@ -35,7 +35,8 @@ export const ordersOf = kind => orderRepository().list().filter(o => o.kind === 
 export const orderById = id => orderRepository().get(id);
 /* This device's next number of a kind that day (QT-/SO- + date + device code + running number) */
 export function nextOrderNo(kind, t){
-  return nextDocNo(ORDER_PREFIX[kind] || "OR-", orderRepository().list().filter(o => o.kind === kind), t, store.dev);
+  const prefix = kind === "quote" ? quotePrefix(store.settings && store.settings.quotePrefix) : ORDER_PREFIX[kind] || "OR-";
+  return nextDocNo(prefix, orderRepository().list().filter(o => o.kind === kind), t, store.dev);
 }
 /* An order's figures: the one bill calculation, with the GST of its customer's place of supply */
 export function orderTotals(o){
@@ -51,7 +52,7 @@ export function orderLine(vid, q, price){
 export function newOrderDraft(kind, { cart, disc, cust } = {}){
   const t = Date.now();
   return { id: "o" + uid(), kind, no: "", status: FIRST_STATUS[kind], cust: customerSnapshot(cust),
-    billDisc: normalizeDiscount(disc) || null, notes: "", terms: "", validUntil: kind === "quote" ? addDays(dayKey(t), QUOTE_VALID_DAYS) : "", source: "staff", convertedTo: null,
+    billDisc: normalizeDiscount(disc) || null, notes: "", terms: kind === "quote" ? String(store.settings && store.settings.quoteTerms || "") : "", validUntil: kind === "quote" ? addDays(dayKey(t), QUOTE_VALID_DAYS) : "", source: "staff", convertedTo: null,
     saleIds: [], version: 0, t, updatedT: t, dev: store.dev,
     items: (cart || []).map((c, k) => ({ ln: k, p: c.p, v: c.v, name: c.name, vl: c.vl || "", q: c.q, price: c.price, ...(c.u&&c.u!=="pcs"?{u:c.u}:{}), ...(normalizeDiscount(c.disc) ? { disc: normalizeDiscount(c.disc) } : {}),
       gst: rateOf(c), fq: 0 })) };
@@ -72,6 +73,8 @@ export function saveOrder(draft){
   const items = (draft.items || []).map((l, k) => ({ ...l, ln: !prev ? k : known.has(l.ln) ? l.ln : next++ }));
   const o = { ...draft, cust:customerSnapshot(draft.cust), items, notes: String(draft.notes || "").trim(), terms: String(draft.terms || "").trim(), validUntil: draft.kind === "quote" ? draft.validUntil || "" : "" };
   const bad = checkOrder(o); if(bad) return bad;
+  // the total the one bill calculation gives (what a quotation sent to the customer says it comes to)
+  if(o.kind !== "table") o.total = orderTotals(o).total;
   if(prev){
     // changed since this copy was taken (another till's save arrived, or a bill delivered some of it): not overwritten
     if(draft.updatedT != null && prev.updatedT != null && +draft.updatedT !== +prev.updatedT) return { error: "This order changed while it was open (on another till, or a bill delivered some of it). Close it and open it again." };
@@ -98,6 +101,7 @@ export function convertToSalesOrder(id){
   const q = orderRepository().get(id), t = Date.now();
   const r = convertQuote(q, { id: "o" + uid(), no: nextOrderNo("sales", t), t, dev: store.dev }, todayKey());
   if(r.error) return r;
+  r.order.total = orderTotals(r.order).total;
   orderRepository().save(r.order); orderRepository().save(r.quote); upload();
   return { order: r.order, quote: r.quote };
 }

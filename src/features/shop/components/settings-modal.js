@@ -38,7 +38,7 @@ function sectionBody(key){
       return (member ? `<dl class="kv"><dt>Type of business</dt><dd>${esc(shopTypeLabel())}</dd></dl>` : '<form id="profileForm" class="authform" novalidate>' + profileFieldsHTML(store.profile || {}, "ps") +
         '<p id="profileErr" class="autherr" role="alert" hidden></p><div class="setactions"><button class="btn primary" type="submit" id="profileSave">Save changes</button></div></form>') + stockCashHTML();
     case "capabilities": return capabilitiesHTML() + settingsPartsHTML("capabilities");
-    case "receipt": return receiptFormHTML() + receiptSetupHTML() + paymentsFormHTML();
+    case "receipt": return receiptFormHTML() + receiptSetupHTML() + paymentsFormHTML() + settingsPartsHTML("receipt");
     case "taxes": return taxFormsHTML();
     case "team": return teamEntryHTML();
     case "roles": return '<div class="setactions" style="margin-top:0"><button class="btn sm" type="button" data-team="roles">Open roles &amp; permissions</button></div>';

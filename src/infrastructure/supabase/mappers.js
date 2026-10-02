@@ -135,7 +135,7 @@ export const eventRow = e => ({ id:e.id, name:e.name, start_date:e.start, end_da
 export const rowToEvent = r => ({ id:r.id, name:r.name, start:String(r.start_date||"").slice(0,10), end:String(r.end_date||"").slice(0,10), place:r.location||"",
   status:r.status==="closed"?"closed":"active", t:Number(r.created_t)||Date.parse(r.created_at)||0 });
 /* A bill sent to its customer (hangtag_deliveries, written by the send-receipt Edge Function) */
-export const rowToDelivery = r => ({ id:r.id, saleId:r.sale_id, channel:r.channel, to:r.recipient, status:r.status, provider:r.provider||"", providerId:r.provider_message_id||"", error:r.error||"",
+export const rowToDelivery = r => ({ id:r.id, saleId:r.sale_id, ...(r.order_id ? { orderId:r.order_id } : {}), ...(r.request_id ? { requestId:r.request_id } : {}), channel:r.channel, to:r.recipient, status:r.status, provider:r.provider||"", providerId:r.provider_message_id||"", error:r.error||"",
   mode:r.mode||"manual", t:Date.parse(r.created_at)||0, ...(r.delivered_at ? { deliveredAt:Date.parse(r.delivered_at) } : {}) });
 export const rowToCustomer = r => ({ id:r.id, name:r.name, phone:r.phone||"", email:r.email||"", gstin:r.gstin||"", type:r.customer_type==='business'?'business':'individual', t:Date.parse(r.created_at)||0 });
 
@@ -194,7 +194,7 @@ const orderCust = c => c ? Object.assign({ id:c.id||null, name:c.name||"", phone
 export const orderArgs = o => ({
   p_order: { id:o.id, kind:o.kind, no:o.no||null, status:o.status, customer_id:o.cust&&o.cust.id||null, customer:orderCust(o.cust), bill_disc:normalizeDiscount(o.billDisc)||null,
     notes:o.notes||null, terms:o.terms||null, valid_until:o.validUntil||null, table_id:o.tableId||null, session_id:o.sessionId||null, source:o.source==="customer"?"customer":"staff",
-    converted_to:o.convertedTo||null, quote_id:o.quoteId||null, quote_no:o.quoteNo||null, sale_ids:(o.saleIds||[]).slice(), version:+o.version||0, t:o.t, updated_t:o.updatedT||o.t, device_id:o.dev||store.dev },
+    converted_to:o.convertedTo||null, quote_id:o.quoteId||null, quote_no:o.quoteNo||null, total:o.total==null||o.total===""||!Number.isFinite(+o.total)?null:+o.total, sale_ids:(o.saleIds||[]).slice(), version:+o.version||0, t:o.t, updated_t:o.updatedT||o.t, device_id:o.dev||store.dev },
   p_items: (o.items||[]).map((l,k) => { const d = normalizeDiscount(l.disc); return { line_no:l.ln!=null?l.ln:k, product_id:l.p||null, variant_id:l.v||null, name:l.name,
     variant_label:l.vl||null, unit:l.u||"pcs", qty:+l.q, price:+l.price||0, disc:d||null, gst_rate:l.gst==null||l.gst===""?null:+l.gst, note:l.note||null, fulfilled_qty:+l.fq||0,
     serials:Array.isArray(l.serials)&&l.serials.length?l.serials.slice():null }; }),
@@ -208,7 +208,7 @@ export const rowToOrder = (r, items) => Object.assign({ id:r.id, kind:r.kind, no
   billDisc:normalizeDiscount(r.bill_disc)||null, notes:r.notes||"", terms:r.terms||"", validUntil:dateOnly(r.valid_until), source:r.source||"staff",
   convertedTo:r.converted_to||null, quoteId:r.quote_id||null, quoteNo:r.quote_no||"", saleIds:Array.isArray(r.sale_ids)?r.sale_ids.slice():[], version:+r.version||1, t:Number(r.t), updatedT:Number(r.updated_t||r.t),
   dev:r.device_id||"", items:(items||[]).slice().sort((a,b)=>a.ln-b.ln) },
-  r.table_id ? { tableId:r.table_id } : {}, r.session_id ? { sessionId:r.session_id } : {}, r.user_id ? { user:r.user_id } : {});
+  r.table_id ? { tableId:r.table_id } : {}, r.session_id ? { sessionId:r.session_id } : {}, r.user_id ? { user:r.user_id } : {}, r.total != null ? { total:+r.total } : {});
 /* ---------- suppliers, purchases and payments to suppliers (section 3l) ---------- */
 export const supplierRow = s => ({ id:s.id, name:s.name, phone:s.phone||null, email:s.email||null, address:s.address||null, gstin:s.gstin||null, notes:s.notes||null,
   active:s.active!==false, created_at:new Date(s.t||Date.now()).toISOString(), updated_at:new Date().toISOString() });

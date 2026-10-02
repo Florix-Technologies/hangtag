@@ -29,7 +29,7 @@ import { refuse } from '../../shop/services/access.js';
 import { productFieldsFor, trackingChoiceOf, trackingChoices, trackingFromChoice } from '../../../domain/shop/capabilities.js';
 import { shopCaps } from '../../shop/services/shop-caps.js';
 
-import { UNITS, decimalsOf, unitId, unitOf } from '../../../domain/catalog/units.js';
+import { UNITS, decimalsOf, unitId, unitOf, isWeighed } from '../../../domain/catalog/units.js';
 
 /* ---------- product editor ----------
    store.editor = { isNew, id, name, cat, brand, desc, price, cost, color, img, archived, hsn, gst, unit (what it is sold by: pcs, kg…), tracking (none|serial|batch|expiry: batch with expiry dates),
@@ -128,7 +128,7 @@ export function renderEditor(){
         <label class="f"><span class="lab">Cost price ₹</span><input data-ed="cost" type="number" inputmode="numeric" min="0" value="${esc(e.cost)}" placeholder="For gross profit"></label>
         <label class="f"><span class="lab">HSN code</span><input data-ed="hsn" value="${esc(e.hsn)}" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="4, 6 or 8 digits"></label>
         <label class="f"><span class="lab">GST %</span><input data-ed="gst" type="number" inputmode="decimal" min="0" max="100" step="0.01" value="${esc(e.gst)}" placeholder="e.g. 5"></label>
-        <label class="f"><span class="lab">Sold by</span><select data-ed="unit" id="edUnit">${UNITS.map(u=>`<option value="${u.id}"${unitId(e.unit)===u.id?" selected":""}>${esc(u.label)}${u.dp?` (up to ${u.dp} decimals)`:""}</option>`).join("")}</select><span class="fhint">Kg and litres are weighed on the bill; prices are per ${esc(unitOf(e.unit).id==="pcs"?"piece":unitOf(e.unit).sym)}</span></label>
+        <label class="f"><span class="lab">Sold by</span><select data-ed="unit" id="edUnit">${UNITS.filter(u=>!isWeighed(u.id)||fx.weight||isWeighed(e.unit)).map(u=>`<option value="${u.id}"${unitId(e.unit)===u.id?" selected":""}>${esc(u.label)}${u.dp?` (up to ${u.dp} decimals)`:""}</option>`).join("")}</select><span class="fhint">Kg and litres are weighed on the bill; prices are per ${esc(unitOf(e.unit).id==="pcs"?"piece":unitOf(e.unit).sym)}</span></label>
       </div></div>
       <label class="f"><span class="lab">Description</span><textarea data-ed="desc" rows="2" maxlength="300" placeholder="Optional">${esc(e.desc)}</textarea></label>
       <div class="f"><span>Tile colour <span class="hintx">· shown when there's no photo</span></span><div class="colors">${COLORS.map(cc=>`<button type="button" data-tilecolor="${cc}" aria-label="Tile colour ${cc}" aria-pressed="${cc===e.color}" style="background:${cc}"></button>`).join("")}</div></div>

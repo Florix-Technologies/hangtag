@@ -187,6 +187,11 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
       const { data } = sbOk(await table('hangtag_meta').select('value').eq('key','logo').maybeSingle());
       return data && data.value && typeof data.value.data === 'string' ? data.value.data : "";
     },
+    /* A quotation's messages to its customer (send-receipt with order_id), newest first */
+    async fetchOrderDeliveries(orderId){
+      const { data } = sbOk(await table('hangtag_deliveries').select('*').eq('order_id', orderId).order('created_at', { ascending:false }).limit(50));
+      return (data || []).map(rowToDelivery);
+    },
     /* A bill's messages to its customer, newest first */
     async fetchDeliveries(saleId){
       const { data } = sbOk(await table('hangtag_deliveries').select('*').eq('sale_id', saleId).order('created_at', { ascending:false }));

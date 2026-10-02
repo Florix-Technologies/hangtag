@@ -75,7 +75,7 @@ const saveOrder = (db, who, o) => { const a = orderArgs(o); return tryAs(db, who
 const quote = (over = {}) => ({ id: 'q1', kind: 'quote', no: 'QT-260929-ABC001', status: 'draft', cust: CUST, billDisc: null, notes: 'Wedding order', validUntil: '2026-10-30',
   source: 'staff', saleIds: [], version: 0, t: 1790000000000, updatedT: 1790000000000, dev: 'd1',
   items: [{ ln: 0, p: 'p1', v: 'p1:M', name: 'Tee', vl: 'M', q: 10, price: 450, gst: 5, fq: 0, disc: { type: 'percent', value: 10 } },
-    { ln: 1, p: 'p1', v: 'p1:M', name: 'Tee (gift wrap)', vl: 'M', q: 2.5, price: 20, gst: null, fq: 0 }], ...over });
+    { ln: 1, p: 'p1', v: 'p1:M', name: 'Tee (gift ribbon)', vl: 'M', q: 2.5, u: 'm', price: 20, gst: null, fq: 0 }], ...over });
 
 // ---------- two shops; shop A's team ----------
 const uid = (n) => `aaaaaaaa-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -94,7 +94,7 @@ await db.exec(NEW); await db.exec(NEW);
 console.log('=== schema runs twice; report ===');
 {
   const rep = await report(db);
-  check('migration report: 49 rows (45-49 are credit and orders), all ok on an empty shop', rep.length === 49 && rep.every((r) => r.ok) && rep.some((r) => /on account, for a saved customer/.test(r.check_name)), rep.filter((r) => !r.ok));
+  check('migration report: 52 rows (45-49 are credit and orders), all ok on an empty shop', rep.length === 52 && rep.every((r) => r.ok) && rep.some((r) => /on account, for a saved customer/.test(r.check_name)), rep.filter((r) => !r.ok));
   const pub = (await db.query(`SELECT count(*)::int n FROM pg_class WHERE relname IN ('hangtag_collections','hangtag_held_carts','hangtag_orders','hangtag_order_items') AND relrowsecurity`)).rows[0].n;
   check('row security is on for the four new tables', pub === 4, pub);
 }
@@ -130,7 +130,7 @@ console.log('=== (a) selling on account ===');
   const extra = billArgs(bill('b6', 500, () => [{ method: 'cash', amount: 200 }, { method: 'due', amount: 300 }])); extra.payments[0].amount = 300;
   r = await saveRaw(db, A, [extra]);
   check('a payment above what is due now (total − on account) is refused by the payments trigger', /would come to 300(\.00)? but only 200(\.00)? is due/.test(r.err || ''), r.err);
-  r = await saveBills(db, CA, [bill('b7', 300, () => [{ method: 'upi', amount: 100, ref: '412345678901' }, { method: 'due', amount: 200 }])]);
+  r = await saveBills(db, CA, [bill('b7', 300, () => [{ method: 'upi', amount: 100, ref: '412345678901', confirmed: true }, { method: 'due', amount: 200 }])]);
   check('a cashier (collect_credit) sells on account', !r.err && (await count(db, A, 'hangtag_sales', `WHERE id = 'b7' AND due_amount = 200`)) === 1, r);
   r = await saveBills(db, MA, [bill('b8', 300, () => [{ method: 'cash', amount: 100 }, { method: 'due', amount: 200 }])]);
   check('a role without collect_credit can\'t put anything on account (nothing saved)', /Not allowed to sell on credit/.test(r.err || '') && (await count(db, A, 'hangtag_sales', `WHERE id = 'b8'`)) === 0, r);
@@ -242,7 +242,7 @@ console.log('=== (c) orders: saved all or nothing, one version at a time ===');
   check('an order needs at least one line', /at least one line/.test(r.err || ''), r.err);
   const badLine = quote({ status: 'sent', version: 2 }); badLine.items[1] = { ...badLine.items[1], q: -1 };
   r = await saveOrder(db, A, badLine);
-  check('…and every line a quantity above 0: nothing of the save is kept', /qty_check|check/.test(r.err || '') && (await one(db, A, `SELECT version FROM public.hangtag_orders WHERE id = 'q1'`)).version === 2
+  check('…and every line a quantity above 0: nothing of the save is kept', /qty_check|check|quantity its unit/.test(r.err || '') && (await one(db, A, `SELECT version FROM public.hangtag_orders WHERE id = 'q1'`)).version === 2
     && (await one(db, A, `SELECT qty::float AS q FROM public.hangtag_order_items WHERE order_id = 'q1' AND line_no = 1`)).q === 2.5, r.err);
   r = await saveOrder(db, A, quote({ status: 'cancelled', version: 2 }));
   r = r.err ? r : await saveOrder(db, A, quote({ status: 'draft', version: 3 }));
@@ -295,10 +295,43 @@ console.log('=== (c) who may save and read orders ===');
   check('B\'s cashier can\'t reach A\'s version of it (conflict on B\'s own, version 1)', r.code === '40001', r);
 }
 
+console.log('=== quotations: their saved total and the messages sent for them (section 3p) ===');
+{
+  const trySvc = async (sql, params) => { try { return { r: await asService(db, sql, params) }; } catch (e) { return { err: e.message, code: e.code }; } };
+  let r = await saveOrder(db, A, quote({ id: 'qt1', no: 'QT-260929-ABC009', total: 4065.5 }));
+  const t = await one(db, A, `SELECT total::float AS t FROM public.hangtag_orders WHERE id = 'qt1'`);
+  check('a quotation keeps the total the app worked out (what a quotation sent to the customer says)', !r.err && t && t.t === 4065.5, { r, t });
+  r = await saveOrder(db, A, quote({ id: 'qt1', no: 'QT-260929-ABC009', total: -1, version: 1 }));
+  check('…never below 0', !!r.err && (await one(db, A, `SELECT total::float AS t FROM public.hangtag_orders WHERE id = 'qt1'`)).t === 4065.5, r);
+  const del = (extra) => trySvc(`INSERT INTO public.hangtag_deliveries (owner_id, order_id, sale_id, request_id, channel, recipient, status, mode) VALUES ($1, $2, $3, $4, 'email', 'asha@example.com', 'pending', 'manual') RETURNING id`,
+    [A, extra.order === undefined ? 'qt1' : extra.order, extra.sale || null, extra.req === undefined ? 'qreq00000001' : extra.req]);
+  r = await del({});
+  check('the function logs a message for a quotation (order_id, request_id)', !r.err, r);
+  r = await del({});
+  check('…a press of Send (request id) is logged once per shop: a retry can\'t send it twice', !!r.err && /unique|duplicate/.test(r.err), r);
+  r = await del({ req: 'qreq00000002', sale: 'b7' });
+  check('…a message is for one bill or one quotation, never both', !!r.err && /target_check|check/.test(r.err), r);
+  r = await del({ req: 'bad id!' });
+  check('…a request id is a short token', !!r.err, r);
+  r = await tryAs(db, CA, `INSERT INTO public.hangtag_deliveries (order_id, channel, recipient, status) VALUES ('qt1', 'email', 'x@y.zz', 'sent')`);
+  check('only the function writes them: a cashier can\'t', !!r.err, r);
+  check('whoever makes quotations reads what was sent from them (the server: create_order); shop B doesn\'t',
+    (await count(db, SA, 'hangtag_deliveries', `WHERE order_id = 'qt1'`)) === 1 && (await count(db, B, 'hangtag_deliveries')) === 0 && (await count(db, CB, 'hangtag_deliveries')) === 0);
+  await saveOrder(db, A, quote({ id: 'qt2', no: 'QT-260929-ABC010' }));
+  const qt2 = await one(db, A, `SELECT version FROM public.hangtag_orders WHERE id = 'qt2'`);
+  r = await saveOrder(db, A, { ...quote({ id: 'so9', kind: 'sales', no: 'SO-260929-ABC009', status: 'draft' }), quoteId: 'qt2', quoteNo: 'QT-260929-ABC010' });
+  check('a sales order made from a quotation keeps its reference (the quotation must be the shop\'s own)', !r.err && (await one(db, A, `SELECT quote_no FROM public.hangtag_orders WHERE id = 'so9'`)).quote_no === 'QT-260929-ABC010' && qt2.version === 1, r);
+  r = await saveOrder(db, B, { ...quote({ id: 'so9', kind: 'sales', no: 'SO-1', status: 'draft' }), quoteId: 'qt2', quoteNo: 'QT-260929-ABC010' });
+  check('…another shop can\'t point at A\'s quotation', !!r.err && /source quotation/.test(r.err), r);
+  const rep = await report(db);
+  check('report rows 63-65 (bill originals in the shop folder, sales orders from a quotation of the shop, one target per message): ok',
+    rep.filter((x) => /original is kept|made from a quotation|never both/.test(x.check_name)).length === 3 && rep.filter((x) => /original is kept|made from a quotation|never both/.test(x.check_name)).every((x) => x.ok), rep.filter((x) => !x.ok));
+}
+
 console.log('=== the report after all of it ===');
 {
   const rep = await report(db);
-  check('every row ok (credit bills for saved customers, collections posted, refunds to the account within the bill, bills from orders that exist, orders with lines)', rep.length === 49 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
+  check('every row ok (credit bills for saved customers, collections posted, refunds to the account within the bill, bills from orders that exist, orders with lines)', rep.length === 52 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
   await db.query(`UPDATE public.hangtag_sales SET order_id = 'missing' WHERE id = 'b9'`);
   const bad = (await report(db)).find((x) => /made from an order/.test(x.check_name));
   check('…and a bill pointing at an order that doesn\'t exist shows up', bad && !bad.ok, bad);

@@ -52,6 +52,7 @@
         <label id="emailWrap" class="f"><span class="lab">Email</span><input id="authEmail" type="email" name="email" autocomplete="username email" inputmode="email" autocapitalize="off" spellcheck="false" required></label>
         <label id="pwWrap" class="f"><span class="lab" id="pwLabel">Password</span><input id="authPass" type="password" name="password" autocomplete="current-password" minlength="8"><span id="pwHint" class="pwhint" hidden>At least 8 characters.</span></label>
         <label id="pw2Wrap" class="f" hidden><span class="lab">Type the password again</span><input id="authPass2" type="password" autocomplete="new-password" minlength="8"></label>
+        <div class="authfp"><button id="forgotBtn" class="link" type="button">Forgot password?</button></div>
         <button id="emailSubmit" class="btn primary gbtn" type="submit">Sign in</button>
       </form>
       <form id="staffForm" class="authform" novalidate hidden>
@@ -62,12 +63,11 @@
         <p class="authfine" style="margin:0">No password? Ask the owner to show you the sign-in QR code, and scan it with this phone's camera.</p>
       </form>
       <div class="authlinks">
-        <button id="forgotBtn" class="link" type="button">Forgot password?</button>
         <button id="backBtn" class="link" type="button" hidden>Back to sign in</button>
         <button id="resendBtn" class="link" type="button" hidden>Resend confirmation email</button>
       </div>
       <p id="authSwitch" class="authfine"></p>
-      <p id="staffSwitch" class="authfine"><span>Staff or team member?</span> <button type="button" class="link" data-switchto="staff">Staff sign-in</button></p>
+      <p id="staffSwitch" class="authfine authstaff"><span>Staff or team member?</span> <button type="button" class="btn sm" data-switchto="staff">Staff sign-in</button></p>
     </div>
     <form id="resetForm" class="authform" novalidate hidden>
       <label class="f"><span class="lab">New password</span><input id="newPass" type="password" autocomplete="new-password" minlength="8"><span class="pwhint">At least 8 characters.</span></label>

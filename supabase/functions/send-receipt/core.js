@@ -9,7 +9,11 @@
 
 export const CHANNELS = ["email", "whatsapp", "sms"];
 export const CHANNEL_LABELS = { email: "email", whatsapp: "WhatsApp", sms: "SMS" };
-export const LIMITS = { saleId: 64, receiptUrl: 500, sms: 300, whatsapp: 4000, lines: 200 };
+export const LIMITS = { saleId: 64, receiptUrl: 500, sms: 300, whatsapp: 4000, lines: 200, notes: 2000 };
+/* Quotations go by email or WhatsApp (an SMS can't carry a quotation's lines) */
+export const QUOTE_CHANNELS = ["email", "whatsapp"];
+/* One press of Send on the phone: the id that makes a retry or a queued send go out only once */
+export const REQUEST_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 /* Messages one shop can send per hour (a runaway loop or a leaked session can't spam customers) */
 export const MAX_PER_HOUR = 60;
 /* What the function reads of a bill, its lines, its payments and the shop (with the caller's session) */
@@ -21,8 +25,9 @@ export const PROFILE_COLUMNS = "shop_name,address,city,state,phone,gstin";
 const fail = (status, error, message) => ({ ok: false, status, error, message });
 const str = (v) => (typeof v === "string" ? v : "");
 
-/* body: { action: "channels" } · { action: "send", channel, sale_id, auto? } · { action: "refresh" | "link", sale_id }.
-   Anything else in the body is ignored. auto: sent by itself when the bill completed — at most once per bill and channel. */
+/* body: { action: "channels" } · { action: "send", channel, sale_id, auto? } · { action: "send", channel, order_id, request_id }
+   (a quotation) · { action: "refresh" | "link", sale_id }. Anything else in the body is ignored. auto: sent by itself when
+   the bill completed — at most once per bill and channel. */
 export function validateRequest(body) {
   if (!body || typeof body !== "object") return fail(400, "bad_request", "Send the request as JSON.");
   if (body.action === "channels") return { ok: true, action: "channels" };
@@ -34,14 +39,31 @@ export function validateRequest(body) {
   if (body.action !== "send") return fail(400, "bad_request", "Unknown action.");
   const channel = body.channel;
   if (!CHANNELS.includes(channel)) return fail(400, "bad_channel", "Choose email, WhatsApp or SMS.");
+  const orderId = str(body.order_id).trim();
+  if (orderId) {
+    if (orderId.length > LIMITS.saleId) return fail(400, "bad_request", "Which quotation? The quotation id is too long.");
+    if (!QUOTE_CHANNELS.includes(channel)) return fail(400, "bad_channel", "Quotations go by email or WhatsApp.");
+    const requestId = str(body.request_id).trim();
+    if (!REQUEST_ID_RE.test(requestId)) return fail(400, "bad_request", "The send request has no id.");
+    return { ok: true, action: "send", channel, orderId, requestId, auto: false };
+  }
   const saleId = str(body.sale_id).trim();
   if (!saleId || saleId.length > LIMITS.saleId) return fail(400, "bad_request", "Which bill? The bill id is missing.");
   return { ok: true, action: "send", channel, saleId, auto: body.auto === true };
 }
 
 /* Which provider serves each channel, from the function's secrets (env: an object of strings). null = not set up.
-   WhatsApp counts as set up only with an approved template: WhatsApp doesn't deliver free text a business starts. */
-export function providerConfig(channel, env) {
+   WhatsApp counts as set up only with an approved template: WhatsApp doesn't deliver free text a business starts.
+   kind "quote": a quotation goes through its own approved WhatsApp template (WHATSAPP_QUOTE_TEMPLATE, or for Twilio
+   TWILIO_WHATSAPP_QUOTE_CONTENT_SID): the bill's template would call it a bill. Email is the same for both. */
+export function providerConfig(channel, env, kind = "bill") {
+  if (kind === "quote") {
+    if (!QUOTE_CHANNELS.includes(channel)) return null;
+    if (channel === "whatsapp") {
+      const q = { ...env, WHATSAPP_TEMPLATE: str(env.WHATSAPP_QUOTE_TEMPLATE), TWILIO_WHATSAPP_CONTENT_SID: str(env.TWILIO_WHATSAPP_QUOTE_CONTENT_SID) };
+      return providerConfig(channel, q, "bill");
+    }
+  }
   const e = (k) => str(env[k]).trim();
   const twilio = e("TWILIO_ACCOUNT_SID") && e("TWILIO_AUTH_TOKEN") ? { accountSid: e("TWILIO_ACCOUNT_SID"), authToken: e("TWILIO_AUTH_TOKEN") } : null;
   if (channel === "email") {
@@ -61,7 +83,9 @@ export function providerConfig(channel, env) {
     return { name, ...twilio, from: e("TWILIO_WHATSAPP_FROM"), contentSid: e("TWILIO_WHATSAPP_CONTENT_SID"), whatsapp: true };
   return null;
 }
-export const configuredChannels = (env) => Object.fromEntries(CHANNELS.map((c) => [c, !!providerConfig(c, env)]));
+/* { email, whatsapp, sms } for bills, and quote_email / quote_whatsapp for quotations */
+export const configuredChannels = (env) => ({ ...Object.fromEntries(CHANNELS.map((c) => [c, !!providerConfig(c, env)])),
+  ...Object.fromEntries(QUOTE_CHANNELS.map((c) => ["quote_" + c, !!providerConfig(c, env, "quote")])) });
 
 /* May this signed-in account send? Sign-up is open and the provider accounts are the operator's, so sending is off until
    SEND_ALLOWED_USERS names who may send: user ids or sign-in emails, comma-separated, or "*" for every signed-in account.
@@ -75,6 +99,8 @@ export function allowedToSend(user, env, owner = null) {
 }
 /* What a team member needs (hangtag_can) to send a bill or copy its link; the owner may always */
 export const SEND_PERMISSION = "create_sale";
+/* …and to send a quotation (whoever makes them) */
+export const QUOTE_PERMISSION = "create_order";
 
 /* An Indian mobile number as +91XXXXXXXXXX, or "" (the same rule as the app: domain/invoices/delivery.js) */
 export function mobileE164(phone) {
@@ -86,8 +112,8 @@ export const isEmail = (v) => /^[^\s@<>"',;]+@[^\s@<>"',;]+\.[^\s@<>"',;]+$/.tes
 
 /* Who the bill goes to: always the bill's customer as saved in Customers (hangtag_customers), never an address from the
    request or a copy kept on the bill. → { to } or a failure (422 missing_contact) */
-export function recipientFor(channel, { customer, sale }) {
-  if (!sale || !customer) return fail(422, "missing_contact", "This bill has no saved customer. Add the customer in Customers to send it.");
+export function recipientFor(channel, { customer, sale, what = "bill" }) {
+  if (!sale || !customer) return fail(422, "missing_contact", `This ${what} has no saved customer. Add the customer in Customers to send it.`);
   const name = str(customer.name).trim() || "This customer";
   if (channel === "email") {
     const e = str(customer.email).trim();
@@ -180,11 +206,68 @@ ${B.contact.length ? `<tr><td style="font-size:13px;color:#666;padding-top:2px">
   return { subject, html, text };
 }
 
+/* ---------- a quotation (sent before anything is sold: never an invoice) ---------- */
+/* What the function reads of a quotation and its lines (with the caller's session) */
+export const ORDER_COLUMNS = "id,kind,no,status,customer_id,customer,notes,terms,valid_until,total,t";
+export const ORDER_ITEM_COLUMNS = "line_no,name,variant_label,unit,qty,price,disc";
+const UNIT_SYM = { pcs: "", box: " box", pack: " pack", dozen: " dozen", kg: " kg", g: " g", l: " L", ml: " ml", m: " m" };
+const day = (v) => { const s = str(v).slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return ""; const d = new Date(s + "T12:00:00Z"); return isNaN(d) ? "" : d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric" }); };
+const discText = (d) => { if (!d || typeof d !== "object" || !(num(d.value) > 0)) return ""; return d.type === "fixed" ? "−" + rupees(d.value) : "−" + num(d.value) + "%"; };
+/* The quotation as shown in a message: { shop, contact, number, date, validUntil, customer, lines, more, total, notes, terms } */
+export function quoteView({ order, items, shop, customer }) {
+  const o = order || {}, p = shop || {};
+  const lines = (items || []).slice().sort((a, b) => num(a.line_no) - num(b.line_no)).map((i) => ({
+    name: oneLine(i.name), detail: oneLine(i.variant_label), qty: num(i.qty), unit: UNIT_SYM[i.unit] || "", rate: num(i.price), discount: discText(i.disc) }));
+  const cust = (customer && customer.name) || (o.customer && typeof o.customer === "object" && o.customer.name) || "";
+  return {
+    shop: oneLine(p.shop_name) || "Our shop", contact: [[p.address, p.city, p.state].map(oneLine).filter(Boolean).join(", "), p.phone ? "Phone " + oneLine(p.phone) : "", p.gstin ? "GSTIN " + oneLine(p.gstin).toUpperCase() : ""].filter(Boolean),
+    number: oneLine(o.no || o.id), date: billDate(o.t), validUntil: day(o.valid_until), customer: oneLine(cust),
+    lines: lines.slice(0, LIMITS.lines), more: Math.max(0, lines.length - LIMITS.lines), total: o.total == null ? "" : rupees(o.total),
+    notes: String(o.notes || "").slice(0, LIMITS.notes), terms: String(o.terms || "").slice(0, LIMITS.notes),
+  };
+}
+const quoteLine = (l) => `${l.name}${l.detail ? " (" + l.detail + ")" : ""} × ${l.qty}${l.unit} @ ${rupees(l.rate)}${l.discount ? ` (discount ${l.discount})` : ""}`;
+/* The message for a quotation: email { subject, html, text } · WhatsApp { text, params } (the quotation template's values
+   {{1}} customer, {{2}} shop, {{3}} quotation number, {{4}} amount, {{5}} valid until). Headed QUOTATION, never a bill. */
+export function quoteMessage(channel, data) {
+  const Q = quoteView(data), more = Q.more ? [`… and ${Q.more} more items`] : [];
+  const validity = Q.validUntil ? `Valid until ${Q.validUntil}` : "";
+  if (channel === "whatsapp") {
+    const text = [`*${Q.shop}*`, `QUOTATION ${Q.number} · ${Q.date}`, validity, "", ...Q.lines.map(quoteLine), ...more, "", ...(Q.total ? [`*Total: ${Q.total}*`] : []),
+      ...(Q.notes ? ["", Q.notes] : []), ...(Q.terms ? ["", "Terms: " + Q.terms] : [])].filter((x, i, a) => x !== "" || a[i - 1] !== "").join("\n");
+    const params = [Q.customer || "Customer", Q.shop, Q.number, Q.total || "-", Q.validUntil || "-"];
+    return { text: text.slice(0, LIMITS.whatsapp), params: params.map((x) => x.slice(0, 200)) };
+  }
+  const subject = `Quotation ${Q.number} from ${Q.shop}${Q.total ? " — " + Q.total : ""}`.slice(0, 200);
+  const td = 'style="padding:6px 0;border-bottom:1px solid #eee;font-size:14px;color:#222"', tdr = 'style="padding:6px 0;border-bottom:1px solid #eee;font-size:14px;color:#222;text-align:right;white-space:nowrap"';
+  const items = Q.lines.map((l) => `<tr><td ${td}><b>${esc(l.name)}</b>${l.detail ? `<br><span style="color:#666;font-size:13px">${esc(l.detail)}</span>` : ""}</td><td ${tdr}>${l.qty}${esc(l.unit)} × ${esc(rupees(l.rate))}</td><td ${tdr}>${esc(l.discount || "")}</td></tr>`).join("")
+    + (Q.more ? `<tr><td ${td} colspan="3">… and ${Q.more} more items</td></tr>` : "");
+  const block = (label, t) => t ? `<tr><td style="padding-top:14px;font-size:13px;color:#222"><b>${esc(label)}</b><br>${esc(t).replace(/\r?\n/g, "<br>")}</td></tr>` : "";
+  const html = `<!doctype html><html><body style="margin:0;background:#f5f4f1;font-family:Arial,Helvetica,sans-serif">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f4f1;padding:24px 12px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border-radius:12px;padding:24px">
+<tr><td style="font-size:20px;font-weight:700;color:#111">${esc(Q.shop)}</td></tr>
+${Q.contact.length ? `<tr><td style="font-size:13px;color:#666;padding-top:2px">${Q.contact.map(esc).join(" · ")}</td></tr>` : ""}
+<tr><td style="padding-top:18px;font-size:22px;font-weight:700;letter-spacing:2px;color:#111">QUOTATION</td></tr>
+<tr><td style="padding-top:4px;font-size:13px;color:#666">No. <b style="color:#222">${esc(Q.number)}</b> · ${esc(Q.date)}${validity ? " · " + esc(validity) : ""}</td></tr>
+<tr><td style="padding-top:14px;font-size:15px;color:#222">${Q.customer ? `Hello ${esc(Q.customer)},<br>` : ""}Here is our quotation. Prices are as quoted; nothing has been billed.</td></tr>
+<tr><td style="padding-top:10px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${items}</table></td></tr>
+${Q.total ? `<tr><td style="padding-top:10px;font-size:16px;font-weight:700;color:#111;text-align:right">Total ${esc(Q.total)}</td></tr>` : ""}
+${block("Notes", Q.notes)}${block("Terms & conditions", Q.terms)}
+<tr><td style="padding-top:22px;font-size:11px;color:#999">This is a quotation, not a bill. Sent by ${esc(Q.shop)} with Hangtag. Reply to this email to contact the shop.</td></tr>
+</table></td></tr></table></body></html>`;
+  const text = [Q.shop, ...Q.contact, "", `QUOTATION ${Q.number} · ${Q.date}`, validity, "", `${Q.customer ? `Hello ${Q.customer},\n` : ""}Here is our quotation. Prices are as quoted; nothing has been billed.`, "",
+    ...Q.lines.map(quoteLine), ...more, ...(Q.total ? ["", `Total: ${Q.total}`] : []), ...(Q.notes ? ["", "Notes: " + Q.notes] : []), ...(Q.terms ? ["", "Terms & conditions: " + Q.terms] : []),
+    "", "This is a quotation, not a bill."].join("\n");
+  return { subject, html, text };
+}
+
 /* ---------- the delivery record ----------
    A row is written as "pending" before the provider is called (it holds the attempt's place under the hourly limit),
    then finished as "sent" (only with the provider's message id) or "failed". */
-export const reservationRow = ({ ownerId, saleId, channel, to, provider, auto }) =>
-  ({ owner_id: ownerId, sale_id: saleId, channel, recipient: String(to).slice(0, 200), status: "pending", provider: provider || null, mode: auto ? "auto" : "manual" });
+export const reservationRow = ({ ownerId, saleId, orderId, requestId, channel, to, provider, auto }) =>
+  ({ owner_id: ownerId, sale_id: saleId || null, channel, recipient: String(to).slice(0, 200), status: "pending", provider: provider || null, mode: auto ? "auto" : "manual",
+    ...(orderId ? { order_id: orderId } : {}), ...(requestId ? { request_id: requestId } : {}) });
 /* result: a provider's { ok, id, message } → the columns that finish the row */
 export function deliveryOutcome(result) {
   const sent = !!(result && result.ok && result.id);

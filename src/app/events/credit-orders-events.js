@@ -6,6 +6,7 @@ import { cancelCollectionAction, collectInput, collectMethod, openCollectForm, s
 import { detachAction, holdAction, openHeldList } from '../../features/orders/components/bill-extras.js';
 import { billAction, convertAction, openOrderEditor, orderFormChange, orderFormClick, orderFormInput } from '../../features/orders/components/order-editor.js';
 import { quotationDocumentClick } from '../../features/orders/components/quotation-document.js';
+import { invoicePageClick, quotationSettingsSubmit } from '../../features/orders/components/quotation-settings.js';
 import { renderOrders } from '../../features/orders/pages/orders-page.js';
 import { chooseSubview } from '../../features/shop/services/modules.js';
 import { discardHeld, recallHeld } from '../../features/orders/use-cases/held-carts.js';
@@ -14,7 +15,7 @@ import { toast } from '../../shared/components/toast.js';
 import { renderAll, setTab } from '../../shared/ui/render.js';
 
 export function creditOrdersClick(t){
-  if(quotationDocumentClick(t)) return true;
+  if(quotationDocumentClick(t) || invoicePageClick(t)) return true;
   // closing a sheet or clearing the bill: forget what belonged to it, then let the usual handling run
   if(t.matches("[data-modal-scrim]") || t.closest("[data-modal-close]") || t.closest("[data-custhist]")){ store.orderForm = null; store.collectForm = null; return false; }
   if(t.closest('[data-act="clear"]')){ store.cartOrder = null; return false; }
@@ -48,6 +49,7 @@ export function creditOrdersChange(t){
   return !!(store.orderForm && orderFormChange(t));
 }
 export function creditOrdersSubmit(e){
+  if(quotationSettingsSubmit(e)) return true;
   if(e.target.id !== "collectForm") return false;
   e.preventDefault();
   const r = submitCollect();

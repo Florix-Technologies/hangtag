@@ -12,7 +12,7 @@ import { blankReviewLine, newReviewLines, planImport, prepareLines, reviewReason
 import { lineMoney, lineTrackingError } from '../../../domain/inventory/purchase.js';
 import { normBatch, parseSerials } from '../../../domain/inventory/tracking.js';
 import { toRupees } from '../../../domain/sales/paise.js';
-import { decimalsOf, isMeasured } from '../../../domain/catalog/units.js';
+import { decimalsOf, isWeighed } from '../../../domain/catalog/units.js';
 import { prod, products } from '../../products/services/catalog.js';
 import { batchOf, expiryKept, serialState, today, trackingOfP } from '../services/tracking.js';
 import { supplierById } from '../services/purchase-state.js';
@@ -43,6 +43,14 @@ export async function keepBillDocument(importId, file){
   else if(out.local) P[importId] = { path: out.path, name: file.name || "", type: file.type || "", t: Date.now(), saved: false };
   savePendingDocs();
   return out;
+}
+/* The merchant closed a bill without saving it (or chose another file): its original isn't kept waiting on this device
+   (one that already reached the shop's private folder stays there, unused) */
+export function discardBillDocument(importId){
+  const P = store.pendingDocs || {};
+  if(!importId || !P[importId] || P[importId].saved) return false;
+  delete P[importId]; savePendingDocs(); use("blobStore").remove(importId).catch(() => {});
+  return true;
 }
 /* The bill was saved: a document still waiting for the cloud will be attached to it when it arrives */
 function markSaved(importId){ const P = store.pendingDocs || {}; if(P[importId]){ P[importId].saved = true; savePendingDocs(); } }
@@ -126,7 +134,7 @@ export function planSupplierBill(b){
   const plan = planImport(lines, products(), { uid, now: Date.now(), deviceId: store.dev, importId: b.importId, note: noteFor(b), colorIndex: products().length });
   lines.filter(l=>l.include!==false&&l.action!=="skip").forEach(l=>{
     if((l.action==="new-variant"||(l.action==="new-product"&&(l.options||[]).length))&&!hasCap("uses_variants")) plan.errors.push({lineId:l.id,message:"Product variants are switched off for this shop."});
-    if(l.action==="new-product"&&isMeasured(l.unit)&&!hasCap("uses_weight")) plan.errors.push({lineId:l.id,message:"Weight-based products are switched off for this shop."});
+    if(l.action==="new-product"&&isWeighed(l.unit)&&!hasCap("uses_weight")) plan.errors.push({lineId:l.id,message:"Weight-based products are switched off for this shop."});
   });
   if(errs.length){ plan.errors.push(...errs); plan.moves = []; plan.lines = []; }
   if(plan.errors.length){ plan.moves=[]; plan.lines=[]; }

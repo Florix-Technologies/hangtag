@@ -182,7 +182,19 @@
   "sellableOf",
   "serialsOf",
   "serialState",
-  "stockRepository"
+  "stockRepository",
+  "sendPendingDocs",
+  "discardBillDocument",
+  "tablesList",
+  "tableStateOf",
+  "orderRepository",
+  "pullOrderChanges",
+  "saveProduct",
+  "quoteSendsOf",
+  "processQuoteSends",
+  "openOrderEditor",
+  "saveTable",
+  "sendTableOrder"
  ],
  "state": [
   "access",
@@ -234,6 +246,7 @@
   "lastCheckout",
   "purchaseForm",
   "snPick",
-  "trackView"
+  "trackView",
+  "pendingDocs"
  ]
 }

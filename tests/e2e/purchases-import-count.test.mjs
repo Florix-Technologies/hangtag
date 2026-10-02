@@ -41,8 +41,8 @@ const A = await openPage();
 check('signed in and connected', await A.until('sbStatus==="connected"'));
 const today = await A.run(`return dayKey(Date.now())`);
 
-// two products: one by the piece, one by the kg
-await A.run(`openEditor(null);editor.name="Tee";editor.price="500";edCombos()[0].cell.stock="5";saveEditor();
+// two products: one by the piece, one by the kg (the shop sells by weight: Weight-based products switched on)
+await A.run(`saveCapabilities({uses_weight:true});openEditor(null);editor.name="Tee";editor.price="500";edCombos()[0].cell.stock="5";saveEditor();
   openEditor(null);editor.name="Rice";editor.price="90";editor.unit="kg";edCombos()[0].cell.stock="10.5";saveEditor();await flushSbQueue()`);
 const TEE = await A.run(`const p=products().find(p=>p.name==="Tee");return {pid:p.id,vid:p.variants[0].id}`);
 const RICE = await A.run(`const p=products().find(p=>p.name==="Rice");return {pid:p.id,vid:p.variants[0].id,unit:p.unit}`);

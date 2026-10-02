@@ -100,7 +100,7 @@ const au = await q(`SELECT action FROM public.hangtag_audit_log WHERE entity = '
 check('the audit log: SN002 assigned, sold, returned', JSON.stringify(au.map((x) => x.action)) === '["insert","sold","returned"]', au);
 
 console.log('--- batches with expiry dates ---');
-check('batches and expiry switched on', await run('const r=saveCapabilities({uses_batches:true,uses_expiry:true});return r.ok&&hasCap("uses_batches")&&hasCap("uses_expiry")'));
+check('batches, expiry and weight switched on', await run('const r=saveCapabilities({uses_batches:true,uses_expiry:true,uses_weight:true});return r.ok&&hasCap("uses_batches")&&hasCap("uses_expiry")&&hasCap("uses_weight")'));
 await run('setTab("products");renderAll();openEditor(null)');
 await until('document.querySelector("#edTracking")');
 check('the form now offers Batch and Batch with expiry date', JSON.stringify(await P.$$eval('#edTracking option', (o) => o.map((x) => x.value))) === '["none","serial","batch","expiry"]');

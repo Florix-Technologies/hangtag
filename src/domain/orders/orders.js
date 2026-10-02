@@ -13,6 +13,8 @@ import { checkBillDiscounts, normalizeDiscount } from '../sales/discounts.js';
 import { deviceCode, formatInvoiceNo } from '../sales/sale.js';
 import { tooPrecise } from '../sales/paise.js';
 import { checkQty, unitId } from '../catalog/units.js';
+import { mobileE164 } from '../invoices/delivery.js';
+import { validEmail } from '../../shared/validation/email.js';
 
 export const ORDER_KINDS=["quote","sales","table"];
 export const KIND_LABELS={quote:"Quotation",sales:"Sales order",table:"Table order"};
@@ -36,6 +38,8 @@ export const FINAL={quote:["cancelled","converted"],sales:["completed","cancelle
 /* Numbers: QT-260929-K3F001, SO-…, KOT-… — T1's device-scoped series (domain/sales/sale.js): the prefix, the date (yymmdd),
    this device's code and its running number of that kind that day, so two tills offline never make the same number. */
 export const ORDER_PREFIX={quote:"QT-",sales:"SO-",table:"KOT-"};
+/* A quotation's number prefix from the shop's quotation settings ("QT" → "QT-"; empty: the default) */
+export const quotePrefix=p=>{const x=String(p||"").trim();return !x?ORDER_PREFIX.quote:/[-/]$/.test(x)?x:x+"-"};
 export const orderDeviceCode=deviceCode;
 export const orderNo=(kind,t,seq,dev)=>formatInvoiceNo(ORDER_PREFIX[kind]||"OR-",t,seq,dev);
 
@@ -142,4 +146,21 @@ export function checkHold(cart,name){
   if(!n) return "Give the bill a name (e.g. the customer's).";
   if(n.length>60) return "Keep the name to 60 characters.";
   return null;
+}
+
+/* ---------- sending a quotation to its customer ---------- */
+/* Quotations go by email or WhatsApp (through the server's providers), or as a PDF shared from the phone */
+export const QUOTE_CHANNELS={email:"Email",whatsapp:"WhatsApp"};
+export const QUOTE_SEND_LABELS={queued:"Queued",sending:"Sending…",sent:"Sent",delivered:"Delivered",failed:"Failed"};
+/* Where a quotation would go on a channel, from its customer as saved in Customers (cust: { name, email, phone }) →
+   { to } or { error } (a reason written for the shop) */
+export function quoteTarget(cust,channel){
+  if(!QUOTE_CHANNELS[channel]) return {error:"Choose email or WhatsApp."};
+  if(!cust||!cust.name) return {error:"Choose the quotation's customer first."};
+  if(channel==="email"){
+    const e=String(cust.email||"").trim();
+    return e&&validEmail(e)?{to:e}:{error:`${cust.name} has no email address. Add one in Customers to email the quotation.`};
+  }
+  const m=mobileE164(cust.phone);
+  return m?{to:m}:{error:`${cust.name} has no mobile number${cust.phone?" that can get messages":""} in Customers. Add one there to send by WhatsApp.`};
 }

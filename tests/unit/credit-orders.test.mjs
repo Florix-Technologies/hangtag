@@ -365,7 +365,7 @@ const ownerAgain = () => { store.access = null; };
   const quoteDoc = OU.ordersOf('quote').find((x) => x.status !== 'converted');
   if(quoteDoc){
     const h = QD.quotationHTML({ ...quoteDoc, notes: 'Handle carefully', terms: 'Payment in 15 days' });
-    check('quotation preview is headed QUOTATION, carries its commercial fields, and is never an invoice', /<h1>QUOTATION<\/h1>/.test(h) && /Valid until/.test(h) && /Unit price/.test(h) && /Discount/.test(h) && /Taxable/.test(h) && /GST/.test(h) && /Terms &amp; conditions/.test(h) && !/TAX INVOICE|<h1>INVOICE<\/h1>/i.test(h));
+    check('quotation preview is headed QUOTATION, carries its commercial fields, and is never an invoice (no GST columns: this shop charges no GST)', /<h1>QUOTATION<\/h1>/.test(h) && /Valid until/.test(h) && /Unit price/.test(h) && /Discount/.test(h) && !/<th>GST<\/th>/.test(h) && /Terms &amp; conditions/.test(h) && !/TAX INVOICE|<h1>INVOICE<\/h1>/i.test(h));
   }
   check('typing a search lists matching items', OE.orderFormInput({ id: 'ofQ', value: 'tee', dataset: {}, closest: () => el }) && store.orderForm.q === 'tee');
   store.orderForm = null;

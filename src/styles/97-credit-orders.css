@@ -63,3 +63,17 @@ html[data-noperm~="collect_credit"] :is([data-collect],[data-paymode="credit"]){
 .ae-w{display:flex;flex-direction:column;min-width:0}
 .ae-w small,.ae-a small{color:var(--ink-3);font-size:12px}
 .ae-a{display:flex;flex-direction:column;align-items:flex-end;font-weight:700}
+
+/* Quotation: send by email / WhatsApp (through the server) or share the PDF; each send's status */
+.sheet.qsendsheet{max-width:560px}
+.qs-chans{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:4px 0 8px}
+.qs-chans .btn{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;padding:10px 12px;min-height:58px}
+.qs-chans .btn small{font-weight:500;font-size:12px;opacity:.85;word-break:break-word}
+.qs-chans .btn[aria-disabled="true"]{opacity:.6}
+.qs-jobs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.qs-job{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:2px 10px;align-items:center;padding:8px 10px;border:1px solid var(--line);border-radius:10px;font-size:13.5px}
+.qs-ch{font-weight:700}.qs-to{color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.qs-st{text-align:right;white-space:nowrap}
+.qs-err{grid-column:1/-1;color:var(--crit);font-size:12.5px}.qs-job .link{grid-column:1/-1;justify-self:start}
+.qs-job.st-sent .qs-st b,.qs-job.st-delivered .qs-st b{color:var(--good-ink)}.qs-job.st-failed .qs-st b{color:var(--crit)}
+.quotation .q-note{color:#586174;font-size:11px;margin:14px 0 0}
+@media (max-width:520px){.qs-chans{grid-template-columns:1fr}.qs-job{grid-template-columns:auto minmax(0,1fr)}.qs-st{grid-column:1/-1;text-align:left}}

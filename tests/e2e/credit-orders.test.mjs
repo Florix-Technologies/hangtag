@@ -126,7 +126,8 @@ check('in the cloud: version 1, its line with the discount', qt && qt.version ==
 check('quotation actions are available from the saved quotation', (await A.$$('#orderSheet [data-qdoc="preview"],#orderSheet [data-qdoc="print"],#orderSheet [data-qdoc="download"],#orderSheet [data-qdoc="send"],#orderSheet [data-ofdup]')).length === 5);
 await A.$eval('#orderSheet [data-qdoc="preview"]', (b) => b.click()); await sleep(250);
 const preview = await text('.quotation');
-check('preview is a full QUOTATION, never an invoice', /QUOTATION/.test(preview || '') && /Valid until/.test(preview || '') && /Unit price/.test(preview || '') && /Discount/.test(preview || '') && /Taxable/.test(preview || '') && /GST/.test(preview || '') && /Blue stock only/.test(preview || '') && /Prices valid/.test(preview || '') && !/INVOICE/.test(preview || ''), preview);
+// this shop charges no GST, so the quotation has no Taxable / GST columns (a GST shop's are checked in quotations.test.mjs)
+check('preview is a full QUOTATION, never an invoice', /QUOTATION/.test(preview || '') && /Valid until/.test(preview || '') && /Unit price/.test(preview || '') && /Discount/.test(preview || '') && !/Taxable/.test(preview || '') && /Blue stock only/.test(preview || '') && /Prices valid/.test(preview || '') && /not a bill/.test(preview || '') && !/INVOICE/.test(preview || ''), preview);
 await A.click('[data-modal-close]'); await sleep(150);
 await run(`openOrderEditor(${JSON.stringify(QT.id)})`); await sleep(150);
 await A.click('#orderSheet [data-ofconvert]'); await sleep(300);

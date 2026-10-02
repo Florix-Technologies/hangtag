@@ -4061,6 +4061,10 @@ ALTER TABLE public.hangtag_orders ADD CONSTRAINT hangtag_orders_terms_check CHEC
 ALTER TABLE public.hangtag_orders DROP CONSTRAINT IF EXISTS hangtag_orders_quote_check;
 ALTER TABLE public.hangtag_orders ADD CONSTRAINT hangtag_orders_quote_check CHECK ((quote_id IS NULL AND quote_no IS NULL) OR kind = 'sales') NOT VALID;
 ALTER TABLE public.hangtag_order_items ADD COLUMN IF NOT EXISTS unit TEXT NOT NULL DEFAULT 'pcs';
+-- the order's total as the app's one bill calculation gave it (what a quotation sent to a customer says it comes to)
+ALTER TABLE public.hangtag_orders ADD COLUMN IF NOT EXISTS total NUMERIC(12,2);
+ALTER TABLE public.hangtag_orders DROP CONSTRAINT IF EXISTS hangtag_orders_total_check;
+ALTER TABLE public.hangtag_orders ADD CONSTRAINT hangtag_orders_total_check CHECK (total IS NULL OR total >= 0) NOT VALID;
 UPDATE public.hangtag_order_items SET unit = 'pcs' WHERE unit IS NULL;
 ALTER TABLE public.hangtag_order_items DROP CONSTRAINT IF EXISTS hangtag_order_items_unit_check;
 ALTER TABLE public.hangtag_order_items ADD CONSTRAINT hangtag_order_items_unit_check CHECK (unit IN ('pcs','box','pack','dozen','kg','g','l','ml','m')) NOT VALID;
@@ -4108,15 +4112,15 @@ BEGIN
         ver := cur.version + 1;
         UPDATE public.hangtag_orders SET no=o.no,status=o.status,customer_id=o.customer_id,customer=o.customer,bill_disc=o.bill_disc,
             notes=o.notes,terms=o.terms,valid_until=o.valid_until,table_id=o.table_id,session_id=o.session_id,converted_to=o.converted_to,
-            quote_id=o.quote_id,quote_no=o.quote_no,sale_ids=COALESCE(o.sale_ids,'{}'),version=ver,updated_t=o.updated_t,
+            quote_id=o.quote_id,quote_no=o.quote_no,total=o.total,sale_ids=COALESCE(o.sale_ids,'{}'),version=ver,updated_t=o.updated_t,
             device_id=o.device_id,save_hash=fp,updated_at=NOW() WHERE owner_id=uid AND id=cur.id;
     ELSE
         IF base <> 0 THEN RAISE EXCEPTION 'Order % is no longer in the cloud. Discard this change.', COALESCE(o.no,o.id) USING ERRCODE = '40001'; END IF;
         ver := 1;
         INSERT INTO public.hangtag_orders (owner_id,id,kind,no,status,customer_id,customer,bill_disc,notes,terms,valid_until,table_id,session_id,
-            source,converted_to,quote_id,quote_no,sale_ids,version,t,updated_t,device_id,user_id,save_hash)
+            source,converted_to,quote_id,quote_no,total,sale_ids,version,t,updated_t,device_id,user_id,save_hash)
         VALUES (uid,o.id,o.kind,o.no,o.status,o.customer_id,o.customer,o.bill_disc,o.notes,o.terms,o.valid_until,o.table_id,o.session_id,
-            COALESCE(o.source,'staff'),o.converted_to,o.quote_id,o.quote_no,COALESCE(o.sale_ids,'{}'),ver,
+            COALESCE(o.source,'staff'),o.converted_to,o.quote_id,o.quote_no,o.total,COALESCE(o.sale_ids,'{}'),ver,
             COALESCE(o.t,(extract(epoch FROM now())*1000)::BIGINT),o.updated_t,o.device_id,auth.uid(),fp);
     END IF;
     DELETE FROM public.hangtag_order_items i WHERE i.owner_id=uid AND i.order_id=o.id
@@ -4203,7 +4207,7 @@ BEGIN
         ELSE
             tr:=COALESCE(NULLIF(r->>'tracking',''),'none'); u:=COALESCE(NULLIF(r->>'unit',''),'pcs');
             IF jsonb_array_length(COALESCE(r->'options'->'opts','[]'::jsonb))>0 AND NOT public.hangtag_cap_on(uid,'uses_variants') THEN RAISE EXCEPTION 'Product variants are switched off for this shop.' USING ERRCODE='42501'; END IF;
-            IF u IN ('kg','g','l','ml','m') AND NOT public.hangtag_cap_on(uid,'uses_weight') THEN RAISE EXCEPTION 'Weight-based products are switched off for this shop.' USING ERRCODE='42501'; END IF;
+            IF u IN ('kg','g','l','ml') AND NOT public.hangtag_cap_on(uid,'uses_weight') THEN RAISE EXCEPTION 'Weight-based products are switched off for this shop.' USING ERRCODE='42501'; END IF;
             IF tr='serial' AND NOT public.hangtag_cap_on(uid,'uses_serials') THEN RAISE EXCEPTION 'Serial tracking is switched off for this shop.' USING ERRCODE='42501'; END IF;
             IF tr='batch' AND NOT public.hangtag_cap_on(uid,'uses_batches') THEN RAISE EXCEPTION 'Batch tracking is switched off for this shop.' USING ERRCODE='42501'; END IF;
             IF COALESCE((r->>'tracks_expiry')::BOOLEAN,FALSE) AND NOT public.hangtag_cap_on(uid,'uses_expiry') THEN RAISE EXCEPTION 'Expiry tracking is switched off for this shop.' USING ERRCODE='42501'; END IF;
@@ -4237,7 +4241,8 @@ BEGIN
         VALUES (r->>'id',r->>'variant_id',r->>'product_id','RESTOCK',q,(r->>'cost_price')::INTEGER,LEFT(r->>'note',200),COALESCE((r->>'t')::BIGINT,(extract(epoch FROM now())*1000)::BIGINT),r->>'device_id',imp,sns,bno,bexp);
         n_m:=n_m+1; n_units:=n_units+q;
     END LOOP;
-    IF n_m=0 THEN RAISE EXCEPTION 'There is no stock to add.' USING ERRCODE='23514'; END IF;
+    -- a purchase needs stock lines; a plain import keeps the earlier rule (an import record alone is allowed)
+    IF n_m=0 AND k='purchase' THEN RAISE EXCEPTION 'There is no stock to add.' USING ERRCODE='23514'; END IF;
     IF k='purchase' THEN
         IF sid IS NULL THEN RAISE EXCEPTION 'Choose the supplier for this purchase.' USING ERRCODE='23514'; END IF;
         SELECT name,gstin INTO s_name,s_gstin FROM public.hangtag_suppliers WHERE owner_id=uid AND id=sid;
@@ -4327,6 +4332,22 @@ GRANT EXECUTE ON FUNCTION public.hangtag_cap_on(UUID,TEXT) TO authenticated;
 REVOKE ALL ON FUNCTION public.hangtag_order_status(TEXT,TEXT) FROM PUBLIC,anon;
 GRANT EXECUTE ON FUNCTION public.hangtag_order_status(TEXT,TEXT) TO authenticated;
 
+-- (e) Quotations sent to their customer by email or WhatsApp (Edge Function send-receipt, the same providers and log as
+--     bills): a delivery row is for one bill OR one order. request_id is made by the phone for one press of Send and is
+--     used once per shop, so a retry, a queued send going out twice or a second tap never sends the quotation twice.
+--     Rows are still written only by the function; the shop reads them (row security: section 5).
+ALTER TABLE public.hangtag_deliveries ADD COLUMN IF NOT EXISTS order_id TEXT;
+ALTER TABLE public.hangtag_deliveries ADD COLUMN IF NOT EXISTS request_id TEXT;
+ALTER TABLE public.hangtag_deliveries DROP CONSTRAINT IF EXISTS hangtag_deliveries_order_fkey;
+ALTER TABLE public.hangtag_deliveries ADD CONSTRAINT hangtag_deliveries_order_fkey FOREIGN KEY (owner_id, order_id)
+    REFERENCES public.hangtag_orders (owner_id, id) ON DELETE SET NULL (order_id);
+ALTER TABLE public.hangtag_deliveries DROP CONSTRAINT IF EXISTS hangtag_deliveries_target_check;
+ALTER TABLE public.hangtag_deliveries ADD CONSTRAINT hangtag_deliveries_target_check CHECK (sale_id IS NULL OR order_id IS NULL) NOT VALID;
+ALTER TABLE public.hangtag_deliveries DROP CONSTRAINT IF EXISTS hangtag_deliveries_request_check;
+ALTER TABLE public.hangtag_deliveries ADD CONSTRAINT hangtag_deliveries_request_check CHECK (request_id IS NULL OR request_id ~ '^[A-Za-z0-9_-]{8,64}$') NOT VALID;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_hangtag_deliveries_request ON public.hangtag_deliveries (owner_id, request_id) WHERE request_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_hangtag_deliveries_order ON public.hangtag_deliveries (owner_id, order_id, created_at DESC) WHERE order_id IS NOT NULL;
+
 -- ==============================================================================
 -- 4. Indexes for reports
 -- ==============================================================================
@@ -4375,7 +4396,7 @@ BEGIN
         ('hangtag_fin_txns',        'create_sale,view_reports',                     '-'),
         ('hangtag_cash_book',       'create_sale,view_reports',                     '-'),
         ('hangtag_bank_book',       'create_sale,view_reports',                     '-'),
-        ('hangtag_deliveries',      'create_sale,view_reports',                     '-'),
+        ('hangtag_deliveries',      'create_sale,view_reports,create_order',        '-'),
         ('hangtag_payment_intents', 'create_sale,view_reports',                     '-'),
         ('hangtag_invoice_links',   'create_sale,view_reports',                     'create_sale'),
         ('hangtag_cash_moves',      'create_sale,view_reports',                     'create_sale'),
@@ -4768,4 +4789,17 @@ SELECT check_name, value, expected, value = expected AS ok FROM (
     SELECT 62, 'Closed table sessions with the bill that closed them',
            (SELECT count(*) FROM public.hangtag_table_sessions s WHERE s.status = 'closed' AND s.sale_id IS NOT NULL)::bigint,
            (SELECT count(*) FROM public.hangtag_table_sessions s WHERE s.status = 'closed')::bigint
+    UNION ALL
+    SELECT 63, 'Supplier bills whose original is kept in the shop''s own folder',
+           (SELECT count(*) FROM public.hangtag_stock_imports i WHERE i.document_path IS NULL OR split_part(i.document_path, '/', 1) = i.owner_id::text)::bigint,
+           (SELECT count(*) FROM public.hangtag_stock_imports)::bigint
+    UNION ALL
+    SELECT 64, 'Sales orders made from a quotation of the same shop',
+           (SELECT count(*) FROM public.hangtag_orders o WHERE o.quote_id IS NOT NULL AND EXISTS (SELECT 1 FROM public.hangtag_orders q
+               WHERE q.owner_id = o.owner_id AND q.id = o.quote_id AND q.kind = 'quote'))::bigint,
+           (SELECT count(*) FROM public.hangtag_orders o WHERE o.quote_id IS NOT NULL)::bigint
+    UNION ALL
+    SELECT 65, 'Messages sent for one bill or one quotation, never both',
+           (SELECT count(*) FROM public.hangtag_deliveries d WHERE d.sale_id IS NULL OR d.order_id IS NULL)::bigint,
+           (SELECT count(*) FROM public.hangtag_deliveries)::bigint
 ) r ORDER BY n;

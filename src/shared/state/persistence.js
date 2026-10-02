@@ -57,3 +57,5 @@ export const saveTables=()=>storage.set("rc_tables",store.tables);
 export const saveTableSessions=()=>storage.set("rc_table_sessions",store.tableSessions);
 /* Supplier bills' originals that couldn't reach the cloud yet (the files themselves are in the blobStore), by import id */
 export const savePendingDocs=()=>storage.set("rc_pending_docs",store.pendingDocs||{});
+/* Quotations sent to customers from this device: each press of Send until it went out (queued → sent / failed) */
+export const saveQuoteSends=()=>storage.set("rc_quote_sends",store.quoteSends||[]);

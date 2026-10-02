@@ -43,7 +43,7 @@ export function setEmailMode(mode){
   const staffSw = aEl("staffSwitch");
   staffSw.hidden = forgot;
   staffSw.innerHTML = staff ? 'Shop owner? <button type="button" class="link" data-switchto="signin">Back to sign in</button>'
-    : 'Staff or team member? <button type="button" class="link" data-switchto="staff">Staff sign-in</button>';
+    : '<span>Staff or team member?</span> <button type="button" class="btn sm" data-switchto="staff">Staff sign-in</button>';
   labelProviders();
   aEl("authPass").value = ""; aEl("authPass2").value = "";
   setAuthError(""); setAuthNote("");

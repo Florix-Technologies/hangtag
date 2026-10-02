@@ -25,6 +25,9 @@ html.gated body{overflow:hidden}
 .emailchip{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--wash);font-size:14px;font-weight:600;color:var(--ink);word-break:break-all}
 .authfine{margin:14px 0 0;color:var(--ink-3);font-size:12.5px;line-height:1.5;text-align:center}
 .authfine+.authfine{margin-top:7px}
+.authfp{display:flex;justify-content:flex-end;margin:-6px 0 -2px}.authfp[hidden],.authfp:has(#forgotBtn[hidden]){display:none}
+.authfp .link{font-size:13.5px;padding:2px 0}
+.authstaff{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:6px 8px}.authstaff .btn.sm{padding:6px 14px;font-size:13.5px}
 .authnote{margin:14px 0 0;padding:10px 12px;border-radius:10px;background:var(--good-soft);color:var(--good-ink);font-size:13.5px;line-height:1.45}
 .autherr{margin:14px 0 0;padding:10px 12px;border-radius:10px;background:var(--crit-soft);color:var(--crit);font-size:13.5px;line-height:1.45}
 .authcenter{text-align:center;margin-top:12px}

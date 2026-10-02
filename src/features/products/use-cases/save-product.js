@@ -12,7 +12,8 @@ import { okColor } from '../../../shared/utils/colors.js';
 import { UPLOAD_PERMISSIONS } from '../../../domain/sync/queue-rules.js';
 import { canAny, denied, notAllowedText } from '../../shop/services/access.js';
 import { cleanTracking, trackingFromChoice } from '../../../domain/shop/capabilities.js';
-import { decimalsOf, roundQty, unitId } from '../../../domain/catalog/units.js';
+import { decimalsOf, isWeighed, roundQty, unitId } from '../../../domain/catalog/units.js';
+import { hasCap } from '../../shop/services/shop-caps.js';
 
 /* draft: the editor state { id, name, cat, brand, desc, price, cost, color, archived, hsn, gst, unit, tracking, hasOpts, opts, cells, codesOn, code, img }
    (opts/cells as in domain/catalog/options.js). Every current combination is saved as a variant (off sale when unticked);
@@ -33,6 +34,12 @@ export function saveProduct({ draft }){
   // tracked by serial number or batch: its stock moves only with its serials / batches (Purchases, Stock in, bills), and how
   // it is tracked changes only while it has no stock (pieces already in hand have no serials or batch to go by)
   const trk=trackingFromChoice(e.tracking), wasTrk=cleanTracking(old&&old.tracking);
+  // a capability the shop has switched off can't be started on a product (one already using it keeps working)
+  const capOff=(cap,what)=>({error:`${what} ${what.endsWith("s")?"are":"is"} switched off for this shop. Switch it on in Settings → Capabilities first.`,cap});
+  if(trk.tracking==="serial"&&wasTrk!=="serial"&&!hasCap("uses_serials")) return capOff("uses_serials","Serial numbers");
+  if(trk.tracking==="batch"&&wasTrk!=="batch"&&!hasCap("uses_batches")) return capOff("uses_batches","Batch tracking");
+  if(trk.expiry&&!(old&&old.expiry)&&!hasCap("uses_expiry")) return capOff("uses_expiry","Expiry dates");
+  if(isWeighed(unit)&&!(old&&isWeighed(unitId(old.unit)))&&!hasCap("uses_weight")) return capOff("uses_weight","Selling by weight");
   if(old&&trk.tracking!==wasTrk&&variantsOf(old,true).some(v=>stockOf(v.id)!==0)) return {error:`How ${old.name} is tracked can change only while it has no stock. It has ${variantsOf(old,true).reduce((a,v)=>a+Math.max(0,stockOf(v.id)),0)} in hand: sell or adjust it to 0 first.`};
   const variants=[], newMoves=[], delV=[], ids={}; let bad=null;
   const fields=cell=>({sku:String(cell.sku||"").trim(),bc:cleanCode(cell.bc),price:numOrNull(cell.price),cost:numOrNull(cell.cost)});

@@ -32,6 +32,7 @@ import { renderTablesPage } from '../features/restaurant/pages/tables-page.js';
 import { renderKitchenPage } from '../features/restaurant/pages/kitchen-page.js';
 import { mayWorkTables } from '../features/restaurant/services/restaurant-state.js';
 import { installRestaurantTimers } from './events/restaurant-events.js';
+import { invoicePageHTML, quotationSettingsHTML } from '../features/orders/components/quotation-settings.js';
 
 let installed = false;
 export function installModules(){
@@ -58,6 +59,9 @@ export function installModules(){
   // Settings → Capabilities → Expiry (Wave 2): for shops that keep expiry dates or batches
   const expires = () => hasCap("uses_expiry") || hasCap("uses_batches") || products().some(p => trackingOfP(p) === "batch");
   registerSettingsPart("capabilities", { id: "expiry", order: 20, perms: ["manage_settings"], html: () => expires() ? expirySettingsHTML() : "" });
+  // Settings → Receipt: the page invoice links open (the owner's), and the quotation template for shops that make quotations
+  registerSettingsPart("receipt", { id: "invoice-page", order: 10, perms: ["manage_settings"], html: invoicePageHTML });
+  registerSettingsPart("receipt", { id: "quotations", order: 20, perms: ["manage_settings"], html: () => hasCap("uses_quotations") ? quotationSettingsHTML() : "" });
   // Restaurant (W2-B): the tables (a till, or servers ordering on their phones) and the kitchen screen — only with the shop's
   // table / kitchen capabilities (the registry adds them to these modules by itself)
   registerModule({ id: "tables", label: "Tables", order: 32, phone: 25, caps: ["uses_tables"], perms: ["create_sale", "create_order", "manage_tables", "manage_settings"], available: mayWorkTables, render: renderTablesPage });

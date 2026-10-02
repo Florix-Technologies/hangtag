@@ -2,7 +2,7 @@
 // Nothing reaches stock until "Confirm & Add to Inventory"; the save is one all-or-nothing step in the cloud.
 import { store } from '../../../shared/state/store.js';
 import { variantsOf } from '../../../domain/catalog/variants.js';
-import { addBlankLine, billDocumentLink, confirmSupplierBill, fingerprintBill, invoiceDuplicates, keepBillDocument, planSupplierBill, readSupplierBill, refreshLine } from '../use-cases/import-supplier-bill.js';
+import { addBlankLine, billDocumentLink, confirmSupplierBill, discardBillDocument, fingerprintBill, invoiceDuplicates, keepBillDocument, planSupplierBill, readSupplierBill, refreshLine } from '../use-cases/import-supplier-bill.js';
 import { suppliersList } from '../services/purchase-state.js';
 import { IMPORT_UNITS } from '../../../domain/catalog/product-import.js';
 import { liveProducts, prod } from '../../products/services/catalog.js';
@@ -256,11 +256,11 @@ export function billImportClick(t){
   const el = t.closest("[data-bi]"); if(!el) return false;
   const act = el.dataset.bi, l = el.dataset.line ? lineOf(el.dataset.line) : null;
   switch(act){
-    case "cancel": if(b.step === "review" && b.lines.length > 1 && !confirm("Close without adding this bill? Your review will be lost.")) return true; store.billImport = null; closeModal(); break;
+    case "cancel": if(b.step === "review" && b.lines.length > 1 && !confirm("Close without adding this bill? Your review will be lost.")) return true; if(b.step !== "done") discardBillDocument(b.importId); store.billImport = null; closeModal(); break;
     case "close": store.billImport = null; closeModal(); break;
     case "continue": extract(); break;
     case "retry": extract(); break;
-    case "another": b.step = "pick"; b.err = ""; b.file = null; b.doc = null; b.fileHash = ""; b.importId = "imp" + uid(); renderBillImport(); break;
+    case "another": discardBillDocument(b.importId); b.step = "pick"; b.err = ""; b.file = null; b.doc = null; b.fileHash = ""; b.importId = "imp" + uid(); renderBillImport(); break;
     case "viewdoc": billDocumentLink(b.importId, b.doc && b.doc.cloud ? b.doc.path : "").then(r => {
         const url = r.url || (b.file ? URL.createObjectURL(b.file) : ""); if(url) window.open(url, "_blank", "noopener"); else toast(r.error || "The original isn't available."); }); break;
     // by hand: the chosen file (if any) stays attached to the bill

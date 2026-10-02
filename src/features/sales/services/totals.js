@@ -16,7 +16,7 @@ export function billCustomer(cust){
 /* Which GST applies to a bill for this customer (null = walk-in): { mode, shopState, pos, b2b } */
 export const gstContext=cust=>placeOfSupply({settings:store.settings,shop:store.profile||{},customer:billCustomer(cust)});
 /* A bill line's GST rate: the product's own rate, else the shop's */
-export const rateOf=c=>lineRate((prod(c.p)||{}).gst,store.settings);
+export const rateOf=c=>c&&c.gst!=null&&c.gst!==""&&Number.isFinite(+c.gst)?+c.gst:lineRate((prod(c.p)||{}).gst,store.settings);
 /* Totals for bill lines ({ q, price, p, disc? }) with a bill discount, for a customer (default: the bill's customer) */
 export function billTotals(lines,billDisc,cust){
   const g=gstContext(cust===undefined?store.cartCust:cust);

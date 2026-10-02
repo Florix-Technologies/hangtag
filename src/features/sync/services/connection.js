@@ -106,6 +106,7 @@ export function setupSupabaseRealtime(){
       orders: ()=>debouncePull("orders"),
       held: ()=>debouncePull("orders"),
       collections: ()=>debouncePull("orders"),
+      tables: ()=>debouncePull("orders"),
     }, (status)=>{ if(status === "SUBSCRIBED" && store.sbStatus !== "update"){ store.sbStatus = "connected"; renderSync(); } });
   }catch(e){ logger.warn("Realtime subscription notice:", e); }
 }

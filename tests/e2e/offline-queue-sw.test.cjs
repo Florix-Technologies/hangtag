@@ -82,7 +82,7 @@ const FAKE_DB=`
     const order=await run(A,`return __calls.filter(c=>c.t==='hangtag_sales').map(c=>c.ops[0][0])`);
     check('bill uploaded before its cancel',order.lastIndexOf('rpc')>-1&&order.lastIndexOf('rpc')<order.lastIndexOf('update'),order);
     // no session -> nothing sent, queue kept
-    await run(A,`window.__calls=[];window.__sess=false;cart=[];addToLines(cart,'q1:M',1);await checkout({method:'upi',ref:'412345678901'});await sleep(400);await flushSbQueue();`);
+    await run(A,`window.__calls=[];window.__sess=false;cart=[];addToLines(cart,'q1:M',1);await checkout({method:'upi',ref:'412345678901',confirmed:true});await sleep(400);await flushSbQueue();`);
     check('no signed-in session: nothing sent to the cloud',(await run(A,'return __calls.length'))===0);
     check('no signed-in session: bill kept in queue',(await run(A,'return sbOfflineQueue.length'))===1);
     // bill added while an upload is running is not lost

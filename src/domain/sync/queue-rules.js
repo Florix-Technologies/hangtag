@@ -10,7 +10,7 @@
 //     by the database's rules won't fix itself by retrying: the item goes to the review list with the reason. Nothing is
 //     ever dropped silently; review items can be sent again, and all but bills can be discarded after review.
 export const ORDERED_TYPES=["sale","prod","allsales","event"];
-const ONE_PER_RECORD=["sale","return","cust","move","event","eventdel","void","cashmove","dayclose","collection","held","helddel","order","supplier","purchase","pcancel","spay"];
+const ONE_PER_RECORD=["sale","return","cust","move","event","eventdel","void","cashmove","dayclose","collection","held","helddel","order","supplier","purchase","pcancel","spay","table","tsession","ostatus"];
 const REVIEW_NOW=["VALIDATION","CONFLICT"];
 export const REVIEW_AFTER_TRIES=3;   // NOT_FOUND: something it needs may still be on its way from another device
 
@@ -26,12 +26,25 @@ export function mergeIntoQueue(queue,item){
   if(k){ const i=q.findIndex(x=>!x.sending&&itemKey(x)===k); if(i>-1){ q[i]=item; return q; } }
   q.push(item); return q;
 }
+/* Serial numbers and batches (section 3n): a stock-in brings them into the cloud ("sn:<serial>", "bt:<variant>|<batch>");
+   a bill, or a stock record taking them out, waits for the stock-in still on its way. Serials and batches as normalized
+   (upper case, trimmed), as every record keeps them. */
+const snKeys=list=>(list||[]).flatMap(x=>Array.isArray(x.sn)?x.sn.map(s=>"sn:"+String(s).trim().toUpperCase()):[]);
+const btKeys=(list,vid)=>(list||[]).flatMap(x=>Array.isArray(x.bt)?x.bt.map(a=>"bt:"+(vid||x.v)+"|"+String(a.b).trim().replace(/\s+/g," ").toUpperCase()):[]);
+const moveKeys=m=>[...snKeys([m]),...(m.b?["bt:"+m.v+"|"+String(m.b).trim().replace(/\s+/g," ").toUpperCase()]:[])];
+export function providesKeys(item){
+  if(!item) return [];
+  if(item.type==="move"&&item.move&&item.move.q>0) return moveKeys(item.move);
+  if(item.type==="purchase") return (item.moves||[]).flatMap(moveKeys);
+  return [];
+}
 /* Records an item needs in the cloud first */
 export function dependsOn(item){
   if(!item) return [];
+  if(item.type==="sale"&&item.sale) return [...snKeys(item.sale.items),...btKeys(item.sale.items)];
   if(item.type==="return"&&item.ret) return ["sale:"+item.ret.sale];
   if(item.type==="void") return ["sale:"+item.id];
-  if(item.type==="move"&&item.move&&item.move.p) return ["prod:"+item.move.p];
+  if(item.type==="move"&&item.move&&item.move.p) return ["prod:"+item.move.p,...(item.move.q<0?moveKeys(item.move):[])];
   if(item.type==="cashmove"&&item.move&&item.move.reverses) return ["cashmove:"+item.move.reverses];
   // a payment collected from a customer needs the customer in the cloud first (foreign key)
   if(item.type==="collection"&&item.col&&item.col.cust) return ["cust:"+item.col.cust];
@@ -39,6 +52,9 @@ export function dependsOn(item){
   // and the payment it reverses
   if(item.type==="purchase"&&item.purchase){const p=item.purchase;return [...(p.supplierId?["supplier:"+p.supplierId]:[]),...new Set((p.lines||[]).map(l=>"prod:"+l.p))]}
   if(item.type==="pcancel") return ["purchase:"+item.id];
+  // a restaurant (section 3o): a kitchen step needs its order in the cloud; a table order its table's session
+  if(item.type==="ostatus") return ["order:"+item.id];
+  if(item.type==="tsession"&&item.session) return ["table:"+item.session.table];
   if(item.type==="spay"&&item.pay){const x=item.pay;return ["supplier:"+x.supplierId,...(x.purchaseId?["purchase:"+x.purchaseId]:[]),...(x.reverses?["spay:"+x.reverses]:[])]}
   return [];
 }
@@ -47,7 +63,7 @@ export const recordKey=x=>itemKey(x)||(x&&x.type==="prod"&&x.id?"prod:"+x.id:nul
 /* Keys of records still waiting: the queue's items (except those done) and the review list */
 export function waitingKeys(queue,review,done){
   const s=new Set();
-  const add=x=>{const k=recordKey(x);if(k)s.add(k)};
+  const add=x=>{const k=recordKey(x);if(k)s.add(k);providesKeys(x).forEach(p=>s.add(p))};
   (queue||[]).forEach(x=>{if(!(done&&done.has(x)))add(x)});
   (review||[]).forEach(r=>add(r.item));
   return s;
@@ -78,6 +94,9 @@ export const UPLOAD_PERMISSIONS={
   collection:["collect_credit"],held:["create_sale"],helddel:["create_sale"],order:["create_order"],
   // suppliers and purchases (section 3l); cancelling a purchase also needs manage_inventory (checked by the use case and hangtag_cancel_purchase)
   supplier:["create_purchase","manage_inventory"],purchase:["create_purchase"],pcancel:["create_purchase"],spay:["create_purchase"],
+  // a restaurant (section 3o): tables are set up with the shop's settings; guests are seated by whoever takes their order;
+  // the kitchen moves orders along (RPC hangtag_order_status)
+  table:["manage_settings"],tsession:["manage_tables","create_order","create_sale"],ostatus:["manage_kitchen","create_order","send_to_kitchen"],
 };
 /* May someone with these permissions upload this item? (unknown kinds: yes) */
 export const uploadAllowed=(item,has)=>{const need=item&&UPLOAD_PERMISSIONS[item.type];return !need||need.some(p=>has(p))};

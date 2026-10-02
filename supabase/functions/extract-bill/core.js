@@ -23,6 +23,7 @@ export const EXTRACTION_SCHEMA = obj({
       brand: nullable("string"),
       options: { type: "array", items: obj({ name: { type: "string" }, value: { type: "string" } }) },
       quantity: nullable("number"),
+      unit: nullable("string"),
       unit_price: nullable("number"),
       total_price: nullable("number"),
       mrp: nullable("number"),
@@ -45,7 +46,7 @@ Extract every product line on the bill: the goods the shop received. Skip lines 
 Rules:
 - Never invent or infer a value that is not on the bill. If a field is not shown, or you cannot read it, return null. An empty list of options is correct when the bill shows none.
 - Split the product name from option values only when the bill clearly shows them, for example separate Colour / Size / Storage columns, or an obvious pattern such as "Dress Black M". Use the bill's own words for option names (Colour, Size, Storage, RAM, Weight, Pack size, Model, Shade, Material, Length…) and values. When unsure, keep the text in the name.
-- quantity is the number of units received on that line. If the bill gives packs or dozens and the unit count is not stated, give the quantity as printed and explain in notes.
+- quantity is the number received on that line. unit is the printed unit, normalised to one of: pcs, box, pack, dozen, kg, g, l, ml, m. Common words such as Nos/pieces become pcs and litres become l. If no unit is printed, return null. If the bill gives packs or dozens and the piece count is not stated, keep the printed quantity and unit and explain in notes.
 - unit_price is the supplier's price per unit before tax when the bill shows it; total_price is the line amount as printed. Do not compute a missing price.
 - mrp is the printed maximum retail price, if any.
 - hsn is the HSN/SAC code exactly as printed (digits only). gst_rate is the tax percentage for the line (for example 5 or 12); if CGST and SGST are shown separately, add them. tax_amount is the line's tax if printed.
@@ -118,6 +119,28 @@ export function toNumber(v) {
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
 }
+const UNIT_ALIASES = {
+  pcs: "pcs", pc: "pcs", piece: "pcs", pieces: "pcs", no: "pcs", nos: "pcs", number: "pcs", numbers: "pcs", each: "pcs", ea: "pcs",
+  box: "box", boxes: "box", bx: "box",
+  pack: "pack", packs: "pack", packet: "pack", packets: "pack", pkt: "pack", pkts: "pack",
+  dozen: "dozen", dozens: "dozen", doz: "dozen", dz: "dozen",
+  kg: "kg", kgs: "kg", kilogram: "kg", kilograms: "kg", kilo: "kg", kilos: "kg",
+  g: "g", gm: "g", gms: "g", gram: "g", grams: "g",
+  l: "l", lt: "l", ltr: "l", ltrs: "l", litre: "l", litres: "l", liter: "l", liters: "l",
+  ml: "ml", mls: "ml", millilitre: "ml", millilitres: "ml", milliliter: "ml", milliliters: "ml",
+  m: "m", mt: "m", mtr: "m", mtrs: "m", metre: "m", metres: "m", meter: "m", meters: "m",
+};
+const UNIT_DP = { pcs: 0, box: 0, pack: 0, dozen: 0, kg: 3, g: 0, l: 3, ml: 0, m: 2 };
+/* Printed unit words/codes -> the same canonical IDs used by the catalog. Unknown or absent stays null. */
+export function normalizeUnit(v) {
+  const s = str(v, 30);
+  if (!s) return null;
+  return UNIT_ALIASES[s.toLowerCase().replace(/\./g, "").replace(/\s+/g, " ")] || null;
+}
+const quantityFitsUnit = (q, unit) => {
+  const dp = UNIT_DP[unit];
+  return dp === undefined || Math.abs(q * 10 ** dp - Math.round(q * 10 ** dp)) < 1e-6;
+};
 const date = (v) => {
   const s = str(v, 20);
   if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
@@ -136,14 +159,17 @@ export function normalizeExtraction(raw, meta = {}) {
       .map((o) => ({ name: str(o && o.name, 24), value: str(o && o.value, 40) })).filter((o) => o.name && o.value);
     const line = {
       name: str(l.name, 120), description: str(l.description, 300), brand: str(l.brand, 60), options,
-      quantity: toNumber(l.quantity), unit_price: toNumber(l.unit_price), total_price: toNumber(l.total_price), mrp: toNumber(l.mrp),
+      quantity: toNumber(l.quantity), unit: normalizeUnit(l.unit), unit_price: toNumber(l.unit_price), total_price: toNumber(l.total_price), mrp: toNumber(l.mrp),
       sku: str(l.sku, 40), barcode: str(l.barcode, 64), hsn: str(l.hsn, 8) && String(l.hsn).replace(/\D/g, "").slice(0, 8) || null,
       gst_rate: toNumber(l.gst_rate), tax_amount: toNumber(l.tax_amount),
       confidence: Math.min(1, Math.max(0, toNumber(l.confidence) ?? 0)), notes: str(l.notes, 300),
     };
     const empty = !line.name && !line.description && !line.sku && !line.barcode && line.quantity == null && line.unit_price == null && line.total_price == null;
     if (empty) return;
-    if (line.quantity != null && !Number.isInteger(line.quantity)) warnings.push(`Line ${i + 1}: quantity ${line.quantity} is not a whole number.`);
+    if (line.quantity != null && !Number.isInteger(line.quantity)) {
+      if (!line.unit) warnings.push(`Line ${i + 1}: quantity ${line.quantity} is fractional; check the unit printed on the bill.`);
+      else if (!quantityFitsUnit(line.quantity, line.unit)) warnings.push(`Line ${i + 1}: quantity ${line.quantity} has too many decimal places for ${line.unit}.`);
+    }
     lines.push(line);
   });
   return {

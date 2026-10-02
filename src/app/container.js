@@ -32,7 +32,9 @@ import { createWeightScale } from '../infrastructure/hardware/weight-scale.js';
 import { createLocalFirstOrderRepository } from '../infrastructure/repositories/local-first-order-repository.js';
 import { createLocalFirstCreditRepository } from '../infrastructure/repositories/local-first-credit-repository.js';
 import { createLocalFirstPurchaseRepository } from '../infrastructure/repositories/local-first-purchase-repository.js';
-import { saveCollections, saveHeldCarts, saveOrders, savePurchases, saveSupplierPays, saveSuppliers } from '../shared/state/persistence.js';
+import { saveCollections, saveHeldCarts, saveOrders, savePurchases, saveSupplierPays, saveSuppliers, saveTableSessions, saveTables } from '../shared/state/persistence.js';
+import { createLocalFirstTableRepository } from '../infrastructure/repositories/local-first-table-repository.js';
+import { createBlobStore } from '../infrastructure/storage/blob-store.js';
 
 /* Called first at start-up (app/main.js), before the state is restored from storage */
 export function installContainer(){
@@ -71,5 +73,9 @@ export function installContainer(){
   provide("inventoryImportService", createLocalFirstStockImport({ store, cloud: cloudGateway, persist: { saveCatalog, saveMoves }, outbox: { flush: flushSbQueue }, invalidate }));
   // Customer credit, held bills and orders (section 3m)
   provide("orderRepository", createLocalFirstOrderRepository({ store, persist: { saveOrders, saveHeldCarts }, outbox }));
+  // Files kept on this device until the cloud has them (a supplier bill's original photo or PDF)
+  provide("blobStore", createBlobStore());
+  // A restaurant's tables and their sessions (section 3o); their orders are orders of kind "table"
+  provide("tableRepository", createLocalFirstTableRepository({ store, persist: { saveTables, saveTableSessions }, outbox: { enqueue } }));
   provide("creditRepository", createLocalFirstCreditRepository({ store, persist: { saveCollections }, outbox: { enqueue } }));
 }

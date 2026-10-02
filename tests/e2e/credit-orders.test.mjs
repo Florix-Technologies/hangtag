@@ -113,6 +113,8 @@ await type('#ofQ', 'kurta'); await sleep(150);
 await A.click('#ofHits [data-ofadd]'); await sleep(200);
 await type('#orderSheet [data-ofl="q:0"]', '3');
 await type('#orderSheet [data-ofl="dv:0"]', '10');
+await type('#orderSheet [data-off="notes"]', 'Blue stock only');
+await type('#orderSheet [data-off="terms"]', 'Prices valid until the date shown.');
 check('the editor adds it up with the one bill calculation (3 × ₹1,000 − 10%)', /2,700/.test(await text('#ofTotals')));
 await A.screenshot({ path: H.ARTIFACTS + '/co4_quotation_editor_phone.png' });
 await A.click('#orderSheet [data-ofsave]'); await sleep(300);
@@ -121,9 +123,20 @@ check('saved: QT- number, draft, valid for 15 days', QT && /^QT-/.test(QT.no) &&
 await run('await flushSbQueue()');
 const qt = (await q(`SELECT o.version, o.status, i.qty::float AS q, i.disc FROM public.hangtag_orders o JOIN public.hangtag_order_items i ON i.order_id = o.id WHERE o.id = $1`, [QT.id]))[0];
 check('in the cloud: version 1, its line with the discount', qt && qt.version === 1 && qt.q === 3 && qt.disc && +qt.disc.value === 10 && (await run(`return orderById(${JSON.stringify(QT.id)}).version`)) === 1, qt);
+check('quotation actions are available from the saved quotation', (await A.$$('#orderSheet [data-qdoc="preview"],#orderSheet [data-qdoc="print"],#orderSheet [data-qdoc="download"],#orderSheet [data-qdoc="send"],#orderSheet [data-ofdup]')).length === 5);
+await A.$eval('#orderSheet [data-qdoc="preview"]', (b) => b.click()); await sleep(250);
+const preview = await text('.quotation');
+// this shop charges no GST, so the quotation has no Taxable / GST columns (a GST shop's are checked in quotations.test.mjs)
+check('preview is a full QUOTATION, never an invoice', /QUOTATION/.test(preview || '') && /Valid until/.test(preview || '') && /Unit price/.test(preview || '') && /Discount/.test(preview || '') && !/Taxable/.test(preview || '') && /Blue stock only/.test(preview || '') && /Prices valid/.test(preview || '') && /not a bill/.test(preview || '') && !/INVOICE/.test(preview || ''), preview);
+await A.click('[data-modal-close]'); await sleep(150);
+await run(`openOrderEditor(${JSON.stringify(QT.id)})`); await sleep(150);
 await A.click('#orderSheet [data-ofconvert]'); await sleep(300);
 const SO = await run('return ordersOf("sales")[0]');
-check('made a sales order: SO- number, confirmed; the quotation is converted', SO && /^SO-/.test(SO.no) && SO.status === 'confirmed' && (await run(`return orderById(${JSON.stringify(QT.id)}).status`)) === 'converted');
+check('made a sales order: SO- number, Pending; quotation reference and terms preserved', SO && /^SO-/.test(SO.no) && SO.status === 'draft' && SO.quoteId === QT.id && SO.quoteNo === QT.no && SO.notes === 'Blue stock only' && /Prices valid/.test(SO.terms) && (await run(`return orderById(${JSON.stringify(QT.id)}).status`)) === 'converted');
+check('Pending sales order cannot be billed yet', !(await A.$('#orderSheet [data-ofbill]')) && /Pending/.test(await text('#orderSheet .ostat')));
+await choose('#orderSheet [data-off="status"]', 'confirmed');
+await A.click('#orderSheet [data-ofsave]'); await sleep(250);
+check('sales order is explicitly Confirmed before billing', (await run(`return orderById(${JSON.stringify(SO.id)}).status`)) === 'confirmed' && await A.$('#orderSheet [data-ofbill]'));
 await A.click('#orderSheet [data-ofbill]'); await sleep(300);
 check('billing it: the Sell screen with its lines at the order\'s price and discount, for Riya', (await run('return prefs.tab')) === 'sell' && (await run('return cart.length===1&&cart[0].q===3&&cart[0].disc.value===10&&cartCust.id')) === RIYA
   && /From sales order/.test(await run('return billPanelHTML("sheet")')));

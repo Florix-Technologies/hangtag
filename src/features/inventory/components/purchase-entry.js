@@ -1,7 +1,9 @@
 // New purchase (Inventory → Purchases → New purchase): supplier → invoice no → date → lines (scan or type a factory barcode /
 // SKU, or search a product; an unknown code makes a new product on the spot) → qty, cost per piece, GST → paid now and how
 // → save. Saved on this device at once (stock in, cash out of the drawer) and uploaded in one step.
-// store.purchaseForm = { supplierId, invoiceNo, invoiceDate, lines: [{ v, p, q, cost, gst }], paid, method, note, updateCost,
+// A product tracked by serial number takes one serial per piece (typed, pasted, scanned or a range: they make the quantity); one
+// tracked by batch takes its batch number (and expiry date where the product keeps them) — one batch per line.
+// store.purchaseForm = { supplierId, invoiceNo, invoiceDate, lines: [{ v, p, q, cost, gst, sn? (serials typed), bno?, bexp? }], paid, method, note, updateCost,
 //   q (product search), quick (new product for an unknown code) | null, err, dup, line }
 import { store } from '../../../shared/state/store.js';
 import { vCost, vLabel, variantsOf } from '../../../domain/catalog/variants.js';
@@ -27,6 +29,8 @@ import { dayKey } from '../../../shared/formatting/dates.js';
 import { inrx } from '../../../shared/formatting/money.js';
 import { norm } from '../../../shared/utils/text.js';
 import { renderAll } from '../../../shared/ui/render.js';
+import { batchesOf, expiryKept, trackingOfP } from '../services/tracking.js';
+import { parseSerials } from '../../../domain/inventory/tracking.js';
 
 /* opts: { supplierId } (from a supplier's page) */
 export function openPurchaseEntry(opts={}){
@@ -41,6 +45,20 @@ function searchHits(q){
   const out=[];
   liveProducts().forEach(p=>variantsOf(p).forEach(v=>{ if(out.length<8&&toks.every(t=>productText(p).includes(t)||variantText(p,v).includes(t))) out.push({p,v}); }));
   return out;
+}
+/* A serial line's count of serials as typed so far (what its quantity is) */
+const snCount=l=>{const r=parseSerials(l.sn||"");return r.error?String(l.sn||"").split(/[\s,;]+/).filter(Boolean).length:r.serials.length};
+/* The extra row of a tracked line: its serial numbers, or its batch (and expiry date) */
+function trackRowHTML(l,i,r){
+  const t=trackingOfP(r.p);
+  if(t==="serial") return `<tr class="pu-trk"><td colspan="6"><label class="f"><span class="lab">Serial numbers · <b data-pusn="${i}">${snCount(l)}</b> entered</span><textarea data-pul="${i}:sn" rows="2" placeholder="Scan or type one per line, or a range like SN001..SN010" aria-label="Serial numbers of ${esc(r.p.name)}">${esc(l.sn||"")}</textarea></label></td></tr>`;
+  if(t==="batch"){
+    const known=batchesOf(l.v,{all:true}).map(b=>b.b);
+    return `<tr class="pu-trk"><td colspan="6"><div class="pu-bt"><label class="f"><span class="lab">Batch no.</span><input data-pul="${i}:bno" value="${esc(l.bno||"")}" maxlength="40" list="puBt${i}" autocomplete="off" aria-label="Batch number of ${esc(r.p.name)}">${known.length?`<datalist id="puBt${i}">${known.map(b=>`<option value="${esc(b)}">`).join("")}</datalist>`:""}</label>
+      <label class="f"><span class="lab">Expiry${expiryKept(r.p)?"":" <small>(optional)</small>"}</span><input type="date" data-pul="${i}:bexp" value="${esc(l.bexp||"")}" aria-label="Expiry date of ${esc(r.p.name)}"></label>
+      <button type="button" class="link xs" data-pur="batch:${i}">+ Another batch</button></div></td></tr>`;
+  }
+  return "";
 }
 const lineAmount=l=>{ const m=lineMoney({q:+l.q||0,cost:+l.cost||0,gst:+String(l.gst==null?"":l.gst).replace("%","")||0}); return toRupees(m.total); };
 function totalsText(){
@@ -61,10 +79,10 @@ export function renderPurchaseEntry(){
     ${q.err?`<p class="autherr">${esc(q.err)}</p>`:""}
     <div class="row" style="justify-content:flex-end;gap:8px;margin-top:10px"><button type="button" class="btn sm" data-pur="qpcancel">Cancel</button><button type="button" class="btn sm primary" data-pur="qpsave">Add product and line</button></div></div>`:"";
   const rows=f.lines.map((l,i)=>{const r=vRec(l.v);return `<tr${i===f.line?' class="pu-bad"':""}><td class="pu-n"><b>${esc(r?r.p.name:"(removed product)")}</b>${r&&vLabel(r.v)?`<small>${esc(vLabel(r.v))}</small>`:""}<small>now ${r?stockOf(l.v):0} in stock</small></td>
-    <td><input data-pul="${i}:q" inputmode="decimal" value="${esc(l.q)}" aria-label="Quantity"></td>
+    <td><input data-pul="${i}:q" inputmode="decimal" value="${esc(l.q)}" aria-label="Quantity"${r&&trackingOfP(r.p)==="serial"?" readonly":""}></td>
     <td><input data-pul="${i}:cost" inputmode="decimal" value="${esc(l.cost)}" aria-label="Cost per piece"></td>
     <td><input data-pul="${i}:gst" inputmode="decimal" value="${esc(l.gst)}" aria-label="GST %"></td>
-    <td class="pu-amt" data-pula="${i}">${inrx(lineAmount(l))}</td><td><button type="button" class="iconbtn" data-pur="rm:${i}" aria-label="Remove line">${ICON.x}</button></td></tr>`}).join("");
+    <td class="pu-amt" data-pula="${i}">${inrx(lineAmount(l))}</td><td><button type="button" class="iconbtn" data-pur="rm:${i}" aria-label="Remove line">${ICON.x}</button></td></tr>${r?trackRowHTML(l,i,r):""}`}).join("");
   $("#modalHost").innerHTML=`<div class="scrim" data-modal-scrim data-keep><div class="sheet pu-sheet" role="dialog" aria-modal="true" aria-label="New purchase">
     <div class="sh-head"><div class="sh-t"><h3>New purchase</h3><p>A supplier's invoice: its lines add stock at their cost.</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
     <div class="pgrid"><label class="f full">Supplier<select id="puSup"><option value="">${sups.length?"Choose the supplier":"No suppliers yet"}</option>${sups.map(s=>`<option value="${esc(s.id)}"${s.id===f.supplierId?" selected":""}>${esc(s.name)}</option>`).join("")}</select></label>
@@ -93,9 +111,10 @@ function updateTotals(){
 /* One more of a variant on the purchase (a line of its own the first time, with its cost price and GST) */
 export function addPurchaseLine(vid,q=1){
   const f=store.purchaseForm, r=vRec(vid); if(!f||!r) return null;
-  const l=f.lines.find(x=>x.v===vid);
-  if(l) l.q=String((+l.q||0)+q);
-  else{ const c=vCost(r.p,r.v); f.lines.push({v:vid,p:r.p.id,q:String(q),cost:c==null?"":String(c),gst:r.p.gst==null?"":String(r.p.gst)}); }
+  const l=f.lines.find(x=>x.v===vid), serial=trackingOfP(r.p)==="serial";
+  // a serial line's quantity is its serials: scanning the product again only brings its line up
+  if(l){ if(!serial) l.q=String((+l.q||0)+q); }
+  else{ const c=vCost(r.p,r.v); f.lines.push({v:vid,p:r.p.id,q:serial?"0":String(q),cost:c==null?"":String(c),gst:r.p.gst==null?"":String(r.p.gst),...(serial?{sn:""}:{})}); }
   f.err=""; f.dup=false; f.line=-1;
   return {label:label(r),q:+(l?l.q:q)};
 }
@@ -123,7 +142,9 @@ function scanForPurchase(){
 }
 function savePurchaseNow(allowDuplicate){
   const f=store.purchaseForm; if(!f) return;
-  const r=savePurchase({supplierId:f.supplierId,invoiceNo:f.invoiceNo,invoiceDate:f.invoiceDate,lines:f.lines,paid:f.paid,method:f.method,note:f.note},{allowDuplicate,updateCost:f.updateCost});
+  // serials as typed (the use case reads them), batches as { no, exp }
+  const lines=f.lines.map(l=>{const {sn,bno,bexp,...x}=l;return Object.assign(x,sn!=null?{snText:sn}:{},bno!=null||bexp!=null?{batch:{no:bno||"",exp:bexp||""}}:{})});
+  const r=savePurchase({supplierId:f.supplierId,invoiceNo:f.invoiceNo,invoiceDate:f.invoiceDate,lines,paid:f.paid,method:f.method,note:f.note},{allowDuplicate,updateCost:f.updateCost});
   if(r.error){ f.err=r.error; f.dup=!!r.duplicate; f.line=r.line==null?-1:r.line; renderPurchaseEntry(); return; }
   store.purchaseForm=null; closeModal(); renderSync(); flushSbQueue(); renderAll();
   toast(`Purchase saved: ${r.totals.pieces} pcs in stock · ${inrx(r.purchase.total)}${r.purchase.paid?` · ${inrx(r.purchase.paid)} paid`:""}.`);
@@ -134,6 +155,7 @@ export function purchaseClick(t){
   const b=t.closest("[data-pur]"); if(!b) return false;
   const [act,arg]=[b.dataset.pur.split(":")[0],b.dataset.pur.slice(b.dataset.pur.indexOf(":")+1)];
   if(act==="rm"){ f.lines.splice(+arg,1); f.err=""; f.dup=false; renderPurchaseEntry(); }
+  else if(act==="batch"){ const l=f.lines[+arg]; if(l){ f.lines.splice(+arg+1,0,{v:l.v,p:l.p,q:"",cost:l.cost,gst:l.gst,bno:"",bexp:""}); f.err=""; renderPurchaseEntry(); const b=$(`[data-pul="${+arg+1}:bno"]`); if(b) b.focus(); } }
   else if(act==="addv"){ addPurchaseLine(arg); f.q=""; renderPurchaseEntry(); const c=$("#puCode"); if(c) c.focus(); }
   else if(act==="scan") scanForPurchase();
   else if(act==="qpcancel"){ f.quick=null; renderPurchaseEntry(); }
@@ -153,7 +175,10 @@ export function purchaseClick(t){
 }
 export function purchaseInput(t){
   const f=store.purchaseForm; if(!f) return false;
-  if(t.dataset.pul){ const [i,k]=t.dataset.pul.split(":"), l=f.lines[+i]; if(l){ l[k]=t.value; updateTotals(); } return true; }
+  if(t.dataset.pul){ const [i,k]=t.dataset.pul.split(":"), l=f.lines[+i]; if(l){ l[k]=t.value;
+    // serials typed: they make the quantity
+    if(k==="sn"){ l.q=String(snCount(l)); const qi=$(`#modalHost [data-pul="${i}:q"]`), c=$(`#modalHost [data-pusn="${i}"]`); if(qi) qi.value=l.q; if(c) c.textContent=l.q; }
+    updateTotals(); } return true; }
   if(t.dataset.qp&&f.quick){ f.quick[t.dataset.qp]=t.value; return true; }
   if(t.id==="puQ"){ f.q=t.value; const pos=t.selectionStart; renderPurchaseEntry(); const i=$("#puQ"); if(i){ i.focus(); i.setSelectionRange(pos,pos); } return true; }
   const map={puInv:"invoiceNo",puDate:"invoiceDate",puPaid:"paid",puNote:"note"};

@@ -93,7 +93,7 @@ try {
 
   // ================= the product form follows the capabilities =================
   await A.run('setTab("products");renderAll();openEditor(null)'); await sleep(250);
-  check('grocery product form: tracking None / Batch, the expiry note and weight guidance, variants', JSON.stringify(await A.$$eval('#edTracking option', (o) => o.map((x) => x.value))) === '["none","batch"]'
+  check('grocery product form: tracking None / Batch / Batch with expiry date, the expiry note and weight guidance, variants', JSON.stringify(await A.$$eval('#edTracking option', (o) => o.map((x) => x.value))) === '["none","batch","expiry"]'
     && await A.vis('[data-capnote="expiry"]') && await A.vis('[data-capnote="weight"]') && !!(await A.$('[data-edtoggle="hasOpts"]')));
   await A.type('#edName', 'Basmati Rice'); await A.type('[data-ed="price"]', '120');
   await A.select('#edTracking', 'batch');
@@ -108,7 +108,7 @@ try {
   check('serial numbers on for this grocery', await A.run('return hasCap("uses_serials")&&settings.caps.uses_serials===true&&typeof settings.capsAt==="number"'));
   check('...uploaded with the shop\'s settings (only the difference from the defaults)', await A.until('!sbOfflineQueue.length') && JSON.stringify((await settingsRow() || {}).caps) === '{"uses_serials":true}');
   await A.run('closeSettings();openEditor(null)'); await sleep(200);
-  check('the form now offers serial numbers too', JSON.stringify(await A.$$eval('#edTracking option', (o) => o.map((x) => x.value))) === '["none","serial","batch"]');
+  check('the form now offers serial numbers too', JSON.stringify(await A.$$eval('#edTracking option', (o) => o.map((x) => x.value))) === '["none","serial","batch","expiry"]');
   await A.run('closeModal()');
   // a phone with an older copy of the settings (no capabilities) uploads: the database keeps the choice, the app keeps it too
   const before = await settingsRow();
@@ -124,7 +124,7 @@ try {
   await A.click('#profileSave');
   check('the type changed to Hotel / Restaurant', await A.until('profile.business_type==="restaurant"&&!document.querySelector("#modalHost .settings")'));
   check('restaurant defaults (serial numbers kept as the shop chose)', await A.run(`const c=shopCaps();return c.uses_tables&&c.uses_kitchen&&c.uses_table_qr&&!c.uses_batches&&c.uses_serials`));
-  check('no Tables or Kitchen tab until those modules exist (no dead placeholders)', !(await A.tabs()).includes('tables') && !(await A.tabs()).includes('kitchen'));
+  check('restaurant modules appear when their capabilities are on', (await A.tabs()).includes('tables') && (await A.tabs()).includes('kitchen'));
   await A.run('openSettings()'); await sleep(200);
   check('Capabilities recommended for Hotel / Restaurant; Team & devices still there', /Recommended for Hotel \/ Restaurant/.test(await A.text('#capsForm .capgrp') || '') && await A.vis('#teamSec [data-team="open"]'));
   await A.run('closeSettings();openEditor(null)'); await sleep(200);

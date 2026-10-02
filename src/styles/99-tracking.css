@@ -1,0 +1,64 @@
+/* ================= serial numbers, batches, expiry ================= */
+/* serials on a bill line and in the stock page */
+.sns{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.snchip{display:inline-flex;align-items:center;gap:2px;padding:2px 4px 2px 8px;border-radius:999px;background:var(--wash-2);font-size:12px;font-variant-numeric:tabular-nums;font-weight:600}
+.snchip.ro{padding:2px 8px;margin:0 4px 4px 0}
+.snchip button{border:0;background:none;color:var(--ink-3);font-size:14px;line-height:1;padding:0 4px;cursor:pointer}
+.snchip button:hover{color:var(--crit)}
+.snneed{color:var(--warn-ink)!important;font-weight:600}
+.snstep .snq{min-width:28px;text-align:center}
+/* the batch a bill line comes from */
+.lbt{display:flex;align-items:center;gap:6px;margin-top:4px;font-size:12px;color:var(--ink-3)}
+.lbt select{max-width:100%;padding:3px 6px;border:1px solid var(--line-2);border-radius:8px;font-size:12px;background:var(--bg);color:var(--ink)}
+/* the serial picker */
+.snpick .snlist{display:flex;flex-direction:column;max-height:48vh;overflow:auto;margin:8px 0;border:1px solid var(--line);border-radius:12px}
+.snrow{display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:auto auto;gap:0 10px;align-items:center;padding:9px 12px;border-bottom:1px solid var(--line);cursor:pointer}
+.snrow:last-child{border-bottom:0}
+.snrow:hover{background:var(--wash)}
+.snrow input{grid-row:span 2;width:18px;height:18px}
+.snrow b{font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.snrow small{color:var(--ink-3);font-size:12px}
+.snpick form.search{margin-top:10px}
+/* returns: the serials coming back */
+.rt-sns{display:flex;flex-wrap:wrap;gap:4px 12px;max-width:60%}
+.rt-sns .chk{font-size:13px;font-variant-numeric:tabular-nums}
+/* purchases: a tracked line's serials or batch */
+.pu-lines tr.pu-trk td{background:var(--wash);border-bottom:1px solid var(--line)}
+.pu-lines tr.pu-trk textarea{width:100%;min-height:52px;padding:7px 8px;border:1px solid var(--line-2);border-radius:8px;font:inherit;font-size:13px;background:var(--bg);color:var(--ink);resize:vertical}
+.pu-bt{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px 12px}
+.pu-bt input{width:150px}
+/* stock in / adjust by serial or batch */
+.so-trk{padding:10px 0;border-bottom:1px solid var(--line)}
+.so-trk h4{margin:0 0 6px;font-size:14px}
+.so-trk h4 small{color:var(--ink-3);font-weight:500}
+.so-trk textarea{width:100%;min-height:56px;padding:8px;border:1px solid var(--line-2);border-radius:8px;font:inherit;font-size:13px;background:var(--bg);color:var(--ink)}
+.so-sns{display:flex;flex-wrap:wrap;gap:4px 14px;margin:4px 0}
+.so-sns .chk{font-size:13px;font-variant-numeric:tabular-nums}
+/* expiry states */
+em.exp{font-style:normal;font-size:11px;font-weight:700;padding:1px 6px;border-radius:999px;white-space:nowrap}
+em.exp.expired{background:var(--crit-soft);color:var(--crit)}
+em.exp.soon{background:var(--warn-soft,var(--wash-2));color:var(--warn-ink)}
+em.exp.fresh{background:var(--wash-2);color:var(--ink-3)}
+tr.expired td{color:var(--crit)}
+/* a tracked product on the stock page */
+.trk{padding:8px 16px 12px}
+.trk .note{display:block;margin-bottom:4px}
+.trk-row{margin:0 0 4px}
+.trk-bt{border-collapse:collapse;width:100%;font-size:13px}
+.trk-bt th,.trk-bt td{padding:5px 6px;border-bottom:1px solid var(--line);text-align:left}
+.trk-bt th{font-size:12px;color:var(--ink-3);font-weight:600}
+.trk-bt .num{text-align:right;font-variant-numeric:tabular-nums}
+/* Inventory → Serials & batches */
+.snst{display:inline-block;font-size:12px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--wash-2);white-space:nowrap}
+.snst.in_stock,.snst.returned{background:var(--ok-soft,var(--wash-2));color:var(--ok,var(--ink))}
+.snst.sold{background:var(--wash-2);color:var(--ink)}
+.snst.damaged,.snst.cancelled{background:var(--crit-soft);color:var(--crit)}
+.trk-sn{margin:12px 0;border:1px solid var(--line-2)}
+.trk-hist{list-style:none;margin:8px 0 0;padding:0;font-size:13px}
+.trk-hist li{padding:4px 0;border-bottom:1px dashed var(--line)}
+.trk-hist li:last-child{border-bottom:0}
+.trk-hist .mv-t{color:var(--ink-3);font-variant-numeric:tabular-nums}
+tr.bt-hist td{background:var(--wash)}
+.scb{color:var(--ink-2)!important}
+.expcard .al .st{white-space:normal}
+@media (max-width:600px){.rt-sns{max-width:100%}.pu-bt input{width:120px}}

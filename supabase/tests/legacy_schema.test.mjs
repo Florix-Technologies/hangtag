@@ -55,7 +55,7 @@ async function scenario(label, before, opts = {}) {
   check('script runs a second time (safe to re-run)', true);
 
   const cols = (await db.query(`SELECT count(*)::int n FROM information_schema.columns WHERE table_schema='public' AND column_name='owner_id' AND is_nullable='NO'`)).rows[0].n;
-  check('every shop table has a required owner_id (including payments, books, deliveries, events, payment intents, invoice links, cash entries, day closes, roles, devices, enrollments and the audit log)', cols === 32, cols);
+  check('every shop table has a required owner_id (including payments, books, deliveries, events, payment intents, invoice links, cash entries, day closes, roles, devices, enrollments and the audit log)', cols === 36, cols);
   const nulls = (await db.query(`SELECT (SELECT count(*) FROM public.hangtag_products WHERE owner_id IS NULL)+(SELECT count(*) FROM public.hangtag_sales WHERE owner_id IS NULL) AS n`)).rows[0].n;
   check('no rows without an owner', Number(nulls) === 0);
   if (hadLegacy) {

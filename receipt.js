@@ -10,7 +10,7 @@
   if(!/^[A-Za-z0-9_-]{32,64}$/.test(token)){ fail("This invoice link is incomplete. Open the full link from your message."); return; }
   if(!cfg.SUPABASE_URL || !cfg.SUPABASE_ANON_KEY){ fail("This page isn't set up yet."); return; }
   fetch(String(cfg.SUPABASE_URL).replace(/\/+$/, "") + "/functions/v1/receipt", {
-    method: "POST", headers: { "Content-Type": "application/json", apikey: cfg.SUPABASE_ANON_KEY }, body: JSON.stringify({ token: token })
+    method: "POST", headers: { "Content-Type": "application/json", apikey: cfg.SUPABASE_ANON_KEY, Authorization: "Bearer " + cfg.SUPABASE_ANON_KEY }, body: JSON.stringify({ token: token })
   }).then(function(r){ return r.json().catch(function(){ return {}; }); }).then(function(d){
     if(!d || !d.ok || !d.bill){ fail((d && d.message) || "This invoice link isn't valid any more. Ask the shop for a new one."); return; }
     var B = d.bill;

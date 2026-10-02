@@ -34,9 +34,11 @@ const eq = (a, b) => JSON.stringify(sortKeys(a)) === JSON.stringify(sortKeys(b))
   check('a reference that looks like a card number is refused', !!checkReference('4111111111111111').error && !checkReference('UTR412345678901'));
   check('last 4 digits only: exactly 4 digits', !checkLast4('') && !checkLast4('4242') && !!checkLast4('424').error && !!checkLast4('42424').error && !!checkLast4('ab12').error);
   let S = settlePayments(500, [{ method: 'upi', amount: 500 }]);
-  check('UPI checked by hand needs its transaction reference', S.error && S.field === 'ref' && /UTR/.test(S.error), S);
-  S = settlePayments(500, [{ method: 'upi', amount: 500, ref: '412345678901' }]);
-  check('…with it the bill completes and the part is "unverified"', S.ok && S.payments[0].verification === 'unverified' && S.payments[0].via === 'manual' && S.payments[0].ref === '412345678901', S);
+  check('UPI checked by hand needs the cashier to mark the payment received', S.error && S.field === 'confirmed' && /Mark the UPI payment received/.test(S.error), S);
+  S = settlePayments(500, [{ method: 'upi', amount: 500, confirmed: true }]);
+  check('the UTR is optional; an explicitly received manual UPI payment is saved unverified', S.ok && S.payments[0].verification === 'unverified' && S.payments[0].via === 'manual' && !('ref' in S.payments[0]), S);
+  S = settlePayments(500, [{ method: 'upi', amount: 500, ref: '412345678901', confirmed: true }]);
+  check('an optional UTR is kept when entered', S.ok && S.payments[0].ref === '412345678901');
   S = settlePayments(800, [{ method: 'card', amount: 800 }]);
   check('card on a card machine needs its reference', S.error && S.field === 'ref' && /card machine/.test(S.error));
   S = settlePayments(800, [{ method: 'card', amount: 800, ref: 'APPR77', last4: '4242' }]);
@@ -313,7 +315,7 @@ const { D, invalidate } = await import('../../src/features/inventory/services/le
   store.payState = null; PP.persistPending();
   check('nothing open: the kept payment is cleared', store.payPending === null && !('hangtag_pay_pending' in storage.mem));
   // later: a hand-checked UPI bill is matched with the provider once uploaded
-  const s = newSaleRecord([{ v: 'p1:', p: 'p1', name: 'Tee', q: 1, price: 500 }], null, [{ method: 'upi', amount: 500, ref: '412345678901' }]);
+  const s = newSaleRecord([{ v: 'p1:', p: 'p1', name: 'Tee', q: 1, price: 500 }], null, [{ method: 'upi', amount: 500, ref: '412345678901', confirmed: true }]);
   recordSale(s);
   let n = await PP.verifyManualUpi(D().sales);
   check('hand-checked UPI waits while its bill is still uploading', n === 0 && !calls.some((x) => x[0] === 'verify'));

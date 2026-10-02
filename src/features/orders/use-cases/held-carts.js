@@ -18,6 +18,7 @@ export const listHeldCarts = () => orderRepository().heldList().slice().sort((a,
 /* name: optional (default: the customer's name, else "Bill 2:05 pm") → { held } or { error } (nothing changes) */
 export function holdCart(name){
   const no = denied("create_sale", "hold bills"); if(no) return no;
+  if(store.cartTable) return { error: "A table bill can't be held. Use Clear to put it back on the table." };
   const t = Date.now(), nm = String(name == null || !String(name).trim() ? heldName(store.cartCust, "Bill " + hhmm(t)) : name).trim();
   const bad = checkHold(store.cart, nm); if(bad) return { error: bad };
   const h = { id: "h" + uid(), name: nm, t, dev: store.dev, ...(store.authUser ? { user: store.authUser.id } : {}),

@@ -42,6 +42,12 @@ export function initState(){
   store.heldCarts = objOr(storage.get("rc_held",{}),{});           // bills put aside to finish later, on any till (by id)
   store.orders = objOr(storage.get("rc_orders",{}),{});            // quotations and sales orders (by id)
   store.cartOrder = objOr(storage.get("rc_cartorder",null),null);  // the order the bill being rung up comes from: { id, no, kind }
+  store.tables = objOr(storage.get("rc_tables",{}),{});            // a restaurant's tables (by id)
+  store.tableSessions = objOr(storage.get("rc_table_sessions",{}),{});   // guests seated at a table until their bill is paid (by id)
+  store.cartTable = objOr(storage.get("rc_carttable",null),null);  // the table the bill being rung up is for: { table, name, sessions }
+  store.pendingDocs = objOr(storage.get("rc_pending_docs",{}),{});
+  store.quoteSends = storage.get("rc_quote_sends",[]); if(!Array.isArray(store.quoteSends)) store.quoteSends = [];   // quotations to send / sent from here   // supplier bills' originals still to upload (by import id)
+  store.tableView = null;       // Tables: { sel (a table), mode: "floor" | "setup", order (an order being taken), edit, qr }
   store.ordersView = "";        // Orders tab: "held" | "quote" | "sales" ("": the first one this person has)
   store.orderForm = null;       // the quotation / sales order being edited
   store.collectForm = null;     // "Collect payment" from a customer: { cid, amount, method, ref, note, err }

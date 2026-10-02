@@ -67,7 +67,7 @@ let fails = 0; const check = (n, ok, i) => { if (!ok) fails++; console.log((ok ?
   await p.screenshot({ path: H.ARTIFACTS + '/cu1_desktop_list.png' });
 
   // ---------- Sell: select existing / add new / continue without ----------
-  const pay = async (how) => { await sleep(700); await p.click(`#billPanel [data-pay="${how}"]`); await sleep(200); if (how !== 'cash') { await p.type(`[data-payf="ref:${how}"]`, how === 'upi' ? '412345678901' : 'APPR1'); await sleep(80); } await p.click('#payDone'); await sleep(300); await run('closeSheets()'); await sleep(100); };
+  const pay = async (how) => { await sleep(700); await p.click(`#billPanel [data-pay="${how}"]`); await sleep(200); if (how !== 'cash') { await p.type(`[data-payf="ref:${how}"]`, how === 'upi' ? '412345678901' : 'APPR1'); await sleep(80); } if (how === 'upi') { await p.click('[data-upireceived]'); await sleep(80); } await p.click('#payDone'); await sleep(300); await run('closeSheets()'); await sleep(100); };
   await run(`setTab("sell");addOne(${JSON.stringify(ids.tee)});addOne(${JSON.stringify(ids.tee)});renderAll()`); await sleep(150);
   await p.click('#billPanel [data-act="pickcust"]'); await sleep(150);
   await p.type('#custQ', 'meera'); await sleep(150);
@@ -88,7 +88,7 @@ let fails = 0; const check = (n, ok, i) => { if (!ok) fails++; console.log((ok ?
   await pay('card');
   check('the walk-in bill has no customer', await run('const s=D().sales[D().sales.length-1];return !s.cust&&s.pay==="card"'));
   // a second bill for Meera, then one cancelled bill for her
-  await run(`addOne(${JSON.stringify(ids.dm)});addOne(${JSON.stringify(ids.dm)});addOne(${JSON.stringify(ids.tee)});pickCustomer(${JSON.stringify(meeraId)});await new Promise(r=>setTimeout(r,700));await checkout({method:"upi",ref:"412345678901"});closeSheets();renderAll()`); await sleep(150);
+  await run(`addOne(${JSON.stringify(ids.dm)});addOne(${JSON.stringify(ids.dm)});addOne(${JSON.stringify(ids.tee)});pickCustomer(${JSON.stringify(meeraId)});await new Promise(r=>setTimeout(r,700));await checkout({method:"upi",ref:"412345678901",confirmed:true});closeSheets();renderAll()`); await sleep(150);
   await run(`addOne(${JSON.stringify(ids.tee)});pickCustomer(${JSON.stringify(meeraId)});await new Promise(r=>setTimeout(r,700));await checkout("cash");closeSheets();renderAll()`); await sleep(150);
   await run('const s=D().sales[D().sales.length-1];await voidSale(s.id,"Duplicate bill")'); await sleep(200);
 

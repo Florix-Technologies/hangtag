@@ -25,6 +25,8 @@ export function buildInvoice(sale,ctx={}){
   const seller=sellerOf(ctx.profile), G=saleGstSplit(sale), tax=sale.tax||0, c=sale.cust, cr=ctx.customer||{};
   const lineTax=sale.items.length>0&&sale.items.every(i=>i.lt!=null);
   const lines=sale.items.map((i,k)=>{const d=normalizeDiscount(i.disc);return {sl:k+1,ln:i.ln!=null?i.ln:k,name:i.n,variant:lineLabel(i),sku:i.sku||"",hsn:i.hsn||"",
+    // the serial numbers of the pieces sold, and the batches they came from (printed under the item)
+    serials:Array.isArray(i.sn)?i.sn.join(", "):"",batch:Array.isArray(i.bt)?i.bt.map(b=>b.b).join(", "):"",
     // qty: the number; unit: its symbol ("kg"; "" for pieces); qtyText: both, as printed ("2.5 kg", "3")
     qty:roundQty(i.q),unit:unitOf(i.u).id==="pcs"?"":unitOf(i.u).sym,uqc:unitOf(i.u).uqc,qtyText:qtyText(i.q,i.u),rate:i.price,gross:toRupees(linePaise(i.q,i.price)),discount:i.dAmt||0,discountLabel:d?discountLabel(d):"",billDiscount:i.bdAmt||0,
     taxable:i.tx==null?null:i.tx,gstRate:i.gst==null?null:i.gst,cgst:i.cgst||0,sgst:i.sgst||0,igst:i.igst||0,total:i.lt==null?null:i.lt}});

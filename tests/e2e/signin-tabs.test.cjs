@@ -23,15 +23,16 @@ async function type(p,sel,v){await p.$eval(sel,e=>{e.value=''});if(v)await p.typ
   try{
     let ctx=await browser.createBrowserContext();let A=await page(ctx,'A');
     // ---- what a first-time visitor sees ----
-    check('Sign in and Create account tabs are visible',await vis(A,'[data-authtab="signin"]')&&await vis(A,'[data-authtab="signup"]'));
-    check('Sign in tab selected first',(await A.$eval('[data-authtab="signin"]',e=>e.getAttribute('aria-pressed')))==='true');
+    check('one clean sign-in hierarchy has no mode tabs',!(await A.$('#authTabs'))&&!(await A.$('[data-authtab]')));
+    check('primary heading says Sign in to your shop',(await txt(A,'#authMsg'))==='Sign in to your shop');
     check('email and password shown straight away',await vis(A,'#authEmail')&&await vis(A,'#authPass'));
     check('"New to Hangtag? Create an account" link shown',/New to Hangtag\? Create an account/.test(await txt(A,'#authSwitch')||''));
+    check('staff sign-in is a secondary link',/Staff or team member\? Staff sign-in/.test(await txt(A,'#staffSwitch')||''));
     await A.screenshot({path:SHOT+'s1-signin.png'});
-    // ---- Create account tab ----
+    // ---- Create account mode ----
     await type(A,'#authEmail','typed@example.com');
-    await A.click('[data-authtab="signup"]');await sleep(150);
-    check('Create account: tab selected, button says Create account',(await A.$eval('[data-authtab="signup"]',e=>e.getAttribute('aria-pressed')))==='true'&&(await txt(A,'#emailSubmit'))==='Create account');
+    await A.click('[data-switchto="signup"]');await sleep(150);
+    check('Create account: button says Create account',(await txt(A,'#emailSubmit'))==='Create account');
     check('Create account: password twice + 8-character hint',await vis(A,'#authPass2')&&await vis(A,'#pwHint')&&(await txt(A,'#pwLabel'))==='Choose a password');
     check('Create account: Google button says "Sign up with Google"',(await txt(A,'[data-provider="google"] span'))==='Sign up with Google');
     check('Create account: heading explains private shop',/Create your Hangtag account/.test(await txt(A,'#authMsg')||''));
@@ -43,6 +44,10 @@ async function type(p,sel,v){await p.$eval(sel,e=>{e.value=''});if(v)await p.typ
     check('switch link goes back to Sign in',(await txt(A,'#emailSubmit'))==='Sign in'&&(await txt(A,'[data-provider="google"] span'))==='Continue with Google');
     await A.click('[data-switchto="signup"]');await sleep(150);
     check('switch link opens Create account',(await txt(A,'#emailSubmit'))==='Create account');
+    await A.click('[data-switchto="staff"]');await sleep(150);
+    check('staff link opens the dedicated staff form',await vis(A,'#staffForm')&&!(await vis(A,'#emailForm'))&&(await txt(A,'#authMsg'))==='Staff sign-in');
+    await A.click('[data-switchto="signin"]');await sleep(150);
+    await A.click('[data-switchto="signup"]');await sleep(150);
     // opening the page at #signup lands on Create account
     const B=await page(ctx,'B','/#signup');
     check('link to the page with #signup opens Create account',(await txt(B,'#emailSubmit'))==='Create account');
@@ -103,7 +108,7 @@ async function type(p,sel,v){await p.$eval(sel,e=>{e.value=''});if(v)await p.typ
     await run(A,`showGate("signin");window.__rp=null;sbClient.auth.resetPasswordForEmail=async(e,o)=>{window.__rp=[e,o];return {error:null}}`);
     await type(A,'#authEmail','shop@example.com');
     await A.click('#forgotBtn');await sleep(150);
-    check('Forgot password: email kept, tabs and Google hidden',(await A.$eval('#authEmail',e=>e.value))==='shop@example.com'&&!(await vis(A,'#authTabs'))&&!(await vis(A,'[data-provider="google"]'))&&(await txt(A,'#emailSubmit'))==='Send reset link');
+    check('Forgot password: email kept and Google hidden',(await A.$eval('#authEmail',e=>e.value))==='shop@example.com'&&!(await vis(A,'[data-provider="google"]'))&&(await txt(A,'#emailSubmit'))==='Send reset link');
     await A.click('#emailSubmit');await sleep(300);
     check('Forgot password: link requested',await A.evaluate(()=>window.__rp&&window.__rp[0]==='shop@example.com'));
     check('back on Sign in with the note',(await txt(A,'#emailSubmit'))==='Sign in'&&/reset link is on its way/.test(await txt(A,'#authNote')||''));
@@ -111,7 +116,7 @@ async function type(p,sel,v){await p.$eval(sel,e=>{e.value=''});if(v)await p.typ
     // phone
     ctx=await browser.createBrowserContext();A=await page(ctx,'A','/',375,800);
     check('phone: fits without sideways scroll',!(await A.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth)));
-    await A.click('[data-authtab="signup"]');await sleep(150);
+    await A.click('[data-switchto="signup"]');await sleep(150);
     await A.screenshot({path:SHOT+'s3-phone-signup.png'});
     await ctx.close();
   }finally{await browser.close()}

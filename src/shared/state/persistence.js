@@ -21,7 +21,7 @@ export const persistLocal=()=>{
   return ok;
 };
 export const savePend=()=>storage.set("rc_pend",store.pend);
-export const saveCart=()=>{storage.set("rc_cart",store.cart);storage.set("rc_disc",store.disc);storage.set("rc_cartcust",store.cartCust);if(store.cartOrder)storage.set("rc_cartorder",store.cartOrder);else if(store.cartOrder!==undefined)storage.remove("rc_cartorder")};
+export const saveCart=()=>{storage.set("rc_cart",store.cart);storage.set("rc_disc",store.disc);storage.set("rc_cartcust",store.cartCust);if(store.cartOrder)storage.set("rc_cartorder",store.cartOrder);else if(store.cartOrder!==undefined)storage.remove("rc_cartorder");if(store.cartTable)storage.set("rc_carttable",store.cartTable);else if(store.cartTable!==undefined)storage.remove("rc_carttable")};
 export const savePrefs=()=>storage.set("rc_prefs",store.prefs);
 export const saveSbQueue=()=>storage.set("hangtag_sb_queue",store.sbOfflineQueue);
 export const saveCatalog=()=>storage.set("rc_catalog",store.catalog);
@@ -52,3 +52,10 @@ export const saveAccess=()=>{ if(store.access) storage.set("hangtag_access",stor
 export const saveCollections=()=>storage.set("rc_collections",store.collections);
 export const saveHeldCarts=()=>storage.set("rc_held",store.heldCarts);
 export const saveOrders=()=>storage.set("rc_orders",store.orders);
+/* A restaurant's tables and their sessions (section 3o): kept per account on this device until uploaded */
+export const saveTables=()=>storage.set("rc_tables",store.tables);
+export const saveTableSessions=()=>storage.set("rc_table_sessions",store.tableSessions);
+/* Supplier bills' originals that couldn't reach the cloud yet (the files themselves are in the blobStore), by import id */
+export const savePendingDocs=()=>storage.set("rc_pending_docs",store.pendingDocs||{});
+/* Quotations sent to customers from this device: each press of Send until it went out (queued → sent / failed) */
+export const saveQuoteSends=()=>storage.set("rc_quote_sends",store.quoteSends||[]);

@@ -19,12 +19,16 @@ import { saveCart } from '../../../shared/state/persistence.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { decimalsOf, fmtQty, isMeasured, isWeighed, qtyText, roundQty, sumQty } from '../../../domain/catalog/units.js';
 import { openWeigh } from './weigh-dialog.js';
+import { openSerialPicker } from './serial-picker.js';
+import { trackingOfP } from '../../inventory/services/tracking.js';
 
 /* ---------- variant picker: every variant with its own quantity, added in one go ----------
    Rows are the combinations of every option but the last (e.g. colours), columns the last option's values (e.g. sizes). */
 
 export function openPicker(pid, target){
   const p=prod(pid); if(!p||p.archived) return;
+  // tracked by serial number: the pieces are chosen by their serials (every variant of the product at once)
+  if(trackingOfP(p)==="serial"){ openSerialPicker(pid,null,target||"cart"); return; }
   const vs=variantsOf(p);
   // sold by weight or volume, one variant: straight to the weight (typed, or read from the scale)
   if(isWeighed(p.unit)&&(target||"cart")==="cart"&&vs.length===1){ openWeigh(vs[0].id); return; }

@@ -2,10 +2,11 @@
 // discount, validity (quotations), notes and status, with the totals from the one bill calculation. Saving goes through
 // the orders use cases (features/orders/use-cases/orders.js); a final order (converted, completed, cancelled) is shown
 // read-only. store.orderForm = { o (the order being edited, a copy), q (product search), err, field, line }
-import { KIND_LABELS, STATUS_LABELS, cartBlock, isFinal, nextStatuses, shownStatus } from '../../../domain/orders/orders.js';
+import { KIND_LABELS, cartBlock, isFinal, nextStatuses, shownStatus, statusLabel } from '../../../domain/orders/orders.js';
 import { variantsOf } from '../../../domain/catalog/variants.js';
+import { unitOf } from '../../../domain/catalog/units.js';
 import { store } from '../../../shared/state/store.js';
-import { convertToSalesOrder, newOrderDraft, orderById, orderLine, orderToCart, orderTotals, saveOrder, todayKey } from '../use-cases/orders.js';
+import { convertToSalesOrder, duplicateQuotation, newOrderDraft, orderById, orderLine, orderToCart, orderTotals, saveOrder, todayKey } from '../use-cases/orders.js';
 import { customerRepository } from '../../customers/repositories/customer-repository.js';
 import { liveProducts } from '../../products/services/catalog.js';
 import { productText, variantText } from '../../sales/services/search.js';
@@ -43,7 +44,7 @@ function linesHTML(F, T, ed){
   if(!o.items.length) return `<p class="muted">No items yet. Search below to add them.</p>`;
   return o.items.map((l, i) => { const L = T.lines[i] || {}, d = l.disc || null, bad = F.line === i ? " bad" : "";
     return `<div class="oline${bad}" data-ofline="${i}"><div class="ol-n"><b>${esc(l.name)}</b><small>${esc(l.vl || "")}${l.gst != null && T.mode !== "none" ? ` · GST ${esc(String(l.gst))}%` : ""}${+l.fq > 0 ? ` · ${l.fq} delivered` : ""}</small></div>
-      <label class="f ol-q"><span class="lab">Qty</span><input data-ofl="q:${i}" value="${esc(l.q)}" type="number" inputmode="decimal" min="0" step="any"${dis}></label>
+      <label class="f ol-q"><span class="lab">Qty${l.u&&l.u!=="pcs"?` (${esc(unitOf(l.u).sym)})`:""}</span><input data-ofl="q:${i}" value="${esc(l.q)}" type="number" inputmode="decimal" min="0" step="any"${dis}></label>
       <label class="f ol-p"><span class="lab">Price</span><input data-ofl="price:${i}" value="${esc(l.price)}" type="number" inputmode="decimal" min="0" step="any"${dis}></label>
       <label class="f ol-d"><span class="lab">Discount</span><span class="ol-dw"><select data-ofl="dt:${i}" aria-label="Discount in percent or rupees"${dis}><option value="percent"${!d || d.type === "percent" ? " selected" : ""}>%</option><option value="fixed"${d && d.type === "fixed" ? " selected" : ""}>₹</option></select><input data-ofl="dv:${i}" value="${esc(d ? d.value : "")}" type="number" inputmode="decimal" min="0" step="any" placeholder="0"${dis}></span></label>
       <span class="ol-t tnum" data-oflt="${i}">${inrx(L.total || 0)}</span>${ed && !(+l.fq > 0) ? `<button type="button" class="iconbtn sm" data-oflrm="${i}" aria-label="Remove ${esc(l.name)}">${ICON.x}</button>` : ""}</div>`; }).join("");
@@ -57,7 +58,7 @@ export function renderOrderEditor(focus){
   const statuses = saved ? nextStatuses(saved) : [o.status];
   const billable = saved && !cartBlock(saved, today);
   $("#modalHost").innerHTML = `<div class="scrim" data-modal-scrim><div class="sheet ordersheet" id="orderSheet" role="dialog" aria-modal="true" aria-labelledby="ofT">
-    <div class="sh-head"><div class="sh-t"><h3 id="ofT">${saved ? esc(what + " " + (saved.no || "")) : "New " + what.toLowerCase()}</h3><p>${saved ? `<span class="ostat ostat-${esc(st)}">${esc(STATUS_LABELS[st] || st)}</span>` : "Not saved yet"}${saved && saved.convertedTo && orderById(saved.convertedTo) ? ` · became ${esc(orderById(saved.convertedTo).no)}` : ""}</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
+    <div class="sh-head"><div class="sh-t"><h3 id="ofT">${saved ? esc(what + " " + (saved.no || "")) : "New " + what.toLowerCase()}</h3><p>${saved ? `<span class="ostat ostat-${esc(st)}">${esc(statusLabel(saved.kind,st))}</span>` : "Not saved yet"}${saved && saved.convertedTo && orderById(saved.convertedTo) ? ` · became ${esc(orderById(saved.convertedTo).no)}` : ""}${saved&&saved.quoteNo?` · from ${esc(saved.quoteNo)}`:""}</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
     <label class="f"><span class="lab">Customer</span><select data-ofcust${dis}><option value="">Choose the customer…</option>${custs.map(c => `<option value="${esc(c.id)}"${o.cust && o.cust.id === c.id ? " selected" : ""}>${esc(c.name)}${c.phone ? " · " + esc(c.phone) : ""}</option>`).join("")}${o.cust && o.cust.id && !custs.some(c => c.id === o.cust.id) ? `<option value="${esc(o.cust.id)}" selected>${esc(o.cust.name || "Customer")}</option>` : ""}</select></label>
     <h4 class="custh">Items</h4>
     <div class="olines">${linesHTML(F, T, ed)}</div>
@@ -65,12 +66,14 @@ export function renderOrderEditor(focus){
     <div class="pgrid2">
       <label class="f"><span class="lab">Bill discount</span><span class="ol-dw"><select data-off="bdt"${dis}><option value="percent"${!bd || bd.type === "percent" ? " selected" : ""}>%</option><option value="fixed"${bd && bd.type === "fixed" ? " selected" : ""}>₹</option></select><input data-off="bdv" value="${esc(bd ? bd.value : "")}" type="number" inputmode="decimal" min="0" step="any" placeholder="0"${dis}></span></label>
       ${o.kind === "quote" ? `<label class="f"><span class="lab">Valid until</span><input type="date" data-off="validUntil" value="${esc(o.validUntil || "")}"${dis}></label>` : ""}
-      ${saved && ed && statuses.length > 1 ? `<label class="f"><span class="lab">Status</span><select data-off="status">${statuses.map(s => `<option value="${s}"${s === o.status ? " selected" : ""}>${esc(STATUS_LABELS[s])}</option>`).join("")}</select></label>` : ""}
+      ${saved && ed && statuses.length > 1 ? `<label class="f"><span class="lab">Status</span><select data-off="status">${statuses.map(s => `<option value="${s}"${s === o.status ? " selected" : ""}>${esc(statusLabel(o.kind,s))}</option>`).join("")}</select></label>` : ""}
     </div>
     <label class="f"><span class="lab">Notes <small>(optional)</small></span><textarea data-off="notes" rows="2" maxlength="500"${dis}>${esc(o.notes || "")}</textarea></label>
+    ${o.kind==="quote"?`<label class="f"><span class="lab">Terms &amp; conditions <small>(optional)</small></span><textarea data-off="terms" rows="3" maxlength="2000"${dis}>${esc(o.terms||"")}</textarea></label>`:""}
     <div class="paysum" id="ofTotals">${totalsHTML(T)}</div>
     <p class="err" id="ofErr" role="alert"${F.err ? "" : " hidden"}>${esc(F.err)}</p>
-    <div class="setactions">${ed ? `<button class="btn primary sm" data-ofsave>${saved ? "Save changes" : "Save " + what.toLowerCase()}</button>` : ""}
+    <div class="setactions of-actions">${ed ? `<button class="btn primary sm" data-ofsave>${saved ? "Save changes" : "Save " + what.toLowerCase()}</button>` : ""}
+      ${saved&&saved.kind==="quote"?`<button class="btn sm" data-qdoc="preview" data-id="${esc(saved.id)}">Preview</button><button class="btn sm" data-qdoc="print" data-id="${esc(saved.id)}">Print</button><button class="btn sm" data-qdoc="download" data-id="${esc(saved.id)}">Download PDF</button><button class="btn sm" data-qdoc="send" data-id="${esc(saved.id)}">Send</button>${can("create_order")?`<button class="btn sm" data-ofdup>Duplicate</button>`:""}`:""}
       ${saved && saved.kind === "quote" && billable && can("create_order") ? `<button class="btn sm" data-ofconvert>Make it a sales order</button>` : ""}
       ${billable && can("create_sale") ? `<button class="btn sm" data-ofbill>Bill ${saved.kind === "sales" && (saved.items || []).some(l => +l.fq > 0) ? "what's left" : "it"}</button>` : ""}</div>
   </div></div>`;
@@ -93,12 +96,13 @@ export function orderFormInput(t){
     updateTotals(); return true; }
   if(t.dataset.off === "bdv"){ F.o.billDisc = setDisc(F.o.billDisc, null, t.value); updateTotals(); return true; }
   if(t.dataset.off === "notes"){ F.o.notes = t.value; return true; }
+  if(t.dataset.off === "terms"){ F.o.terms = t.value; return true; }
   return false;
 }
 /* Choices in the editor → true when handled */
 export function orderFormChange(t){
   const F = store.orderForm; if(!F || !t.closest || !t.closest("#orderSheet")) return false;
-  if(t.matches("[data-ofcust]")){ const c = customerRepository().get(t.value); F.o.cust = c ? { id: c.id, name: c.name, phone: c.phone || "" } : null; renderOrderEditor(false); return true; }
+  if(t.matches("[data-ofcust]")){ const c = customerRepository().get(t.value); F.o.cust = c ? { id:c.id,name:c.name,phone:c.phone||"",...(c.email?{email:c.email}:{}),...(c.gstin?{gstin:c.gstin}:{}),...(c.type==="business"?{type:"business"}:{}) } : null; renderOrderEditor(false); return true; }
   if(t.dataset.ofl && t.dataset.ofl.startsWith("dt:")){ const l = F.o.items[+t.dataset.ofl.slice(3)]; if(l) l.disc = setDisc(l.disc, t.value, null); updateTotals(); return true; }
   if(t.dataset.off === "bdt"){ F.o.billDisc = setDisc(F.o.billDisc, t.value, null); updateTotals(); return true; }
   if(t.dataset.off === "validUntil"){ F.o.validUntil = t.value; return true; }
@@ -117,7 +121,7 @@ export function orderFormClick(t){
   const F = store.orderForm; if(!F || !t.closest("#orderSheet")) return false;
   const add = t.closest("[data-ofadd]");
   if(add){ const same = F.o.items.find(l => l.v === add.dataset.ofadd && !(+l.fq > 0));
-    if(same) same.q = (+same.q || 0) + 1; else { const l = orderLine(add.dataset.ofadd, 1); if(l) F.o.items.push({ ...l, ln: undefined }); }
+    if(same) same.q = (+same.q || 0) + 1; else { const l = orderLine(add.dataset.ofadd, 1, null, F.o); if(l) F.o.items.push({ ...l, ln: undefined }); }
     F.q = ""; renderOrderEditor(false); const q = $("#ofQ"); if(q) q.focus({ preventScroll: true }); return true; }
   const rm = t.closest("[data-oflrm]"); if(rm){ F.o.items.splice(+rm.dataset.oflrm, 1); renderOrderEditor(false); return true; }
   if(t.closest("[data-ofsave]")){
@@ -126,6 +130,7 @@ export function orderFormClick(t){
     store.orderForm = { o: copy(r.order), q: "", err: "", field: "", line: null }; renderOrderEditor(false); renderAll();
     toast(`${KIND_LABELS[r.order.kind]} ${r.order.no} saved.`); return true; }
   if(t.closest("[data-ofconvert]")){ convertAction(F.o.id); return true; }
+  if(t.closest("[data-ofdup]")){ const r=duplicateQuotation(F.o.id); if(r.error){toast(r.error);return true;} store.orderForm={o:copy(r.order),q:"",err:"",field:"",line:null}; renderOrderEditor(false); renderAll(); toast(`Quotation ${r.order.no} duplicated.`); return true; }
   if(t.closest("[data-ofbill]")){ billAction(F.o.id); return true; }
   return false;
 }
@@ -142,5 +147,6 @@ export function billAction(id){
   if(r.error){ toast(r.error); return; }
   store.orderForm = null; closeModal(); setTab("sell"); renderAll();
   const o = orderById(id);
-  toast(`${o ? o.no : "The order"} is on the bill.${r.skipped.length ? " Not added: " + r.skipped.map(s => `${s.name} (${s.why})`).join(", ") + "." : ""}${r.lines.some(l => l.short) ? " Some lines are short of stock: only what's in stock went on the bill." : ""}`);
+  const later = r.lines.reduce((a, l) => a + (+l.short || 0), 0) + r.skipped.length;
+  toast(`${o ? o.no : "The order"} is on the bill.${r.skipped.length ? " Not added: " + r.skipped.map(s => `${s.name} (${s.why})`).join(", ") + "." : ""}${later ? " What's not in stock stays on the order to fulfil later." : ""}`);
 }

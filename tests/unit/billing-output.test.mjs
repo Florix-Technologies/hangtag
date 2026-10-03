@@ -37,13 +37,13 @@ const put = (s) => { store.localDays.today_d1_0.sales.push(s); store._d = null; 
 // B2B customer in Karnataka: IGST; split payment
 store.cartCust = { id: 'c1', name: 'Blr Traders', phone: '98450 12345' };
 const due1 = (() => { const s = newSaleRecord(lines(), { type: 'fixed', value: 50 }, { method: 'card', ref: 'APPR1' }); return s.total; })();
-const b2b = put(newSaleRecord(lines(), { type: 'fixed', value: 50 }, [{ method: 'cash', amount: 1000, received: 1500 }, { method: 'upi', amount: due1 - 1000, ref: 'UTR998877' }]));
+const b2b = put(newSaleRecord(lines(), { type: 'fixed', value: 50 }, [{ method: 'cash', amount: 1000, received: 1500 }, { method: 'upi', amount: due1 - 1000, ref: 'UTR998877', confirmed: true }]));
 // walk-in, same state (CGST + SGST), cash
 store.cartCust = null;
 const walk = put(newSaleRecord([{ v: 'p2:', p: 'p2', name: 'Cap', q: 1, price: 500 }], null, 'cash'));
 // no GST shop setting: a plain invoice
 store.settings.taxOn = false;
-const noGst = put(newSaleRecord([{ v: 'p2:', p: 'p2', name: 'Cap', q: 2, price: 500 }], null, { method: 'upi', ref: '412345678901' }));
+const noGst = put(newSaleRecord([{ v: 'p2:', p: 'p2', name: 'Cap', q: 2, price: 500 }], null, { method: 'upi', ref: '412345678901', confirmed: true }));
 store.settings.taxOn = true;
 // a bill saved before line discounts / GST split (legacy shape)
 const legacy = { id: 'old1', no: 'INV-250101-001', t: Date.parse('2025-01-01T10:00:00Z'), items: [{ ln: 0, p: 'p2', n: 'Cap', c: '', s: '', q: 2, price: 525 }], sub: 1050, disc: 50, tax: 48, taxRate: 5, taxIncl: true, total: 1000, credit: 0, pay: 'cash', cust: null };

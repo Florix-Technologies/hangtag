@@ -2,6 +2,7 @@
 // bill adds (new products, new variants, stock-in moves). Pure: no browser, no app state, no network.
 import { tupleKey } from '../catalog/options.js';
 import { COLORS } from '../../shared/utils/colors.js';
+import { normBatch } from './tracking.js';
 
 export const REVIEW_CONFIDENCE = 0.8;
 const low = s => String(s == null ? "" : s).toLowerCase();
@@ -10,7 +11,8 @@ export const normName = s => low(s).replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 const clean = (s, max) => { const t = String(s == null ? "" : s).replace(/\s+/g, " ").trim(); return max ? t.slice(0, max) : t; };
 const num = v => (v === null || v === undefined || v === "" || !Number.isFinite(+v)) ? null : +v;
 const money = v => { const n = num(v); return n == null || n < 0 ? null : Math.round(n); };
-const isQty = q => Number.isInteger(q) && q > 0;
+/* A quantity: above 0, whole for pieces; dp: the decimals its unit allows (kg, litres: 3) */
+const isQty = (q, dp) => Number.isFinite(q) && q > 0 && Math.abs(q * 10 ** (dp || 0) - Math.round(q * 10 ** (dp || 0))) < 1e-6;
 
 /* ---------- review lines ---------- */
 /* Why a line needs a second look (empty list = looks fine). Recomputed after every edit. */
@@ -18,7 +20,7 @@ export function reviewReasons(l){
   const r = [];
   if(!clean(l.name)) r.push("No product name");
   if(l.qty == null) r.push("No quantity");
-  else if(!isQty(l.qty)) r.push("Quantity should be a whole number, 1 or more");
+  else if(!isQty(l.qty, l.dp)) r.push(l.dp ? `Quantity above 0, at most ${l.dp} decimals` : "Quantity should be a whole number, 1 or more");
   if(l.confidence != null && l.confidence < REVIEW_CONFIDENCE) r.push(`Not sure it was read correctly (${Math.round(l.confidence * 100)}%)`);
   if(l.qty != null && l.unitCost != null && l.total != null && Math.abs(l.qty * l.unitCost - l.total) > Math.max(1, l.total * 0.01))
     r.push("Quantity × price doesn't match the line total");
@@ -134,13 +136,18 @@ export function planImport(lines, products, ctx){
   };
   const moves = [], newVariants = [], updated = new Map(), newProducts = [], touched = new Set();
   let k = 0, units = 0;
+  // lines: what each stock-in record is for (its bill line, GST) — a supplier bill recorded as a purchase needs them
+  const planLines = [];
   const addMove = (l, p, v) => {
-    moves.push({ id: "imp:" + importId + ":" + (k++), v: v.id, p: p.id, type: "RESTOCK", q: l.qty, cost: money(l.unitCost), note: clean(note, 200), t: now, dev: deviceId, imp: importId });
-    units += l.qty;
+    // a line of a product tracked by serial number or batch carries them (checked before planning: use-cases/import-supplier-bill.js)
+    moves.push({ id: "imp:" + importId + ":" + (k++), v: v.id, p: p.id, type: "RESTOCK", q: l.qty, cost: money(l.unitCost), note: clean(note, 200), t: now, dev: deviceId, imp: importId,
+      ...(Array.isArray(l.sn) && l.sn.length ? { sn: l.sn.slice() } : {}), ...(l.batch && l.batch.no ? { b: normBatch(l.batch.no), ...(l.batch.exp ? { exp: l.batch.exp } : {}) } : {}) });
+    planLines.push({ lineId: l.id, p: p.id, v: v.id, n: clean(l.name, 120) || p.name, vl: (v.o || []).join(" / "), sku: v.sku || "", q: l.qty, cost: l.unitCost == null ? 0 : +l.unitCost, gst: l.gst == null ? 0 : +l.gst });
+    units = Math.round((units + l.qty) * 1000) / 1000;
   };
   const used = lines.filter(l => l.include !== false && l.action !== "skip");
   used.forEach(l => {
-    if(!isQty(l.qty)) err(l, "Quantity should be a whole number, 1 or more.");
+    if(!isQty(l.qty, l.dp)) err(l, l.dp ? `Enter a quantity above 0 (at most ${l.dp} decimals).` : "Quantity should be a whole number, 1 or more.");
     if(l.needsReview && !l.confirmed) err(l, "Check this line and tap Confirm, or remove it.");
     if(!l.action) err(l, l.decisionNote || "Choose: add stock to an existing product, or create a new one.");
   });
@@ -227,6 +234,7 @@ export function planImport(lines, products, ctx){
     const hsn = (good.map(l => l.hsn).find(Boolean) || "").replace(/\D/g, "");
     const gst = good.map(l => l.gst).find(x => x != null) ?? null;
     const p = { id: pid, name: pname, cat: "", brand: clean(first.brand, 40), desc: clean(first.desc, 300), price, cost, color: COLORS[(ci++) % COLORS.length],
+      ...(first.unit && first.unit !== "pcs" ? { unit: first.unit } : {}),
       archived: false, hsn: /^\d{4}(\d{2}){0,2}$/.test(hsn) ? hsn : "", gst: gst != null && gst >= 0 && gst <= 100 ? gst : null,
       code: variants.some(v => v.bc) ? "barcode" : "", opts, variants };
     newProducts.push(p);
@@ -237,7 +245,7 @@ export function planImport(lines, products, ctx){
     variantsToCreate: newVariants.length + newProducts.reduce((a, p) => a + p.variants.length, 0),
     existingMatched: touched.size, units, lines: used.length,
   };
-  return { newProducts, updatedProducts: [...updated.values()], newVariants, moves: errors.length ? [] : moves, summary, errors };
+  return { newProducts, updatedProducts: [...updated.values()], newVariants, moves: errors.length ? [] : moves, lines: errors.length ? [] : planLines, summary, errors };
 }
 /* The catalog after the plan: new values and variants on existing products, then the new products (a new array).
    Safe to run twice (a retried import): products and variants already there are not added again. */

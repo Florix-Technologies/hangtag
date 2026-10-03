@@ -12,7 +12,9 @@ export const SETTINGS_SECTIONS = [
   { key: "taxes", label: "Taxes", perms: ["manage_settings"] },
   { key: "team", label: "Team & devices", owner: true },
   { key: "roles", label: "Roles & permissions", owner: true },
+  { key: "selling", label: "Selling", perms: ["manage_products", "manage_settings", "create_sale"], parts: true },
   { key: "hardware", label: "Hardware" },
+  { key: "advanced", label: "Advanced", owner: true, parts: true },
   { key: "account", label: "Account" },
 ];
 /* The sections this person sees, in order */

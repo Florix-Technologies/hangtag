@@ -190,7 +190,7 @@ const vid=(c,s)=>`const p=products().find(x=>x.name==="Street Tee");return p.var
     await A.type('#custForm [name=name]','Meera Shah');await A.type('#custForm [name=phone]','9812345678');
     await A.click('#custForm [type=submit]');await sleep(150);
     check('customer added to the bill',/Meera Shah/.test(await txt(A,'#billPanel .custline')||''));
-    await run(A,`addOne(${JSON.stringify(ids.WM)})`);await A.click('#billPanel [data-pay="upi"]');await sleep(200);await A.type('[data-payf="ref:upi"]','412345678901');await sleep(80);await A.click('#payDone');await sleep(300);
+    await run(A,`addOne(${JSON.stringify(ids.WM)})`);await A.click('#billPanel [data-pay="upi"]');await sleep(200);await A.type('[data-payf="ref:upi"]','412345678901');await sleep(80);await A.click('[data-upireceived]');await sleep(80);await A.click('#payDone');await sleep(300);
     const cs=await run(A,'const s=D().sales[D().sales.length-1];return s.cust&&s.cust.name');
     check('bill carries the customer',cs==='Meera Shah');
     await A.keyboard.press('Escape');

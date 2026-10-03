@@ -11,14 +11,38 @@ export const textWidth=(s,size)=>[...latin(s)].reduce((a,c)=>a+cw(c),0)*size/100
 const fit=(s,width,size)=>{let t=latin(s);if(textWidth(t,size)<=width)return t;while(t.length>1&&textWidth(t+"...",size)>width)t=t.slice(0,-1);return t+"..."};
 const numeric=v=>typeof v==="number"||/^-?[\d,]+(\.\d+)?%?$/.test(String(v).trim());
 
-/* doc: { title, subtitle?, footer?, blocks: [{ heading?, text?: [lines], head?: [cells], rows?: [[cells]] }] } */
+const B64="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+function base64Bytes(s){
+  const clean=String(s||"").replace(/[^A-Za-z0-9+/=]/g,""); let out="",buf=0,bits=0;
+  for(const c of clean){ if(c==="=") break; const n=B64.indexOf(c); if(n<0) continue; buf=(buf<<6)|n; bits+=6; if(bits>=8){ bits-=8; out+=String.fromCharCode((buf>>bits)&255); } }
+  return out;
+}
+/* The receipt-logo flow stores a downscaled JPEG data URL. Keep the PDF dependency-free by embedding that JPEG as-is. */
+function jpegLogo(url){
+  const m=/^data:image\/jpeg;base64,([\s\S]+)$/i.exec(String(url||"")); if(!m) return null;
+  const data=base64Bytes(m[1]); if(data.length<12||data.charCodeAt(0)!==255||data.charCodeAt(1)!==216) return null;
+  for(let i=2;i+9<data.length;){
+    if(data.charCodeAt(i)!==255){ i++; continue; }
+    const marker=data.charCodeAt(i+1), len=(data.charCodeAt(i+2)<<8)|data.charCodeAt(i+3);
+    if([0xc0,0xc1,0xc2,0xc3,0xc5,0xc6,0xc7,0xc9,0xca,0xcb,0xcd,0xce,0xcf].includes(marker)){
+      const h=(data.charCodeAt(i+5)<<8)|data.charCodeAt(i+6), w=(data.charCodeAt(i+7)<<8)|data.charCodeAt(i+8), comps=data.charCodeAt(i+9);
+      return w&&h?{data,w,h,space:comps===1?"DeviceGray":comps===4?"DeviceCMYK":"DeviceRGB"}:null;
+    }
+    if(!len||len<2) break; i+=2+len;
+  }
+  return null;
+}
+
+/* doc: { title, subtitle?, footer?, logo? (JPEG data URL), blocks: [{ heading?, text?: [lines], head?: [cells], rows?: [[cells]] }] } */
 export function pdfBytes(doc){
-  const pages=[]; let ops=[], y=H-M;
+  const pages=[]; let ops=[], y=H-M; const logo=jpegLogo(doc.logo);
   const newPage=()=>{ if(ops.length) pages.push(ops); ops=[]; y=H-M; };
   const need=h=>{ if(y-h<M+FOOT) newPage(); };
   const text=(s,x,yy,size,bold)=>ops.push(`BT /${bold?"F2":"F1"} ${size} Tf ${x.toFixed(1)} ${yy.toFixed(1)} Td ${pdfStr(s)} Tj ET`);
   const rule=(yy,w=0.4)=>ops.push(`${w} w ${M} ${yy.toFixed(1)} m ${W-M} ${yy.toFixed(1)} l S`);
-  text(doc.title||"Report",M,y-14,14,true); y-=20;
+  let titleWidth=W-2*M;
+  if(logo){ const k=Math.min(110/logo.w,45/logo.h), w=logo.w*k,h=logo.h*k; ops.push(`q ${w.toFixed(1)} 0 0 ${h.toFixed(1)} ${(W-M-w).toFixed(1)} ${(H-M-h).toFixed(1)} cm /Im1 Do Q`); titleWidth-=w+12; }
+  text(fit(doc.title||"Report",titleWidth,14),M,y-14,14,true); y-=20;
   if(doc.subtitle){ text(doc.subtitle,M,y-10,9,false); y-=16; }
   for(const b of doc.blocks||[]){
     if(b.heading){ need(40); y-=8; text(b.heading,M,y-10,10,true); y-=15; }
@@ -41,9 +65,11 @@ export function pdfBytes(doc){
     p.push(`BT /F1 6.5 Tf ${W-M-50} ${M-4} Td ${pdfStr(`Page ${i+1} of ${pages.length}`)} Tj ET`); });
   const objs=["<< /Type /Catalog /Pages 2 0 R >>",null,"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>"];
+  let imageId=0;
+  if(logo){ objs.push(`<< /Type /XObject /Subtype /Image /Width ${logo.w} /Height ${logo.h} /ColorSpace /${logo.space} /BitsPerComponent 8 /Filter /DCTDecode /Length ${logo.data.length} >>\nstream\n${logo.data}\nendstream`); imageId=objs.length; }
   const kids=[];
   pages.forEach(p=>{ const content=p.join("\n"); objs.push(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
-    const cid=objs.length; objs.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${cid} 0 R >>`); kids.push(objs.length+" 0 R"); });
+    const cid=objs.length, xobj=imageId?` /XObject << /Im1 ${imageId} 0 R >>`:""; objs.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >>${xobj} >> /Contents ${cid} 0 R >>`); kids.push(objs.length+" 0 R"); });
   objs[1]=`<< /Type /Pages /Kids [${kids.join(" ")}] /Count ${kids.length} >>`;
   let out="%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"; const offs=[];
   objs.forEach((o,i)=>{ offs.push(out.length); out+=`${i+1} 0 obj\n${o}\nendobj\n`; });

@@ -17,8 +17,6 @@ export const gateUp = () => !aEl("authGate").hidden || !aEl("setupGate").hidden;
 export function setEmailMode(mode){
   store.emailMode = mode;
   const up = mode === "signup", forgot = mode === "forgot", staff = mode === "staff";
-  document.querySelectorAll("#authTabs [data-authtab]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.authtab === (forgot ? "signin" : mode))));
-  aEl("authTabs").hidden = forgot;
   // Staff: shop code, username and password (a team member's account, made by the owner); no Google, no email
   aEl("staffForm").hidden = !staff;
   aEl("emailForm").hidden = staff;
@@ -36,12 +34,16 @@ export function setEmailMode(mode){
   aEl("resendBtn").hidden = true;
   aEl("authMsg").textContent = up ? "Create your Hangtag account. Every account gets its own private shop."
     : forgot ? "Enter your email and we'll send you a link to choose a new password."
-    : staff ? "Staff: sign in with the shop code, username and password the owner gave you."
-    : "Sign in to open billing and stock.";
+    : staff ? "Staff sign-in"
+    : "Sign in to your shop";
   const sw = aEl("authSwitch");
   sw.hidden = forgot || staff;
   sw.innerHTML = up ? 'Already have an account? <button type="button" class="link" data-switchto="signin">Sign in</button>'
     : 'New to Hangtag? <button type="button" class="link" data-switchto="signup">Create an account</button>';
+  const staffSw = aEl("staffSwitch");
+  staffSw.hidden = forgot;
+  staffSw.innerHTML = staff ? 'Shop owner? <button type="button" class="link" data-switchto="signin">Back to sign in</button>'
+    : '<span>Staff or team member?</span> <button type="button" class="btn sm" data-switchto="staff">Staff sign-in</button>';
   labelProviders();
   aEl("authPass").value = ""; aEl("authPass2").value = "";
   setAuthError(""); setAuthNote("");

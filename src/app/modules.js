@@ -26,6 +26,20 @@ import { renderOrdersPart } from '../features/orders/pages/orders-page.js';
 import { storage } from '../shared/state/persistence.js';
 import { products } from '../features/products/services/catalog.js';
 import { unitOf } from '../domain/catalog/units.js';
+import { expirySettingsHTML } from '../features/inventory/components/expiry-settings.js';
+import { trackingOfP } from '../features/inventory/services/tracking.js';
+import { renderTablesPage } from '../features/restaurant/pages/tables-page.js';
+import { renderKitchenPage } from '../features/restaurant/pages/kitchen-page.js';
+import { mayWorkTables } from '../features/restaurant/services/restaurant-state.js';
+import { installRestaurantTimers } from './events/restaurant-events.js';
+import { invoicePageHTML, quotationSettingsHTML } from '../features/orders/components/quotation-settings.js';
+import { installAssistantEvents, renderAssistantPage } from '../features/assistant/pages/assistant-page.js';
+import { installProductDraftEvents } from '../features/products/components/product-draft-assistant.js';
+import { installVoiceSearch } from '../features/search/components/voice-search.js';
+import { priceListsSettingsHTML } from '../features/commerce/components/settings-parts.js';
+import { gstSettingsHTML } from '../features/commerce/components/gst-documents.js';
+import { vouchersSettingsHTML } from '../features/commerce/components/vouchers.js';
+import { integrationsSettingsHTML } from '../features/commerce/components/webhooks.js';
 
 let installed = false;
 export function installModules(){
@@ -39,8 +53,9 @@ export function installModules(){
   registerModule({ id: "stock", render: () => renderSubviews("stock") });
   registerSubview("stock", { id: "levels", label: "Stock", order: 10, main: true, render: () => renderStock() });
   // Inventory (T2): purchases, suppliers and stock count, for the roles that use them
-  INVENTORY_SUBVIEWS.forEach((d, i) => registerSubview("stock", { id: d.id, label: d.label, order: 20 + 10 * i, perms: d.perms, render: host => renderInventoryPart(d, host) }));
+  INVENTORY_SUBVIEWS.forEach((d, i) => registerSubview("stock", { id: d.id, label: d.label, order: 20 + 10 * i, perms: d.perms, ...(d.available ? { available: d.available } : {}), render: host => renderInventoryPart(d, host) }));
   registerModule({ id: "report", render: renderReport });
+  registerModule({ id: "assistant", label: "Ask", order: 85, phone: 55, perms: ["view_reports"], render: renderAssistantPage });
   registerModule({ id: "customers", render: renderCustomers });
   // don't redraw the product list under someone typing in it (except its search box)
   registerModule({ id: "products", render(){ const a = document.activeElement; if(!(a && a.closest && a.closest("#v-products") && a.id !== "prodSearch")) renderProducts(); } });
@@ -49,6 +64,26 @@ export function installModules(){
   // litre) or that already set one up on this device
   const weighs = () => hasCap("uses_weight") || !!storage.get("hangtag_scale", null) || products().some(p => /^(weight|volume)$/.test(unitOf(p.unit).kind));
   registerSettingsPart("hardware", { id: "scale", order: 20, html: () => weighs() ? scaleSetupHTML() : "" });
+  // Settings → Capabilities → Expiry (Wave 2): for shops that keep expiry dates or batches
+  const expires = () => hasCap("uses_expiry") || hasCap("uses_batches") || products().some(p => trackingOfP(p) === "batch");
+  registerSettingsPart("capabilities", { id: "expiry", order: 20, perms: ["manage_settings"], html: () => expires() ? expirySettingsHTML() : "" });
+  // Settings → Receipt: the page invoice links open (the owner's), and the quotation template for shops that make quotations
+  registerSettingsPart("receipt", { id: "invoice-page", order: 10, perms: ["manage_settings"], html: invoicePageHTML });
+  registerSettingsPart("receipt", { id: "quotations", order: 20, perms: ["manage_settings"], html: () => hasCap("uses_quotations") ? quotationSettingsHTML() : "" });
+  // Settings → Selling (section 3r): price lists for shops that use them
+  registerSettingsPart("selling", { id: "price-lists", order: 10, perms: ["manage_products"], html: () => hasCap("uses_price_lists") ? priceListsSettingsHTML() : "" });
+  registerSettingsPart("selling", { id: "vouchers", order: 20, perms: ["create_sale", "manage_settings"], html: vouchersSettingsHTML });
+  registerSettingsPart("selling", { id: "gst-docs", order: 30, perms: ["manage_settings"], html: gstSettingsHTML });
+  // Settings → Advanced: integrations (outbound webhooks), the owner's only
+  registerSettingsPart("advanced", { id: "integrations", order: 10, html: integrationsSettingsHTML });
+  // Restaurant (W2-B): the tables (a till, or servers ordering on their phones) and the kitchen screen — only with the shop's
+  // table / kitchen capabilities (the registry adds them to these modules by itself)
+  registerModule({ id: "tables", label: "Tables", order: 32, phone: 25, caps: ["uses_tables"], perms: ["create_sale", "create_order", "manage_tables", "manage_settings"], available: mayWorkTables, render: renderTablesPage });
+  registerModule({ id: "kitchen", label: "Kitchen", order: 34, phone: 26, caps: ["uses_kitchen"], perms: ["manage_kitchen"], render: renderKitchenPage });
+  installRestaurantTimers();
+  installAssistantEvents();
+  installProductDraftEvents();
+  installVoiceSearch();
   document.addEventListener("click", e => {
     if(onSubviewClick(e)) return;
     if(e.target && e.target.closest && e.target.closest("[data-navmore]")) openNavMore();

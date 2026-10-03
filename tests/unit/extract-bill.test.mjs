@@ -1,7 +1,7 @@
 // Supplier bill extraction (supabase/functions/extract-bill): upload checks, the request sent to Claude (PDF as a document,
 // photos as images, JSON schema output), stop reasons, and normalisation. A fake SDK client records requests; no network.
 // Run: npm run test:unit
-import { ACCEPTED_TYPES, EXTRACTION_SCHEMA, FALLBACK_BETA, MAX_BYTES, SYSTEM_PROMPT, buildRequest, normalizeExtraction, parseModelResponse, toNumber, validateUpload } from '../../supabase/functions/extract-bill/core.js';
+import { ACCEPTED_TYPES, EXTRACTION_SCHEMA, FALLBACK_BETA, MAX_BYTES, SYSTEM_PROMPT, buildRequest, normalizeExtraction, normalizeUnit, parseModelResponse, toNumber, validateUpload } from '../../supabase/functions/extract-bill/core.js';
 import { createClaudeProvider } from '../../supabase/functions/extract-bill/providers/claude.js';
 import { MOCK_EXTRACTION, createMockProvider } from '../../supabase/functions/extract-bill/providers/mock.js';
 
@@ -66,7 +66,12 @@ check('missing fields stay null (never invented)', n.lines[0].total_price === nu
 check('parsed values: quantity 2, price 450, HSN digits, GST 5', n.lines[0].quantity === 2 && n.lines[0].unit_price === 450 && n.lines[0].hsn === '6204' && n.lines[0].gst_rate === 5);
 check('confidence clamped to 0..1', n.lines[0].confidence === 1 && n.lines[1].confidence === 0);
 check('fully empty lines are dropped; half-empty options removed', n.lines.length === 2 && n.lines[0].options.length === 1);
-check('a fractional quantity is kept and warned about', n.lines[1].quantity === 2.5 && n.warnings.some((w) => /not a whole number/.test(w)) && n.warnings[0] === 'Skipped: freight');
+check('a fractional quantity is kept and warned about', n.lines[1].quantity === 2.5 && n.warnings.some((w) => /fractional; check the unit/.test(w)) && n.warnings[0] === 'Skipped: freight');
+check('printed units are normalised to the catalog units (Nos → pcs, Ltrs → l, Kgs → kg); unknown or absent stays null',
+  normalizeUnit('Nos') === 'pcs' && normalizeUnit('Ltrs.') === 'l' && normalizeUnit('KGS') === 'kg' && normalizeUnit('mtr') === 'm' && normalizeUnit('bundle') === null && normalizeUnit(null) === null && n.lines[1].unit === null);
+const u = normalizeExtraction({ lines: [{ name: 'Rice', quantity: 2.5, unit: 'Kgs' }, { name: 'Cloth', quantity: 1.255, unit: 'mtr' }, { name: 'Soap', quantity: 3, unit: 'Nos' }] });
+check('a decimal quantity in kg is kept without a warning; too many decimals for metres is warned about',
+  u.lines[0].unit === 'kg' && u.lines[0].quantity === 2.5 && u.lines[2].unit === 'pcs' && u.warnings.length === 1 && /too many decimal places for m/.test(u.warnings[0]), u.warnings);
 check('nothing at all → empty but valid result', (() => { const e = normalizeExtraction(null); return e.ok && e.lines.length === 0 && e.supplier.name === null && e.currency === 'INR'; })());
 
 console.log(`\n${passed} passed, ${failed} failed`);

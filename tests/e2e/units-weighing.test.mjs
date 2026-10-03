@@ -44,6 +44,10 @@ check('signed in and connected', await A.until('sbStatus==="connected"'));
 
 console.log('--- the product form: Unit ---');
 await A.run(`openEditor(null)`); await sleep(200);
+const plain = await A.P.$$eval('#edUnit option', (o) => o.map((x) => x.value));
+check('without Weight-based products: pieces, box, pack, dozen and metre (no kg, gram or litre)', JSON.stringify(plain) === JSON.stringify(['pcs', 'box', 'pack', 'dozen', 'm']), plain);
+check('…and a product can\'t be saved by the kg (the capability is checked, not just hidden)', /Selling by weight is switched off/.test(await A.run(`editor.name="Dal";editor.price="90";editor.unit="kg";return (saveProduct({draft:editor})||{}).error||""`)));
+await A.run(`closeModal();saveCapabilities({uses_weight:true});openEditor(null)`); await sleep(200);
 const opts = await A.P.$$eval('#edUnit option', (o) => o.map((x) => x.value));
 check('the product form has a Unit select with the nine units', JSON.stringify(opts) === JSON.stringify(['pcs', 'box', 'pack', 'dozen', 'kg', 'g', 'l', 'ml', 'm']), opts);
 await A.type('#modalHost [data-ed="name"]', 'Basmati Rice'); await A.type('#modalHost [data-ed="price"]', '120');

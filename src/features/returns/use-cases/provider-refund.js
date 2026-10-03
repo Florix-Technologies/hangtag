@@ -19,7 +19,9 @@ export async function refundThroughProvider(ret){
   await flushSbQueue();
   if(store.sbOfflineQueue.some(q=>q.type==="return"&&q.id===ret.id)) return {error:"The return is still uploading. Refund through the provider from the bill once it has uploaded, or refund by hand."};
   try{
-    const r=await use("paymentGateway").refundReturn(ret.id);
+    const provider=use("paymentGateway"), r=provider.refund
+      ? await provider.refund({returnId:ret.id})
+      : await provider.refundReturn(ret.id);
     const kept=store.returnsMap[ret.id]; if(kept){ kept.providerRefund=r.refundId; saveReturns(); invalidate(); }
     return {refundId:r.refundId};
   }catch(e){ return {error:userMessage(e,"The provider didn't take the refund. Refund the customer by hand.")}; }

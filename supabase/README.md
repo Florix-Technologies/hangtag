@@ -8,6 +8,12 @@ The current app still uses the old `hangtag_*` tables from `../schema.sql`. The 
 Supabase → SQL Editor → New query → paste `migrations/20260925180000_phase1_foundation.sql` → Run.
 You can also use `supabase db push` with the Supabase CLI. It is safe to run again.
 
+**Commerce batch (the live `hangtag_*` tables).** `migrations/20261003120000_hangtag_commerce_batch.sql` is section 3r
+of `schema.sql` (price lists, purchase orders, kits, e-invoice / e-way bill readiness, repack, gift vouchers, outbound
+webhooks) with its row security. Run it on a database that already has `schema.sql` up to section 3q (or run the whole
+`schema.sql` again, which includes it). Safe to run again. Webhooks also need the `webhook-dispatch` Edge Function
+(`functions/webhook-dispatch/README.md`).
+
 ## Test
 
 ```

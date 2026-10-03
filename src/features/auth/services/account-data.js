@@ -8,13 +8,16 @@ import { closeModal } from '../../../shared/components/modal.js';
 import { storage } from '../../../shared/state/persistence.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { objOr } from '../../../shared/utils/objects.js';
+import { resetAssistant } from '../../assistant/pages/assistant-page.js';
+import { resetProductDraftAssistant } from '../../products/components/product-draft-assistant.js';
 
 /* ---------- Each account keeps its own data on this device ----------
    The app works on the plain keys below. When a different account signs in, the current data is put away
    under its owner and that account's own data (or a fresh start) is brought back. */
 
-export const USER_KEYS = ["hangtag_sb_queue", "hangtag_sync_review", "rc_local", "rc_dirty", "rc_moves", "rc_returns", "rc_customers", "rc_events", "rc_settings", "rc_pend", "rc_cart", "rc_disc", "rc_cartcust", "rc_catalog", "rc_imgs", "hangtag_profile", "rc_logo", "hangtag_pay_pending", "hangtag_delivery_queue", "rc_cash_moves", "rc_day_closes", "hangtag_access", "rc_collections", "rc_held", "rc_orders", "rc_cartorder", "rc_suppliers", "rc_purchases", "rc_supplier_pays"];
-export const MUST_KEEP = ["hangtag_sb_queue", "hangtag_sync_review", "rc_local", "rc_dirty", "rc_moves", "rc_returns", "rc_customers", "rc_events", "rc_cash_moves", "rc_day_closes", "rc_collections", "rc_held", "rc_orders", "rc_suppliers", "rc_purchases", "rc_supplier_pays"];   // unsent work: never drop these
+export const USER_KEYS = ["hangtag_sb_queue", "hangtag_sync_review", "rc_local", "rc_dirty", "rc_moves", "rc_returns", "rc_customers", "rc_events", "rc_settings", "rc_pend", "rc_cart", "rc_disc", "rc_cartcust", "rc_catalog", "rc_imgs", "hangtag_profile", "rc_logo", "hangtag_pay_pending", "hangtag_delivery_queue", "rc_cash_moves", "rc_day_closes", "hangtag_access", "rc_collections", "rc_held", "rc_orders", "rc_cartorder", "rc_suppliers", "rc_purchases", "rc_supplier_pays",
+  "rc_tables", "rc_table_sessions", "rc_carttable", "rc_pending_docs", "rc_quote_sends", "rc_biz", "rc_cartpl"];
+export const MUST_KEEP = ["hangtag_sb_queue", "hangtag_sync_review", "rc_local", "rc_dirty", "rc_moves", "rc_returns", "rc_customers", "rc_events", "rc_cash_moves", "rc_day_closes", "rc_collections", "rc_held", "rc_orders", "rc_suppliers", "rc_purchases", "rc_supplier_pays", "rc_tables", "rc_table_sessions", "rc_pending_docs", "rc_quote_sends", "rc_biz"];   // unsent work: never drop these
 export const DATA_OWNER = "hangtag_data_owner";
 export const stashKey = (owner, k) => "hangtag_u_" + owner + "_" + k;
 export function switchLocalDataTo(userId){
@@ -69,6 +72,15 @@ export function loadUserState(){
   store.payPending = objOr(storage.get("hangtag_pay_pending", null), null); store.payConfig = null; store.unmatched = null;
   store.cashMoves = objOr(storage.get("rc_cash_moves", {}), {}); store.dayCloses = objOr(storage.get("rc_day_closes", {}), {});
   store.suppliers = objOr(storage.get("rc_suppliers", {}), {}); store.purchases = objOr(storage.get("rc_purchases", {}), {}); store.supplierPays = objOr(storage.get("rc_supplier_pays", {}), {});
+  // credit, held bills and orders (section 3m), a restaurant's tables (3o), supplier bills' originals and quotations still to send
+  store.collections = objOr(storage.get("rc_collections", {}), {}); store.heldCarts = objOr(storage.get("rc_held", {}), {}); store.orders = objOr(storage.get("rc_orders", {}), {});
+  store.cartOrder = objOr(storage.get("rc_cartorder", null), null); store.cartTable = objOr(storage.get("rc_carttable", null), null);
+  store.tables = objOr(storage.get("rc_tables", {}), {}); store.tableSessions = objOr(storage.get("rc_table_sessions", {}), {});
+  store.pendingDocs = objOr(storage.get("rc_pending_docs", {}), {});
+  store.quoteSends = storage.get("rc_quote_sends", []); if(!Array.isArray(store.quoteSends)) store.quoteSends = [];
+  // the commerce batch (section 3r): price lists, purchase orders, GST readiness, repacks, vouchers; the bill's price list
+  store.biz = objOr(storage.get("rc_biz", {}), {}); store.cartPriceList = storage.get("rc_cartpl", null) || null; store.bizView = null;
+  store.orderForm = null; store.collectForm = null; store.tableView = null; store.quoteDoc = null;
   store.deliveryQueue = storage.get("hangtag_delivery_queue", []); if(!Array.isArray(store.deliveryQueue)) store.deliveryQueue = [];
   store.settings = Object.assign({}, DEFAULT_SETTINGS, objOr(storage.get("rc_settings", {}), {}));
   store.sbOfflineQueue = storage.get("hangtag_sb_queue", []); if(!Array.isArray(store.sbOfflineQueue)) store.sbOfflineQueue = [];
@@ -78,6 +90,7 @@ export function loadUserState(){
   applyCatalogMigration();
   store.editor = null; store.lastSale = null; store.retState = null; store.stockOp = null; store.showAllBills = false;
   store.purchaseForm = null; store.supplierView = null; store.stockCount = null; store.prodImport = null; store.quickProduct = null; store.invSub = "levels";
+  resetAssistant(); resetProductDraftAssistant();
   closeSheets(); closeModal();
   renderAll();
 }

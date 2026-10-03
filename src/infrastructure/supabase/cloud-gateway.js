@@ -7,12 +7,14 @@ import { sbFetchAll, sbOk } from './query.js';
 import { billArgs, cashMoveRow, custRow, dayCloseRow, eventRow, moveRow, productRow, returnArgs, roleRow, rowToCashMove, rowToCustomer, rowToDayClose, rowToDelivery, rowToDevice, rowToEvent, rowToImport, rowToItem, rowToMember, rowToMove, rowToPayment, rowToProduct, rowToReturn, rowToReturnItem, rowToRole, rowToSale, rowToVariant, variantRows } from './mappers.js';
 import { collectionRow, heldRow, orderArgs, rowToCollection, rowToHeld, rowToOrder, rowToOrderItem } from './mappers.js';
 import { purchaseArgs, rowToPurchase, rowToSupplier, rowToSupplierPayment, supplierPaymentRow, supplierRow } from './mappers.js';
+import { rowToSession, rowToTable, sessionRow, tableRow } from './mappers.js';
+import { einvRow, ewayRow, poArgs, priceListRow, repackArgs, rowToDelivery as rowToHookDelivery, rowToEinv, rowToEndpoint, rowToEway, rowToPO, rowToPriceList, rowToRepack,
+  rowToVoucher } from './biz-mappers.js';
 
 /* deviceKey: () => this phone's team device key or "" (sent as x-hangtag-device by every client this makes; see client.js) */
 export function createCloudGateway({ getClient, url, key, storageKey, deviceKey }){
   const db = () => getClient();
   const table = t => db().from(t);
-
   const auth = {
     getSession: () => db().auth.getSession(),
     onAuthStateChange: cb => db().auth.onAuthStateChange(cb),
@@ -45,6 +47,7 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
     const E = (c, m) => new AppError(c, m, { cause: r.error, details: info });
     if(code === "not_configured") throw E(ERROR_CODES.NOT_CONFIGURED, msg || `${what} isn't set up yet.`);
     if(code === "unauthorized" || (!code && status === 401)) throw E(ERROR_CODES.AUTH, "Sign in again.");
+    if(code === "forbidden") throw E(ERROR_CODES.PERMISSION, msg || "Your role can't do that.");
     if(code === "provider_error") throw E(ERROR_CODES.DELIVERY, msg || "The provider didn't accept the request.");
     if(code === "conflict") throw E(ERROR_CODES.CONFLICT, msg || "That was already done.");
     if(code === "not_found") throw E(ERROR_CODES.NOT_FOUND, msg || "It wasn't found.");
@@ -71,12 +74,12 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
     auth,
     /* How an email signs in today: resolves the raw { data, error } of the RPC */
     signInMethods: email => db().rpc("hangtag_sign_in_methods", { p_email: email }),
-    /* Quick check that the database has the current tables (schema.sql has been run; the events table is the newest).
+    /* Quick check that the database has the current tables (schema.sql has been run; the table-ordering tables are newest).
        Resolves { error: null } or { error: AppError } — OUTDATED_DATABASE when the tables are missing. */
     async checkSchema(){
-      const { error } = await table('hangtag_events').select('id', { head: true, count: 'exact' });
+      const { error } = await table('hangtag_tables').select('id', { head: true, count: 'exact' });
       if(!error) return { error: null };
-      const missing = /hangtag_events|hangtag_payments|hangtag_stock_imports|hangtag_variants|PGRST205|42P01|does not exist|schema cache/i.test((error.code||"")+" "+(error.message||""));
+      const missing = /hangtag_tables|hangtag_table_sessions|hangtag_events|hangtag_payments|hangtag_stock_imports|hangtag_variants|PGRST205|42P01|does not exist|schema cache/i.test((error.code||"")+" "+(error.message||""));
       return { error: missing ? new AppError(ERROR_CODES.OUTDATED_DATABASE, "The database needs the latest update (schema.sql).", { cause: error }) : toAppError(error) };
     },
 
@@ -100,6 +103,10 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
       if(h.orders) ch = on(ch, '*', 'hangtag_orders', h.orders);
       if(h.held) ch = on(ch, '*', 'hangtag_held_carts', h.held);
       if(h.collections) ch = on(ch, '*', 'hangtag_collections', h.collections);
+      // section 3o: a restaurant's tables and sessions
+      if(h.tables){ ch = on(ch, '*', 'hangtag_tables', h.tables); ch = on(ch, '*', 'hangtag_table_sessions', h.tables); }
+      // section 3r: price lists, purchase orders, vouchers
+      if(h.biz) ['hangtag_price_lists','hangtag_purchase_orders','hangtag_vouchers','hangtag_einvoices','hangtag_eway_bills'].forEach(t => { ch = on(ch, '*', t, h.biz); });
       return ch.subscribe(onStatus);
     },
     removeChannel: ch => db().removeChannel(ch),
@@ -183,6 +190,11 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
     async fetchLogo(){
       const { data } = sbOk(await table('hangtag_meta').select('value').eq('key','logo').maybeSingle());
       return data && data.value && typeof data.value.data === 'string' ? data.value.data : "";
+    },
+    /* A quotation's messages to its customer (send-receipt with order_id), newest first */
+    async fetchOrderDeliveries(orderId){
+      const { data } = sbOk(await table('hangtag_deliveries').select('*').eq('order_id', orderId).order('created_at', { ascending:false }).limit(50));
+      return (data || []).map(rowToDelivery);
     },
     /* A bill's messages to its customer, newest first */
     async fetchDeliveries(saleId){
@@ -271,12 +283,96 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
     },
     fetchHeldCarts: async () => (await sbFetchAll(db(), 'hangtag_held_carts', ['t','id'])).map(rowToHeld),
     fetchCollections: async () => (await sbFetchAll(db(), 'hangtag_collections', ['t','id'])).map(rowToCollection),
+    /* ---------- a restaurant's tables, their sessions, the kitchen (section 3o) ---------- */
+    async saveTable(t){ sbOk(await table('hangtag_tables').upsert(tableRow(t))); },
+    async saveTableSession(s){ sbOk(await table('hangtag_table_sessions').upsert(sessionRow(s))); },
+    fetchTables: async () => (await sbFetchAll(db(), 'hangtag_tables', ['sort_order','id'])).map(rowToTable),
+    /* sessions still going, and those closed in the last two days (a table's recent history) */
+    async fetchTableSessions(){
+      const since = Date.now() - 2 * 864e5, N = 1000, all = async where => { const out = [];
+        for(let from = 0; ; from += N){ const { data } = sbOk(await where(table('hangtag_table_sessions').select('*')).order('opened_t').order('id').range(from, from + N - 1));
+          out.push(...(data || [])); if(!data || data.length < N) break; }
+        return out; };
+      const [live, recent] = await Promise.all([all(q => q.neq('status', 'closed')), all(q => q.gte('closed_t', since))]);
+      const by = {}; [...live, ...recent].forEach(r => { by[r.id] = r; });
+      return Object.values(by).map(rowToSession);
+    },
+    /* A table order moved along by the kitchen (or served, or cancelled): RPC hangtag_order_status → { status, version } */
+    async setOrderStatus(id, status){
+      const { data } = sbOk(await db().rpc('hangtag_order_status', { p_id: id, p_status: status }));
+      return { status: data && data.status || status, version: data && +data.version || 0 };
+    },
     /* A member's poll: one fingerprint each for orders, held bills and collections (RPC hangtag_order_changes) */
     async orderChanges(){
       const r = await db().rpc('hangtag_order_changes');
       if(r.error) throw toAppError(r.error);
       return r.data && typeof r.data === 'object' ? r.data : {};
     },
+
+    /* ---------- the commerce batch (schema.sql section 3r) ---------- */
+    /* One record as the upload queue sends it. kind: pl (price list), po (purchase order, on the version this device last
+       saw: CONFLICT when changed elsewhere), ei / ew (e-invoice / e-way bill readiness), rpk (a repack and its two stock
+       records, one RPC) → { version? } */
+    async saveBiz(kind, rec){
+      if(kind === "pl"){ sbOk(await table('hangtag_price_lists').upsert(priceListRow(rec))); return {}; }
+      if(kind === "po"){ const { data } = sbOk(await db().rpc('hangtag_save_purchase_order', poArgs(rec))); return { version: data && +data.version || (+rec.version || 0) + 1 }; }
+      if(kind === "ei"){ sbOk(await table('hangtag_einvoices').upsert(einvRow(rec), { onConflict: 'owner_id,sale_id' })); return {}; }
+      if(kind === "ew"){ sbOk(await table('hangtag_eway_bills').upsert(ewayRow(rec), { onConflict: 'owner_id,sale_id' })); return {}; }
+      if(kind === "rpk"){ sbOk(await db().rpc('hangtag_save_repack', repackArgs(rec, rec.moves))); return {}; }
+      throw new AppError(ERROR_CODES.VALIDATION, "Unknown record: " + kind);
+    },
+    /* A price list removed (customers on it go back to the default list) */
+    async deleteBiz(kind, id){
+      if(kind === "pl") await mustReach('hangtag_price_lists', 'id', q => q.delete(), q => q.eq('id', id));
+    },
+    /* Every record of the batch; a kind the database doesn't have yet (schema.sql not re-run) comes back null */
+    async fetchBiz(){
+      const get = async (t, orders, map) => { try{ return (await sbFetchAll(db(), t, orders)).map(map); }catch(_e){ return null; } };
+      const [pl, po, ei, ew, gv, rpk] = await Promise.all([get('hangtag_price_lists', ['created_at','id'], rowToPriceList), get('hangtag_purchase_orders', ['t','id'], rowToPO),
+        get('hangtag_einvoices', ['created_at','sale_id'], rowToEinv), get('hangtag_eway_bills', ['created_at','sale_id'], rowToEway),
+        get('hangtag_vouchers', ['t','id'], rowToVoucher), get('hangtag_repacks', ['t','id'], rowToRepack)]);
+      return { pl, po, ei, ew, gv, rpk };
+    },
+    /* A team member's poll: fingerprints of price lists, POs, vouchers and GST records (RPC hangtag_biz_changes) */
+    async bizChanges(){
+      const r = await db().rpc('hangtag_biz_changes');
+      if(r.error) throw toAppError(r.error);
+      return r.data && typeof r.data === 'object' ? r.data : {};
+    },
+    /* Gift vouchers: issued, looked up, spent and released only online (the database locks the voucher) */
+    async issueVoucher(p){ const { data } = sbOk(await db().rpc('hangtag_issue_voucher', { p })); return rowToVoucher(data.voucher); },
+    async voucherLookup(code){ const { data } = sbOk(await db().rpc('hangtag_voucher_lookup', { p_code: code })); return data || { ok: false }; },
+    async redeemVoucher(code, amount, saleId, paymentId, t){
+      const { data } = sbOk(await db().rpc('hangtag_redeem_voucher', { p_code: code, p_amount: amount, p_sale: saleId, p_payment: paymentId, p_t: t || null }));
+      return data || { ok: false };
+    },
+    async releaseVoucher(paymentId){ const { data } = sbOk(await db().rpc('hangtag_release_voucher', { p_payment: paymentId })); return data || { ok: false }; },
+    async cancelVoucher(id, reason){ const { data } = sbOk(await db().rpc('hangtag_cancel_voucher', { p_id: id, p_reason: reason })); return data || { ok: false }; },
+    async voucherHistory(id){
+      const { data } = sbOk(await table('hangtag_voucher_redemptions').select('*').eq('voucher_id', id).order('t'));
+      return (data || []).map(r => ({ id: r.id, saleId: r.sale_id, amount: +r.amount, kind: r.kind, t: Number(r.t) || 0 }));
+    },
+    /* Outbound webhooks (the owner's; the secret is returned only by create and rotate) */
+    async webhookEndpoints(){ const { data } = sbOk(await table('hangtag_webhook_endpoints').select('*').order('created_at')); return (data || []).map(rowToEndpoint); },
+    async webhookDeliveries(limit){
+      const { data } = sbOk(await table('hangtag_webhook_deliveries').select('*').order('created_at', { ascending: false }).limit(limit || 30));
+      const rows = data || [], ids = [...new Set(rows.map(r => r.event_id))];
+      const types = {};
+      if(ids.length){ const ev = sbOk(await table('hangtag_webhook_events').select('id,type').in('id', ids)); (ev.data || []).forEach(e => { types[e.id] = e.type; }); }
+      return rows.map(r => ({ ...rowToHookDelivery(r), type: types[r.event_id] || "" }));
+    },
+    async webhookCreate(url, events, description){
+      const { data } = sbOk(await db().rpc('hangtag_webhook_create', { p_url: url, p_events: events, p_description: description || null }));
+      return { endpoint: rowToEndpoint(data.endpoint), secret: data.secret };
+    },
+    async webhookRotate(id){ const { data } = sbOk(await db().rpc('hangtag_webhook_rotate', { p_id: id })); return data && data.secret || ""; },
+    async webhookUpdate(id, patch){
+      const x = patch || {};
+      const { data } = sbOk(await db().rpc('hangtag_webhook_update', { p_id: id, p_url: x.url == null ? null : x.url, p_events: x.events == null ? null : x.events, p_active: x.active == null ? null : !!x.active }));
+      return rowToEndpoint(data.endpoint);
+    },
+    async webhookDelete(id){ sbOk(await db().rpc('hangtag_webhook_delete', { p_id: id })); },
+    async webhookTest(id){ sbOk(await db().rpc('hangtag_webhook_test', { p_id: id })); },
 
     /* ---------- shop profile ---------- */
     getProfile: id => table("hangtag_profiles").select("*").eq("id", id).maybeSingle(),
@@ -291,6 +387,21 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
       if(r.error) throw toAppError(r.error);
       return r.data;
     },
+    /* A supplier bill's original (photo or PDF) in the shop's private folder of the "hangtag-bills" bucket (section 3p) */
+    async uploadBillDocument(path, blob, type){
+      const st = db().storage; if(!st) throw new AppError(ERROR_CODES.NOT_CONFIGURED, "File storage isn't available.");
+      const r = await st.from('hangtag-bills').upload(path, blob, { upsert: true, contentType: type || (blob && blob.type) || 'application/octet-stream' });
+      if(r.error) throw toAppError(r.error);
+      return path;
+    },
+    /* A private link to it, valid for an hour */
+    async billDocumentUrl(path){
+      const r = await db().storage.from('hangtag-bills').createSignedUrl(path, 3600);
+      if(r.error) throw toAppError(r.error);
+      return r.data && r.data.signedUrl || "";
+    },
+    /* A saved bill gets its original once the file reached the cloud after it */
+    async setImportDocument(id, path){ sbOk(await table('hangtag_stock_imports').update({ document_path: path }).eq('id', id)); },
 
     /* ---------- suppliers, purchases and payments to suppliers (schema.sql section 3l) ---------- */
     async saveSupplier(s){ sbOk(await table('hangtag_suppliers').upsert(supplierRow(s))); },

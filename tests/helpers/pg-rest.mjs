@@ -37,6 +37,7 @@ export function subOf(authorization) {
 }
 
 export async function createPgRest(schemaPath, { uid, email, users = [] }) {
+  const ARG_TYPES = new Map();
   const db = new PGlite();
   await db.exec(SUPABASE);
   const people = new Map([[uid, { id: uid, email, password: null, meta: { full_name: 'Owner' }, provider: 'google' }]]);
@@ -146,8 +147,10 @@ export async function createPgRest(schemaPath, { uid, email, users = [] }) {
     const prefer = hdrs['prefer'] || '', sel0 = (q.find(([k]) => k === 'select') || [])[1];
     const returning = /return=representation/.test(prefer) ? ' RETURNING ' + (!sel0 || sel0 === '*' ? '*' : sel0.split(',').map((c) => ident(c.trim())).join(', ')) : '';
     try {
-      if (mt[1]) {   // RPC: named arguments
-        const keys = Object.keys(body || {}), params = keys.map((k) => (body[k] !== null && typeof body[k] === 'object' ? JSON.stringify(body[k]) : body[k]));
+      if (mt[1]) {   // RPC: named arguments (a JSON array for a Postgres array argument becomes that array, as PostgREST does)
+        const types = await argTypes(t);
+        const keys = Object.keys(body || {}), params = keys.map((k) => (Array.isArray(body[k]) && /\[\]$/.test(types[k] || '') ? body[k]
+          : body[k] !== null && typeof body[k] === 'object' ? JSON.stringify(body[k]) : body[k]));
         const res = await run(`SELECT public.${ident(t)}(${keys.map((k, i) => `${ident(k)} => $${i + 1}`).join(', ')}) AS r`, params);
         json(r, 200, res.rows[0].r); return true;
       }
@@ -188,4 +191,13 @@ export async function createPgRest(schemaPath, { uid, email, users = [] }) {
     return false;
   }
   return { db, as, handle, session, calls, addUser, setPassword, magicLink, subOf };
+  /* The argument types of a public function, by argument name (cached) */
+  async function argTypes(fn) {
+    if (!ARG_TYPES.has(fn)) {
+      const res = await db.query(`SELECT a.n, a.t FROM pg_proc p, unnest(p.proargnames, p.proargtypes::regtype[]::text[]) AS a(n, t)
+        WHERE p.proname = $1 AND p.pronamespace = 'public'::regnamespace AND a.n IS NOT NULL`, [fn]);
+      ARG_TYPES.set(fn, Object.fromEntries(res.rows.map((x) => [x.n, x.t || ''])));
+    }
+    return ARG_TYPES.get(fn);
+  }
 }

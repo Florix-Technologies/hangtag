@@ -3,15 +3,19 @@
 // How each part was confirmed is kept with it (its verification):
 //   verified   — the payment provider confirmed the money (a UPI QR or a card payment link paid through the provider);
 //   recorded   — cash, or a card paid on a separate card machine with the machine's reference;
-//   unverified — UPI checked by eye on the customer's phone, with the transaction reference (UTR) typed in.
+//   unverified — UPI checked by eye by the cashier; its transaction reference (UTR) is optional.
 // Showing a QR never pays anything: a provider part counts only once its payment intent says "verified".
 // No card number, CVV or PIN is ever taken: at most the last 4 digits, and a reference that looks like a card number is
 // refused. Pure; amounts in rupees in and out, compared in paise.
 import { sumP, toPaise, toRupees, tooPrecise } from './paise.js';
 import { inrx } from '../../shared/formatting/money.js';
+import { providerFee } from './payment-provider.js';
+import { VOUCHER, voucherPartError } from './vouchers.js';
 
 export const PAY_METHODS=["cash","upi","card"];
-export const PAY_LABELS={cash:"Cash",upi:"UPI",card:"Card",due:"On account"};
+export const PAY_LABELS={cash:"Cash",upi:"UPI",card:"Card",due:"On account",voucher:"Gift voucher"};
+/* A gift voucher (domain/sales/vouchers.js) pays like a method of its own: never cash or bank money, one per bill */
+export { VOUCHER };
 /* The part of a bill left on a saved customer's account (paid later: domain/customers/credit.js). Never money in the drawer
    or the bank, so it is not a payment: the bill keeps it as dueAmt. A return may also be refunded to the account ("due"). */
 export const DUE="due";
@@ -52,7 +56,7 @@ export function checkLast4(v){
 }
 const amountOf=v=>v==null||String(v).trim()===""?0:+v;
 export const viaOf=a=>a.via||(a.method==="upi"?"manual":a.method==="card"?"terminal":undefined);
-const REF_NEEDED={upi:"Enter the UPI transaction reference (UTR) from the customer's payment screen.",card:"Enter the approval or transaction reference from the card machine."};
+const REF_NEEDED={card:"Enter the approval or transaction reference from the card machine."};
 
 /* Checks the parts of a payment against the amount due (rupees).
    allocations: [{ method, amount, received? (cash handed over), ref?, via?, last4? (card), intent? ({ id, status, amount, paymentId }) }]
@@ -63,7 +67,7 @@ const REF_NEEDED={upi:"Enter the UPI transaction reference (UTR) from the custom
    or { error, method?, field?, paid, balance } (nothing is recorded) */
 export function settlePayments(due,allocations,opts){
   const D=toPaise(due), all=(allocations||[]).filter(a=>a&&amountOf(a.amount)!==0), seen=new Set();
-  const list=all.filter(a=>a.method!==DUE), acctParts=all.filter(a=>a.method===DUE);
+  const list=all.filter(a=>a.method!==DUE&&a.method!==VOUCHER), acctParts=all.filter(a=>a.method===DUE), vParts=all.filter(a=>a.method===VOUCHER);
   let paid=0, acct=0;
   const fail=(error,a,field)=>({error,method:a&&a.method,field,paid:toRupees(paid),balance:toRupees(Math.max(0,D-paid-acct))});
   if(acctParts.length>1) return fail("The amount on account is there twice. Put all of it on one line.",acctParts[1],"amount");
@@ -75,6 +79,14 @@ export function settlePayments(due,allocations,opts){
     if(!(opts&&opts.customer)) return fail("Add a saved customer to the bill to put part of it on their account.",a,"customer");
     acct=toPaise(v);
   }
+  if(vParts.length>1) return fail("One gift voucher per bill. Pay the rest another way.",vParts[1],"voucher");
+  let vouch=0;
+  for(const a of vParts){
+    const v=amountOf(a.amount);
+    if(!Number.isFinite(v)||v<0||tooPrecise(v)) return fail("Enter the voucher amount.",a,"amount");
+    vouch=toPaise(v);
+  }
+  paid+=vouch;
   for(const a of list){
     const v=amountOf(a.amount);
     if(!PAY_METHODS.includes(a.method)) return fail("Choose cash, UPI or card.",a,"method");
@@ -89,6 +101,7 @@ export function settlePayments(due,allocations,opts){
   // the amounts first (they're typed first), then how each part was confirmed
   if(paid+acct<D) return fail(`${inrx(toRupees(D-paid-acct))} still to pay.`,null,"amount");
   if(paid+acct>D) return fail(`That's ${inrx(toRupees(paid+acct-D))} more than the bill.`,null,"amount");
+  for(const a of vParts){ const e=voucherPartError(a); if(e) return fail(e,a,"voucher"); }
   for(const a of list){
     const v=amountOf(a.amount);
     if(PROVIDER_VIA.includes(viaOf(a))){
@@ -98,6 +111,7 @@ export function settlePayments(due,allocations,opts){
     }else{
       const r=checkReference(a.ref); if(r) return fail(r.error,a,"ref");
       if(REF_NEEDED[a.method]&&!String(a.ref==null?"":a.ref).trim()) return fail(REF_NEEDED[a.method],a,"ref");
+      if(a.method==="upi"&&!a.confirmed) return fail("Mark the UPI payment received after checking the customer's payment screen.",a,"confirmed");
     }
     if(a.method==="card"){ const l=checkLast4(a.last4); if(l) return fail(l.error,a,"last4"); }
   }
@@ -115,14 +129,17 @@ export function settlePayments(due,allocations,opts){
       if(PROVIDER_VIA.includes(via)){
         p.verification="verified"; p.intent=a.intent.id; p.providerRef=String(a.intent.paymentId||a.intent.reference||"").slice(0,40);
         if(p.providerRef) p.ref=p.providerRef;
+        const fee=providerFee(a.intent.providerFee); if(fee!=null) p.providerFee=fee;
       }else{
         p.verification=a.method==="upi"?"unverified":"recorded";
-        p.ref=String(a.ref).trim();
+        const ref=String(a.ref==null?"":a.ref).trim(); if(ref) p.ref=ref;
       }
       if(a.method==="card"&&String(a.last4||"").trim()) p.last4=String(a.last4).trim();
     }
     payments.push(p);
   }
+  // the voucher part: the database already took it off the voucher (its redemption); only the code's last 4 are shown
+  for(const a of vParts){ received+=toPaise(a.amount); payments.push({method:VOUCHER,amount:+(+a.amount).toFixed(2),verification:"recorded",voucher:a.voucher.id,redemption:a.voucher.redemption,ref:"GV ···"+String(a.voucher.code||"").slice(-4)}); }
   return {ok:true,payments,paid:toRupees(paid),received:toRupees(received),change:toRupees(change),...(acct?{onAccount:toRupees(acct)}:{})};
 }
 /* Live figures for the payment screen: paid so far, balance still due, more than due, change from cash handed over, and

@@ -40,24 +40,35 @@ export const CAPABILITIES = [
   { key: "uses_weight", label: "Weight-based products", help: "Sell by kg, gram or litre, typed in or read from a weighing scale.", group: "products" },
   { key: "uses_quotations", label: "Quotations", help: "Price quotes for a customer, turned into a bill when they agree.", group: "orders" },
   { key: "uses_sales_orders", label: "Sales orders", help: "Take an order now, deliver and bill it later (in parts if needed).", group: "orders" },
+  { key: "uses_mobile_store", label: "Mobile store", help: "Customers browse live stock and send an order from their phone; staff still confirms payment and makes the bill.", group: "orders", needs: "uses_sales_orders" },
   { key: "uses_tables", label: "Table ordering", help: "Tables with their own running orders and bills.", group: "restaurant" },
   { key: "uses_table_qr", label: "Table QR", help: "A QR code on each table.", group: "restaurant", needs: "uses_tables" },
   { key: "uses_customer_ordering", label: "Customer table ordering", help: "Guests order from their own phone by scanning the table's QR.", group: "restaurant", needs: "uses_table_qr" },
   { key: "uses_server_ordering", label: "Server ordering", help: "Servers take orders at the table on their phone.", group: "restaurant", needs: "uses_tables" },
-  { key: "uses_kitchen", label: "Kitchen", help: "A kitchen screen with the orders to prepare.", group: "restaurant" },
+  { key: "uses_kitchen", label: "Kitchen", help: "A kitchen screen with the orders to prepare.", group: "restaurant", needs: "uses_tables" },
+  // the commerce batch (schema.sql section 3r)
+  { key: "uses_price_lists", label: "Price lists", help: "Retail, wholesale or special prices: pick a list on the bill, or give a customer their own.", group: "selling" },
+  { key: "uses_bundles", label: "Kits and bundles", help: "Sell a few products together as one item at one price; stock comes from the items inside.", group: "selling" },
+  { key: "uses_vouchers", label: "Gift vouchers", help: "Sell a voucher with a code and QR; customers pay with it later, all at once or in parts.", group: "selling" },
+  { key: "uses_purchase_orders", label: "Purchase orders", help: "Order stock from a supplier, receive it in parts, and see what doesn't match the bill.", group: "products" },
+  { key: "uses_repack", label: "Repack", help: "Open a sack or carton into loose units (25 kg sack → loose kg) with the stock kept right.", group: "products" },
+  { key: "uses_einvoice", label: "E-invoice", help: "Prepare business bills for e-invoicing: Hangtag checks the details and exports the JSON.", group: "gst" },
+  { key: "uses_eway", label: "E-way bill", help: "Prepare e-way bills for big deliveries: only the transport details are asked.", group: "gst" },
 ];
 export const CAP_KEYS = CAPABILITIES.map(c => c.key);
 export const CAP_LABELS = Object.fromEntries(CAPABILITIES.map(c => [c.key, c.label]));
 export const CAP_GROUPS = [
   { key: "products", label: "Products and stock" },
+  { key: "selling", label: "Selling" },
   { key: "orders", label: "Orders" },
+  { key: "gst", label: "GST documents" },
   { key: "restaurant", label: "Restaurant and table service" },
 ];
 /* What each business type starts with (only defaults: any shop can switch on more, e.g. grocery + serials) */
 export const DEFAULT_CAPS = {
-  retail: ["uses_variants", "uses_quotations", "uses_sales_orders"],
-  grocery: ["uses_variants", "uses_batches", "uses_expiry", "uses_weight", "uses_quotations", "uses_sales_orders"],
-  electronics: ["uses_variants", "uses_serials", "uses_quotations", "uses_sales_orders"],
+  retail: ["uses_variants", "uses_quotations", "uses_sales_orders", "uses_purchase_orders"],
+  grocery: ["uses_variants", "uses_batches", "uses_expiry", "uses_weight", "uses_quotations", "uses_sales_orders", "uses_purchase_orders", "uses_repack"],
+  electronics: ["uses_variants", "uses_serials", "uses_quotations", "uses_sales_orders", "uses_purchase_orders", "uses_bundles"],
   restaurant: ["uses_tables", "uses_table_qr", "uses_customer_ordering", "uses_server_ordering", "uses_kitchen"],
   other: ["uses_variants"],
 };
@@ -141,10 +152,18 @@ export const TRACKING_KEYS = TRACKING_MODES.map(m => m.key);
 export function productFieldsFor(caps, product){
   const c = caps || {}, p = product || {}, cur = TRACKING_KEYS.includes(p.tracking) ? p.tracking : "none";
   const modes = TRACKING_KEYS.filter(k => k === "none" || (k === "serial" && c.uses_serials) || (k === "batch" && c.uses_batches) || k === cur);
-  return { variants: !!c.uses_variants || !!p.hasOpts, tracking: modes.length > 1, trackingModes: modes, expiry: !!c.uses_expiry, weight: !!c.uses_weight };
+  const expiry = !!c.uses_expiry || !!p.expiry;
+  return { variants: !!c.uses_variants || !!p.hasOpts, tracking: modes.length > 1 || expiry, trackingModes: modes, expiry, weight: !!c.uses_weight };
 }
 /* A product's tracking as typed: one of the modes, else none */
 export const cleanTracking = t => TRACKING_KEYS.includes(t) ? t : "none";
+/* The product form's "Track stock by" choices: the modes above, and "Batch with expiry date" (tracked by batch, each batch
+   with its expiry date) where the shop keeps expiry dates. fx: productFieldsFor(…) */
+export const EXPIRY_CHOICE = { key: "expiry", label: "Batch with expiry date" };
+export const trackingChoices = fx => [...TRACKING_MODES.filter(m => fx.trackingModes.includes(m.key)), ...(fx.expiry ? [EXPIRY_CHOICE] : [])];
+/* A product's choice ({ tracking, expiry }) and back */
+export const trackingChoiceOf = p => cleanTracking(p && p.tracking) === "batch" && p.expiry ? "expiry" : cleanTracking(p && p.tracking);
+export const trackingFromChoice = k => k === "expiry" ? { tracking: "batch", expiry: true } : { tracking: cleanTracking(k), expiry: false };
 
 /* ---------- navigation: is a module (or one of its sub-views) shown? ----------
    def: { caps: [any of these capabilities] (none: every business), perms: [any of these permissions] (none: everyone),

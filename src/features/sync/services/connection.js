@@ -3,7 +3,7 @@ import { store } from '../../../shared/state/store.js';
 import { sbSessionOk } from '../../auth/services/auth-settings.js';
 import { renderSync } from '../components/sync-status.js';
 import { flushSbQueue } from './outbox.js';
-import { forgetShopChanges, pullFromSupabase, pullOrderChanges, pullShopChanges } from './pull.js';
+import { forgetShopChanges, pullBizChanges, pullFromSupabase, pullOrderChanges, pullShopChanges } from './pull.js';
 import { debouncePull, mergeRemoteItems, onRemoteCatalogEvent, onRemoteImageEvent, onRemoteMoveEvent, onRemoteSaleEvent } from './remote-events.js';
 import { sbKey, sbUrl } from '../../../shared/config/app-config.js';
 import { use } from '../../../shared/di/services.js';
@@ -69,7 +69,7 @@ export async function memberPoll(){
     const a = await refreshAccess();
     if(a.lost){ accessLost(); return; }
     if(!a.ok) return;
-    try{ await pullShopChanges(); await pullOrderChanges().catch(e => logger.warn("Orders:", e)); }
+    try{ await pullShopChanges(); await pullOrderChanges().catch(e => logger.warn("Orders:", e)); await pullBizChanges().catch(e => logger.warn("Price lists, purchase orders:", e)); }
     catch(e){
       // the database doesn't have hangtag_shop_changes yet: the whole download, at most every 5 minutes (anything else,
       // e.g. a dropped connection, is simply tried again at the next check)
@@ -106,6 +106,8 @@ export function setupSupabaseRealtime(){
       orders: ()=>debouncePull("orders"),
       held: ()=>debouncePull("orders"),
       collections: ()=>debouncePull("orders"),
+      tables: ()=>debouncePull("orders"),
+      biz: ()=>debouncePull("biz"),
     }, (status)=>{ if(status === "SUBSCRIBED" && store.sbStatus !== "update"){ store.sbStatus = "connected"; renderSync(); } });
   }catch(e){ logger.warn("Realtime subscription notice:", e); }
 }

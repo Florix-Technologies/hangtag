@@ -37,7 +37,7 @@ import { setBillDiscount } from '../../features/sales/use-cases/discounts.js';
 import { applyLineDiscount, lineDiscountInput, lineDiscountType, openLineDiscount } from '../../features/sales/components/discount-sheet.js';
 import { cashFormChange, openCashForm, submitCashForm } from '../../features/finance/components/cash-form.js';
 import { checkUnverified, loadUnmatched, resolveUnmatched } from '../../features/finance/components/reconcile-view.js';
-import { completePayment, openPayment, payClosed, payInput, payIntent, payMode, payQuick, payRest, paySend, payVia } from '../../features/sales/components/payment-sheet.js';
+import { completePayment, openPayment, payClosed, payInput, payIntent, payManualUpiReceived, payMode, payQuick, payRest, paySend, payVia, payVoucher, payVoucherRemove } from '../../features/sales/components/payment-sheet.js';
 import { openBook } from '../../features/finance/components/books-view.js';
 import { enqueue, flushSbQueue } from '../../features/sync/services/outbox.js';
 import { can } from '../../features/shop/services/access.js';
@@ -55,6 +55,10 @@ import { renderAll, setTab } from '../../shared/ui/render.js';
 import { logger } from '../../shared/logging/logger.js';
 import { creditOrdersChange, creditOrdersClick, creditOrdersInput, creditOrdersSubmit } from './credit-orders-events.js';
 import { inventoryChange, inventoryClick, inventoryInput, inventoryModalClose, inventorySubmit } from '../../features/inventory/components/inventory-views.js';
+import { trackingChange, trackingClick, trackingInput, trackingSubmit } from './tracking-events.js';
+import { restaurantChange, restaurantClick, restaurantInput, restaurantSubmit } from './restaurant-events.js';
+import { commerceChange, commerceClick, commerceInput, commerceSubmit } from './commerce-events.js';
+import { releaseTableBill } from '../../features/restaurant/use-cases/tables.js';
 
 /* Registered once at start-up (app/main.js). */
 export function installDomEvents(){
@@ -66,6 +70,9 @@ export function installDomEvents(){
     const re=t.closest("[data-repevent]");if(re){store.prefs.repEvent=re.dataset.repevent;store.showAllBills=false;savePrefs();closeModal();if(re.dataset.tab)setTab(re.dataset.tab);else renderReport();return}
     const tab=t.closest("[data-tab]");if(tab){closeModal();setTab(tab.dataset.tab);return}
     const tile=t.closest(".tile");if(tile){openPicker(tile.dataset.pid);return}
+    if(commerceClick(t))return;   // price lists, purchase orders, kits, vouchers, GST documents, repack, webhooks
+    if(trackingClick(t))return;   // serial numbers at the till, a bill line's serials, an exchange's serial items
+    if(restaurantClick(t))return;   // tables, table orders, the kitchen, table QR codes
     // variant picker
     const cp=t.closest("[data-cellplus]");if(cp&&store.pick){const v=cp.dataset.cellplus;setPickQty(v,(store.pick.qty[v]||0)+1);return}
     const cm=t.closest("[data-cellminus]");if(cm&&store.pick){const v=cm.dataset.cellminus;setPickQty(v,(store.pick.qty[v]||0)-1);return}
@@ -91,14 +98,17 @@ export function installDomEvents(){
     const ge=t.closest("[data-gstexp]");if(ge){gstExport(ge.dataset.gstexp);return}
     const um=t.closest("[data-unm]");if(um){resolveUnmatched(um.dataset.unm);return}
     const pvia=t.closest("[data-payvia]");if(pvia&&store.payState){payVia(pvia.dataset.payvia);return}
+    if(t.closest("[data-upireceived]")&&store.payState){payManualUpiReceived();return}
+    if(t.closest("[data-payvoucher]")&&store.payState){payVoucher();return}
+    if(t.closest("[data-payvoucherrm]")&&store.payState){payVoucherRemove();return}
     const pi=t.closest("[data-payintent]");if(pi&&!pi.disabled&&store.payState){payIntent(pi.dataset.payintent);return}
     const ld=t.closest("[data-linedisc]");if(ld){openLineDiscount(+ld.dataset.linedisc);return}
     const ldt=t.closest("[data-ldtype]");if(ldt&&store.lineDisc){lineDiscountType(ldt.dataset.ldtype);return}
     const dty=t.closest("[data-disctype]");if(dty&&!dty.disabled){const d=store.disc||{value:""};setBillDiscount({type:dty.dataset.disctype,value:d.value});const w=dty.closest(".bp-foot"),id=w&&w.querySelector("[data-disc]")&&w.querySelector("[data-disc]").id;renderAll();if(store.billOpen)renderBillSheet();const i=id&&document.getElementById(id);if(i)i.focus();return}
     const bk=t.closest("[data-book]");if(bk){openBook(bk.dataset.book);return}
     const inc=t.closest("[data-inc]");if(inc){const c=store.cart[+inc.dataset.inc];if(c){if(availOf(c.v)<=0){toast("No more in stock.");return}c.q++;saveCart();renderAll()}return}
-    const rl=t.closest("[data-rmline]");if(rl){removeLine(+rl.dataset.rmline);renderAll();if(store.billOpen&&store.cart.length)renderBillSheet();return}
-    const dec=t.closest("[data-dec]");if(dec){const i=+dec.dataset.dec,c=store.cart[i];if(c){c.q--;if(c.q<=0)store.cart.splice(i,1);if(!store.cart.length)store.disc=null;saveCart();renderAll()}return}
+    const rl=t.closest("[data-rmline]");if(rl){removeLine(+rl.dataset.rmline);if(!store.cart.length)releaseTableBill();renderAll();if(store.billOpen&&store.cart.length)renderBillSheet();return}
+    const dec=t.closest("[data-dec]");if(dec){const i=+dec.dataset.dec,c=store.cart[i];if(c){c.q--;if(c.q<=0)store.cart.splice(i,1);if(!store.cart.length){store.disc=null;releaseTableBill()}saveCart();renderAll()}return}
     const den=t.closest("[data-density]");if(den){store.prefs.density=den.dataset.density;savePrefs();renderNav();renderGrid();return}
     const per=t.closest("[data-period]");if(per){store.prefs.period=per.dataset.period;if(per.dataset.period==="custom"&&!store.prefs.from){store.prefs.from=addDays(dayKey(Date.now()),-6);store.prefs.to=dayKey(Date.now())}store.showAllBills=false;savePrefs();renderReport();return}
     const tb=t.closest("[data-table]");if(tb){showTable[tb.dataset.table]=!showTable[tb.dataset.table];renderReport();return}
@@ -170,7 +180,7 @@ export function installDomEvents(){
       case "openbill":store.billOpen=true;store.pick=null;renderBillSheet();break;
       case "addpicked":addPicked();break;
       case "newsale":closeSheets();{const s=$("#sellSearch");if(s&&window.innerWidth>=1000)s.focus()}break;
-      case "clear":store.cart=[];store.disc=null;store.cartCust=null;saveCart();closeSheets();renderAll();break;
+      case "clear":store.cart=[];store.disc=null;store.cartCust=null;releaseTableBill();saveCart();closeSheets();renderAll();break;
       case "paydone":completePayment();break;
       case "ldapply":applyLineDiscount(false);break;
       case "ldremove":applyLineDiscount(true);break;
@@ -207,7 +217,10 @@ export function installDomEvents(){
   });
   document.addEventListener("input",e=>{
     const t=e.target;
+    if(commerceInput(t))return;
     if(creditOrdersInput(t))return;
+    if(trackingInput(t))return;
+    if(restaurantInput(t))return;
     if(t.matches("[data-cellqty]")&&store.pick){const v=t.dataset.cellqty;setPickQty(v,t.value===""?0:t.value);return}
     if(t.matches("[data-disc]")){setBillDiscount({type:store.disc&&store.disc.type,value:t.value});updateBillTotals();return}
     if(t.id==="ldVal"){lineDiscountInput(t.value);return}
@@ -227,7 +240,10 @@ export function installDomEvents(){
     }
   });
   document.addEventListener("submit",e=>{
+    if(commerceSubmit(e))return;
     if(creditOrdersSubmit(e))return;
+    if(trackingSubmit(e))return;
+    if(restaurantSubmit(e))return;
     if(e.target.id==="custForm"){e.preventDefault();saveCustomerForm(e.target);return}
     if(e.target.id==="edForm"){e.preventDefault();return}
     if(e.target.id==="evForm"){e.preventDefault();submitEventForm(e.target);return}
@@ -237,7 +253,10 @@ export function installDomEvents(){
   });
   document.addEventListener("change",async e=>{
     const t=e.target;
+    if(commerceChange(t))return;
     if(creditOrdersChange(t))return;
+    if(trackingChange(t))return;
+    if(restaurantChange(t))return;
     if(t.id==="repFrom"||t.id==="repTo"){if(t.value){store.prefs[t.id==="repFrom"?"from":"to"]=t.value;store.prefs.period="custom";savePrefs();renderReport()}return}
     if(t.id==="sellCat"){store.sellCat=t.value;renderGrid();return}
     if(t.id==="sellAt"){chooseSellingAt(t.value);return}
@@ -269,6 +288,7 @@ export function installDomEvents(){
       const tg=t.dataset.edtoggle;if(tg){if(tg==="hasOpts")edToggleOptions(t.checked);else{store.editor.codesOn=t.checked;edFocusKeep(renderEditor)}return}
       if(t.matches("[data-edcode]")){store.editor.code=t.value==="qr"?"qr":"barcode";renderEditor();return}
       if(t.id==="edUnit"){store.editor.unit=t.value;edFocusKeep(renderEditor);return}
+      if(t.id==="edTracking"){store.editor.tracking=t.value;edFocusKeep(renderEditor);return}
       if(t.dataset.edf==="active"){const c=store.editor.cells[t.dataset.k];if(c){c.active=t.checked;const tr=t.closest("tr");if(tr)tr.classList.toggle("off",!t.checked)}return}
       if(t.matches("[data-edsel]")){store.editor.sel[t.dataset.edsel]=t.checked;edFocusKeep(renderEditor);return}
       if(t.matches("[data-edselall]")){edCombos().forEach(x=>{store.editor.sel[x.key]=t.checked});renderEditor();return}

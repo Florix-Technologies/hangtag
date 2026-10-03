@@ -1,0 +1,88 @@
+/* The commerce batch (schema.sql section 3r): price lists, purchase orders and receiving, kits, gift vouchers, GST
+   documents, repack, webhooks. Phone first: big tap targets, short pages, one sticky primary action. */
+html[data-noperm~="manage_products"] :is([data-biz="plmanage"]),
+html[data-noperm~="create_purchase"] :is([data-ponew],[data-poreorder],[data-porecv]){display:none!important}
+
+.bizsheet{max-width:560px}
+.bizsheet .biz-body{display:flex;flex-direction:column;gap:12px}
+.bizsheet .biz-foot{position:sticky;bottom:calc(-18px - env(safe-area-inset-bottom,0px));background:var(--bg);padding:10px 0 4px;margin-top:10px;border-top:1px solid var(--line)}
+.bizsheet .biz-err{margin:8px 0 0}
+.bizsheet .sh-t p{margin:2px 0 0;color:var(--ink-3);font-size:13px}
+.bizlist{display:flex;flex-direction:column;gap:8px}
+.bizrow{display:flex;align-items:center;gap:8px;justify-content:space-between;width:100%;min-height:52px;padding:10px 12px;border:1px solid var(--line);border-radius:14px;background:var(--bg);color:inherit;font:inherit;text-align:left;cursor:pointer}
+.bizrow>span{display:flex;flex-direction:column;min-width:0;flex:1}
+.bizrow b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bizrow small{color:var(--ink-3);font-size:12.5px}
+.bizinline{display:flex;gap:8px}
+.bizinline input{flex:1;min-width:0;height:44px;border:1px solid var(--line);border-radius:12px;padding:0 12px;font:inherit;background:var(--bg);color:inherit}
+.bizsearch{height:44px;border:1px solid var(--line);border-radius:12px;padding:0 12px;font:inherit;background:var(--bg);color:inherit;width:100%}
+.bizchip{display:inline-block;font-size:11.5px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--wash);color:var(--ink-2);white-space:nowrap}
+.bizchip.ok{background:var(--good-soft);color:var(--good-ink)}
+.bizchip.warn{background:var(--warn-soft);color:var(--warn-ink)}
+.bizchip.bad{background:var(--crit-soft);color:var(--crit)}
+.bizchip.info{background:var(--accent-soft);color:var(--accent)}
+.biznote{padding:10px 12px;border-radius:12px;background:var(--wash);font-size:13.5px}
+.biznote.ok{background:var(--good-soft);color:var(--good-ink)}
+.biznote.warn{background:var(--warn-soft);color:var(--warn-ink)}
+.bizkv{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.bizkv>div{display:flex;flex-direction:column;padding:8px;border-radius:12px;background:var(--wash);text-align:center}
+.bizkv span{font-size:11.5px;color:var(--ink-3)}
+.bizkv b{font-size:16px}
+
+/* price lists */
+.plline{display:flex;align-items:center;gap:8px;padding:2px 0 8px;font-size:13px;color:var(--ink-3)}
+.plchip{min-height:34px}
+.plopts{display:flex;flex-direction:column;gap:8px}
+.plopt{display:flex;justify-content:space-between;align-items:center;min-height:52px;padding:10px 14px;border:1px solid var(--line);border-radius:14px;background:var(--bg);color:inherit;font:inherit;text-align:left;cursor:pointer}
+.plopt[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
+.plopt small{color:var(--ink-3)}
+.plitems{display:flex;flex-direction:column;gap:6px}
+.plrow{display:flex;align-items:center;gap:10px;justify-content:space-between;padding:8px 10px;border:1px solid var(--line);border-radius:12px}
+.plrow>span{display:flex;flex-direction:column;min-width:0}
+.plrow small{color:var(--ink-3);font-size:12px}
+.plrow input{width:110px;height:42px;border:1px solid var(--line);border-radius:10px;padding:0 10px;font:inherit;text-align:right;background:var(--bg);color:inherit}
+.plgroup{display:flex;flex-direction:column;gap:6px}
+.plgh{font-weight:700;font-size:13.5px;margin-top:4px}
+
+/* purchase orders and receiving */
+.poline{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:14px}
+.poline b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.poline small{color:var(--ink-3);font-size:12.5px}
+.poline input{width:96px;height:44px;border:1px solid var(--line);border-radius:10px;padding:0 10px;font:inherit;text-align:right;background:var(--bg);color:inherit}
+.poline.done{opacity:.6}
+.recv-nums{display:flex;gap:10px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-3)}
+.recv-nums b{color:var(--ink);display:inline}
+.recvnow{display:grid;gap:2px;justify-items:end}
+.disc-row{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:12px}
+.disc-row>span{display:flex;flex-direction:column;min-width:0}
+.disc-row small{color:var(--ink-3);font-size:12.5px}
+.reorder-group{border:1px solid var(--line);border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.reorder-group h4{margin:0}
+.reorder-line{display:flex;justify-content:space-between;gap:8px;font-size:14px}
+
+/* gift vouchers */
+.gvcard{display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px;border:1px dashed var(--line);border-radius:16px;text-align:center}
+.gvcard .gvcode{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:20px;font-weight:700;letter-spacing:.06em}
+.gvcard svg{width:180px;height:180px}
+.gvamt{font-size:28px;font-weight:800}
+.payvoucher{display:flex;gap:8px;align-items:center}
+.payvoucher input{flex:1;min-width:0;height:44px;border:1px solid var(--line);border-radius:12px;padding:0 12px;font:inherit;text-transform:uppercase;background:var(--bg);color:inherit}
+
+/* GST documents */
+.gstneed{display:flex;flex-direction:column;gap:8px}
+.gstjson{max-height:200px;overflow:auto;font-size:11.5px;background:var(--wash);border-radius:12px;padding:10px;white-space:pre-wrap;word-break:break-all}
+
+/* kits and repack */
+.kitline{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:12px}
+.kitline>span{flex:1;min-width:0}
+.kitline input{width:80px;height:42px;border:1px solid var(--line);border-radius:10px;padding:0 10px;font:inherit;text-align:right;background:var(--bg);color:inherit}
+.kitbadge{font-size:11px;font-weight:700;color:var(--accent)}
+.rpkflow{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center;text-align:center}
+.rpkflow>div{padding:12px;border-radius:14px;background:var(--wash)}
+.rpkflow b{display:block;font-size:20px}
+
+/* webhooks */
+.whsecret{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;word-break:break-all;background:var(--wash);padding:10px;border-radius:12px}
+.whevents{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:6px}
+.ofulfil{display:block;font-size:12.5px;color:var(--ink-3)}
+.ofulfil b{color:var(--good-ink)}

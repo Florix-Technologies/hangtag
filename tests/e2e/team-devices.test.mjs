@@ -202,10 +202,13 @@ try {
   check('no live updates for a member\'s phone (it polls)', await B.run('return !sbRealtimeChannel'));
 
   console.log('--- what a cashier may and may not do ---');
-  check('Reports hidden; Sell, Stock, Products, Customers shown (Products may sit behind More on a phone)', !(await B.vis('.nav [data-tab="report"]')) && await B.vis('.nav [data-tab="sell"]') && await B.run('return tabOpen("products")&&tabOpen("stock")&&tabOpen("customers")&&!tabOpen("report")'));
+  check('cashier phone workflow shows Sell and Customers, while hiding Stock, Products and Reports', !(await B.vis('.nav [data-tab="report"]')) && await B.vis('.nav [data-tab="sell"]')
+    && !(await B.vis('.nav [data-tab="products"]')) && !(await B.vis('.nav [data-tab="stock"]')) && await B.vis('.nav [data-tab="customers"]')
+    && await B.run('return tabOpen("products")&&tabOpen("stock")&&tabOpen("customers")&&!tabOpen("report")'));
   await B.run('setTab("report")'); await sleep(100);
   check('...and Reports can\'t be opened', (await B.run('return prefs.tab')) !== 'report');
-  await B.run('setTab("products")'); await sleep(200);
+  // The desktop workflow still exposes Products read-only; permission enforcement hides every write control there.
+  await B.setViewport({ width: 800, height: 880 }); await B.run('renderAll();setTab("products")'); await sleep(200);
   check('Products: the Edit and Add buttons are hidden', await B.run('return document.querySelectorAll("#prodBody [data-editp]").length>0') && !(await B.vis('#prodBody [data-editp]')) && !(await B.vis('#prodBody [data-act="addp"]')));
   await B.run('openEditor("p1")'); await sleep(150);
   check('opening the product editor anyway is refused, with a plain reason', (await B.run('return editor')) === null && /can't add or edit products/.test(await B.text('#toastHost') || ''), await B.text('#toastHost'));
@@ -213,7 +216,7 @@ try {
   const p1 = (await q(`SELECT name FROM public.hangtag_products WHERE owner_id = $1 AND id = 'p1'`, [OWNER]))[0];
   check('the database refuses a direct product write from the cashier (insert refused, update changes nothing)', direct.a === '42501' && p1.name !== 'Hacked'
     && !(await q(`SELECT 1 FROM public.hangtag_products WHERE id = 'hack1'`)).length, { direct, p1 });
-  await B.run('setTab("sell")'); await sleep(150);
+  await B.setViewport({ width: 420, height: 880 }); await B.run('renderAll();setTab("sell")'); await sleep(150);
   await B.run(`const v=prod("p1").variants[0].id;addToLines(cart,v,1);await checkout("cash");closeSheets();await flushSbQueue()`);
   const sales = await q(`SELECT id, owner_id::text, total FROM public.hangtag_sales`);
   check('the cashier sells: the bill is saved in the owner\'s shop', sales.length === 1 && sales[0].owner_id === OWNER && (await B.run('return sbOfflineQueue.length')) === 0, sales);
@@ -240,7 +243,7 @@ try {
     && !polled.some((p) => /hangtag_(images|products|variants|sales|sale_items|payments|stock_moves)$/.test(p)), polled);
   B.sbRequests.length = 0;
   await B.run('await memberPoll()');
-  check('nothing new: the check downloads nothing', B.sbRequests.every((x) => /rpc\/hangtag_(touch_device|shop_changes|purchase_changes|order_changes)$|hangtag_(members|roles)$/.test(x.path)), B.sbRequests.map((x) => x.path));
+  check('nothing new: the check downloads nothing', B.sbRequests.every((x) => /rpc\/hangtag_(touch_device|shop_changes|purchase_changes|order_changes|biz_changes)$|hangtag_(members|roles)$/.test(x.path)), B.sbRequests.map((x) => x.path));
 
   console.log('--- the cashier\'s cash drawer (no Reports tab) ---');
   await B.click('#acctBtn'); await sleep(100);
@@ -287,8 +290,8 @@ try {
   const D = await phone('manager');
   await D.goto('http://localhost:3210/', { waitUntil: 'domcontentloaded' });
   await D.until('!document.getElementById("authForms").hidden');
-  check('the sign-in screen has a Staff tab', await D.vis('[data-authtab="staff"]') && await D.vis('[data-authtab="signin"]') && await D.vis('[data-authtab="signup"]'));
-  await D.click('[data-authtab="staff"]'); await sleep(100);
+  check('the sign-in screen has a secondary Staff sign-in link and no mode tabs', await D.vis('#staffSwitch [data-switchto="staff"]') && !(await D.$('[data-authtab]')));
+  await D.click('#staffSwitch [data-switchto="staff"]'); await sleep(100);
   check('Staff: shop code, username and password; no Google, no email', await D.vis('#staffShop') && await D.vis('#staffUser') && await D.vis('#staffPass') && !(await D.vis('#authEmail')) && !(await D.vis('[data-provider="google"]')));
   await D.fill('#staffShop', core.shopCode(OWNER).toUpperCase()); await D.fill('#staffUser', 'meera'); await D.fill('#staffPass', 'wrong-pass-9');
   await D.click('#staffSubmit');
@@ -296,11 +299,12 @@ try {
   await D.fill('#staffPass', 'counter-pass-1'); await D.click('#staffSubmit');
   check('the right one: signed in as the manager, this phone registered', await D.until('authUser&&sbStatus==="connected"&&isMember()', 20000) && await D.run('return access.role==="manager"')
     && +(await q(`SELECT count(*) AS n FROM public.hangtag_devices WHERE user_id = $1`, [meera]))[0].n === 1, await D.text('#authErr'));
-  check('a manager sees Reports and can edit products, but has no Team & devices', await D.vis('.nav [data-tab="report"]') && await D.run('return can("manage_products")&&!can("manage_users")')
-    && await D.run('openSettings();return !document.getElementById("teamSec")&&/Signed in as Meera \\(Manager\\) at Aura Threads/.test(document.getElementById("setSub").textContent)'));
+  const managerAccess = { report: await D.vis('.nav [data-tab="report"]'), permissions: await D.run('return {products:can("manage_products"),users:can("manage_users")}'), settings: await D.run('openSettings();return {team:!!document.getElementById("teamSec"),sub:document.getElementById("setSub").textContent}') };
+  check('a manager sees Reports and can edit products, but has no Team & devices', managerAccess.report && managerAccess.permissions.products && !managerAccess.permissions.users
+    && !managerAccess.settings.team && /Signed in as Meera \(Manager\) at Aura Threads/.test(managerAccess.settings.sub), managerAccess);
   await D.run('closeSettings();await requestSignOut()'); await sleep(300);
   check('signing out puts the key away (not sent any more)', await D.run('return !authUser&&localStorage.getItem("hangtag_device_key")===null'));
-  await D.click('[data-authtab="staff"]'); await sleep(100);
+  await D.click('#staffSwitch [data-switchto="staff"]'); await sleep(100);
   await D.fill('#staffShop', core.shopCode(OWNER)); await D.fill('#staffUser', 'meera'); await D.fill('#staffPass', 'counter-pass-1'); await D.click('#staffSubmit');
   check('signing in again reuses the phone\'s key: no second device', await D.until('authUser&&sbStatus==="connected"&&isMember()', 20000)
     && +(await q(`SELECT count(*) AS n FROM public.hangtag_devices WHERE user_id = $1`, [meera]))[0].n === 1 && teamCalls.filter((x) => x === 'register_device').length === 1, teamCalls);
@@ -325,7 +329,7 @@ try {
   check('saved to hangtag_roles for this shop', await A.until('team&&!team.busy&&!team.draft') && ((await q(`SELECT permissions FROM public.hangtag_roles WHERE owner_id = $1 AND role = 'cashier'`, [OWNER]))[0] || {}).permissions.includes('view_reports'));
   await A.screenshot({ path: H.ARTIFACTS + '/team4_roles.png' });
 
-  const staffSignIn = async (p, user, pw) => { await p.until('!document.getElementById("authForms").hidden'); await p.click('[data-authtab="staff"]'); await sleep(80);
+  const staffSignIn = async (p, user, pw) => { await p.until('!document.getElementById("authForms").hidden'); await p.click('#staffSwitch [data-switchto="staff"]'); await sleep(80);
     await p.fill('#staffShop', core.shopCode(OWNER)); await p.fill('#staffUser', user); await p.fill('#staffPass', pw); await p.click('#staffSubmit'); };
   console.log('--- reset access without a password: the phone is signed out and the old password dies ---');
   await A.run(`await teamService().createMember({name:"Sunil",username:"sunil",role:"cashier",password:"sunil-pass-1"})`);
@@ -333,7 +337,7 @@ try {
   const E = await phone('sunil');
   await E.goto('http://localhost:3210/', { waitUntil: 'domcontentloaded' });
   await staffSignIn(E, 'sunil', 'sunil-pass-1');
-  check('Sunil signs in on the Staff tab and the phone is registered', await E.until('authUser&&sbStatus==="connected"&&isMember()', 20000));
+  check('Sunil signs in through Staff sign-in and the phone is registered', await E.until('authUser&&sbStatus==="connected"&&isMember()', 20000));
   await A.run('openTeam("members")'); await A.until('team&&!team.loading&&team.members.some(m=>m.username==="sunil")');
   await A.click(`[data-team="reset:${sunil}"]`); await sleep(80); await A.click(`[data-team="reset:${sunil}"]`);
   check('the owner resets his access (no new password)', await A.until('team&&!team.busy') && (await q(`SELECT status FROM public.hangtag_devices WHERE user_id = $1`, [sunil])).every((d) => d.status === 'revoked'));

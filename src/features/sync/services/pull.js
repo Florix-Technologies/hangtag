@@ -11,10 +11,11 @@ import { use } from '../../../shared/di/services.js';
 import { toast } from '../../../shared/components/toast.js';
 import { dayKey } from '../../../shared/formatting/dates.js';
 import { saveCashMoves, saveCatalog, saveCustomers, saveDayCloses, saveEvents, saveImgs, saveLogo, saveMoves, saveReturns, saveSettings } from '../../../shared/state/persistence.js';
-import { saveCollections, saveHeldCarts, saveOrders, savePurchases, saveSupplierPays, saveSuppliers } from '../../../shared/state/persistence.js';
+import { saveCollections, saveHeldCarts, saveOrders, savePurchases, saveSupplierPays, saveSuppliers, saveTableSessions, saveTables } from '../../../shared/state/persistence.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { logger } from '../../../shared/logging/logger.js';
 import { can, isMember } from '../../shop/services/access.js';
+import { bizRepository } from '../../commerce/repositories/biz-repository.js';
 
 /* ---------- pulls (cloud is the truth, except for work still waiting in this device's queue) ---------- */
 let seen = null;   // a member's phone: the shop's fingerprints its data matches (null: not known yet; see pullShopChanges)
@@ -54,8 +55,11 @@ export async function pullMoves(){
   const pending = pendingIds("move"), next = {};
   // the stock records of a purchase (or its cancel) still on its way go up with it, so they stay too
   const withPurchase = new Set([...pendingIds("purchase"), ...pendingIds("pcancel")]);
+  // …and so do a repack's two records (rpk:<id>:out / :in) while the repack is on its way
+  const repacks = new Set(store.sbOfflineQueue.filter(q => q.type === "biz" && q.kind === "rpk").map(q => q.id));
   list.forEach(m => { next[m.id] = m; });
-  Object.values(store.moves).forEach(m => { if(pending.has(m.id) || (m.imp && withPurchase.has(m.imp))) next[m.id] = m; });
+  Object.values(store.moves).forEach(m => { const rk = /^rpk:(.+):(out|in)$/.exec(m.id);
+    if(pending.has(m.id) || (m.imp && withPurchase.has(m.imp)) || (rk && repacks.has(rk[1]))) next[m.id] = m; });
   store.moves = next; saveMoves();
 }
 export async function pullReturns(){
@@ -134,6 +138,8 @@ export async function pullFromSupabase(showToast = true){
     // orders, held bills and payments collected (section 3m): a database without them yet doesn't stop the rest
     await pullOrders().catch(e => logger.warn("Orders and credit not downloaded:", e));
     await pullPurchases();
+    // price lists, purchase orders, GST readiness, repacks, vouchers (section 3r): a database without them keeps this device's copy
+    await pullBiz().catch(e => logger.warn("Price lists, purchase orders and vouchers not downloaded:", e));
     await pullSettings();
     await pullSales();
     if(isMember()){ seen = marks; seenPurchases = pmarks; }
@@ -270,22 +276,60 @@ const reviewIds = type => new Set((store.syncReview || []).filter(r => r.item &&
 export async function pullOrders(){
   const cloud = use("cloud");
   const [orders, held, cols] = await Promise.all([cloud.fetchOrders(), cloud.fetchHeldCarts(), cloud.fetchCollections()]);
-  const po = pendingIds("order"), ro = reviewIds("order"), ph = pendingIds("held"), pd = pendingIds("helddel"), pc = pendingIds("collection");
+  const po = new Set([...pendingIds("order"), ...pendingIds("ostatus")]), ro = reviewIds("order"), ph = pendingIds("held"), pd = pendingIds("helddel"), pc = pendingIds("collection");
   const O = {}, H = {}, C = {};
   orders.forEach(o => { O[o.id] = o; });
   Object.values(store.orders || {}).forEach(o => { if(po.has(o.id) || (!O[o.id] && ro.has(o.id))) O[o.id] = o; });
+  // a restaurant's tables and sessions (section 3o): a database without them yet doesn't stop the rest
+  await pullTables().catch(e => logger.warn("Tables not downloaded:", e));
   held.forEach(h => { if(!pd.has(h.id)) H[h.id] = h; });
   Object.values(store.heldCarts || {}).forEach(h => { if(ph.has(h.id)) H[h.id] = h; });
   cols.forEach(c => { C[c.id] = c; });
   Object.values(store.collections || {}).forEach(c => { if(pc.has(c.id) || !C[c.id]) C[c.id] = c; });
   store.orders = O; saveOrders(); store.heldCarts = H; saveHeldCarts(); store.collections = C; saveCollections();
 }
+/* A restaurant's tables and the sessions going on (and those closed lately), except what this device hasn't uploaded yet */
+export async function pullTables(){
+  const cloud = use("cloud");
+  const [tables, sessions] = await Promise.all([cloud.fetchTables(), cloud.fetchTableSessions()]);
+  const pt = pendingIds("table"), ps = pendingIds("tsession"), T = {}, S = {};
+  tables.forEach(t => { T[t.id] = t; });
+  Object.values(store.tables || {}).forEach(t => { if(pt.has(t.id)) T[t.id] = t; });
+  sessions.forEach(s => { S[s.id] = s; });
+  // this device's sessions: waiting to upload, or still going here though the cloud's list (open or recent) doesn't have them
+  Object.values(store.tableSessions || {}).forEach(s => { if(ps.has(s.id)) S[s.id] = s; });
+  store.tables = T; saveTables(); store.tableSessions = S; saveTableSessions();
+}
+/* ---------- the commerce batch (section 3r) ---------- */
+/* The cloud's records of every kind, except what this device changed and hasn't uploaded (or the cloud refused for review):
+   those stay as they are here. A kind the database doesn't have yet (schema.sql not re-run) leaves this device's copy alone. */
+export async function pullBiz(){
+  const got = await use("cloud").fetchBiz();
+  const waiting = kind => new Set([...store.sbOfflineQueue, ...(store.syncReview || []).map(r => r.item)].filter(q => q && (q.type === "biz" || q.type === "bizdel") && q.kind === kind).map(q => q.id));
+  Object.entries(got || {}).forEach(([kind, list]) => {
+    if(!Array.isArray(list)) return;
+    const keep = waiting(kind), next = {};
+    list.forEach(r => { next[r.id] = r; });
+    bizRepository().list(kind).forEach(r => { if(keep.has(r.id)) next[r.id] = r; });
+    // a repack waiting to upload keeps its stock records here (pullMoves keeps them too)
+    bizRepository().replace(kind, next);
+  });
+}
+/* A team member's phone (no live updates): the batch's records again only when their fingerprint moved */
+let seenBiz = null;
+export async function pullBizChanges(){
+  if(!store.sbClient || store.sbStatus !== "connected") return false;
+  const now = await use("cloud").bizChanges(), was = seenBiz;
+  if(was && JSON.stringify(was) === JSON.stringify(now)) return false;
+  await pullBiz(); seenBiz = now; renderAll();
+  return true;
+}
 /* A team member's phone (no live updates): orders, held bills and collections again only when their fingerprint moved */
 let seenOrders = null;
 export async function pullOrderChanges(){
   if(!store.sbClient || store.sbStatus !== "connected") return false;
   const now = await use("cloud").orderChanges(), was = seenOrders;
-  if(was && was.orders === now.orders && was.held === now.held && was.credit === now.credit) return false;
+  if(was && was.orders === now.orders && was.held === now.held && was.credit === now.credit && was.tables === now.tables) return false;
   await pullOrders(); seenOrders = now; renderAll();
   return true;
 }

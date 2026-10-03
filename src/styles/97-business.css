@@ -7,7 +7,7 @@
 @media (max-width:599px){
   .nav{gap:2px;padding:3px}
   .nav button{min-width:0;font-size:11px;padding:7px 1px 6px}
-  .nav .np{display:none}
+  .nav .np,.nav .phoneoff{display:none}
   .nav .navmore.mp{display:flex}
 }
 @media (min-width:600px) and (max-width:999px){
@@ -48,6 +48,21 @@
 .hsync{display:flex;align-items:center;gap:8px;margin:0 0 6px;font-size:14px}
 .hsync i{width:9px;height:9px;border-radius:50%;background:var(--ink-3);flex:none}
 .hsync.ok i{background:var(--good)} .hsync.wait i{background:var(--warn)} .hsync.off i{background:var(--crit)}
+
+/* ---------- Ask Hangtag ---------- */
+.ask-shell{display:grid;gap:12px;max-width:780px;margin:0 auto}
+.ask-form{display:grid;gap:10px;padding:14px}
+.ask-form .btn{justify-self:end;min-width:108px}
+.ask-chips{display:flex;gap:7px;overflow-x:auto;padding:1px 1px 5px;scrollbar-width:thin}
+.ask-chips .chipbtn{flex:none;min-height:42px}
+.ask-empty{padding:28px 18px;text-align:center;color:var(--ink-2)}
+.ask-empty b{display:block;color:var(--ink);margin-bottom:5px}
+.ask-answer{padding:18px}
+.ask-answer h3{margin:10px 0 5px}
+.ask-answer p{margin:0;color:var(--ink-2);line-height:1.5}
+.ask-answer dl{display:grid;gap:0;margin:14px 0 0}
+.ask-answer dl div{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-top:1px solid var(--line)}
+.ask-answer dt{font-weight:600}.ask-answer dd{margin:0;text-align:right;color:var(--ink-2)}
 
 /* ---------- Settings: sections and capabilities ---------- */
 .setnav{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 2px}

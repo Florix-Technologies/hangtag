@@ -56,7 +56,7 @@ await db.exec(NEW); await db.exec(NEW);
 console.log('=== schema runs twice; report ===');
 {
   const rep = await report(db);
-  check('migration report: 40 rows, all ok on an empty shop', rep.length === 40 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: 59 rows, all ok on an empty shop', rep.length === 59 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
 }
 
 console.log('=== verified payments ===');
@@ -79,13 +79,13 @@ console.log('=== verified payments ===');
   r = await save(db, A, [bill('v3', 500, (d) => [{ method: 'upi', amount: d, via: 'qr', intent: { id: I2, status: 'verified', amount: d, paymentId: 'pay_b' } }])]);
   check('another shop\'s verified intent doesn\'t verify this shop\'s bill', /not confirmed/.test(r.err || ''), r);
   // UPI checked by hand, then matched by the function (service role), then the phone uploads the bill again
-  r = await save(db, A, [bill('m1', 700, (d) => [{ method: 'upi', amount: d, ref: '412345678901' }])]);
+  r = await save(db, A, [bill('m1', 700, (d) => [{ method: 'upi', amount: d, ref: '412345678901', confirmed: true }])]);
   check('hand-checked UPI saves as unverified with its reference', !r.err && (await rows(db, A, `SELECT verification FROM public.hangtag_payments WHERE id = 'm1:upi'`))[0].verification === 'unverified', r);
   const IM = '0b8e1f3e-3333-4333-8333-333333333333';
   await intent(db, A, IM, 'verified', 700, { kind: 'match', pid: 'pay_m', pay: 'pay_m', sale: 'm1' });
   r = await trySvc(db, `UPDATE public.hangtag_payments SET verification = 'verified', intent_id = $1, provider_payment_id = 'pay_m' WHERE owner_id = $2 AND id = 'm1:upi'`, [IM, A]);
   check('the function upgrades it to verified after matching the provider\'s payment', !r.err, r);
-  r = await save(db, A, [bill('m1', 700, (d) => [{ method: 'upi', amount: d, ref: '412345678901' }])]);
+  r = await save(db, A, [bill('m1', 700, (d) => [{ method: 'upi', amount: d, ref: '412345678901', confirmed: true }])]);
   const m = (await rows(db, A, `SELECT verification, intent_id::text, provider_payment_id FROM public.hangtag_payments WHERE id = 'm1:upi'`))[0];
   check('the phone uploading the bill again never downgrades a verified payment', !r.err && m.verification === 'verified' && m.intent_id === IM && m.provider_payment_id === 'pay_m', { r, m });
   r = await save(db, A, [bill('c1', 800, (d) => [{ method: 'card', amount: d, ref: 'APPR1', last4: '4242' }])]);

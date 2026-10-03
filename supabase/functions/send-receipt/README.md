@@ -37,10 +37,19 @@ function.
 - **Automatic receipts** (`{ action: "send", ..., auto: true }`, sent by the phone when a bill completes and the shop
   turned the channel on): at most one per bill and channel. A unique index on the `auto` rows makes a retry (or a
   second phone) get the first attempt's answer (`already: true`) or `409 busy` while it is still being sent.
+- **Quotations** (`{ action: "send", channel: "email" | "whatsapp", order_id, request_id }`): the function reads the
+  quotation and its lines with the caller's session (a saved quotation of the shop, not cancelled), writes the message
+  from it (headed QUOTATION, never a bill; the total the app saved with it) and sends it to the quotation's customer as
+  saved in Customers. `request_id` is made by the phone for one press of Send and is used once per shop (a unique index
+  on `hangtag_deliveries.request_id`): a retry or the phone's queue sending it again gets the first answer, never a
+  second message. A team member needs `create_order`. WhatsApp needs a template of its own for quotations.
 - **Secure invoice links**: with `RECEIPT_URL` set, SMS and WhatsApp messages carry `RECEIPT_URL#<token>`, an
   unguessable link (32 random bytes) to that one bill, kept 12 months in `hangtag_invoice_links` (the shop can revoke
   it from the bill). `{ action: "link", sale_id }` returns the bill's link for sharing by hand. The page
   (`receipt.html`) asks the `receipt` function for the bill; a wrong, revoked or expired token gets "not found".
+  Without `RECEIPT_URL` the link uses the shop's own receipt page: the owner's app saves the address of its
+  `receipt.html` in the shop's settings (`receiptUrl`, written only by the owner, only an https …/receipt.html address;
+  the function checks it again), so invoice links work without this secret.
 - **Team members** (schema.sql section 3i) send for their shop: the function asks the database for the shop
   (`hangtag_shop_id()` with the caller's session and the phone's `x-hangtag-device` key, which it forwards) and writes
   every row for that shop, never for the member's own account. The member needs `create_sale` (`hangtag_can`), and
@@ -68,7 +77,8 @@ Set the secrets of the channels you want (`supabase secrets set NAME=value --pro
 | WhatsApp (Twilio) | `WHATSAPP_PROVIDER=twilio`, the Twilio secrets above, `TWILIO_WHATSAPP_FROM` (the WhatsApp sender, `+14155238886` or `whatsapp:+14155238886`), `TWILIO_WHATSAPP_CONTENT_SID` (an approved WhatsApp template in Twilio Content, variables `{{1}}`–`{{4}}` as above) |
 | Who may send (**required**) | `SEND_ALLOWED_USERS`: the accounts allowed to send, as user ids or sign-in emails, comma-separated, or `*` for every signed-in account. **Unset = nobody sends.** Sign-up is open and the messages go out from your provider accounts, so list your shops' accounts rather than using `*` |
 
-| Invoice links (optional) | `RECEIPT_URL`: the address of `receipt.html` on your site, e.g. `https://<you>.github.io/hangtag/receipt.html` (https, no query). With WhatsApp, `WHATSAPP_LINK_PARAM=on` when the approved template has a 5th value `{{5}}` for the link. |
+| Invoice links (optional) | `RECEIPT_URL`: the address of `receipt.html` on your site, e.g. `https://<you>.github.io/hangtag/receipt.html` (https, no query). Without it, the receipt page of the app the shop's owner uses (saved in the shop's settings) is used. With WhatsApp, `WHATSAPP_LINK_PARAM=on` when the approved template has a 5th value `{{5}}` for the link. |
+| Quotations by WhatsApp (optional) | `WHATSAPP_QUOTE_TEMPLATE` (Meta: an approved template with `{{1}}` customer, `{{2}}` shop, `{{3}}` quotation number, `{{4}}` amount, `{{5}}` valid until) or, with `WHATSAPP_PROVIDER=twilio`, `TWILIO_WHATSAPP_QUOTE_CONTENT_SID`. Quotations by email use the email secrets above. |
 
 The invoice-link page needs the `receipt` function, deployed **without** JWT verification (it is called with the
 project's publishable key and the token is its only key):

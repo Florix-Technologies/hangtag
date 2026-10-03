@@ -124,6 +124,17 @@
  */
 
 /**
+ * "voiceInput": optional browser/device speech. Implementation: infrastructure/browser/browser-speech.js.
+ * Product search still uses the normal text input and search index; a transcript is only another way to fill it.
+ * @typedef {Object} VoiceInputPort
+ * @property {() => boolean} available
+ * @property {(opts?: {lang?: string}) => Promise<string>} listen
+ * @property {() => void} stop
+ * @property {() => boolean} canSpeak
+ * @property {(text: string, opts?: {lang?: string}) => boolean} speak
+ */
+
+/**
  * "qrCodeService": QR codes as SVG. Implementation: infrastructure/codes/qr-svg.js (vendored qrcode-generator, MIT).
  * @typedef {Object} QrCodeServicePort
  * @property {(text: string, opts?: Object) => string} render
@@ -219,18 +230,19 @@
  */
 
 /**
- * "paymentGateway": verified UPI (single-use QR for an exact amount) and card (payment link) payments. Implementation:
- * infrastructure/payments/payment-gateway-client.js → Edge Function payment-gateway (Razorpay keys live there; only the
- * provider's own record of a captured payment makes an intent "verified"). Reach it through
+ * "paymentGateway": provider-neutral verified UPI (single-use QR for an exact amount) and card payment intents.
+ * Implementation: infrastructure/payments/payment-gateway-client.js → Edge Function payment-gateway (provider keys stay
+ * server-side; only the provider's verified record makes an intent "verified"). Reach it through
  * features/sales/use-cases/provider-payment.js.
  * @typedef {Object} PaymentGatewayPort
  * @property {() => Promise<{provider: (string|null), upi: boolean, cardLink: boolean}>} config
- * @property {(req: {method: "upi"|"card", amount: number, saleId: string, note?: string, expiryMin?: number}) => Promise<Object>} create
+ * @property {(req: {method: "upi"|"card", amount: number, saleId: string, note?: string, expiryMin?: number}) => Promise<Object>} createPayment
  *   → the intent { id, status: "pending", qrUrl | linkUrl, reference, expiresAt }.
- * @property {(id: string) => Promise<Object>} status  The intent as the provider sees it now.
- * @property {(id: string) => Promise<Object>} cancel  Closes it ("verified" instead when the money arrived first).
- * @property {(req: {saleId: string, reference: string}) => Promise<{status: string}>} verify  Matches a UPI payment checked by hand.
- * @property {(returnId: string) => Promise<{refundId: string}>} refundReturn  A return's refund back onto its bill's verified payment.
+ * @property {(req: {amount: number, saleId: string, note?: string, expiryMin?: number}) => Promise<Object>} createDynamicQr
+ * @property {(id: string) => Promise<Object>} getStatus  The intent as the provider sees it now.
+ * @property {(id: string) => Promise<Object>} cancelPayment  Closes it ("verified" instead when the money arrived first).
+ * @property {(req: {saleId: string, reference: string}) => Promise<{status: string}>} verifyPayment  Matches a UPI payment checked by hand.
+ * @property {(req: {returnId: string}) => Promise<{refundId: string}>} refund  A return's refund back onto its bill's verified payment.
  * @property {() => Promise<Object[]>} unmatched  Money received that isn't on any bill.
  * @property {(req: {id: string, resolution: "refund"|"refunded"|"allocated", note?: string}) => Promise<Object>} resolve
  *   Every call throws an AppError when it can't be done: NOT_CONFIGURED, VALIDATION, CONFLICT, NOT_FOUND, AUTH, DELIVERY, NETWORK.
@@ -275,6 +287,22 @@
  * @property {(opts?: {timeoutMs?: number}) => Promise<{value: number, unit: "kg"|"g"|"lb"|"oz"|"l"|"ml", stable: true}|{error: string}>} read
  *   The next settled reading (a scale still settling, or nothing within the time, is an error).
  * @property {(line: string, unit?: string) => ({value, unit, stable}|null)} feed  Gives the manual provider a reading, as a scale would print it.
+ */
+
+/**
+ * "bizRepository": the commerce batch's records (schema.sql section 3r) by kind — pl price lists, po purchase orders, ei / ew
+ * e-invoice / e-way bill readiness, rpk repacks (with their two stock records), gv gift vouchers (the cloud's copy only).
+ * Implementation: infrastructure/repositories/local-first-biz-repository.js. Saved here first, then queued ("biz" { kind, id };
+ * "bizdel" removes a price list); the upload reads the record as it is then (cloud.saveBiz).
+ * @typedef {Object} BizRepositoryPort
+ * @property {(kind: string) => Object[]} list
+ * @property {(kind: string, id: string) => (Object|null)} get
+ * @property {(kind: string, rec: Object) => Object} save        Kept and queued for upload.
+ * @property {(kind: string, rec: Object) => Object} keep        The cloud's copy, not uploaded (vouchers).
+ * @property {(kind: string, id: string) => (Object|null)} remove
+ * @property {(kind: string, id: string, version: number) => void} saved   The version the cloud holds after a save (purchase orders).
+ * @property {(rec: Object) => Object} repack                    A repack and its stock records (rec.moves), here at once.
+ * @property {(kind: string, map: Object) => void} replace       A download of a kind.
  */
 
 /**

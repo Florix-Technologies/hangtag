@@ -50,7 +50,8 @@ const ls=(p,k)=>p.evaluate(k=>localStorage.getItem(k),k);
     await A.click('[data-provider="google"]');await sleep(300);
     check('Google switched off: plain message, no redirect',/Google sign-in isn't switched on/.test(await txt(A,'#authErr')||''));
     // real Google redirect goes to Google (it is switched on in this project)
-    await run(A,`authSettings=null;setAuthBusy(false);location.reload()`).catch(()=>{});await sleep(1200);
+    await run(A,`authSettings=null;setAuthBusy(false);location.reload()`).catch(()=>{});
+    await A.waitForSelector('[data-provider="google"]',{visible:true,timeout:15000});
     const [nv]=await Promise.all([A.waitForNavigation({timeout:15000}).catch(()=>null),A.click('[data-provider="google"]')]);
     check('real click reaches Google sign-in',A.url().startsWith('https://accounts.google.com/')||A.url().includes('/auth/v1/authorize'),A.url().slice(0,60));
     await ctx.close();

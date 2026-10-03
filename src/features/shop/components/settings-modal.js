@@ -28,6 +28,8 @@ const SUB = {
   team: "People who sell in your shop, each with their own sign-in and role, and the phones they use.",
   roles: "What each role may do. The same for every type of business.",
   hardware: "Devices connected to this phone or computer.",
+  selling: "Prices, gift vouchers and GST documents.",
+  advanced: "For connecting Hangtag to other software. Most shops never need this.",
   account: "",
 };
 function sectionBody(key){
@@ -37,13 +39,14 @@ function sectionBody(key){
       // the shop's details and its type are the owner's; a member with manage_settings sees the type, and the stock alert
       return (member ? `<dl class="kv"><dt>Type of business</dt><dd>${esc(shopTypeLabel())}</dd></dl>` : '<form id="profileForm" class="authform" novalidate>' + profileFieldsHTML(store.profile || {}, "ps") +
         '<p id="profileErr" class="autherr" role="alert" hidden></p><div class="setactions"><button class="btn primary" type="submit" id="profileSave">Save changes</button></div></form>') + stockCashHTML();
-    case "capabilities": return capabilitiesHTML();
-    case "receipt": return receiptFormHTML() + receiptSetupHTML() + paymentsFormHTML();
+    case "capabilities": return capabilitiesHTML() + settingsPartsHTML("capabilities");
+    case "receipt": return receiptFormHTML() + receiptSetupHTML() + paymentsFormHTML() + settingsPartsHTML("receipt");
     case "taxes": return taxFormsHTML();
     case "team": return teamEntryHTML();
     case "roles": return '<div class="setactions" style="margin-top:0"><button class="btn sm" type="button" data-team="roles">Open roles &amp; permissions</button></div>';
     case "hardware": return printerSetupHTML() + '<div class="hwspot" data-hwspot>' + settingsPartsHTML("hardware") + "</div>";
     case "account": return member ? memberAccountHTML() : ownerAccountHTML();
+    case "selling": case "advanced": return settingsPartsHTML(key);
   }
   return "";
 }
@@ -61,7 +64,8 @@ const memberAccountHTML = () => '<dl class="kv"><dt>Name</dt><dd id="kvName"></d
 
 /* The whole sheet: head, the section bar, the sections this person sees */
 function settingsSheetHTML(title){
-  const list = settingsSections(), member = isMember();
+  // a section made only of other features' parts shows only when one of them has something here
+  const list = settingsSections().filter(s => !s.parts || sectionBody(s.key)), member = isMember();
   const secs = list.map((s, i) => `<div class="setsec" id="set-${s.key}" data-setsec="${s.key}"${i === 0 ? ' style="border-top:0;margin-top:8px"' : ""}><h4 class="secT">${esc(member && s.key === "account" ? "You" : s.label)}</h4>` +
     (SUB[s.key] ? `<p class="note secsub">${esc(SUB[s.key])}</p>` : "") + sectionBody(s.key) + "</div>").join("");
   return '<div class="scrim" data-settings-scrim><div class="sheet settings" role="dialog" aria-modal="true" aria-labelledby="setTitle">' +

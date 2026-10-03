@@ -32,6 +32,9 @@ import { applyCatalogMigration } from '../features/products/services/catalog.js'
 import { initSupabase, memberPoll } from '../features/sync/services/connection.js';
 import { isMember } from '../features/shop/services/access.js';
 import { flushSbQueue } from '../features/sync/services/outbox.js';
+import { sendPendingDocs } from '../features/inventory/use-cases/import-supplier-bill.js';
+import { processQuoteSends } from '../features/orders/use-cases/send-quotation.js';
+import { rememberReceiptPage } from '../features/shop/use-cases/receipt-page.js';
 
 installContainer();    // ports first: everything below may use them
 installNavigation();   // the render bus (shared/ui/render.js) now reaches this app shell
@@ -58,6 +61,11 @@ installAutoDelivery();
 // provider, and receipts waiting to go out are sent
 onConnected(async()=>{ await loadPayConfig(true); resumePayment(); await checkUnverified(true); });
 onConnected(()=>processDeliveryQueue());
+// …and supplier bills' originals that couldn't reach the cloud yet go up (kept on this device until then)
+onConnected(()=>{ if(Object.keys(store.pendingDocs||{}).length) sendPendingDocs(); });
+// …quotations queued to send go out, and the owner's app keeps the shop's invoice-link page (unless the server sets one)
+onConnected(()=>processQuoteSends());
+onConnected(()=>rememberReceiptPage(false));
 renderAll();
 // Sign in, then connect to the cloud database
 

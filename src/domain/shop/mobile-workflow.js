@@ -1,0 +1,47 @@
+// Phone navigation and quick-action priorities for the existing roles. This changes presentation only: permissions and
+// database policies remain authoritative, and a custom permission can surface an otherwise non-default module.
+import { ROLE_DEFAULTS } from './permissions.js';
+
+export const MOBILE_MODULE_ORDER = Object.freeze({
+  owner: ['home', 'sell', 'report', 'stock', 'customers', 'orders', 'products', 'tables', 'kitchen', 'assistant', 'settings'],
+  manager: ['home', 'report', 'stock', 'orders', 'customers', 'products', 'tables', 'kitchen', 'assistant', 'sell', 'settings'],
+  cashier: ['sell', 'orders', 'customers', 'home', 'settings'],
+  server: ['tables', 'orders', 'home', 'settings'],
+  kitchen: ['kitchen', 'settings'],
+});
+
+export const MOBILE_ACTION_ORDER = Object.freeze({
+  owner: ['sale', 'reports', 'reorder', 'stock', 'customers', 'suppliers', 'settings'],
+  manager: ['reports', 'reorder', 'stock', 'orders', 'products', 'customers'],
+  cashier: ['sale', 'scan', 'orders', 'customers'],
+  server: ['tables', 'orders'],
+  kitchen: ['kitchen'],
+});
+
+const defaultPerms = role => new Set(ROLE_DEFAULTS[role] || []);
+
+/* Modules relevant on a phone. `modules` are already capability/permission-filtered module definitions. If the owner has
+   granted this role a permission outside its defaults, the corresponding module is included as a custom workflow. */
+export function mobileModulesFor(role, modules, permissions){
+  const list = Array.isArray(modules) ? modules : [], order = MOBILE_MODULE_ORDER[role] || MOBILE_MODULE_ORDER.owner;
+  const rank = id => { const i = order.indexOf(id); return i < 0 ? order.length : i; };
+  if(role === 'owner') return list.slice().sort((a, b) => rank(a.id) - rank(b.id) || a.order - b.order || String(a.id).localeCompare(String(b.id)));
+  const base = new Set(order), defaults = defaultPerms(role), current = new Set(permissions || []);
+  const custom = def => (def.perms || []).some(p => current.has(p) && !defaults.has(p));
+  const keep = list.filter(def => base.has(def.id) || custom(def));
+  return keep.sort((a, b) => rank(a.id) - rank(b.id) || a.order - b.order || String(a.id).localeCompare(String(b.id)));
+}
+
+/* Keep a phone on a workflow it can actually navigate back to after an account/role change. This is presentation-only:
+   `modules` must already have passed the normal capability and permission checks. */
+export function mobileLandingModule(role, modules, permissions, current){
+  const list = mobileModulesFor(role, modules, permissions);
+  if(list.some(def => def.id === current && def.view !== false)) return current;
+  const first = list.find(def => def.view !== false);
+  return first ? first.id : null;
+}
+
+export function orderMobileActions(role, actions){
+  const order = MOBILE_ACTION_ORDER[role] || MOBILE_ACTION_ORDER.owner, byId = new Map((actions || []).map(a => [a.id, a]));
+  return order.map(id => byId.get(id)).filter(Boolean);
+}

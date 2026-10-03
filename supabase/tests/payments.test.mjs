@@ -88,7 +88,7 @@ console.log('=== upgrade: existing bills and refunds get payments, transactions 
     JSON.stringify(bb.map((x) => [x.id, x.method, x.entry_type, num(x.amount_in), num(x.amount_out), x.status])) === JSON.stringify([
       ['bb:ft:s2:upi', 'upi', 'receipt', 500, 0, 'posted'], ['bb:ft:s3:card', 'card', 'receipt', 800, 0, 'cancelled'], ['bb:ft:r2', 'upi', 'refund', 0, 100, 'posted']]), bb);
   const rep = (await db.query(`SELECT check_name, value, expected, ok FROM (${NEW.slice(NEW.lastIndexOf('SELECT check_name')).replace(/;\s*$/, '')}) q`)).rows;
-  check('migration report: payments, transactions and books all add up', rep.length === 40 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: payments, transactions and books all add up', rep.length === 59 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   await db.close();
 }
 
@@ -97,7 +97,7 @@ const db = await fresh();
 await db.exec(NEW);
 // 2 × ₹999 with 10% off one line, ₹50 off the bill, 5% GST on top (CGST + SGST); paid ₹500 cash (₹600 handed over) + the rest by UPI
 const b1 = bill('b1', [{ q: 2, price: 999, rate: 5, disc: { type: 'percent', value: 10 } }, { q: 1, price: 250, rate: 5 }], { billDisc: { type: 'fixed', value: 50 },
-  pays: (due) => [{ method: 'cash', amount: 500, received: 600 }, { method: 'upi', amount: due - 500, ref: 'UTR123456789' }] });
+  pays: (due) => [{ method: 'cash', amount: 500, received: 600 }, { method: 'upi', amount: due - 500, ref: 'UTR123456789', confirmed: true }] });
 const r2 = (x) => Math.round(x * 100) / 100;
 check('the app worked out the bill: 1998 + 250, −199.80, −50, 5% GST on the rest (99.92), rounded to 2098',
   b1.sub === 2248 && b1.itemDisc === 199.8 && b1.billDiscAmt === 50 && b1.taxable === 1998.2 && b1.tax === 99.92 && b1.roundOff === -0.12 && b1.total === 2098, b1);

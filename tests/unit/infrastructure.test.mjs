@@ -167,7 +167,7 @@ check('an AppError passes through unchanged', (() => { const a = new AppError(C.
 client = fakeClient(() => ({ error: { code: 'PGRST205', message: "Could not find the table 'public.hangtag_variants' in the schema cache" } }));
 check('checkSchema: missing tables report OUTDATED_DATABASE (the app shows "Database update needed")', (await gw.checkSchema()).error.code === C.OUTDATED_DATABASE);
 client = fakeClient(() => ({ error: null }));
-check('checkSchema: a current database reports no error (it looks for the events table, the newest)', (await gw.checkSchema()).error === null && client.calls[0].t === 'hangtag_events');
+check('checkSchema: a current database reports no error (it looks for the newest table-ordering table)', (await gw.checkSchema()).error === null && client.calls[0].t === 'hangtag_tables');
 check('a missing database function (the bill RPC before schema.sql) becomes OUTDATED_DATABASE', m({ code: 'PGRST202', message: 'Could not find the function public.hangtag_save_sales' }).code === C.OUTDATED_DATABASE);
 
 console.log(`\n${passed} passed, ${failed} failed`);

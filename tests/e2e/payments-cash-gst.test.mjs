@@ -126,15 +126,17 @@ const RT = await run(`return D().rets.find(r=>r.sale===${JSON.stringify(S1.id)})
 check('refund sent through the provider once the return uploaded; its id kept on the return (here and in the cloud)', await until(`returnsMap[${JSON.stringify(RT && RT.id)}]&&returnsMap[${JSON.stringify(RT && RT.id)}].providerRefund==="rfnd_e2e"`, 15000)
   && (await q(`SELECT provider_refund_id, refund_method FROM public.hangtag_returns WHERE id = $1`, [RT.id]))[0].provider_refund_id === 'rfnd_e2e', RT);
 
-console.log('--- UPI checked by hand: needs the UTR, saved as unverified, verified later by the provider ---');
+console.log('--- UPI checked by hand: explicit receipt confirmation, optional UTR, saved unverified ---');
 await run(`addOne(${JSON.stringify(PID)});openPayment("upi")`);
 await until(`payState&&payState.pi.upi&&payState.pi.upi.status==="pending"`);
 await A.click('[data-payvia="upi:manual"]'); await sleep(300);
 check('switching to "check by hand" closes the QR at the provider', await until(`!payState.pi.upi`) && gwCalls.some((x) => x.action === 'cancel'));
 check('the shop\'s own UPI QR with the amount is shown', await vis('#paySheet .pi-qr.small svg') && /aura@okaxis/.test(await text('#paySheet .payfields')));
-check('no transaction reference → can\'t complete', await A.$eval('#payDone', (b) => b.disabled) && /UTR/.test(await text('#payErr')));
+check('before the cashier marks it received → can\'t complete (UTR is optional)', await A.$eval('#payDone', (b) => b.disabled) && /Mark the UPI payment received/.test(await text('#payErr')) && /optional/.test(await text('#paySheet .payfields')));
 await type('#paySheet [data-payf="ref:upi"]', '412345678901');
-check('with the reference it can', !(await A.$eval('#payDone', (b) => b.disabled)));
+check('a reference alone still cannot complete it', await A.$eval('#payDone', (b) => b.disabled));
+await A.click('[data-upireceived]'); await sleep(150);
+check('after “Mark payment received” it can complete', !(await A.$eval('#payDone', (b) => b.disabled)));
 await A.screenshot({ path: H.ARTIFACTS + '/pcg2_upi_manual_phone.png' });
 await A.click('#payDone'); await sleep(400);
 const S2 = await run('return lastSale');

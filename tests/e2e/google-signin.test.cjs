@@ -32,6 +32,8 @@ const CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'*'
       if(u.startsWith(SB+'/auth/v1/token')){counts.exchange++;return r.respond({status:200,contentType:'application/json',headers:CORS,body:JSON.stringify(session(uid,email))});}
       if(u.startsWith(SB+'/auth/v1/settings'))return r.respond({status:200,contentType:'application/json',headers:CORS,body:JSON.stringify({external:{google:true,email:false}})});
       if(u.startsWith(SB+'/auth/v1/user'))return r.respond({status:200,contentType:'application/json',headers:CORS,body:JSON.stringify(session(uid,email).user)});
+      // signing out stays on this computer (never a request to the real project)
+      if(u.startsWith(SB+'/auth/v1/logout'))return r.respond({status:204,headers:CORS});
       if(u.startsWith(SB+'/rest/v1/hangtag_profiles')&&r.method()==='GET'){const prof={id:uid,email,full_name:'Test '+uid,shop_name:'Test Shop',phone:'9876543210',city:'Pune',state:'Maharashtra'};const obj=/vnd.pgrst.object/.test(r.headers()['accept']||'');return r.respond({status:200,contentType:'application/json',headers:CORS,body:JSON.stringify(obj?prof:[prof])});}
       if(u.startsWith(SB+'/rest/v1/'))return r.respond({status:200,contentType:'application/json',headers:Object.assign({'content-range':'*/0'},CORS),body:r.method()==='HEAD'?'':'[]'});
       if(u.startsWith(SB+'/realtime'))return r.abort();
@@ -52,9 +54,12 @@ const CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'*'
     check('Google not forced to show its account chooser',counts.prompts[0]===null,counts.prompts);
     check('no extra page reload after coming back from Google',counts.pageLoads===2,counts.pageLoads);
     // sign out, then sign in again: now the account chooser is offered (to switch accounts)
-    await p.click('#acctBtn');await p.click('[data-am="signout"]');await sleep(800);
+    await p.click('#acctBtn');await p.click('[data-am="signout"]');
+    // signing out locally can take most of a second (the sign-in library's lock): wait for the sign-in screen, not a fixed time
+    await p.waitForFunction(()=>!document.getElementById('authGate').hidden&&!document.getElementById('authForms').hidden,{timeout:8000}).catch(()=>null);await sleep(200);
     await Promise.all([p.waitForNavigation({waitUntil:'networkidle0',timeout:15000}).catch(()=>null),p.click('[data-provider="google"]')]);
-    await sleep(3000);
+    // wait for the sign-in to finish (the gate closes), not a fixed time
+    await p.waitForFunction(()=>document.getElementById('authGate').hidden,{timeout:15000}).catch(()=>null);await sleep(300);
     check('after Sign out, Google offers the account chooser',counts.prompts[1]==='select_account',counts.prompts);
     const st2=await p.evaluate(()=>({gate:!document.getElementById('authGate').hidden,pick:localStorage.getItem('hangtag_pick_account')}));
     check('signed back in, chooser request cleared',!st2.gate&&st2.pick==='""',st2);

@@ -32,7 +32,12 @@ import { createWeightScale } from '../infrastructure/hardware/weight-scale.js';
 import { createLocalFirstOrderRepository } from '../infrastructure/repositories/local-first-order-repository.js';
 import { createLocalFirstCreditRepository } from '../infrastructure/repositories/local-first-credit-repository.js';
 import { createLocalFirstPurchaseRepository } from '../infrastructure/repositories/local-first-purchase-repository.js';
-import { saveCollections, saveHeldCarts, saveOrders, savePurchases, saveSupplierPays, saveSuppliers } from '../shared/state/persistence.js';
+import { saveCollections, saveHeldCarts, saveOrders, savePurchases, saveSupplierPays, saveSuppliers, saveTableSessions, saveTables } from '../shared/state/persistence.js';
+import { createLocalFirstTableRepository } from '../infrastructure/repositories/local-first-table-repository.js';
+import { createBlobStore } from '../infrastructure/storage/blob-store.js';
+import { createBrowserSpeech } from '../infrastructure/browser/browser-speech.js';
+import { createLocalFirstBizRepository } from '../infrastructure/repositories/local-first-biz-repository.js';
+import { saveBiz } from '../shared/state/persistence.js';
 
 /* Called first at start-up (app/main.js), before the state is restored from storage */
 export function installContainer(){
@@ -41,6 +46,7 @@ export function installContainer(){
   provide("files", files);
   provide("barcodeService", { render: barcodeSVG, symbology: symbologyFor });
   provide("qrCodeService", { render: qrSVG });
+  provide("voiceInput", createBrowserSpeech());
   provide("barcodeScanner", createCameraScanner());
   // Sign out / open the shop, for the screens around sign-in (shared/ui/session-actions.js)
   provide("session", { signOut, enterApp });
@@ -71,5 +77,11 @@ export function installContainer(){
   provide("inventoryImportService", createLocalFirstStockImport({ store, cloud: cloudGateway, persist: { saveCatalog, saveMoves }, outbox: { flush: flushSbQueue }, invalidate }));
   // Customer credit, held bills and orders (section 3m)
   provide("orderRepository", createLocalFirstOrderRepository({ store, persist: { saveOrders, saveHeldCarts }, outbox }));
+  // The commerce batch (section 3r): price lists, purchase orders, e-invoice / e-way readiness, repacks, vouchers
+  provide("bizRepository", createLocalFirstBizRepository({ store, persist: { saveBiz, saveMoves }, outbox, invalidate }));
+  // Files kept on this device until the cloud has them (a supplier bill's original photo or PDF)
+  provide("blobStore", createBlobStore());
+  // A restaurant's tables and their sessions (section 3o); their orders are orders of kind "table"
+  provide("tableRepository", createLocalFirstTableRepository({ store, persist: { saveTables, saveTableSessions }, outbox: { enqueue } }));
   provide("creditRepository", createLocalFirstCreditRepository({ store, persist: { saveCollections }, outbox: { enqueue } }));
 }

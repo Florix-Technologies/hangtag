@@ -10,8 +10,15 @@ import { ERROR_CODES, userMessage } from '../../../shared/errors/app-error.js';
 import { logger } from '../../../shared/logging/logger.js';
 import { uid } from '../../../shared/utils/ids.js';
 import { paymentsOf } from '../../../domain/sales/payments.js';
+import { normalizeProviderConfig, normalizeProviderIntent } from '../../../domain/sales/payment-provider.js';
 
 export const gateway = () => use("paymentGateway");
+export const paymentProvider = gateway;
+const providerCall = (modern, legacy, ...args) => {
+  const provider = paymentProvider(), fn = provider[modern] || provider[legacy];
+  if(typeof fn !== 'function') throw new Error(`The payment provider does not support ${modern}.`);
+  return fn.apply(provider, args);
+};
 const online = () => !!store.sbClient && store.sbStatus === "connected";
 const OPEN = ["starting", "pending"];
 export const isOpen = I => !!I && OPEN.includes(I.status);
@@ -19,7 +26,7 @@ export const isOpen = I => !!I && OPEN.includes(I.status);
 /* What the provider can take ({ provider, upi, cardLink }); asked once per session, null while unknown or offline */
 export async function loadPayConfig(force){
   if((store.payConfig && !force) || !online()) return store.payConfig;
-  try{ store.payConfig = await gateway().config(); }
+  try{ store.payConfig = normalizeProviderConfig(await paymentProvider().config()); }
   catch(e){
     logger.warn("Payment provider:", e);
     // not set up (or the function isn't deployed): known for this session; anything else is asked again next time
@@ -55,7 +62,9 @@ export async function startIntent(method, amount){
   if(isOpen(old) && old.id){ const c = await cancelIntent(method); if(c && c.status === "verified") return c; }
   s.pi[method] = { status: "starting", method, amount: +amount };
   try{
-    const I = await gateway().create({ method, amount: +amount, saleId: billIdForPayment(), note: s.note || "", expiryMin: store.settings.payExpiry || 5 });
+    const request = { method, amount: +amount, saleId: billIdForPayment(), note: s.note || "", expiryMin: store.settings.payExpiry || 5 };
+    const raw = method === 'upi' ? await providerCall('createDynamicQr', 'create', request) : await providerCall('createPayment', 'create', request);
+    const I = normalizeProviderIntent(raw);
     if(store.payState !== s) return I;
     s.pi[method] = I; persistPending();
     return I;
@@ -71,7 +80,7 @@ export async function checkIntent(method){
   const s = store.payState, I = s && s.pi[method];
   if(!I || !I.id || !isOpen(I)) return I;
   try{
-    const N = await gateway().status(I.id);
+    const N = normalizeProviderIntent(await providerCall('getStatus', 'status', I.id));
     if(store.payState === s && s.pi[method] && s.pi[method].id === N.id){ s.pi[method] = N; persistPending(); }
     return N;
   }catch(e){
@@ -86,7 +95,7 @@ export async function cancelIntent(method){
   if(!I) return null;
   if(!I.id || !isOpen(I)){ if(I.status !== "verified") delete s.pi[method]; persistPending(); return I; }
   try{
-    const N = await gateway().cancel(I.id);
+    const N = normalizeProviderIntent(await providerCall('cancelPayment', 'cancel', I.id));
     if(store.payState === s){ if(N.status === "verified") s.pi[method] = N; else delete s.pi[method]; persistPending(); }
     return N;
   }catch(e){
@@ -107,7 +116,7 @@ export async function abandonIntents(state, { keepVerified = false } = {}){
     store.payPending = { saleId: s.saleId, mode: s.mode, method: s.method, via: s.via, amt: s.amt, pi: Object.fromEntries(verified), t: Date.now() };
     savePayPending();
   }else if(open.length || store.payPending) clearPending();
-  await Promise.all(open.map(I => gateway().cancel(I.id).catch(e => logger.warn("Payment cancel:", e))));
+  await Promise.all(open.map(I => providerCall('cancelPayment', 'cancel', I.id).catch(e => logger.warn("Payment cancel:", e))));
   return verified.map(([, I]) => I);
 }
 
@@ -131,7 +140,7 @@ export async function verifyManualUpi(sales){
     const p = paymentsOf(s).find(x => x.method === "upi" && x.verification === "unverified" && x.ref && !(Date.now() - (x.checkedAt || 0) < 3600e3));
     if(!p) continue;
     try{
-      const r = await gateway().verify({ saleId: s.id, reference: p.ref });
+      const r = await providerCall('verifyPayment', 'verify', { saleId: s.id, reference: p.ref });
       p.checkedAt = Date.now();
       if(r && r.status === "verified"){ p.verification = "verified"; p.intent = r.intentId || p.intent; p.providerRef = r.paymentId || p.providerRef; n++; }
     }catch(e){ logger.warn("UPI verification:", e); if(e && e.code === ERROR_CODES.NOT_CONFIGURED) break; }

@@ -64,7 +64,7 @@ export async function refreshDeliveryStatus(sid){
 export async function invoiceLink(sid){
   if(!online()) return {error:"You're offline. Invoice links need the internet."};
   if(store.sbOfflineQueue.some(q=>q.type==="sale"&&q.sale&&q.sale.id===sid)) return {error:"This bill is still uploading. Try again in a moment."};
-  try{ const r=await messageDelivery().link(sid); return r&&r.url?{url:r.url}:{error:"Invoice links aren't set up yet (RECEIPT_URL on the server)."}; }
+  try{ const r=await messageDelivery().link(sid); return r&&r.url?{url:r.url}:{error:"Invoice links aren't set up yet. The shop's owner can open Settings → Receipt once on this app to set the invoice page."}; }
   catch(e){ return {error:userMessage(e,"Couldn't make the link.")}; }
 }
 /* Stops every invoice link of the bill from working */

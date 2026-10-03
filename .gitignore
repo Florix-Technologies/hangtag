@@ -25,3 +25,6 @@ dist/
 
 # Supabase CLI local state (linked project, CLI version)
 supabase/.temp/
+
+.vercel
+.env*

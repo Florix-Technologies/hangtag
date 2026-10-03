@@ -21,6 +21,11 @@ const API = "https://api.razorpay.com/v1";
 const str = (v) => (typeof v === "string" ? v : v == null ? "" : String(v));
 const fail = (status, error, message) => ({ ok: false, status, error, message });
 export const toPaise = (r) => Math.round((+r || 0) * 100);
+const feePaise = payment => {
+  if(!payment || payment.fee == null || payment.fee === '') return null;
+  const fee = +payment.fee;
+  return Number.isFinite(fee) && fee >= 0 ? Math.round(fee) : null;
+};
 
 /* Razorpay keys from the function's secrets, or null */
 export function razorpayConfig(env) {
@@ -114,8 +119,9 @@ export function qrView(qr, payments, now = Date.now()) {
   if (!qr || typeof qr !== "object" || !qr.id) return { state: "failed", paid: 0 };
   const captured = (payments || []).filter((p) => p && (p.status === "captured" || p.status === "authorized"));
   const paid = captured.length ? captured.reduce((a, p) => a + (+p.amount || 0), 0) : +qr.payments_amount_received || 0;
-  const pay = captured[0];
-  const base = { paid, paymentId: pay ? str(pay.id) : null, method: pay ? str(pay.method) : "upi", rrn: pay && pay.acquirer_data ? str(pay.acquirer_data.rrn) : "" };
+  const pay = captured[0], fees = captured.map(feePaise), hasFee = !!captured.length && fees.every(fee => fee != null);
+  const base = { paid, paymentId: pay ? str(pay.id) : null, method: pay ? str(pay.method) : "upi", rrn: pay && pay.acquirer_data ? str(pay.acquirer_data.rrn) : "",
+    ...(hasFee ? { fee: fees.reduce((sum, fee) => sum + fee, 0) } : {}) };
   if (paid > 0) return { state: "paid", ...base };
   if (qr.status === "closed") return { state: qr.close_reason === "on_demand" ? "cancelled" : "expired", ...base };
   if (qr.close_by && qr.close_by * 1000 < now) return { state: "expired", ...base };
@@ -127,7 +133,9 @@ export function linkView(link, now = Date.now()) {
   if (!link || typeof link !== "object" || !link.id) return { state: "failed", paid: 0 };
   const pays = Array.isArray(link.payments) ? link.payments.filter((p) => p && (p.status === "captured" || p.status === "authorized")) : [];
   const paid = +link.amount_paid || pays.reduce((a, p) => a + (+p.amount || 0), 0);
-  const base = { paid, paymentId: pays[0] ? str(pays[0].payment_id || pays[0].id) : null, method: pays[0] ? str(pays[0].method) : "card", rrn: "" };
+  const fees = pays.map(feePaise), hasFee = !!pays.length && fees.every(fee => fee != null);
+  const base = { paid, paymentId: pays[0] ? str(pays[0].payment_id || pays[0].id) : null, method: pays[0] ? str(pays[0].method) : "card", rrn: "",
+    ...(hasFee ? { fee: fees.reduce((sum, fee) => sum + fee, 0) } : {}) };
   if (paid > 0 && (link.status === "paid" || link.status === "partially_paid")) return { state: "paid", ...base };
   if (link.status === "cancelled") return { state: "cancelled", ...base };
   if (link.status === "expired" || (link.expire_by && link.expire_by * 1000 < now)) return { state: "expired", ...base };
@@ -143,7 +151,8 @@ export function nextIntent(intent, view) {
     if (settled) return null;
     const exact = view.paid === toPaise(intent.amount) && (intent.method !== "card" || !view.method || view.method === "card");
     const open = cur === "pending" || cur === "created";
-    return { status: exact && open ? "verified" : "unmatched", paid_amount: view.paid / 100, provider_payment_id: view.paymentId || null };
+    return { status: exact && open ? "verified" : "unmatched", paid_amount: view.paid / 100, provider_payment_id: view.paymentId || null,
+      ...(view.fee != null && Number.isFinite(+view.fee) && +view.fee >= 0 ? { provider_fee: Math.round(+view.fee) / 100 } : {}) };
   }
   if (settled || cur === view.state) return null;
   if ((cur === "pending" || cur === "created") && ["expired", "cancelled", "failed"].includes(view.state)) return { status: view.state };
@@ -154,7 +163,8 @@ export function nextIntent(intent, view) {
 export const intentReply = (row) => ({ ok: true, id: row.id, method: row.method, kind: row.kind, status: row.status, amount: +row.amount,
   paidAmount: row.paid_amount == null ? null : +row.paid_amount, reference: row.reference, paymentId: row.provider_payment_id || null,
   qrUrl: row.qr_url || null, linkUrl: row.link_url || null, expiresAt: row.expires_at ? Date.parse(row.expires_at) : null,
-  saleId: row.client_sale_id || null, resolution: row.resolution || null, createdAt: row.created_at ? Date.parse(row.created_at) : null });
+  saleId: row.client_sale_id || null, resolution: row.resolution || null, ...(row.provider_fee == null ? {} : { providerFee: +row.provider_fee }),
+  createdAt: row.created_at ? Date.parse(row.created_at) : null });
 
 /* A UPI payment checked by hand (reference typed in) matched to the provider's captured payments: same amount and the
    same bank reference (RRN / UTR). Returns the payment or null. */
@@ -188,7 +198,7 @@ export function webhookTarget(event, now = Date.now()) {
     return { kind: "qr", providerIntentId: str(p.qr_code.entity.id), view: qrView(p.qr_code.entity, pay ? [pay] : [], now) };
   if ((e === "payment_link.paid" || e === "payment_link.expired" || e === "payment_link.cancelled") && p.payment_link && p.payment_link.entity) {
     const link = { ...p.payment_link.entity };
-    if (pay && !Array.isArray(link.payments)) link.payments = [{ payment_id: pay.id, amount: pay.amount, status: pay.status, method: pay.method }];
+    if (pay && !Array.isArray(link.payments)) link.payments = [{ payment_id: pay.id, amount: pay.amount, status: pay.status, method: pay.method, fee: pay.fee }];
     return { kind: "link", providerIntentId: str(link.id), view: linkView(link, now) };
   }
   return null;

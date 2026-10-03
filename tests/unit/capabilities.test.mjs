@@ -34,8 +34,8 @@ const SHOP = 'ab12cd34-ef56-4789-9abc-def012345678', MEMBER = '0f0e0d0c-0b0a-490
 // ---------- the model ----------
 check('five business types with labels (Hotel / Restaurant)', eq(BUSINESS_TYPE_KEYS, ['retail', 'grocery', 'restaurant', 'electronics', 'other'])
   && BUSINESS_TYPES.find((t) => t.key === 'restaurant').label === 'Hotel / Restaurant' && BUSINESS_TYPES.every((t) => t.label && t.hint));
-check('twelve capabilities, each with a human name and a line of help', CAP_KEYS.length === 12 && eq(CAP_KEYS, ['uses_variants', 'uses_serials', 'uses_batches', 'uses_expiry',
-  'uses_weight', 'uses_quotations', 'uses_sales_orders', 'uses_tables', 'uses_table_qr', 'uses_customer_ordering', 'uses_server_ordering', 'uses_kitchen'])
+check('thirteen capabilities, each with a human name and a line of help', CAP_KEYS.length === 13 && eq(CAP_KEYS, ['uses_variants', 'uses_serials', 'uses_batches', 'uses_expiry',
+  'uses_weight', 'uses_quotations', 'uses_sales_orders', 'uses_mobile_store', 'uses_tables', 'uses_table_qr', 'uses_customer_ordering', 'uses_server_ordering', 'uses_kitchen'])
   && CAPABILITIES.every((c) => c.label && !/uses_/.test(c.label) && c.help));
 check('human names as the owner reads them', CAPABILITIES.find((c) => c.key === 'uses_variants').label === 'Product variants'
   && CAPABILITIES.find((c) => c.key === 'uses_serials').label === 'Serial number tracking' && CAPABILITIES.find((c) => c.key === 'uses_weight').label === 'Weight-based products'
@@ -68,6 +68,9 @@ check('7 grocery + serial numbers', capsFor('grocery', { uses_serials: true }).u
 check('7 restaurant + batch and expiry', (() => { const c = capsFor('restaurant', { uses_batches: true, uses_expiry: true }); return c.uses_batches && c.uses_expiry && c.uses_tables; })());
 check('7 a default switched off stays off', !capsFor('retail', { uses_variants: false }).uses_variants && !capsFor('electronics', { uses_serials: false }).uses_serials);
 check('7 restaurant features that build on tables are all off while tables are off', (() => { const c = capsFor('restaurant', { uses_tables: false }); return !c.uses_table_qr && !c.uses_customer_ordering && !c.uses_server_ordering && !c.uses_kitchen; })());
+check('7 mobile store is opt-in and stays off without sales orders', !defaultCaps('retail').uses_mobile_store
+  && capsFor('retail', { uses_mobile_store: true }).uses_mobile_store
+  && !capsFor('retail', { uses_mobile_store: true, uses_sales_orders: false }).uses_mobile_store);
 check('7 only differences from the type\'s defaults are stored', eq(capOverridesAfter('retail', {}, { uses_variants: true, uses_serials: true }).overrides, { uses_serials: true })
   && eq(capOverridesAfter('retail', { uses_serials: true }, { uses_serials: false }).overrides, {}));
 check('7 an unknown capability or a value that isn\'t on/off is refused', /Unknown capability/.test(capOverridesAfter('retail', {}, { uses_magic: true }).error)

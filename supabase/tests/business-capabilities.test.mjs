@@ -129,7 +129,7 @@ console.log('=== capabilities in the synced settings ===');
   const kept = { caps: { uses_tables: true }, capsAt: 2000 };
   check('app and database agree: an older copy keeps the newer choices, a newer copy wins',
     eq(keepNewerCaps({ lowStock: 1 }, kept).caps, kept.caps) && eq(keepNewerCaps({ caps: {}, capsAt: 1 }, kept).caps, kept.caps)
-    && eq(keepNewerCaps({ caps: {}, capsAt: 3000 }, kept).caps, {}) && CAP_KEYS.length === 12);
+    && eq(keepNewerCaps({ caps: {}, capsAt: 3000 }, kept).caps, {}) && CAP_KEYS.length === 13);
 }
 
 console.log('=== team members: capabilities are settings (manage_settings), and never a permission ===');

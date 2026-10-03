@@ -8,6 +8,8 @@ import { closeModal } from '../../../shared/components/modal.js';
 import { storage } from '../../../shared/state/persistence.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { objOr } from '../../../shared/utils/objects.js';
+import { resetAssistant } from '../../assistant/pages/assistant-page.js';
+import { resetProductDraftAssistant } from '../../products/components/product-draft-assistant.js';
 
 /* ---------- Each account keeps its own data on this device ----------
    The app works on the plain keys below. When a different account signs in, the current data is put away
@@ -86,6 +88,7 @@ export function loadUserState(){
   applyCatalogMigration();
   store.editor = null; store.lastSale = null; store.retState = null; store.stockOp = null; store.showAllBills = false;
   store.purchaseForm = null; store.supplierView = null; store.stockCount = null; store.prodImport = null; store.quickProduct = null; store.invSub = "levels";
+  resetAssistant(); resetProductDraftAssistant();
   closeSheets(); closeModal();
   renderAll();
 }

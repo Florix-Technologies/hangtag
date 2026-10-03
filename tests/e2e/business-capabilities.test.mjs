@@ -69,8 +69,8 @@ try {
   // ================= the navigation =================
   await A.run('setTab("home");renderAll()'); await sleep(200);
   const tabs = await A.tabs();
-  check('tab bar: Home, Sell, Inventory, Products, Customers, Reports, Settings (in that order, Orders only with a part)',
-    JSON.stringify(tabs.filter((t) => t !== 'orders')) === JSON.stringify(['home', 'sell', 'stock', 'products', 'customers', 'report', 'settings'])
+  check('tab bar: Home, Sell, Inventory, Products, Customers, Reports, Ask, Settings (in that order, Orders only with a part)',
+    JSON.stringify(tabs.filter((t) => t !== 'orders')) === JSON.stringify(['home', 'sell', 'stock', 'products', 'customers', 'report', 'assistant', 'settings'])
     && tabs.includes('orders') === (await A.run('return subviewsOf("orders").length>0')), tabs);
   check('Inventory is the Stock tab (same id), labelled Inventory', (await A.text('.nav [data-tab="stock"]')) === 'Inventory');
   check('no Tables or Kitchen for a grocery', !tabs.includes('tables') && !tabs.includes('kitchen') && !(await A.run('return moduleShown("tables")||moduleShown("kitchen")')));

@@ -40,6 +40,7 @@ export const CAPABILITIES = [
   { key: "uses_weight", label: "Weight-based products", help: "Sell by kg, gram or litre, typed in or read from a weighing scale.", group: "products" },
   { key: "uses_quotations", label: "Quotations", help: "Price quotes for a customer, turned into a bill when they agree.", group: "orders" },
   { key: "uses_sales_orders", label: "Sales orders", help: "Take an order now, deliver and bill it later (in parts if needed).", group: "orders" },
+  { key: "uses_mobile_store", label: "Mobile store", help: "Customers browse live stock and send an order from their phone; staff still confirms payment and makes the bill.", group: "orders", needs: "uses_sales_orders" },
   { key: "uses_tables", label: "Table ordering", help: "Tables with their own running orders and bills.", group: "restaurant" },
   { key: "uses_table_qr", label: "Table QR", help: "A QR code on each table.", group: "restaurant", needs: "uses_tables" },
   { key: "uses_customer_ordering", label: "Customer table ordering", help: "Guests order from their own phone by scanning the table's QR.", group: "restaurant", needs: "uses_table_qr" },

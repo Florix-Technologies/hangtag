@@ -145,7 +145,7 @@ Deno.serve(async (req) => {
       const id = crypto.randomUUID(), now = new Date().toISOString();
       const ins = await T().insert({ id, owner_id: shop, client_sale_id: pay.sale_id, amount: pay.amount, method: "upi", kind: "match", provider: cfg.name,
         provider_intent_id: String(found.id), provider_payment_id: String(found.id), reference: String(found.id), status: "verified",
-        paid_amount: +found.amount / 100, checked_at: now });
+        paid_amount: +found.amount / 100, ...(found.fee != null && Number.isFinite(+found.fee) && +found.fee >= 0 ? { provider_fee: Math.round(+found.fee) / 100 } : {}), checked_at: now });
       if (ins.error) return reply(409, { ok: false, error: "conflict", message: "That UPI payment is already matched to another bill." });
       const up = await admin.from("hangtag_payments").update({ verification: "verified", intent_id: id, provider_payment_id: String(found.id) })
         .eq("owner_id", shop).eq("id", pay.id);

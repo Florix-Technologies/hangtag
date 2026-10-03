@@ -16,6 +16,8 @@ import { ICON } from '../shared/constants/icons.js';
 import { NAV_ICONS } from '../shared/constants/nav-icons.js';
 import { TABS, applyAccessUI, tabOpen } from '../features/shop/components/access-ui.js';
 import { moduleDef, moduleShown, navSlots, registeredModules, shownModules } from '../features/shop/services/modules.js';
+import { currentPerms, currentRole } from '../features/shop/services/access.js';
+import { mobileLandingModule, mobileModulesFor } from '../domain/shop/mobile-workflow.js';
 
 /* ================= render + navigation ================= */
 
@@ -24,13 +26,14 @@ const ROOM = { p: 6, t: 8, d: 11 };
 let barSig = "";
 function drawTabBar(){
   const nav = $(".nav"); if(!nav) return;
-  const list = shownModules(), cur = store.prefs.tab, slots = {};
-  Object.keys(ROOM).forEach(k => { slots[k] = navSlots(list, cur, ROOM[k]); });
-  const sig = JSON.stringify([list.map(d => d.id + ":" + d.label), slots]);
+  const list = shownModules(), cur = store.prefs.tab, phoneList = mobileModulesFor(currentRole(), list, currentPerms()), phoneIds = new Set(phoneList.map(d => d.id)), slots = {};
+  slots.p = navSlots(phoneList, phoneIds.has(cur) ? cur : '', ROOM.p);
+  ['t', 'd'].forEach(k => { slots[k] = navSlots(list, cur, ROOM[k]); });
+  const sig = JSON.stringify([list.map(d => d.id + ":" + d.label), [...phoneIds], slots]);
   if(sig === barSig && nav.querySelector("[data-navmore]")) return;
   barSig = sig;
   const off = id => Object.keys(ROOM).filter(k => !slots[k].bar.includes(id)).map(k => "n" + k);
-  nav.innerHTML = list.map(d => { const c = off(d.id);
+  nav.innerHTML = list.map(d => { const c = off(d.id); if(!phoneIds.has(d.id)) c.push('phoneoff');
     return `<button type="button"${d.view === false ? "" : ' role="tab"'} data-tab="${esc(d.id)}" aria-selected="false"${c.length ? ` class="${c.join(" ")}"` : ""}>${d.icon}<span>${esc(d.label)}</span></button>`; }).join("")
     + `<button type="button" class="navmore ${Object.keys(ROOM).filter(k => slots[k].more.length).map(k => "m" + k).join(" ")}" data-navmore aria-haspopup="dialog">${NAV_ICONS.more}<span>More</span></button>`;
 }
@@ -46,6 +49,10 @@ export function renderNav(){
   // plain note instead of any screen
   applyAccessUI();
   if(!tabOpen(store.prefs.tab)){ const t = TABS.find(tabOpen) || shownModules().map(d => d.id).find(tabOpen); if(t) store.prefs.tab = t; }
+  if(window.innerWidth < 600){
+    const landing = mobileLandingModule(currentRole(), shownModules(), currentPerms(), store.prefs.tab);
+    if(landing && landing !== store.prefs.tab){ store.prefs.tab = landing; savePrefs(); }
+  }
   const none = !tabOpen(store.prefs.tab);
   drawTabBar();
   $$(".nav [data-tab]").forEach(b => b.setAttribute("aria-selected", String(!none && b.dataset.tab === store.prefs.tab)));
@@ -75,7 +82,8 @@ function switchTab(t){
 }
 /* "More" in the tab bar: the modules that don't fit on this screen */
 export function openNavMore(){
-  const hidden = $$(".nav [data-tab]").filter(b => getComputedStyle(b).display === "none");
+  const phone = window.innerWidth < 600;
+  const hidden = $$(".nav [data-tab]").filter(b => getComputedStyle(b).display === "none" && !(phone && b.classList.contains('phoneoff')));
   $("#modalHost").innerHTML = `<div class="scrim" data-modal-scrim><div class="sheet navsheet" role="dialog" aria-modal="true" aria-labelledby="navMoreT">
     <div class="sh-head"><h3 id="navMoreT" style="margin:0;flex:1">More</h3><button class="iconbtn" type="button" data-modal-close aria-label="Close">${ICON.x}</button></div>
     <div class="navlist">${hidden.map(b => `<button type="button" class="navitem" data-tab="${esc(b.dataset.tab)}">${b.innerHTML}</button>`).join("")}</div></div></div>`;

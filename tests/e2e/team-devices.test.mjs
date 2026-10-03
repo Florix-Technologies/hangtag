@@ -202,10 +202,13 @@ try {
   check('no live updates for a member\'s phone (it polls)', await B.run('return !sbRealtimeChannel'));
 
   console.log('--- what a cashier may and may not do ---');
-  check('Reports hidden; Sell, Stock, Products, Customers shown (Products may sit behind More on a phone)', !(await B.vis('.nav [data-tab="report"]')) && await B.vis('.nav [data-tab="sell"]') && await B.run('return tabOpen("products")&&tabOpen("stock")&&tabOpen("customers")&&!tabOpen("report")'));
+  check('cashier phone workflow shows Sell and Customers, while hiding Stock, Products and Reports', !(await B.vis('.nav [data-tab="report"]')) && await B.vis('.nav [data-tab="sell"]')
+    && !(await B.vis('.nav [data-tab="products"]')) && !(await B.vis('.nav [data-tab="stock"]')) && await B.vis('.nav [data-tab="customers"]')
+    && await B.run('return tabOpen("products")&&tabOpen("stock")&&tabOpen("customers")&&!tabOpen("report")'));
   await B.run('setTab("report")'); await sleep(100);
   check('...and Reports can\'t be opened', (await B.run('return prefs.tab')) !== 'report');
-  await B.run('setTab("products")'); await sleep(200);
+  // The desktop workflow still exposes Products read-only; permission enforcement hides every write control there.
+  await B.setViewport({ width: 800, height: 880 }); await B.run('renderAll();setTab("products")'); await sleep(200);
   check('Products: the Edit and Add buttons are hidden', await B.run('return document.querySelectorAll("#prodBody [data-editp]").length>0') && !(await B.vis('#prodBody [data-editp]')) && !(await B.vis('#prodBody [data-act="addp"]')));
   await B.run('openEditor("p1")'); await sleep(150);
   check('opening the product editor anyway is refused, with a plain reason', (await B.run('return editor')) === null && /can't add or edit products/.test(await B.text('#toastHost') || ''), await B.text('#toastHost'));
@@ -213,7 +216,7 @@ try {
   const p1 = (await q(`SELECT name FROM public.hangtag_products WHERE owner_id = $1 AND id = 'p1'`, [OWNER]))[0];
   check('the database refuses a direct product write from the cashier (insert refused, update changes nothing)', direct.a === '42501' && p1.name !== 'Hacked'
     && !(await q(`SELECT 1 FROM public.hangtag_products WHERE id = 'hack1'`)).length, { direct, p1 });
-  await B.run('setTab("sell")'); await sleep(150);
+  await B.setViewport({ width: 420, height: 880 }); await B.run('renderAll();setTab("sell")'); await sleep(150);
   await B.run(`const v=prod("p1").variants[0].id;addToLines(cart,v,1);await checkout("cash");closeSheets();await flushSbQueue()`);
   const sales = await q(`SELECT id, owner_id::text, total FROM public.hangtag_sales`);
   check('the cashier sells: the bill is saved in the owner\'s shop', sales.length === 1 && sales[0].owner_id === OWNER && (await B.run('return sbOfflineQueue.length')) === 0, sales);
@@ -296,8 +299,9 @@ try {
   await D.fill('#staffPass', 'counter-pass-1'); await D.click('#staffSubmit');
   check('the right one: signed in as the manager, this phone registered', await D.until('authUser&&sbStatus==="connected"&&isMember()', 20000) && await D.run('return access.role==="manager"')
     && +(await q(`SELECT count(*) AS n FROM public.hangtag_devices WHERE user_id = $1`, [meera]))[0].n === 1, await D.text('#authErr'));
-  check('a manager sees Reports and can edit products, but has no Team & devices', await D.vis('.nav [data-tab="report"]') && await D.run('return can("manage_products")&&!can("manage_users")')
-    && await D.run('openSettings();return !document.getElementById("teamSec")&&/Signed in as Meera \\(Manager\\) at Aura Threads/.test(document.getElementById("setSub").textContent)'));
+  const managerAccess = { report: await D.vis('.nav [data-tab="report"]'), permissions: await D.run('return {products:can("manage_products"),users:can("manage_users")}'), settings: await D.run('openSettings();return {team:!!document.getElementById("teamSec"),sub:document.getElementById("setSub").textContent}') };
+  check('a manager sees Reports and can edit products, but has no Team & devices', managerAccess.report && managerAccess.permissions.products && !managerAccess.permissions.users
+    && !managerAccess.settings.team && /Signed in as Meera \(Manager\) at Aura Threads/.test(managerAccess.settings.sub), managerAccess);
   await D.run('closeSettings();await requestSignOut()'); await sleep(300);
   check('signing out puts the key away (not sent any more)', await D.run('return !authUser&&localStorage.getItem("hangtag_device_key")===null'));
   await D.click('#staffSwitch [data-switchto="staff"]'); await sleep(100);

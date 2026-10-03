@@ -39,3 +39,42 @@
   .sm-t .sub{font-size:12px}
 }
 
+/* ---------- Smart reorder / inventory intelligence ---------- */
+.intel-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px 20px;flex-wrap:wrap;margin-bottom:16px}
+.intel-head .eyebrow{display:block;margin-bottom:5px;color:var(--accent)}
+.intel-head p{margin:6px 0 0;max-width:68ch;color:var(--ink-2);font-size:14px}
+.intel-method{align-items:flex-start}
+.intel-method span{min-width:0}.intel-method small{color:var(--ink-3);white-space:nowrap}
+.intel-section{margin-top:18px}
+.intel-section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:10px;margin-bottom:10px}
+.intel-section-head h3{margin:0;font-size:17px}.intel-section-head p{margin:3px 0 0;color:var(--ink-3);font-size:13px}
+.intel-list{display:grid;gap:10px}
+.intel-card{border:1px solid #EFD89C;border-radius:16px;background:linear-gradient(145deg,var(--warn-soft),var(--bg) 62%);padding:14px;min-width:0}
+.intel-card.critical{border-color:#F0CACA;background:linear-gradient(145deg,var(--crit-soft),var(--bg) 62%)}
+.intel-card-head{display:flex;align-items:flex-start;gap:10px}
+.intel-name{min-width:0;flex:1}.intel-name>div{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.intel-name h4{font-size:15.5px;margin:0;line-height:1.25}
+.intel-name p{margin:4px 0 0;color:var(--ink-2);font-size:12.5px}
+.intel-badge{display:inline-flex;align-items:center;border-radius:999px;padding:2px 8px;background:var(--warn-soft);color:var(--warn-ink);font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+.intel-badge.critical{background:var(--crit-soft);color:var(--crit)}
+.intel-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:12px}
+.intel-metrics>div{display:flex;flex-direction:column;gap:1px;padding:8px 9px;border-radius:10px;background:rgba(255,255,255,.78);border:1px solid rgba(230,232,238,.8);min-width:0}
+.intel-metrics span,.intel-action span{font-size:11.5px;color:var(--ink-3)}
+.intel-metrics b{font-size:14px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.intel-vars{display:grid;gap:1px;margin-top:10px;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--line)}
+.intel-vars>div{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:8px 12px;padding:7px 9px;background:var(--bg);font-size:12.5px}
+.intel-vars small{color:var(--ink-3)}.intel-vars b{font-variant-numeric:tabular-nums;color:var(--warn-ink)}
+.intel-action{display:flex;align-items:flex-end;justify-content:space-between;gap:10px;margin-top:12px;padding-top:11px;border-top:1px solid rgba(138,90,0,.14)}
+.intel-card.critical .intel-action{border-color:rgba(208,59,59,.16)}
+.intel-action>div{display:grid;line-height:1.2}.intel-action strong{font-size:24px;letter-spacing:-.03em;font-variant-numeric:tabular-nums}.intel-action small{color:var(--ink-3);font-size:11.5px;margin-top:3px}
+.intel-action .btn{min-height:42px}
+.intel-watch-grid{display:grid;gap:10px;margin-top:18px}
+.intel-watch{padding:14px}.intel-watch .card-h{margin-bottom:8px}.intel-count{display:grid;place-items:center;min-width:25px;height:25px;padding:0 7px;border-radius:999px;background:var(--wash);font-size:12px;font-weight:700}
+.intel-watch-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-top:1px solid var(--line)}
+.intel-watch-row>span{display:flex;flex-direction:column;min-width:0}.intel-watch-row>span:last-child{text-align:right;align-items:flex-end;flex:none}
+.intel-watch-row b{font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.intel-watch-row strong{font-size:13px;font-variant-numeric:tabular-nums}.intel-watch-row small{font-size:11.5px;color:var(--ink-3)}
+.intel-footnote{margin:14px 2px 0}.empty.compact{padding:22px 16px}
+@media (min-width:700px){
+  .intel-metrics{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .intel-watch-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media (min-width:1000px){.intel-list{grid-template-columns:repeat(2,minmax(0,1fr))}}

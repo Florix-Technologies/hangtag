@@ -124,6 +124,17 @@
  */
 
 /**
+ * "voiceInput": optional browser/device speech. Implementation: infrastructure/browser/browser-speech.js.
+ * Product search still uses the normal text input and search index; a transcript is only another way to fill it.
+ * @typedef {Object} VoiceInputPort
+ * @property {() => boolean} available
+ * @property {(opts?: {lang?: string}) => Promise<string>} listen
+ * @property {() => void} stop
+ * @property {() => boolean} canSpeak
+ * @property {(text: string, opts?: {lang?: string}) => boolean} speak
+ */
+
+/**
  * "qrCodeService": QR codes as SVG. Implementation: infrastructure/codes/qr-svg.js (vendored qrcode-generator, MIT).
  * @typedef {Object} QrCodeServicePort
  * @property {(text: string, opts?: Object) => string} render
@@ -219,18 +230,19 @@
  */
 
 /**
- * "paymentGateway": verified UPI (single-use QR for an exact amount) and card (payment link) payments. Implementation:
- * infrastructure/payments/payment-gateway-client.js → Edge Function payment-gateway (Razorpay keys live there; only the
- * provider's own record of a captured payment makes an intent "verified"). Reach it through
+ * "paymentGateway": provider-neutral verified UPI (single-use QR for an exact amount) and card payment intents.
+ * Implementation: infrastructure/payments/payment-gateway-client.js → Edge Function payment-gateway (provider keys stay
+ * server-side; only the provider's verified record makes an intent "verified"). Reach it through
  * features/sales/use-cases/provider-payment.js.
  * @typedef {Object} PaymentGatewayPort
  * @property {() => Promise<{provider: (string|null), upi: boolean, cardLink: boolean}>} config
- * @property {(req: {method: "upi"|"card", amount: number, saleId: string, note?: string, expiryMin?: number}) => Promise<Object>} create
+ * @property {(req: {method: "upi"|"card", amount: number, saleId: string, note?: string, expiryMin?: number}) => Promise<Object>} createPayment
  *   → the intent { id, status: "pending", qrUrl | linkUrl, reference, expiresAt }.
- * @property {(id: string) => Promise<Object>} status  The intent as the provider sees it now.
- * @property {(id: string) => Promise<Object>} cancel  Closes it ("verified" instead when the money arrived first).
- * @property {(req: {saleId: string, reference: string}) => Promise<{status: string}>} verify  Matches a UPI payment checked by hand.
- * @property {(returnId: string) => Promise<{refundId: string}>} refundReturn  A return's refund back onto its bill's verified payment.
+ * @property {(req: {amount: number, saleId: string, note?: string, expiryMin?: number}) => Promise<Object>} createDynamicQr
+ * @property {(id: string) => Promise<Object>} getStatus  The intent as the provider sees it now.
+ * @property {(id: string) => Promise<Object>} cancelPayment  Closes it ("verified" instead when the money arrived first).
+ * @property {(req: {saleId: string, reference: string}) => Promise<{status: string}>} verifyPayment  Matches a UPI payment checked by hand.
+ * @property {(req: {returnId: string}) => Promise<{refundId: string}>} refund  A return's refund back onto its bill's verified payment.
  * @property {() => Promise<Object[]>} unmatched  Money received that isn't on any bill.
  * @property {(req: {id: string, resolution: "refund"|"refunded"|"allocated", note?: string}) => Promise<Object>} resolve
  *   Every call throws an AppError when it can't be done: NOT_CONFIGURED, VALIDATION, CONFLICT, NOT_FOUND, AUTH, DELIVERY, NETWORK.

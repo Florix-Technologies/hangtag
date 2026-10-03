@@ -8,8 +8,9 @@ import { levelOf, lowAt } from '../../inventory/services/stock-levels.js';
 import { liveProducts } from '../../products/services/catalog.js';
 import { todayStats } from '../../sales/services/sales-log.js';
 import { syncSummary } from '../../sync/components/sync-status.js';
-import { can, canAny } from '../../shop/services/access.js';
+import { can, canAny, currentRole } from '../../shop/services/access.js';
 import { moduleShown } from '../../shop/services/modules.js';
+import { orderMobileActions } from '../../../domain/shop/mobile-workflow.js';
 import { shopTypeLabel } from '../../shop/services/shop-caps.js';
 import { vLabel, variantsOf } from '../../../domain/catalog/variants.js';
 import { payLabel } from '../../../domain/sales/payments.js';
@@ -22,16 +23,21 @@ import { inr } from '../../../shared/formatting/money.js';
 
 /* Quick actions: [label, the button's data attribute, the module it belongs to, any of these permissions] */
 const ACTIONS = [
-  ["New sale", 'data-tab="sell"', "sell", ["create_sale"], "sell"],
-  ["Orders", 'data-tab="orders"', "orders", ["create_sale", "create_order"], "orders"],
-  ["Stock in", 'data-act="stockin"', "stock", ["manage_inventory"], "stock"],
-  ["Add product", 'data-act="addp"', "products", ["manage_products"], "products"],
-  ["Add customer", 'data-act="custadd"', "customers", ["create_sale", "collect_credit", "create_order"], "customers"],
-  ["Reports", 'data-tab="report"', "report", ["view_reports"], "report"],
-  ["Settings", 'data-tab="settings"', "settings", [], "settings"],
+  { id:"sale", label:"New sale", attr:'data-tab="sell"', module:"sell", perms:["create_sale"], icon:"sell" },
+  { id:"scan", label:"Scan", attr:'data-act="scan"', module:"sell", perms:["create_sale"], icon:"sell" },
+  { id:"orders", label:"Orders", attr:'data-tab="orders"', module:"orders", perms:["create_sale", "create_order"], icon:"orders" },
+  { id:"stock", label:"Stock", attr:'data-tab="stock"', module:"stock", perms:["manage_inventory", "create_purchase"], icon:"stock" },
+  { id:"reorder", label:"Smart reorder", attr:'data-tab="stock" data-subview="stock:smart"', module:"stock", perms:["manage_inventory", "view_reports"], icon:"stock" },
+  { id:"suppliers", label:"Suppliers", attr:'data-tab="stock" data-subview="stock:suppliers"', module:"stock", perms:["create_purchase"], icon:"stock" },
+  { id:"products", label:"Products", attr:'data-tab="products"', module:"products", perms:["manage_products"], icon:"products" },
+  { id:"customers", label:"Customers", attr:'data-tab="customers"', module:"customers", perms:["create_sale", "collect_credit", "create_order"], icon:"customers" },
+  { id:"reports", label:"Reports & profit", attr:'data-tab="report"', module:"report", perms:["view_reports"], icon:"report" },
+  { id:"tables", label:"Tables", attr:'data-tab="tables"', module:"tables", perms:["manage_tables", "create_order"], icon:"tables" },
+  { id:"kitchen", label:"Kitchen queue", attr:'data-tab="kitchen"', module:"kitchen", perms:["manage_kitchen"], icon:"kitchen" },
+  { id:"settings", label:"Settings", attr:'data-tab="settings"', module:"settings", perms:[], icon:"settings" },
 ];
 /* The quick actions this person has in this shop: [{ label, attr }] */
-export const homeActions = () => ACTIONS.filter(([, , mod, perms]) => moduleShown(mod) && (!perms.length || canAny(perms))).map(([label, attr, , , icon]) => ({ label, attr, icon }));
+export const homeActions = () => orderMobileActions(currentRole(), ACTIONS.filter(a => moduleShown(a.module) && (!a.perms.length || canAny(a.perms))));
 
 /* Variants running low or sold out (products on sale), fewest first */
 export function stockAlerts(){

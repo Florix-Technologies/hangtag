@@ -11,6 +11,8 @@ import { productText, variantText } from '../../sales/services/search.js';
 import { $, esc } from '../../../shared/dom.js';
 import { inr } from '../../../shared/formatting/money.js';
 import { norm } from '../../../shared/utils/text.js';
+import { can } from '../../shop/services/access.js';
+import { voiceSearchButtonHTML } from '../../search/components/voice-search.js';
 
 export function emptyProductsHTML(){return `<div class="empty"><b>No products yet</b><p>Add your products first — then stock and sales show up here.</p><div class="row c"><button class="btn primary" data-act="gosetup">Add products</button></div></div>`}
 /* ---------- product list ---------- */
@@ -29,10 +31,10 @@ export function renderProducts(){
     if(store.prodView==="low"&&!variantsOf(p).some(v=>levelOf(stockOf(v.id),p)!=="ok"))return false;
     return !toks.length||toks.every(t=>productText(p).includes(t)||variantsOf(p,true).some(v=>variantText(p,v).includes(t)));
   });
-  let h=`<div class="ptools"><div class="search"><input id="prodSearch" type="search" placeholder="Search name, SKU or barcode" value="${esc(store.prodQuery)}" autocomplete="off"></div>
+  let h=`<div class="ptools"><div class="search"><input id="prodSearch" type="search" placeholder="Search name, SKU or barcode" value="${esc(store.prodQuery)}" autocomplete="off"></div>${voiceSearchButtonHTML('prodSearch')}
     ${cs.length?`<select id="prodCat" class="sel"><option value="">All categories</option>${cs.map(c=>`<option${c===store.prodCat?" selected":""}>${esc(c)}</option>`).join("")}</select>`:""}
     <div class="seg" role="group" aria-label="Show">${[["active","Active"],["low","Low stock"],["archived","Archived"]].map(([k,l])=>`<button data-prodview="${k}" aria-pressed="${store.prodView===k}">${l}</button>`).join("")}</div>
-    <button class="btn sm" data-act="prodimport">Import</button><button class="btn sm primary" data-act="addp">+ Add product</button></div>`;
+    <button class="btn sm" data-act="prodimport">Import</button>${can('manage_products') ? '<button class="btn sm" data-product-draft>Draft from description</button>' : ''}<button class="btn sm primary" data-act="addp">+ Add product</button></div>`;
   if(store.catalog&&store.catalog.example)h+=`<div class="banner"><span><b>These are example products.</b> Edit them to match your shop — names, colours, sizes, prices and real stock.</span></div>`;
   const groups=colorGroups();
   if(groups.length)h+=`<div class="card grp"><div class="card-h"><div><h3>Combine colours into one product?</h3><p class="note">These look like colours of the same product. Review each one first — nothing changes until you confirm.</p></div></div>${groups.map(g=>`<div class="row grp-row"><span><b>${esc(g.base)}</b> · ${g.items.map(i=>esc(i.color)).join(", ")}</span><button class="btn xs" data-grouprev="${esc(g.base)}">Review</button></div>`).join("")}</div>`;

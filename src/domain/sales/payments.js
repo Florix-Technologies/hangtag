@@ -9,6 +9,7 @@
 // refused. Pure; amounts in rupees in and out, compared in paise.
 import { sumP, toPaise, toRupees, tooPrecise } from './paise.js';
 import { inrx } from '../../shared/formatting/money.js';
+import { providerFee } from './payment-provider.js';
 
 export const PAY_METHODS=["cash","upi","card"];
 export const PAY_LABELS={cash:"Cash",upi:"UPI",card:"Card",due:"On account"};
@@ -116,6 +117,7 @@ export function settlePayments(due,allocations,opts){
       if(PROVIDER_VIA.includes(via)){
         p.verification="verified"; p.intent=a.intent.id; p.providerRef=String(a.intent.paymentId||a.intent.reference||"").slice(0,40);
         if(p.providerRef) p.ref=p.providerRef;
+        const fee=providerFee(a.intent.providerFee); if(fee!=null) p.providerFee=fee;
       }else{
         p.verification=a.method==="upi"?"unverified":"recorded";
         const ref=String(a.ref==null?"":a.ref).trim(); if(ref) p.ref=ref;

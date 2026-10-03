@@ -33,7 +33,10 @@ function heldHTML(){
 }
 function orderRowHTML(o, today){
   const T = orderTotals(o), st = shownStatus(o, today), left = (o.items || []).reduce((a, l) => a + remaining(l), 0), billable = !cartBlock(o, today);
+  const mobile = o.kind === "sales" && o.source === "customer";
   const sub = [dayLab(dayKey(o.t)), (o.items || []).length + " line" + ((o.items || []).length === 1 ? "" : "s"),
+    mobile ? (o.checkoutMode === "assisted" ? "in-store assisted cart" : "mobile store order") : "",
+    mobile ? ({upi:"prefers UPI",cash:"prefers cash",counter:"pay at checkout"}[o.paymentPreference] || "pay at checkout") : "",
     o.kind === "quote" && o.validUntil ? (isExpired(o, today) ? "expired " : "valid till ") + dayLab(o.validUntil) : "",
     o.kind === "sales" && o.quoteNo ? "from "+o.quoteNo : "", o.kind === "sales" && (st === "partial" || st === "confirmed") && left ? left + " to deliver" : ""].filter(Boolean).join(" · ");
   return `<div class="ocard" data-orderrow="${esc(o.id)}"><button class="oc-main asbtn" data-ordopen="${esc(o.id)}"><b>${esc(o.no || KIND_LABELS[o.kind])} · ${esc(o.cust && o.cust.name || "No customer")}</b><small>${esc(sub)}</small></button>

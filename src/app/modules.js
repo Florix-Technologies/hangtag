@@ -33,6 +33,9 @@ import { renderKitchenPage } from '../features/restaurant/pages/kitchen-page.js'
 import { mayWorkTables } from '../features/restaurant/services/restaurant-state.js';
 import { installRestaurantTimers } from './events/restaurant-events.js';
 import { invoicePageHTML, quotationSettingsHTML } from '../features/orders/components/quotation-settings.js';
+import { installAssistantEvents, renderAssistantPage } from '../features/assistant/pages/assistant-page.js';
+import { installProductDraftEvents } from '../features/products/components/product-draft-assistant.js';
+import { installVoiceSearch } from '../features/search/components/voice-search.js';
 
 let installed = false;
 export function installModules(){
@@ -48,6 +51,7 @@ export function installModules(){
   // Inventory (T2): purchases, suppliers and stock count, for the roles that use them
   INVENTORY_SUBVIEWS.forEach((d, i) => registerSubview("stock", { id: d.id, label: d.label, order: 20 + 10 * i, perms: d.perms, ...(d.available ? { available: d.available } : {}), render: host => renderInventoryPart(d, host) }));
   registerModule({ id: "report", render: renderReport });
+  registerModule({ id: "assistant", label: "Ask", order: 85, phone: 55, perms: ["view_reports"], render: renderAssistantPage });
   registerModule({ id: "customers", render: renderCustomers });
   // don't redraw the product list under someone typing in it (except its search box)
   registerModule({ id: "products", render(){ const a = document.activeElement; if(!(a && a.closest && a.closest("#v-products") && a.id !== "prodSearch")) renderProducts(); } });
@@ -67,6 +71,9 @@ export function installModules(){
   registerModule({ id: "tables", label: "Tables", order: 32, phone: 25, caps: ["uses_tables"], perms: ["create_sale", "create_order", "manage_tables", "manage_settings"], available: mayWorkTables, render: renderTablesPage });
   registerModule({ id: "kitchen", label: "Kitchen", order: 34, phone: 26, caps: ["uses_kitchen"], perms: ["manage_kitchen"], render: renderKitchenPage });
   installRestaurantTimers();
+  installAssistantEvents();
+  installProductDraftEvents();
+  installVoiceSearch();
   document.addEventListener("click", e => {
     if(onSubviewClick(e)) return;
     if(e.target && e.target.closest && e.target.closest("[data-navmore]")) openNavMore();

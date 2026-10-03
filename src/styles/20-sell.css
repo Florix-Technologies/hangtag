@@ -136,4 +136,7 @@
 .tip{position:fixed;z-index:80;pointer-events:none;background:var(--bg);border:1px solid var(--line);box-shadow:0 8px 24px rgba(16,19,31,.14);border-radius:10px;padding:8px 11px;font-size:12.5px;max-width:240px}
 .tip .tv{font-size:15px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums}
 .tip .tl2{color:var(--ink-2)}
-
+.voicebtn{flex:none;min-height:42px;gap:5px}
+.voicebtn.listening{border-color:var(--accent);background:var(--wash);animation:voice-pulse 1s ease-in-out infinite}
+@keyframes voice-pulse{50%{transform:scale(.97);opacity:.72}}
+@media (max-width:480px){.voicebtn .voice-label{display:none}.voicebtn{width:44px;padding-left:0;padding-right:0}}

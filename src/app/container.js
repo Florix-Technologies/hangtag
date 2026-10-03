@@ -35,6 +35,7 @@ import { createLocalFirstPurchaseRepository } from '../infrastructure/repositori
 import { saveCollections, saveHeldCarts, saveOrders, savePurchases, saveSupplierPays, saveSuppliers, saveTableSessions, saveTables } from '../shared/state/persistence.js';
 import { createLocalFirstTableRepository } from '../infrastructure/repositories/local-first-table-repository.js';
 import { createBlobStore } from '../infrastructure/storage/blob-store.js';
+import { createBrowserSpeech } from '../infrastructure/browser/browser-speech.js';
 
 /* Called first at start-up (app/main.js), before the state is restored from storage */
 export function installContainer(){
@@ -43,6 +44,7 @@ export function installContainer(){
   provide("files", files);
   provide("barcodeService", { render: barcodeSVG, symbology: symbologyFor });
   provide("qrCodeService", { render: qrSVG });
+  provide("voiceInput", createBrowserSpeech());
   provide("barcodeScanner", createCameraScanner());
   // Sign out / open the shop, for the screens around sign-in (shared/ui/session-actions.js)
   provide("session", { signOut, enterApp });

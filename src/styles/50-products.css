@@ -31,4 +31,12 @@
 .savebar{position:sticky;bottom:calc(12px + env(safe-area-inset-bottom,0px));margin-top:16px;display:flex;gap:8px;justify-content:flex-end;align-items:center;flex-wrap:wrap;background:rgba(255,255,255,.97);border:1px solid var(--line);border-radius:14px;padding:10px 12px;box-shadow:var(--shadow);z-index:20}
 .savebar .sbx{margin-right:auto;font-size:13.5px;color:var(--ink-2)}
 .unsaved{color:var(--warn-ink)}
-
+/* Optional natural-language product draft. The normal editor remains the only place that can save it. */
+.product-draft-sheet{max-width:620px}
+.product-draft-sheet form{display:grid;gap:10px;margin:8px 0 14px}
+.product-draft-sheet form .btn{justify-self:end}
+.draft-preview{border:1px solid var(--line);border-radius:14px;padding:14px;background:var(--wash)}
+.draft-preview h4{margin:9px 0}
+.draft-preview dl{margin:0 0 12px}
+.draft-preview dl div{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-top:1px solid var(--line)}
+.draft-preview dt{font-weight:600}.draft-preview dd{margin:0}

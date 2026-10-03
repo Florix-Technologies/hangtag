@@ -836,6 +836,7 @@ CREATE TABLE IF NOT EXISTS public.hangtag_payments (
     tendered NUMERIC(12,2),                        -- cash handed over (cash only)
     change_given NUMERIC(12,2) NOT NULL DEFAULT 0,
     reference TEXT CHECK (reference IS NULL OR char_length(reference) <= 40),
+    provider_fee NUMERIC(12,2),                    -- fee/MDR reported by the trusted payment provider, never estimated
     status TEXT NOT NULL DEFAULT 'completed' CHECK (status IN ('completed','cancelled')),
     t BIGINT NOT NULL,
     device_id TEXT,
@@ -847,6 +848,7 @@ CREATE TABLE IF NOT EXISTS public.hangtag_payments (
     CONSTRAINT hangtag_payments_id_check CHECK (id = sale_id || ':' || method),
     CONSTRAINT hangtag_payments_cash_check CHECK ((method = 'cash' AND tendered >= amount AND change_given = tendered - amount)
                                                OR (method <> 'cash' AND tendered IS NULL AND change_given = 0)),
+    CONSTRAINT hangtag_payments_provider_fee_check CHECK (provider_fee IS NULL OR provider_fee >= 0),
     CONSTRAINT hangtag_payments_sale_fkey FOREIGN KEY (owner_id, sale_id) REFERENCES public.hangtag_sales (owner_id, id) ON DELETE CASCADE
 );
 -- Financial transactions: money in (a payment on a bill) or out (a refund on a return), always pointing at the bill
@@ -1319,6 +1321,7 @@ CREATE TABLE IF NOT EXISTS public.hangtag_payment_intents (
     provider TEXT NOT NULL,
     provider_intent_id TEXT NOT NULL,
     provider_payment_id TEXT,
+    provider_fee NUMERIC(12,2),
     reference TEXT NOT NULL,
     status TEXT NOT NULL,
     qr_url TEXT,
@@ -1331,6 +1334,7 @@ CREATE TABLE IF NOT EXISTS public.hangtag_payment_intents (
 ALTER TABLE public.hangtag_payment_intents ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'qr';
 ALTER TABLE public.hangtag_payment_intents ADD COLUMN IF NOT EXISTS link_url TEXT;
 ALTER TABLE public.hangtag_payment_intents ADD COLUMN IF NOT EXISTS paid_amount NUMERIC(12,2);
+ALTER TABLE public.hangtag_payment_intents ADD COLUMN IF NOT EXISTS provider_fee NUMERIC(12,2);
 ALTER TABLE public.hangtag_payment_intents ADD COLUMN IF NOT EXISTS resolution TEXT NOT NULL DEFAULT 'open';
 ALTER TABLE public.hangtag_payment_intents ADD COLUMN IF NOT EXISTS resolution_note TEXT;
 ALTER TABLE public.hangtag_payment_intents ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
@@ -1346,6 +1350,7 @@ ALTER TABLE public.hangtag_payment_intents ADD CONSTRAINT hangtag_payment_intent
     AND resolution IN ('open','refunded','allocated')
     AND (status NOT IN ('verified','unmatched') OR paid_amount IS NOT NULL)
     AND (resolution = 'open' OR status = 'unmatched')
+    AND (provider_fee IS NULL OR provider_fee >= 0)
     AND char_length(reference) <= 64 AND (client_sale_id IS NULL OR char_length(client_sale_id) <= 64)
     AND (resolution_note IS NULL OR char_length(resolution_note) <= 200));
 -- the webhook finds an intent by the provider's id
@@ -1359,6 +1364,7 @@ ALTER TABLE public.hangtag_payments ADD COLUMN IF NOT EXISTS via TEXT;
 ALTER TABLE public.hangtag_payments ADD COLUMN IF NOT EXISTS intent_id UUID;
 ALTER TABLE public.hangtag_payments ADD COLUMN IF NOT EXISTS provider_payment_id TEXT;
 ALTER TABLE public.hangtag_payments ADD COLUMN IF NOT EXISTS card_last4 TEXT;
+ALTER TABLE public.hangtag_payments ADD COLUMN IF NOT EXISTS provider_fee NUMERIC(12,2);
 ALTER TABLE public.hangtag_payments DROP CONSTRAINT IF EXISTS hangtag_payments_verification_check;
 ALTER TABLE public.hangtag_payments ADD CONSTRAINT hangtag_payments_verification_check CHECK (
     verification IN ('verified','recorded','unverified')
@@ -1367,23 +1373,35 @@ ALTER TABLE public.hangtag_payments ADD CONSTRAINT hangtag_payments_verification
     AND (verification <> 'unverified' OR method = 'upi')
     AND (verification <> 'verified' OR intent_id IS NOT NULL)
     AND (card_last4 IS NULL OR (method = 'card' AND card_last4 ~ '^[0-9]{4}$'))
+    AND (provider_fee IS NULL OR (verification = 'verified' AND provider_fee >= 0))
     AND (provider_payment_id IS NULL OR char_length(provider_payment_id) <= 64)) NOT VALID;
 -- one provider payment pays one bill part, once
 CREATE UNIQUE INDEX IF NOT EXISTS hangtag_payments_intent_key ON public.hangtag_payments (owner_id, intent_id) WHERE intent_id IS NOT NULL;
 -- "verified" only with a verified intent of this shop for the same method and amount: the app can't make it up
 CREATE OR REPLACE FUNCTION public.hangtag_payment_verified_check()
 RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
+DECLARE trusted_fee NUMERIC;
 BEGIN
-    IF NEW.verification = 'verified' AND NOT EXISTS (
-        SELECT 1 FROM public.hangtag_payment_intents i
-         WHERE i.owner_id = NEW.owner_id AND i.id = NEW.intent_id AND i.status = 'verified' AND i.method = NEW.method AND i.amount = NEW.amount) THEN
-        RAISE EXCEPTION 'Payment % is marked verified but the payment provider has not confirmed it', NEW.id USING ERRCODE = 'check_violation';
+    IF NEW.verification = 'verified' THEN
+        SELECT i.provider_fee INTO trusted_fee FROM public.hangtag_payment_intents i
+         WHERE i.owner_id = NEW.owner_id AND i.id = NEW.intent_id AND i.status = 'verified' AND i.method = NEW.method AND i.amount = NEW.amount;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Payment % is marked verified but the payment provider has not confirmed it', NEW.id USING ERRCODE = 'check_violation';
+        END IF;
+        -- Fee/MDR is informational but still comes only from the server-owned intent; never trust a value uploaded by a phone.
+        NEW.provider_fee := trusted_fee;
+    ELSE
+        NEW.provider_fee := NULL;
     END IF;
     RETURN NEW;
 END $$;
 DROP TRIGGER IF EXISTS hangtag_payment_verified_check ON public.hangtag_payments;
 CREATE TRIGGER hangtag_payment_verified_check BEFORE INSERT OR UPDATE ON public.hangtag_payments
     FOR EACH ROW EXECUTE FUNCTION public.hangtag_payment_verified_check();
+UPDATE public.hangtag_payments p SET provider_fee = i.provider_fee
+  FROM public.hangtag_payment_intents i
+ WHERE p.owner_id = i.owner_id AND p.intent_id = i.id AND p.verification = 'verified'
+   AND p.provider_fee IS DISTINCT FROM i.provider_fee;
 REVOKE EXECUTE ON FUNCTION public.hangtag_payment_verified_check() FROM PUBLIC, anon;
 
 -- Receipts sent automatically when a bill completes go once per bill and channel, however often the phone retries
@@ -4039,6 +4057,7 @@ BEGIN
         WHEN 'uses_weight' THEN kind = 'grocery'
         WHEN 'uses_quotations' THEN kind IN ('retail','grocery','electronics')
         WHEN 'uses_sales_orders' THEN kind IN ('retail','grocery','electronics')
+        WHEN 'uses_mobile_store' THEN FALSE
         WHEN 'uses_tables' THEN kind = 'restaurant'
         WHEN 'uses_table_qr' THEN kind = 'restaurant'
         WHEN 'uses_customer_ordering' THEN kind = 'restaurant'
@@ -4046,7 +4065,8 @@ BEGIN
         WHEN 'uses_kitchen' THEN kind = 'restaurant'
         ELSE FALSE END;
     END IF;
-    need := CASE p_cap WHEN 'uses_table_qr' THEN 'uses_tables' WHEN 'uses_customer_ordering' THEN 'uses_table_qr'
+    need := CASE p_cap WHEN 'uses_mobile_store' THEN 'uses_sales_orders'
+        WHEN 'uses_table_qr' THEN 'uses_tables' WHEN 'uses_customer_ordering' THEN 'uses_table_qr'
         WHEN 'uses_server_ordering' THEN 'uses_tables' WHEN 'uses_kitchen' THEN 'uses_tables' END;
     IF v AND need IS NOT NULL THEN v := public.hangtag_cap_on(p_owner, need); END IF;
     RETURN COALESCE(v, FALSE);
@@ -4347,6 +4367,261 @@ ALTER TABLE public.hangtag_deliveries DROP CONSTRAINT IF EXISTS hangtag_deliveri
 ALTER TABLE public.hangtag_deliveries ADD CONSTRAINT hangtag_deliveries_request_check CHECK (request_id IS NULL OR request_id ~ '^[A-Za-z0-9_-]{8,64}$') NOT VALID;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_hangtag_deliveries_request ON public.hangtag_deliveries (owner_id, request_id) WHERE request_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_hangtag_deliveries_order ON public.hangtag_deliveries (owner_id, order_id, created_at DESC) WHERE order_id IS NOT NULL;
+
+-- ------------------------------------------------------------------------------
+-- 3q. Mobile store and assisted customer cart
+-- ------------------------------------------------------------------------------
+-- One public interface over the existing catalog, stock ledger, customers, sales orders and billing. A shop explicitly
+-- switches on uses_mobile_store. Its opaque store token reveals only the deliberately small catalog RPC; every order is
+-- an ordinary confirmed sales order (source customer), and staff fulfil and bill it through the existing Orders screen.
+
+-- (a) A stable, opaque shop link. It is not an account id or credential and can be replaced manually if a link must be
+-- retired. Row security still keeps profiles private; only the catalog/order RPCs accept this token.
+ALTER TABLE public.hangtag_profiles ADD COLUMN IF NOT EXISTS store_token TEXT;
+UPDATE public.hangtag_profiles SET store_token = 'st_' || replace(gen_random_uuid()::TEXT, '-', '') WHERE store_token IS NULL;
+ALTER TABLE public.hangtag_profiles ALTER COLUMN store_token SET DEFAULT ('st_' || replace(gen_random_uuid()::TEXT, '-', ''));
+ALTER TABLE public.hangtag_profiles ALTER COLUMN store_token SET NOT NULL;
+ALTER TABLE public.hangtag_profiles DROP CONSTRAINT IF EXISTS hangtag_profiles_store_token_check;
+ALTER TABLE public.hangtag_profiles ADD CONSTRAINT hangtag_profiles_store_token_check CHECK (store_token ~ '^st_[A-Za-z0-9_-]{32,61}$') NOT VALID;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_hangtag_profiles_store_token ON public.hangtag_profiles (store_token);
+
+-- A mobile order has two unrelated secrets: checkout_key makes one customer's retry idempotent; public_token lets that
+-- customer read only the safe status of this order. Neither is used by staff or becomes a second order identifier.
+ALTER TABLE public.hangtag_orders ADD COLUMN IF NOT EXISTS public_token TEXT;
+ALTER TABLE public.hangtag_orders ADD COLUMN IF NOT EXISTS checkout_key TEXT;
+ALTER TABLE public.hangtag_orders ADD COLUMN IF NOT EXISTS checkout_mode TEXT;
+ALTER TABLE public.hangtag_orders ADD COLUMN IF NOT EXISTS payment_preference TEXT;
+ALTER TABLE public.hangtag_orders DROP CONSTRAINT IF EXISTS hangtag_orders_public_token_check;
+ALTER TABLE public.hangtag_orders ADD CONSTRAINT hangtag_orders_public_token_check CHECK (public_token IS NULL OR
+    (public_token ~ '^mo_[A-Za-z0-9_-]{32,61}$' AND checkout_key ~ '^[A-Za-z0-9_-]{24,64}$' AND kind = 'sales' AND source = 'customer')) NOT VALID;
+ALTER TABLE public.hangtag_orders DROP CONSTRAINT IF EXISTS hangtag_orders_checkout_mode_check;
+ALTER TABLE public.hangtag_orders ADD CONSTRAINT hangtag_orders_checkout_mode_check CHECK (checkout_mode IS NULL OR checkout_mode IN ('store','assisted')) NOT VALID;
+ALTER TABLE public.hangtag_orders DROP CONSTRAINT IF EXISTS hangtag_orders_payment_preference_check;
+ALTER TABLE public.hangtag_orders ADD CONSTRAINT hangtag_orders_payment_preference_check CHECK (payment_preference IS NULL OR payment_preference IN ('counter','cash','upi')) NOT VALID;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_hangtag_orders_public_token ON public.hangtag_orders (public_token) WHERE public_token IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_hangtag_orders_checkout ON public.hangtag_orders (owner_id, checkout_key) WHERE checkout_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_hangtag_order_items_variant ON public.hangtag_order_items (owner_id, variant_id) WHERE variant_id IS NOT NULL;
+
+-- Outstanding mobile-order quantity. Quantities billed against that order cease to be reservations because the bill has
+-- removed them from on-hand stock. This helper also lets the till guard stay dormant when there is no customer reservation.
+CREATE OR REPLACE FUNCTION public.hangtag_mobile_reserved(p_owner UUID, p_variant TEXT)
+RETURNS NUMERIC LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+    SELECT COALESCE((SELECT sum(GREATEST(i.qty - COALESCE((SELECT sum(si.quantity) FROM public.hangtag_sales bs
+                JOIN public.hangtag_sale_items si ON si.owner_id = bs.owner_id AND si.sale_id = bs.id
+               WHERE bs.owner_id = o.owner_id AND bs.order_id = o.id AND NOT bs.is_void AND si.variant_id = i.variant_id), 0), 0))
+            FROM public.hangtag_orders o JOIN public.hangtag_order_items i ON i.owner_id = o.owner_id AND i.order_id = o.id
+           WHERE o.owner_id = p_owner AND o.public_token IS NOT NULL AND o.status NOT IN ('completed','cancelled') AND i.variant_id = p_variant), 0)
+$$;
+
+-- Current free quantity from the one stock ledger, less the reservation above. It deliberately remains unclamped for the
+-- database guard below: a negative value while a reservation exists means an ordinary till bill consumed customer stock.
+CREATE OR REPLACE FUNCTION public.hangtag_mobile_free(p_owner UUID, p_variant TEXT)
+RETURNS NUMERIC LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+    SELECT
+        COALESCE((SELECT sum(m.qty) FROM public.hangtag_stock_moves m WHERE m.owner_id = p_owner AND m.variant_id = p_variant), 0)
+        - COALESCE((SELECT sum(i.quantity) FROM public.hangtag_sale_items i JOIN public.hangtag_sales s
+            ON s.owner_id = i.owner_id AND s.id = i.sale_id WHERE i.owner_id = p_owner AND i.variant_id = p_variant AND NOT s.is_void), 0)
+        + COALESCE((SELECT sum(i.quantity) FROM public.hangtag_return_items i JOIN public.hangtag_returns r
+            ON r.owner_id = i.owner_id AND r.id = i.return_id JOIN public.hangtag_sales s
+            ON s.owner_id = r.owner_id AND s.id = r.sale_id WHERE i.owner_id = p_owner AND i.variant_id = p_variant AND i.restock AND NOT s.is_void), 0)
+        - public.hangtag_mobile_reserved(p_owner, p_variant)
+$$;
+
+CREATE OR REPLACE FUNCTION public.hangtag_mobile_available(p_owner UUID, p_variant TEXT)
+RETURNS NUMERIC LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+    SELECT GREATEST(0, public.hangtag_mobile_free(p_owner, p_variant))
+$$;
+
+-- (b) Public catalog. Products stay nested around their existing variants so a product image and description are sent
+-- once. Cost, SKU/barcode, supplier, exact ledger history and every other shop row remain private.
+CREATE OR REPLACE FUNCTION public.hangtag_mobile_catalog(p_token TEXT)
+RETURNS JSONB LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE shop RECORD; items JSONB; cats JSONB; tax_on BOOLEAN := FALSE; tax_incl BOOLEAN := TRUE; default_rate NUMERIC := 5;
+BEGIN
+    IF p_token IS NULL OR p_token !~ '^st_[A-Za-z0-9_-]{32,61}$' THEN
+        RETURN jsonb_build_object('ok', FALSE, 'message', 'This shop link is not valid. Ask the shop for a new link.');
+    END IF;
+    SELECT p.id, p.shop_name INTO shop FROM public.hangtag_profiles p WHERE p.store_token = p_token;
+    IF NOT FOUND OR NOT public.hangtag_cap_on(shop.id, 'uses_mobile_store') THEN
+        RETURN jsonb_build_object('ok', FALSE, 'message', 'This mobile store is not open right now.');
+    END IF;
+    SELECT COALESCE(CASE WHEN jsonb_typeof(m.value->'taxOn')='boolean' THEN (m.value->>'taxOn')::BOOLEAN END,FALSE),
+           COALESCE(CASE WHEN jsonb_typeof(m.value->'taxIncl')='boolean' THEN (m.value->>'taxIncl')::BOOLEAN END,TRUE),
+           COALESCE(CASE WHEN jsonb_typeof(m.value->'taxRate')='number' THEN (m.value->>'taxRate')::NUMERIC END,5)
+      INTO tax_on,tax_incl,default_rate FROM public.hangtag_meta m WHERE m.owner_id=shop.id AND m.key='settings';
+    SELECT COALESCE(jsonb_agg(x.item ORDER BY x.sort_key), '[]'::jsonb) INTO items FROM (
+        SELECT jsonb_build_object('id', p.id, 'name', p.name, 'description', COALESCE(p.description, ''),
+                   'brand', COALESCE(p.brand, ''), 'category', COALESCE(p.category, ''), 'gst', CASE WHEN tax_on THEN COALESCE(p.gst_rate,default_rate) ELSE 0 END,
+                   'unit', COALESCE(p.unit, 'pcs'), 'image', CASE WHEN im.image_data ~ '^data:image/(png|jpeg|webp);base64,' THEN im.image_data END,
+                   'variants', (SELECT COALESCE(jsonb_agg(jsonb_build_object('v', v.id,
+                       'label', COALESCE((SELECT string_agg(e.value, ' / ' ORDER BY e.n) FROM jsonb_array_elements_text(v.option_values) WITH ORDINALITY e(value,n)), ''),
+                       'price', COALESCE(v.price, p.price), 'available', public.hangtag_mobile_available(p.owner_id, v.id))
+                       ORDER BY v.sort_order, v.id), '[]'::jsonb)
+                     FROM public.hangtag_variants v WHERE v.owner_id = p.owner_id AND v.product_id = p.id AND v.active)) AS item,
+               lower(COALESCE(p.category, 'zzz')) || '|' || lpad(p.sort_order::TEXT, 10, '0') || '|' || lower(p.name) AS sort_key
+          FROM public.hangtag_products p LEFT JOIN public.hangtag_images im ON im.owner_id = p.owner_id AND im.product_id = p.id
+         WHERE p.owner_id = shop.id AND NOT p.archived
+           AND EXISTS (SELECT 1 FROM public.hangtag_variants v WHERE v.owner_id = p.owner_id AND v.product_id = p.id AND v.active)
+         ORDER BY lower(COALESCE(p.category, 'zzz')), p.sort_order, lower(p.name) LIMIT 500) x;
+    SELECT COALESCE(jsonb_agg(c ORDER BY lower(c)), '[]'::jsonb) INTO cats FROM (
+        SELECT DISTINCT btrim(p.category) c FROM public.hangtag_products p WHERE p.owner_id = shop.id AND NOT p.archived AND btrim(COALESCE(p.category, '')) <> '') q;
+    RETURN jsonb_build_object('ok', TRUE, 'shop', COALESCE(NULLIF(btrim(shop.shop_name), ''), 'Shop'), 'tax_on', tax_on,
+        'tax_inclusive', tax_incl, 'items', items, 'categories', cats);
+END $$;
+
+-- (c) Customer checkout. The shop profile row and requested variants are locked before availability is tested, so two
+-- phones cannot reserve the last piece. The phone never supplies price, GST, product/customer ids or order state.
+CREATE OR REPLACE FUNCTION public.hangtag_place_mobile_order(p_token TEXT, p_items JSONB, p_customer JSONB, p_checkout_key TEXT,
+    p_note TEXT DEFAULT NULL, p_payment TEXT DEFAULT 'counter', p_mode TEXT DEFAULT 'store')
+RETURNS JSONB LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    shop RECORD; prior public.hangtag_orders; vr RECORD; it JSONB; q NUMERIC; available NUMERIC; dp INT; ln INT := 0;
+    oid TEXT := 'om' || replace(gen_random_uuid()::TEXT, '-', ''); otok TEXT := 'mo_' || replace(gen_random_uuid()::TEXT, '-', '');
+    now_ms BIGINT := (extract(epoch FROM now()) * 1000)::BIGINT; ono TEXT; total NUMERIC := 0; cid TEXT; line_net NUMERIC;
+    tax_on BOOLEAN := FALSE; tax_incl BOOLEAN := TRUE; default_rate NUMERIC := 5;
+    nm TEXT; ph TEXT; em TEXT; raw_phone TEXT; clean_note TEXT;
+BEGIN
+    IF p_token IS NULL OR p_token !~ '^st_[A-Za-z0-9_-]{32,61}$' THEN RETURN jsonb_build_object('ok', FALSE, 'message', 'This shop link is not valid.'); END IF;
+    -- One short lock per shop serializes idempotency, reservation and stock checks. Catalog reads remain lock-free.
+    SELECT p.id, p.shop_name INTO shop FROM public.hangtag_profiles p WHERE p.store_token = p_token FOR UPDATE;
+    IF NOT FOUND THEN RETURN jsonb_build_object('ok', FALSE, 'message', 'This shop link is not valid.'); END IF;
+    IF p_checkout_key IS NULL OR p_checkout_key !~ '^[A-Za-z0-9_-]{24,64}$' THEN RETURN jsonb_build_object('ok', FALSE, 'message', 'Start checkout again and retry.'); END IF;
+    SELECT * INTO prior FROM public.hangtag_orders o WHERE o.owner_id = shop.id AND o.checkout_key = p_checkout_key;
+    IF FOUND THEN RETURN jsonb_build_object('ok', TRUE, 'order_no', prior.no, 'order_token', prior.public_token, 'state', 'received', 'state_label', 'Awaiting staff'); END IF;
+    IF NOT public.hangtag_cap_on(shop.id, 'uses_mobile_store') THEN RETURN jsonb_build_object('ok', FALSE, 'message', 'This mobile store is not open right now.'); END IF;
+    SELECT COALESCE(CASE WHEN jsonb_typeof(m.value->'taxOn')='boolean' THEN (m.value->>'taxOn')::BOOLEAN END,FALSE),
+           COALESCE(CASE WHEN jsonb_typeof(m.value->'taxIncl')='boolean' THEN (m.value->>'taxIncl')::BOOLEAN END,TRUE),
+           COALESCE(CASE WHEN jsonb_typeof(m.value->'taxRate')='number' THEN (m.value->>'taxRate')::NUMERIC END,5)
+      INTO tax_on,tax_incl,default_rate FROM public.hangtag_meta m WHERE m.owner_id=shop.id AND m.key='settings';
+    IF p_mode NOT IN ('store','assisted') OR p_payment NOT IN ('counter','cash','upi') THEN RETURN jsonb_build_object('ok', FALSE, 'message', 'Choose a valid checkout option.'); END IF;
+    IF jsonb_typeof(COALESCE(p_items, 'null'::jsonb)) <> 'array' OR jsonb_array_length(p_items) NOT BETWEEN 1 AND 50 THEN RETURN jsonb_build_object('ok', FALSE, 'message', 'Add from 1 to 50 products to your cart.'); END IF;
+    IF EXISTS (SELECT 1 FROM jsonb_array_elements(p_items) x(item) GROUP BY x.item ->> 'v' HAVING count(*) > 1) THEN RETURN jsonb_build_object('ok', FALSE, 'message', 'Choose each product variant only once.'); END IF;
+    IF jsonb_typeof(COALESCE(p_customer, 'null'::jsonb)) <> 'object' THEN RETURN jsonb_build_object('ok', FALSE, 'message', 'Enter your customer details.'); END IF;
+    nm := left(btrim(regexp_replace(COALESCE(p_customer ->> 'name', ''), '[[:cntrl:]]', ' ', 'g')), 80);
+    raw_phone := regexp_replace(COALESCE(p_customer ->> 'phone', ''), '[^0-9]', '', 'g'); ph := left(raw_phone, 15);
+    em := lower(left(btrim(COALESCE(p_customer ->> 'email', '')), 120));
+    clean_note := NULLIF(left(btrim(regexp_replace(COALESCE(p_note, ''), '[[:cntrl:]]', ' ', 'g')), 500), '');
+    IF nm = '' THEN RETURN jsonb_build_object('ok', FALSE, 'message', 'Enter your name.'); END IF;
+    IF char_length(raw_phone) NOT BETWEEN 10 AND 15 THEN RETURN jsonb_build_object('ok', FALSE, 'message', 'Enter a valid mobile number.'); END IF;
+    IF em <> '' AND em !~ '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$' THEN RETURN jsonb_build_object('ok', FALSE, 'message', 'Enter a valid email address.'); END IF;
+    IF (SELECT count(*) FROM public.hangtag_orders o WHERE o.owner_id = shop.id AND o.public_token IS NOT NULL AND o.created_at > NOW() - interval '10 minutes') >= 100 THEN
+        RETURN jsonb_build_object('ok', FALSE, 'message', 'The shop received many orders just now. Please wait a moment or contact the staff.');
+    END IF;
+    -- Sorted locks avoid deadlocks with carts containing the same variants in a different order.
+    FOR it IN SELECT x.item FROM jsonb_array_elements(p_items) x(item) ORDER BY x.item ->> 'v' LOOP
+        q := CASE WHEN jsonb_typeof(it -> 'q') = 'number' THEN (it ->> 'q')::NUMERIC END;
+        SELECT v.id, v.product_id, p.name, p.unit, COALESCE(v.price, p.price) price, CASE WHEN tax_on THEN COALESCE(p.gst_rate,default_rate) ELSE 0 END gst_rate,
+               COALESCE((SELECT string_agg(e.value, ' / ' ORDER BY e.n) FROM jsonb_array_elements_text(v.option_values) WITH ORDINALITY e(value,n)), '') label
+          INTO vr FROM public.hangtag_variants v JOIN public.hangtag_products p ON p.owner_id = v.owner_id AND p.id = v.product_id
+         WHERE v.owner_id = shop.id AND v.id = it ->> 'v' AND v.active AND NOT p.archived FOR UPDATE OF v, p;
+        IF NOT FOUND THEN RAISE EXCEPTION 'A product in your cart is not available any more. Refresh the store and try again.' USING ERRCODE = 'check_violation'; END IF;
+        dp := CASE vr.unit WHEN 'kg' THEN 3 WHEN 'l' THEN 3 WHEN 'm' THEN 2 ELSE 0 END;
+        IF q IS NULL OR q <= 0 OR q > 50 OR q <> round(q, dp) THEN RAISE EXCEPTION 'Choose a valid quantity for %.', vr.name USING ERRCODE = 'check_violation'; END IF;
+        available := public.hangtag_mobile_available(shop.id, vr.id);
+        IF q > available THEN RAISE EXCEPTION '% now has only % available. Refresh your cart and try again.', vr.name, trim_scale(available) USING ERRCODE = 'check_violation'; END IF;
+        line_net := round(q * vr.price,2);
+        total := total + line_net + CASE WHEN tax_on AND NOT tax_incl AND vr.gst_rate>0 THEN 2*round(line_net*vr.gst_rate/200,2) ELSE 0 END;
+    END LOOP;
+    SELECT c.id INTO cid FROM public.hangtag_customers c WHERE c.owner_id = shop.id
+     AND right(regexp_replace(COALESCE(c.phone, ''), '[^0-9]', '', 'g'), 10) = right(ph, 10) ORDER BY c.created_at LIMIT 1;
+    IF cid IS NULL THEN
+        cid := 'mc' || replace(gen_random_uuid()::TEXT, '-', '');
+        INSERT INTO public.hangtag_customers (owner_id, id, name, phone, email, customer_type) VALUES (shop.id, cid, nm, ph, NULLIF(em, ''), 'individual');
+    END IF;
+    ono := 'MO-' || to_char(NOW() AT TIME ZONE 'Asia/Kolkata', 'YYMMDD') || '-' || upper(substr(md5(oid), 1, 6));
+    INSERT INTO public.hangtag_orders (owner_id,id,kind,no,status,customer_id,customer,notes,source,version,t,updated_t,device_id,user_id,total,
+        public_token,checkout_key,checkout_mode,payment_preference)
+    VALUES (shop.id,oid,'sales',ono,'confirmed',cid,jsonb_build_object('id',cid,'name',nm,'phone',ph) || CASE WHEN em <> '' THEN jsonb_build_object('email',em) ELSE '{}'::jsonb END,
+        clean_note,'customer',1,now_ms,now_ms,'mobile-store',NULL,round(total),otok,p_checkout_key,p_mode,p_payment);
+    FOR it IN SELECT x.item FROM jsonb_array_elements(p_items) WITH ORDINALITY x(item,n) ORDER BY x.n LOOP
+        q := (it ->> 'q')::NUMERIC;
+        SELECT v.id, v.product_id, p.name, p.unit, COALESCE(v.price,p.price) price, CASE WHEN tax_on THEN COALESCE(p.gst_rate,default_rate) ELSE 0 END gst_rate,
+               COALESCE((SELECT string_agg(e.value, ' / ' ORDER BY e.n) FROM jsonb_array_elements_text(v.option_values) WITH ORDINALITY e(value,n)), '') label
+          INTO vr FROM public.hangtag_variants v JOIN public.hangtag_products p ON p.owner_id=v.owner_id AND p.id=v.product_id
+         WHERE v.owner_id=shop.id AND v.id=it->>'v';
+        INSERT INTO public.hangtag_order_items (owner_id,order_id,line_no,product_id,variant_id,name,variant_label,unit,qty,price,gst_rate,fulfilled_qty)
+        VALUES (shop.id,oid,ln,vr.product_id,vr.id,vr.name,vr.label,COALESCE(vr.unit,'pcs'),q,vr.price,vr.gst_rate,0);
+        ln := ln + 1;
+    END LOOP;
+    RETURN jsonb_build_object('ok', TRUE, 'order_no', ono, 'order_token', otok, 'total', round(total), 'state', 'received', 'state_label', 'Awaiting staff');
+END $$;
+
+-- (d) Only the order's random status token works. Status and payment are derived from existing orders, bills and payments;
+-- no customer details, item names, shop ids, bill ids or payment references are exposed.
+CREATE OR REPLACE FUNCTION public.hangtag_mobile_order_status(p_order_token TEXT)
+RETURNS JSONB LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE o public.hangtag_orders; ordered NUMERIC; billed NUMERIC; state TEXT; state_label TEXT; payment_state TEXT; payment_label TEXT;
+BEGIN
+    IF p_order_token IS NULL OR p_order_token !~ '^mo_[A-Za-z0-9_-]{32,61}$' THEN RETURN jsonb_build_object('ok', FALSE, 'message', 'That order link is not valid.'); END IF;
+    SELECT * INTO o FROM public.hangtag_orders x WHERE x.public_token = p_order_token;
+    IF NOT FOUND THEN RETURN jsonb_build_object('ok', FALSE, 'message', 'That order was not found.'); END IF;
+    SELECT COALESCE(sum(i.qty),0) INTO ordered FROM public.hangtag_order_items i WHERE i.owner_id=o.owner_id AND i.order_id=o.id;
+    SELECT COALESCE(sum(i.quantity),0) INTO billed FROM public.hangtag_sales s JOIN public.hangtag_sale_items i ON i.owner_id=s.owner_id AND i.sale_id=s.id
+     WHERE s.owner_id=o.owner_id AND s.order_id=o.id AND NOT s.is_void;
+    IF o.status='cancelled' THEN state:='cancelled'; state_label:='Cancelled';
+    ELSIF ordered>0 AND billed>=ordered THEN state:='fulfilled'; state_label:='Fulfilled';
+    ELSIF billed>0 THEN state:='partial'; state_label:='Partly fulfilled';
+    ELSE state:='received'; state_label:='Awaiting staff'; END IF;
+    IF EXISTS (SELECT 1 FROM public.hangtag_sales s WHERE s.owner_id=o.owner_id AND s.order_id=o.id AND NOT s.is_void
+        AND COALESCE((SELECT sum(p.amount) FROM public.hangtag_payments p WHERE p.owner_id=s.owner_id AND p.sale_id=s.id AND p.status='completed'),0)
+            >= GREATEST(s.total-s.credit-s.due_amount,0)) THEN payment_state:='confirmed'; payment_label:='Payment confirmed';
+    ELSE payment_state:='awaiting_staff'; payment_label:=CASE o.payment_preference WHEN 'upi' THEN 'UPI to be verified by staff' WHEN 'cash' THEN 'Cash at checkout' ELSE 'Pay at checkout' END; END IF;
+    RETURN jsonb_build_object('ok',TRUE,'order_no',o.no,'state',state,'state_label',state_label,'payment_state',payment_state,'payment_label',payment_label,
+        'total',o.total,'mode',COALESCE(o.checkout_mode,'store'),'updated_at',o.updated_at);
+END $$;
+
+-- A bill may fulfil a mobile order in parts, but never beyond what the customer ordered. This deferred check sees the
+-- whole bill after hangtag_save_sales has inserted all lines, and serializes concurrent tills on the order row.
+CREATE OR REPLACE FUNCTION public.hangtag_check_mobile_fulfilment()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE sid TEXT; own UUID; sale public.hangtag_sales; ord public.hangtag_orders;
+BEGIN
+    IF TG_TABLE_NAME='hangtag_sales' THEN
+        IF TG_OP='DELETE' THEN sid:=OLD.id; own:=OLD.owner_id; ELSE sid:=NEW.id; own:=NEW.owner_id; END IF;
+    ELSE
+        IF TG_OP='DELETE' THEN sid:=OLD.sale_id; own:=OLD.owner_id; ELSE sid:=NEW.sale_id; own:=NEW.owner_id; END IF;
+    END IF;
+    SELECT * INTO sale FROM public.hangtag_sales s WHERE s.owner_id=own AND s.id=sid;
+    IF NOT FOUND THEN RETURN NULL; END IF;
+    -- Mobile checkout takes this same row lock before it tests stock. Whichever transaction locks it second therefore sees
+    -- the first one's committed sale/order and cannot take the same units. A bill tied to the mobile order is safe because
+    -- its billed quantity reduces that order's outstanding reservation by exactly the quantity removed from stock.
+    PERFORM 1 FROM public.hangtag_profiles p WHERE p.id=own FOR UPDATE;
+    IF NOT sale.is_void AND EXISTS (SELECT 1 FROM (SELECT DISTINCT i.variant_id FROM public.hangtag_sale_items i
+        WHERE i.owner_id=own AND i.sale_id=sid AND i.variant_id IS NOT NULL) v
+        WHERE public.hangtag_mobile_reserved(own,v.variant_id) > 0 AND public.hangtag_mobile_free(own,v.variant_id) < 0) THEN
+        RAISE EXCEPTION 'Some stock on this bill is reserved for a mobile order. Fulfil or cancel that order first.' USING ERRCODE='check_violation';
+    END IF;
+    IF sale.order_id IS NULL THEN RETURN NULL; END IF;
+    SELECT * INTO ord FROM public.hangtag_orders o WHERE o.owner_id=sale.owner_id AND o.id=sale.order_id AND o.public_token IS NOT NULL FOR UPDATE;
+    IF NOT FOUND OR sale.is_void THEN RETURN NULL; END IF;
+    IF ord.status='cancelled' THEN RAISE EXCEPTION 'This mobile order was cancelled and cannot be billed.' USING ERRCODE='check_violation'; END IF;
+    IF NOT EXISTS (SELECT 1 FROM public.hangtag_sale_items i WHERE i.owner_id=sale.owner_id AND i.sale_id=sale.id) THEN
+        RAISE EXCEPTION 'A mobile order bill needs at least one ordered item.' USING ERRCODE='check_violation';
+    END IF;
+    IF EXISTS (SELECT 1 FROM public.hangtag_sales s JOIN public.hangtag_sale_items i ON i.owner_id=s.owner_id AND i.sale_id=s.id
+        WHERE s.owner_id=ord.owner_id AND s.order_id=ord.id AND NOT s.is_void
+          AND NOT EXISTS (SELECT 1 FROM public.hangtag_order_items oi WHERE oi.owner_id=ord.owner_id AND oi.order_id=ord.id
+              AND oi.variant_id=i.variant_id AND oi.price=i.unit_price)) THEN
+        RAISE EXCEPTION 'This bill has an item or price that is not on the mobile order.' USING ERRCODE='check_violation';
+    END IF;
+    IF EXISTS (SELECT 1 FROM public.hangtag_order_items oi WHERE oi.owner_id=ord.owner_id AND oi.order_id=ord.id
+        AND COALESCE((SELECT sum(i.quantity) FROM public.hangtag_sales s JOIN public.hangtag_sale_items i ON i.owner_id=s.owner_id AND i.sale_id=s.id
+             WHERE s.owner_id=ord.owner_id AND s.order_id=ord.id AND NOT s.is_void AND i.variant_id=oi.variant_id),0)>oi.qty) THEN
+        RAISE EXCEPTION 'This mobile order has already been billed for that quantity.' USING ERRCODE='check_violation';
+    END IF;
+    RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_check_mobile_sale ON public.hangtag_sales;
+CREATE CONSTRAINT TRIGGER hangtag_check_mobile_sale AFTER INSERT OR UPDATE OF is_void,order_id ON public.hangtag_sales
+    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.hangtag_check_mobile_fulfilment();
+DROP TRIGGER IF EXISTS hangtag_check_mobile_line ON public.hangtag_sale_items;
+CREATE CONSTRAINT TRIGGER hangtag_check_mobile_line AFTER INSERT OR UPDATE OR DELETE ON public.hangtag_sale_items
+    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.hangtag_check_mobile_fulfilment();
+
+REVOKE ALL ON FUNCTION public.hangtag_mobile_reserved(UUID,TEXT), public.hangtag_mobile_free(UUID,TEXT), public.hangtag_mobile_available(UUID,TEXT), public.hangtag_check_mobile_fulfilment() FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON FUNCTION public.hangtag_mobile_catalog(TEXT), public.hangtag_place_mobile_order(TEXT,JSONB,JSONB,TEXT,TEXT,TEXT,TEXT), public.hangtag_mobile_order_status(TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.hangtag_mobile_catalog(TEXT), public.hangtag_place_mobile_order(TEXT,JSONB,JSONB,TEXT,TEXT,TEXT,TEXT), public.hangtag_mobile_order_status(TEXT) TO anon,authenticated;
 
 -- ==============================================================================
 -- 4. Indexes for reports

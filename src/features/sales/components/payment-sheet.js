@@ -117,7 +117,7 @@ function intentHTML(m){
       <p class="note">${m==="upi"?"The customer scans this with any UPI app. The bill completes by itself once the payment is confirmed.":`The customer scans this with their phone camera and pays by card on the page it opens.${I.linkUrl?` Link: <b>${esc(I.linkUrl)}</b>`:""}`}</p>
       ${I.checkError?`<p class="note">${esc(I.checkError)}</p>`:""}${acts(`<button type="button" class="btn sm" data-payintent="check:${m}">Check now</button>`,`<button type="button" class="btn sm" data-payintent="cancel:${m}">Cancel ${what}</button>`)}</div>`;
   }
-  if(I.status==="verified") return `<div class="pi-box ok" data-pistate="verified"><p class="pi-st">✓ ${INTENT_LABELS.verified} · ${inrx(I.paidAmount==null?I.amount:I.paidAmount)}</p><p class="note">Verified by the payment provider · ref ${esc(I.paymentId||I.reference)}</p></div>`;
+  if(I.status==="verified") return `<div class="pi-box ok" data-pistate="verified"><p class="pi-st">✓ ${INTENT_LABELS.verified} · ${inrx(I.paidAmount==null?I.amount:I.paidAmount)}</p><p class="note">Verified by the payment provider · ref ${esc(I.paymentId||I.reference)}${I.providerFee==null?'':` · provider fee ${inrx(I.providerFee)}`}</p></div>`;
   if(I.status==="unmatched") return `<div class="pi-box bad" data-pistate="unmatched"><p class="pi-st">${inrx(I.paidAmount)} arrived, not ${inrx(I.amount)}</p><p class="note">It isn't used on this bill. It's kept under Books → Unmatched receipts to refund or allocate.</p>${acts(again,byHand)}</div>`;
   return `<div class="pi-box bad" data-pistate="${esc(I.status)}"><p class="pi-st">${esc(INTENT_LABELS[I.status]||I.status)}</p><p class="note">Nothing was received for this ${what}.</p>${acts(again,byHand)}</div>`;
 }

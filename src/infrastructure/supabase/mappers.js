@@ -69,11 +69,11 @@ export const saleItemRows = s => (s.items||[]).map((i,k)=>{ const d = normalizeD
 export const paymentRows = s => paymentsOf(s).map(p => ({ id:p.id, sale_id:s.id, method:p.method, amount:p.amount,
   tendered:p.method==="cash" ? (p.received==null ? p.amount : p.received) : null, change_given:p.change||0, reference:p.ref||null, t:s.t, device_id:s.dev||store.dev,
   verification:p.verification||"recorded", via:p.method==="cash" ? null : p.via||null, intent_id:p.intent||null, provider_payment_id:p.providerRef||null,
-  card_last4:p.method==="card" && p.last4 ? p.last4 : null }));
+  card_last4:p.method==="card" && p.last4 ? p.last4 : null, ...(p.providerFee==null?{}:{provider_fee:p.providerFee}) }));
 export const rowToPayment = r => Object.assign({ id:r.id, method:r.method, amount:+r.amount },
   r.method==="cash" ? { received:r.tendered==null ? +r.amount : +r.tendered, change:numOr0(r.change_given) } : {}, r.reference ? { ref:r.reference } : {},
   r.verification ? { verification:r.verification } : {},
-  r.via ? { via:r.via } : {}, r.intent_id ? { intent:r.intent_id } : {}, r.provider_payment_id ? { providerRef:r.provider_payment_id } : {}, r.card_last4 ? { last4:r.card_last4 } : {});
+  r.via ? { via:r.via } : {}, r.intent_id ? { intent:r.intent_id } : {}, r.provider_payment_id ? { providerRef:r.provider_payment_id } : {}, r.card_last4 ? { last4:r.card_last4 } : {}, r.provider_fee!=null ? { providerFee:+r.provider_fee } : {});
 /* One bill for RPC hangtag_save_sales */
 export const billArgs = s => ({ sale:Object.assign(saleRow(s), { is_void:!!s.void }), items:saleItemRows(s), payments:paymentRows(s) });
 /* options column: { opts:[{name, values}], colors, sizes } — colors/sizes are copies for older app versions */
@@ -208,7 +208,8 @@ export const rowToOrder = (r, items) => Object.assign({ id:r.id, kind:r.kind, no
   billDisc:normalizeDiscount(r.bill_disc)||null, notes:r.notes||"", terms:r.terms||"", validUntil:dateOnly(r.valid_until), source:r.source||"staff",
   convertedTo:r.converted_to||null, quoteId:r.quote_id||null, quoteNo:r.quote_no||"", saleIds:Array.isArray(r.sale_ids)?r.sale_ids.slice():[], version:+r.version||1, t:Number(r.t), updatedT:Number(r.updated_t||r.t),
   dev:r.device_id||"", items:(items||[]).slice().sort((a,b)=>a.ln-b.ln) },
-  r.table_id ? { tableId:r.table_id } : {}, r.session_id ? { sessionId:r.session_id } : {}, r.user_id ? { user:r.user_id } : {}, r.total != null ? { total:+r.total } : {});
+  r.table_id ? { tableId:r.table_id } : {}, r.session_id ? { sessionId:r.session_id } : {}, r.user_id ? { user:r.user_id } : {}, r.total != null ? { total:+r.total } : {},
+  r.public_token ? { checkoutMode:r.checkout_mode||"store", paymentPreference:r.payment_preference||"counter" } : {});
 /* ---------- suppliers, purchases and payments to suppliers (section 3l) ---------- */
 export const supplierRow = s => ({ id:s.id, name:s.name, phone:s.phone||null, email:s.email||null, address:s.address||null, gstin:s.gstin||null, notes:s.notes||null,
   active:s.active!==false, created_at:new Date(s.t||Date.now()).toISOString(), updated_at:new Date().toISOString() });

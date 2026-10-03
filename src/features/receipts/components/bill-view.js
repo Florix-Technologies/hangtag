@@ -13,6 +13,7 @@ import { ICON } from '../../../shared/constants/icons.js';
 import { $, esc } from '../../../shared/dom.js';
 import { dtLong } from '../../../shared/formatting/dates.js';
 import { inrx } from '../../../shared/formatting/money.js';
+import { gstDocsHTML } from '../../commerce/components/gst-documents.js';
 
 /* ================= bill view (from Reports, the last bill, customers) ================= */
 
@@ -31,6 +32,7 @@ export function openBillView(sid,paper){
     ${s.void?`<button class="btn sm" data-unvoid="${esc(s.id)}">Restore bill</button>`:rets.length?"":`<button class="btn sm danger" data-void="${esc(s.id)}">Cancel bill</button>`}</div>
     ${printStateHTML(s.id)}
     ${sendBoxHTML(s)}
+    ${gstDocsHTML(s)}
     <div data-dlhist="${esc(s.id)}">${historyHTML(s.id)}</div>
     ${money}
     ${rets.length?`<div class="setsec"><h4>Returns and exchanges</h4>${retLinesHTML(s)}${rets.map(r=>{const tax=(r.items||[]).reduce((a,i)=>a+(i.cgst||0)+(i.sgst||0)+(i.igst||0),0),ex=r.ex&&D().sales.find(x=>x.ex===r.ex&&x.kind==="exchange");

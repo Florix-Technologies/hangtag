@@ -1,6 +1,8 @@
 // Orders tab: held bills (every shop), quotations and sales orders (where the shop uses them). A list per part; an order
 // opens in the editor (components/order-editor.js). Nothing here changes stock.
-import { KIND_LABELS, cartBlock, isExpired, remaining, shownStatus, statusLabel } from '../../../domain/orders/orders.js';
+import { KIND_LABELS, cartBlock, fulfilmentPlan, isExpired, remaining, shownStatus, statusLabel } from '../../../domain/orders/orders.js';
+import { availOf } from '../../sales/services/cart.js';
+import { vRec } from '../../inventory/services/ledger.js';
 import { store } from '../../../shared/state/store.js';
 import { orderViews } from '../module.js';
 import { currentSubview } from '../../shop/services/modules.js';
@@ -23,6 +25,7 @@ export function renderOrdersPart(host, id){
 }
 const chip = (kind, st, label) => `<span class="ostat ostat-${esc(st)}">${esc(label || statusLabel(kind,st))}</span>`;
 const pieces = lines => (lines || []).reduce((a, l) => a + (+l.q || 0), 0);
+const fmt = n => String(Math.round(n * 1000) / 1000);
 
 function heldHTML(){
   const list = listHeldCarts();
@@ -39,8 +42,12 @@ function orderRowHTML(o, today){
     mobile ? ({upi:"prefers UPI",cash:"prefers cash",counter:"pay at checkout"}[o.paymentPreference] || "pay at checkout") : "",
     o.kind === "quote" && o.validUntil ? (isExpired(o, today) ? "expired " : "valid till ") + dayLab(o.validUntil) : "",
     o.kind === "sales" && o.quoteNo ? "from "+o.quoteNo : "", o.kind === "sales" && (st === "partial" || st === "confirmed") && left ? left + " to deliver" : ""].filter(Boolean).join(" · ");
-  return `<div class="ocard" data-orderrow="${esc(o.id)}"><button class="oc-main asbtn" data-ordopen="${esc(o.id)}"><b>${esc(o.no || KIND_LABELS[o.kind])} · ${esc(o.cust && o.cust.name || "No customer")}</b><small>${esc(sub)}</small></button>
-    <div class="oc-side"><b>${inr(T.total)}</b>${chip(o.kind,st)}<span class="oc-acts">${o.kind === "quote"?`<button class="btn xs" data-qdoc="preview" data-id="${esc(o.id)}">Preview</button>`:""}${o.kind === "quote" && billable && can("create_order") ? `<button class="btn xs" data-ordconvert="${esc(o.id)}">To sales order</button>` : ""}${billable && can("create_sale") ? `<button class="btn xs primary" data-ordbill="${esc(o.id)}">Bill</button>` : ""}</span></div></div>`;
+  // a sales order being delivered: what can go out now (stock allows) and what stays on the order for later — no separate backorder
+  const plan = o.kind === "sales" && billable ? fulfilmentPlan(o, vid => vRec(vid) ? availOf(vid) : null) : null;
+  const ready = plan ? `<small class="ofulfil">${plan.now ? `<b>${esc(fmt(plan.now))} available now</b>` : "Nothing in stock yet"}${plan.later ? ` · ${esc(fmt(plan.later))} remaining` : ""}</small>` : "";
+  const billLabel = plan ? (plan.canFulfil ? `Fulfil ${fmt(plan.now)}` : "") : "Bill";
+  return `<div class="ocard" data-orderrow="${esc(o.id)}"><button class="oc-main asbtn" data-ordopen="${esc(o.id)}"><b>${esc(o.no || KIND_LABELS[o.kind])} · ${esc(o.cust && o.cust.name || "No customer")}</b><small>${esc(sub)}</small>${ready}</button>
+    <div class="oc-side"><b>${inr(T.total)}</b>${chip(o.kind,st)}<span class="oc-acts">${o.kind === "quote"?`<button class="btn xs" data-qdoc="preview" data-id="${esc(o.id)}">Preview</button>`:""}${o.kind === "quote" && billable && can("create_order") ? `<button class="btn xs" data-ordconvert="${esc(o.id)}">To sales order</button>` : ""}${billable && billLabel && can("create_sale") ? `<button class="btn xs primary" data-ordbill="${esc(o.id)}">${esc(billLabel)}</button>` : ""}</span></div></div>`;
 }
 function ordersHTML(kind){
   const list = ordersOf(kind), today = todayKey(), what = KIND_LABELS[kind].toLowerCase(), mayEdit = can("create_order");

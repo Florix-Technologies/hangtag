@@ -243,7 +243,7 @@ try {
     && !polled.some((p) => /hangtag_(images|products|variants|sales|sale_items|payments|stock_moves)$/.test(p)), polled);
   B.sbRequests.length = 0;
   await B.run('await memberPoll()');
-  check('nothing new: the check downloads nothing', B.sbRequests.every((x) => /rpc\/hangtag_(touch_device|shop_changes|purchase_changes|order_changes)$|hangtag_(members|roles)$/.test(x.path)), B.sbRequests.map((x) => x.path));
+  check('nothing new: the check downloads nothing', B.sbRequests.every((x) => /rpc\/hangtag_(touch_device|shop_changes|purchase_changes|order_changes|biz_changes)$|hangtag_(members|roles)$/.test(x.path)), B.sbRequests.map((x) => x.path));
 
   console.log('--- the cashier\'s cash drawer (no Reports tab) ---');
   await B.click('#acctBtn'); await sleep(100);

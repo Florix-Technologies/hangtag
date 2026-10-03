@@ -290,6 +290,22 @@
  */
 
 /**
+ * "bizRepository": the commerce batch's records (schema.sql section 3r) by kind — pl price lists, po purchase orders, ei / ew
+ * e-invoice / e-way bill readiness, rpk repacks (with their two stock records), gv gift vouchers (the cloud's copy only).
+ * Implementation: infrastructure/repositories/local-first-biz-repository.js. Saved here first, then queued ("biz" { kind, id };
+ * "bizdel" removes a price list); the upload reads the record as it is then (cloud.saveBiz).
+ * @typedef {Object} BizRepositoryPort
+ * @property {(kind: string) => Object[]} list
+ * @property {(kind: string, id: string) => (Object|null)} get
+ * @property {(kind: string, rec: Object) => Object} save        Kept and queued for upload.
+ * @property {(kind: string, rec: Object) => Object} keep        The cloud's copy, not uploaded (vouchers).
+ * @property {(kind: string, id: string) => (Object|null)} remove
+ * @property {(kind: string, id: string, version: number) => void} saved   The version the cloud holds after a save (purchase orders).
+ * @property {(rec: Object) => Object} repack                    A repack and its stock records (rec.moves), here at once.
+ * @property {(kind: string, map: Object) => void} replace       A download of a kind.
+ */
+
+/**
  * "orderRepository": orders (quotations, sales orders, table orders) and held bills. Implementation:
  * infrastructure/repositories/local-first-order-repository.js (this device first, then the upload queue: "order" →
  * cloud.saveOrder (RPC hangtag_save_order, optimistic concurrency), "held" / "helddel" → hangtag_held_carts).

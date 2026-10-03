@@ -15,6 +15,7 @@ import { deviceDocNo, nextBillNo } from '../../sales/services/totals.js';
 import { requestSignOut } from '../../../shared/ui/session-actions.js';
 import { orderRepository } from '../../orders/repositories/order-repository.js';
 import { purchaseItemOff, purchaseItemOn } from '../../inventory/services/purchase-state.js';
+import { bizRepository } from '../../commerce/repositories/biz-repository.js';
 
 /* Add work for the cloud; identical product uploads are merged so the queue stays short */
 
@@ -109,6 +110,12 @@ export async function sendItem(item){
     // a table order moved along by the kitchen: the cloud's new version is kept for this device's next save of it
     const r = await cloud.setOrderStatus(item.id, item.status);
     if(r.version) orderRepository().saved(item.id, r.version);
+  } else if(item.type === "biz"){
+    // the commerce batch (section 3r): the record as it is now; a purchase order keeps the version the cloud now holds
+    const rec = bizRepository().get(item.kind, item.id);
+    if(rec){ const r = await cloud.saveBiz(item.kind, rec); if(r && r.version) bizRepository().saved(item.kind, item.id, r.version); }
+  } else if(item.type === "bizdel"){
+    await cloud.deleteBiz(item.kind, item.id);
   } else if(item.type === "catdel"){
     // left over from the old size-only version: nothing to do with the new tables
   }

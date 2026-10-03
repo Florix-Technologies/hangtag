@@ -639,6 +639,69 @@ Migration report rows 60–65 check them: tables with their own QR, table orders
 with their bill, bill originals in the shop's own folder, sales orders from a quotation of the same shop, one target per
 message.
 
+## Commerce batch: price lists, purchase orders, kits, GST documents, repack, vouchers, webhooks (section 3r)
+
+Each part is a capability (`domain/shop/capabilities.js`: `uses_price_lists`, `uses_purchase_orders`, `uses_bundles`,
+`uses_repack`, `uses_vouchers`, `uses_einvoice`, `uses_eway`) checked in navigation, use cases and the database
+(`hangtag_cap_on`). Permissions are the existing ones. Records the phone keeps (price lists, POs, e-invoice / e-way bill
+readiness, repacks, vouchers) go through one local-first channel: `features/commerce/repositories/biz-repository.js` →
+`store.biz[kind]` (`rc_biz`) → the outbox (`biz` / `bizdel` jobs, `domain/sync/queue-rules.js`) → `cloud-gateway.js`
+(`infrastructure/supabase/biz-mappers.js`). Vouchers and webhooks are online only.
+
+- **Price lists** (`domain/sales/pricing.js` `resolvePrice`, the one resolver): the customer's own list → the list chosen
+  on the bill → the shop's default list → the item's price; a list counts only while active and in its dates, and never
+  resolves to ₹0. POS, quotations, sales orders and the assisted cart price through `features/sales/services/pricing.js`;
+  the public mobile store uses the default list only (anyone can type a phone number). A bill keeps the prices it was made
+  with. UI: a chip on the bill ("Wholesale · customer's"), a list picker on the customer, Settings → Selling.
+- **Purchase orders** (`domain/inventory/purchase-orders.js`): Draft → Sent → (Partially received → Received, derived from
+  the receipts) → Closed, or Cancelled. A PO never changes stock. Smart Reorder groups its suggestion by last supplier into
+  draft POs the owner reviews. **Receiving** shows Ordered / Previously received / Receiving now / Remaining per line
+  (starting at what is still to come; barcode scan counts one; serials, batch and expiry, decimals by unit) and saves an
+  ordinary purchase (`hangtag_save_purchase` with `po_id`): the PO row is locked, more than is still to come needs
+  "receive as extra", the same receipt twice is a no-op. **Differences** between PO, receipts and the supplier's bill are
+  listed (short, extra, price) and accepted / reviewed / noted in the PO's `review` log (audited); source documents are
+  never rewritten.
+- **Kits** (`domain/catalog/bundles.js`): a product with `bundle: [{ v, q }]` (not kits, not serial-tracked). Available =
+  the fewest kits the items' stock makes. Sold as its items' lines (`explodeKits`: the kit price shared out as fixed
+  discounts, each line remembering `kit: { v, p, name, n }`), so stock, returns and reports use the ledger as before.
+- **Partial fulfilment** of sales orders: each order on the Orders page shows "N available now · M remaining" and a
+  **Fulfil N** button (`fulfilmentPlan`): the bill takes what stock allows; the rest stays on the same order (no separate
+  backorder record). Customers see Confirmed → Partially ready → Ready → Completed. The database refuses a bill that
+  would deliver more of a line than was ordered (deferred trigger `hangtag_check_order_fulfilment`).
+- **E-invoice / e-way bill readiness** (`domain/gst/einvoice.js`, `eway.js`): a normalized payload, validation, and a
+  sheet that asks only for what is missing; JSON export. Applicability is the shop's setting (Settings → Selling → GST
+  documents). The IRN, acknowledgement, signed QR and EWB number are written only by a provider adapter with the service
+  role (`hangtag_compliance_check`); the app can't invent one.
+- **Repack** (`domain/inventory/repack.js`): source → target with a per-unit factor; one audited conversion and two stock
+  records (`hangtag_save_repack`), quantity and value reconcile; not for serial-tracked products.
+- **Gift vouchers** (`domain/sales/vouchers.js`): issued online (code from the database), spent as a **payment method**
+  (`voucher`, not a discount) on the payment screen. `hangtag_redeem_voucher` locks the voucher row (no double spend), one
+  redemption per bill payment, own shop only; cancelling the bill gives it back, restoring takes it again; not money in
+  the cash or bank book.
+- **Webhooks** (Settings → Advanced → Integrations, owner only): endpoints in the cloud; the signing secret lives in
+  `hangtag_webhook_secrets` (service role only) and is shown once. Events are written by triggers once per change
+  (`event_key`); `supabase/functions/webhook-dispatch` claims due deliveries, signs `X-Hangtag-Signature: sha256=HMAC(secret,
+  "<timestamp>.<body>")` with `X-Hangtag-Event-Id` and `X-Hangtag-Timestamp`, retries with back-off and logs each attempt.
+
+### Database relationships (schema.sql section 3r)
+
+| Table / column | Relationship |
+|---|---|
+| `hangtag_price_lists` | per shop; one `is_default` (partial unique index) |
+| `hangtag_customers.price_list_id` | → `hangtag_price_lists (owner_id, id)` (same shop), set null on delete |
+| `hangtag_purchase_orders.supplier_id` | → `hangtag_suppliers (owner_id, id)` |
+| `hangtag_stock_imports.po_id` | → `hangtag_purchase_orders (owner_id, id)`: a receipt of a PO |
+| `hangtag_products.bundle`, `hangtag_sale_items.kit` | a kit's items; the kit a bill line was sold in |
+| `hangtag_einvoices.sale_id`, `hangtag_eway_bills.sale_id` | → `hangtag_sales (owner_id, id)` |
+| `hangtag_repacks` | one per conversion; its stock records are `rpk:<id>:out` / `rpk:<id>:in` |
+| `hangtag_vouchers.customer_id` | → `hangtag_customers (owner_id, id)`; `code` unique across shops |
+| `hangtag_voucher_redemptions.voucher_id` | → `hangtag_vouchers`; one `redeem` (and at most one `reverse`) per payment |
+| `hangtag_webhook_secrets.endpoint_id`, `hangtag_webhook_deliveries` | → `hangtag_webhook_endpoints (id)`, cascade |
+
+Migration report rows 66–72 check them: one default list per shop, customers on their own shop's list, PO receipts from
+the PO's supplier, voucher balances, kit items, repacks with both stock records, provider numbers only when generated.
+Migration: `supabase/migrations/20261003120000_hangtag_commerce_batch.sql` (exactly section 3r plus its row security).
+
 ## State
 
 One store object (`shared/state/store.js`) holds the app's state. `app/state-init.js` restores it at start-up.

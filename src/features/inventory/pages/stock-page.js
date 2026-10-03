@@ -18,6 +18,11 @@ import { inr } from '../../../shared/formatting/money.js';
 import { qtyText, roundQty } from '../../../domain/catalog/units.js';
 import { allBatches, batchesOf, expiryDays, expiryOf, serialsOf, trackingOfP } from '../services/tracking.js';
 import { EXPIRY_LABELS } from '../../../domain/inventory/tracking.js';
+import { usesRepack } from '../use-cases/repack.js';
+import { isKit } from '../../../domain/catalog/bundles.js';
+import { can } from '../../shop/services/access.js';
+/* Repack (grocery): open this product's stock into loose units — only where the shop repacks and the product has stock */
+const repackHere=p=>{if(!usesRepack()||!can("manage_inventory")||isKit(p)||trackingOfP(p)==="serial")return "";const v=variantsOf(p).find(x=>stockOf(x.id)>0);return v?`<button class="btn xs" data-rpknew="${esc(v.id)}">Repack</button>`:""};
 
 /* A tracked product's detail under its stock: the serials in stock, or its batches with their expiry */
 export function trackedStockHTML(p){
@@ -67,7 +72,7 @@ export function renderStock(){
   h+=expiryCardHTML();
   const shown=ps.filter(p=>store.stockView==="all"||variantsOf(p).some(v=>{const lv=levelOf(stockOf(v.id),p);return store.stockView==="low"?lv!=="ok":lv==="out"}));
   h+=`<div class="card flush" style="margin-top:14px"><div class="card-h"><h3>Every product, every variant</h3><div class="seg" role="group" aria-label="Show">${[["all","All"],["low","Low or out"],["out","Sold out"]].map(([k,l])=>`<button data-stockview="${k}" aria-pressed="${store.stockView===k}">${l}</button>`).join("")}</div></div>`;
-  h+=shown.length?shown.map(p=>`<div class="spc"><div class="spc-h">${thumb(p,"sm")}<div><b>${esc(p.name)}</b><span class="sub">${esc([p.cat,priceRange(p)].filter(Boolean).join(" · "))} · ${esc(qtyText(productLeft(p),p.unit))} in hand</span></div><button class="btn xs" data-stockin="${esc(p.id)}">+ Stock in</button>${trackingOfP(p)!=="none"?`<button class="btn xs" data-stockadjp="${esc(p.id)}">Adjust</button>`:""}</div>${stockMatrixHTML(p)}${trackedStockHTML(p)}</div>`).join(""):`<p class="muted" style="padding:0 16px 16px">Nothing to show here.</p>`;
+  h+=shown.length?shown.map(p=>`<div class="spc"><div class="spc-h">${thumb(p,"sm")}<div><b>${esc(p.name)}</b><span class="sub">${esc([p.cat,priceRange(p)].filter(Boolean).join(" · "))} · ${esc(qtyText(productLeft(p),p.unit))} in hand</span></div><button class="btn xs" data-stockin="${esc(p.id)}">+ Stock in</button>${trackingOfP(p)!=="none"?`<button class="btn xs" data-stockadjp="${esc(p.id)}">Adjust</button>`:""}${repackHere(p)}</div>${stockMatrixHTML(p)}${trackedStockHTML(p)}</div>`).join(""):`<p class="muted" style="padding:0 16px 16px">Nothing to show here.</p>`;
   h+=`</div>`;
   h+=stockHistoryHTML(ps);
   host.innerHTML=intakeCardHTML()+h;

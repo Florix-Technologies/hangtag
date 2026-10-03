@@ -121,7 +121,7 @@ export function orderFormClick(t){
   const F = store.orderForm; if(!F || !t.closest("#orderSheet")) return false;
   const add = t.closest("[data-ofadd]");
   if(add){ const same = F.o.items.find(l => l.v === add.dataset.ofadd && !(+l.fq > 0));
-    if(same) same.q = (+same.q || 0) + 1; else { const l = orderLine(add.dataset.ofadd, 1); if(l) F.o.items.push({ ...l, ln: undefined }); }
+    if(same) same.q = (+same.q || 0) + 1; else { const l = orderLine(add.dataset.ofadd, 1, null, F.o); if(l) F.o.items.push({ ...l, ln: undefined }); }
     F.q = ""; renderOrderEditor(false); const q = $("#ofQ"); if(q) q.focus({ preventScroll: true }); return true; }
   const rm = t.closest("[data-oflrm]"); if(rm){ F.o.items.splice(+rm.dataset.oflrm, 1); renderOrderEditor(false); return true; }
   if(t.closest("[data-ofsave]")){
@@ -147,5 +147,6 @@ export function billAction(id){
   if(r.error){ toast(r.error); return; }
   store.orderForm = null; closeModal(); setTab("sell"); renderAll();
   const o = orderById(id);
-  toast(`${o ? o.no : "The order"} is on the bill.${r.skipped.length ? " Not added: " + r.skipped.map(s => `${s.name} (${s.why})`).join(", ") + "." : ""}${r.lines.some(l => l.short) ? " Some lines are short of stock: only what's in stock went on the bill." : ""}`);
+  const later = r.lines.reduce((a, l) => a + (+l.short || 0), 0) + r.skipped.length;
+  toast(`${o ? o.no : "The order"} is on the bill.${r.skipped.length ? " Not added: " + r.skipped.map(s => `${s.name} (${s.why})`).join(", ") + "." : ""}${later ? " What's not in stock stays on the order to fulfil later." : ""}`);
 }

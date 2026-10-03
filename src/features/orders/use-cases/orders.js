@@ -6,13 +6,12 @@
 import { FIRST_STATUS, KIND_LABELS, STATUS_LABELS, canMove, cartBlock, checkOrder, convertQuote, fulfil, isFinal, orderCartLines, orderCheckout, ORDER_PREFIX, quotePrefix,
   soldFromOrder } from '../../../domain/orders/orders.js';
 import { legacyCS, optionSnapshot } from '../../../domain/catalog/options.js';
-import { vCost, vLabel, vPrice } from '../../../domain/catalog/variants.js';
+import { vCost, vLabel } from '../../../domain/catalog/variants.js';
 import { normalizeDiscount } from '../../../domain/sales/discounts.js';
 import { nextDocNo } from '../../../domain/sales/sale.js';
 import { store } from '../../../shared/state/store.js';
 import { orderRepository } from '../repositories/order-repository.js';
 import { vRec } from '../../inventory/services/ledger.js';
-import { stockOf } from '../../inventory/services/stock.js';
 import { gstContext, rateOf } from '../../sales/services/totals.js';
 import { renderSync } from '../../sync/components/sync-status.js';
 import { flushSbQueue } from '../../sync/services/outbox.js';
@@ -22,6 +21,8 @@ import { okColor } from '../../../shared/utils/colors.js';
 import { uid } from '../../../shared/utils/ids.js';
 import { can, denied, notAllowedText } from '../../shop/services/access.js';
 import { hasCap } from '../../shop/services/shop-caps.js';
+import { priceCtx, priceOf } from '../../sales/services/pricing.js';
+import { availOf, kitLineOf } from '../../sales/services/cart.js';
 
 export const QUOTE_VALID_DAYS = 15;
 const upload = () => { renderSync(); flushSbQueue(); };
@@ -43,10 +44,13 @@ export function orderTotals(o){
   const g = gstContext(o && o.cust || null);
   return orderCheckout(o || {}, { mode: g.mode, inclusive: !!store.settings.taxIncl });
 }
-/* A line for a catalog variant, at its price today (or the one given) and with the GST rate a bill would charge */
-export function orderLine(vid, q, price){
+/* A line for a catalog variant, at its price today for the order's customer (their own price list, the order's chosen
+   list, the shop's default — the same resolver as the till) or the price given, with the GST rate a bill would charge.
+   order: { cust, priceList } (optional) */
+export function orderLine(vid, q, price, order){
   const r = vRec(vid); if(!r) return null;
-  return { p: r.p.id, v: vid, name: r.p.name, vl: vLabel(r.v), q: +q || 1, price: price == null ? vPrice(r.p, r.v) : +price, ...(r.p.unit&&r.p.unit!=="pcs"?{u:r.p.unit}:{}), gst: rateOf({ p: r.p.id }), fq: 0 };
+  const P = price == null ? priceOf(r.p, r.v, priceCtx(order && order.cust, order && order.priceList)).price : +price;
+  return { p: r.p.id, v: vid, name: r.p.name, vl: vLabel(r.v), q: +q || 1, price: P, ...(r.p.unit&&r.p.unit!=="pcs"?{u:r.p.unit}:{}), gst: rateOf({ p: r.p.id }), fq: 0 };
 }
 /* A new order, not saved yet: from the bill on the screen (its lines, discounts and customer) or empty */
 export function newOrderDraft(kind, { cart, disc, cust } = {}){
@@ -122,11 +126,13 @@ export function orderToCart(id){
   const cap=capDenied(o&&o.kind); if(cap) return cap;
   if(why) return { error: why };
   if(store.cart.length) return { error: "Finish, hold or clear the bill on the screen first." };
-  const { lines, skipped } = orderCartLines(o, vid => vRec(vid) ? stockOf(vid) : null);
+  // what can go out now (a kit: as many as its items allow); the rest stays on the order for later
+  const { lines, skipped } = orderCartLines(o, vid => vRec(vid) ? availOf(vid) : null);
   if(!lines.length) return { error: "Nothing on this order can go on a bill now: " + skipped.map(s => `${s.name} (${s.why})`).join(", ") + "." };
   store.cart = lines.map(l => { const r = vRec(l.v);
     return { v: l.v, p: r.p.id, name: l.name || r.p.name, ...legacyCS(r.p.opts, r.v.o), vl: l.vl || vLabel(r.v), ov: optionSnapshot(r.p, r.v), sku: r.v.sku || "", q: l.q, price: l.price,
-      cost: vCost(r.p, r.v), color: okColor(r.p.color), ...(l.u&&l.u!=="pcs"?{u:l.u}:{}), ...(l.gst!=null?{gst:l.gst}:{}), ...(l.disc ? { disc: l.disc } : {}), ord: o.id, oln: l.oln }; });
+      cost: vCost(r.p, r.v), color: okColor(r.p.color), ...(l.u&&l.u!=="pcs"?{u:l.u}:{}), ...(l.gst!=null?{gst:l.gst}:{}), ...(l.disc ? { disc: l.disc } : {}), ord: o.id, oln: l.oln,
+      ...(kitLineOf(l.v) ? { kit: kitLineOf(l.v) } : {}) }; });
   store.disc = normalizeDiscount(o.billDisc) || null;
   store.cartCust = o.cust && o.cust.id ? { id: o.cust.id, name: o.cust.name, phone: o.cust.phone || "" } : null;
   store.cartOrder = { id: o.id, no: o.no, kind: o.kind };

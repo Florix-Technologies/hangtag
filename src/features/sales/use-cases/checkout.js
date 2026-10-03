@@ -3,7 +3,8 @@ import { lineLabel } from '../../../domain/catalog/options.js';
 import { checkBillDiscounts, normalizeDiscount } from '../../../domain/sales/discounts.js';
 import { DUE, paymentId, settlePayments } from '../../../domain/sales/payments.js';
 import { store } from '../../../shared/state/store.js';
-import { billCustomer, billTotals, gstContext, nextBillNo } from '../services/totals.js';
+import { billCustomer, billTotals, gstContext, nextBillNo, rateOf } from '../services/totals.js';
+import { explodeKits } from '../../../domain/catalog/bundles.js';
 import { D, invalidate } from '../../inventory/services/ledger.js';
 import { prod } from '../../products/services/catalog.js';
 import { closeSheets } from '../components/bill-panel.js';
@@ -32,6 +33,9 @@ import { closeTableForSale } from '../../restaurant/use-cases/tables.js';
    One part may be { method: "due", amount }: left on the customer's account (only a saved customer), kept as dueAmt */
 export function newSaleRecord(lines,billDisc,pay,extra){
   const x=extra||{}, cust=x.cust!==undefined?x.cust:store.cartCust, credit=x.credit||0;
+  // a kit is saved as its items (each with its share of the kit price), so the stock ledger takes out the items
+  const K=explodeKits(lines,rateOf); if(K.error) return {error:K.error,field:"kit",line:K.line};
+  lines=K.lines;
   const bad=checkBillDiscounts(lines,billDisc); if(bad) return {error:bad.error,field:"discount",line:bad.line};
   // serial numbers (each piece named, ready to sell) and batches (taken first-to-expire, or the batch chosen for the line)
   const TK=trackSaleLines(lines); if(TK.error) return {error:TK.error,field:"tracking",line:TK.line};
@@ -45,7 +49,7 @@ export function newSaleRecord(lines,billDisc,pay,extra){
   return {id,no:nextBillNo(D().sales,t),t,
     items:lines.map((c,k)=>{const L=T.lines[k], d=normalizeDiscount(c.disc), p=prod(c.p);
       return {ln:k,v:c.v,p:c.p,n:c.name,c:c.c||"",s:c.s||"",vl:lineLabel(c),ov:c.ov||[],sku:c.sku||"",q:c.q,...(c.u?{u:c.u}:{}),price:c.price,cost:c.cost==null?null:c.cost,
-        ...(d?{disc:d}:{}),...(x.order&&c.ord===x.order&&c.oln!=null?{ord:c.ord,oln:c.oln}:{}),dAmt:L.itemDisc,bdAmt:L.billDisc,gst:L.rate,hsn:p&&p.hsn||"",tx:L.taxable,cgst:L.cgst,sgst:L.sgst,igst:L.igst,lt:L.total,...TK.items[k]}}),
+        ...(d?{disc:d}:{}),...(x.order&&c.ord===x.order&&c.oln!=null?{ord:c.ord,oln:c.oln}:{}),...(c.kit&&!Array.isArray(c.kit)?{kit:c.kit}:{}),dAmt:L.itemDisc,bdAmt:L.billDisc,gst:L.rate,hsn:p&&p.hsn||"",tx:L.taxable,cgst:L.cgst,sgst:L.sgst,igst:L.igst,lt:L.total,...TK.items[k]}}),
     sub:T.sub,disc:T.disc,itemDisc:T.itemDisc,billDisc:normalizeDiscount(billDisc),billDiscAmt:T.billDisc,
     taxable:T.taxable,tax:T.tax,cgst:T.cgst,sgst:T.sgst,igst:T.igst,taxRate:T.rate||0,taxIncl:T.incl,
     gst:{mode:g.mode,pos:g.pos,shopState:g.shopState,b2b:g.b2b},roundOff:T.roundOff,total:T.total,credit,

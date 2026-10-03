@@ -19,6 +19,8 @@ import { inr, inrx } from '../../../shared/formatting/money.js';
 import { initials } from '../../../shared/utils/text.js';
 import { billHoldHTML, billOrderHTML, billQuoteHTML } from '../../orders/components/bill-extras.js';
 import { batchesOf, blockExpired, expiryOf, isBatchV, isSerialV } from '../../inventory/services/tracking.js';
+import { priceListChipHTML } from '../../commerce/components/price-lists.js';
+import { voucherSellHTML } from '../../commerce/components/vouchers.js';
 
 /* A serial-tracked line: its serial numbers (each can be taken off), and a prompt while some are still to be chosen */
 function serialsHTML(c,i){
@@ -58,7 +60,7 @@ export function custLineHTML(){
 }
 export function emptyBillHTML(){
   const t=todayStats();
-  let h=`<div class="be">${ICON.bag}<p><b>No items yet</b><br>Tap a product, or search or scan.</p></div>`;
+  let h=`<div class="be">${ICON.bag}<p><b>No items yet</b><br>Tap a product, or search or scan.</p>${voucherSellHTML()}</div>`;
   h+=`<div class="tmini"><div><span>Sold today</span><b>${inr(t.rev)}</b></div><div><span>Bills</span><b>${t.bills}</b></div><div><span>Pieces</span><b>${t.pcs}</b></div></div>`;
   if(store.lastSale&&!isVoid(store.lastSale.id))h+=`<div class="lastbill"><div><div class="eyebrow">Last bill · ${esc(hhmm(store.lastSale.t))}</div><b>${inr(store.lastSale.total)}</b> · ${esc(payLabel(store.lastSale))}</div><button class="btn xs" data-billview="${esc(store.lastSale.id)}">Receipt</button></div>`;
   return h;
@@ -75,7 +77,7 @@ export function billPanelHTML(where){
   const pcs=cartPcs(),T=billTotals(store.cart,store.disc),empty=!store.cart.length,err=empty?"":billDiscountError();
   return `<div class="bp">
     <div class="bp-head"><div><div class="eyebrow">Bill ${esc(billNo())}</div><div class="bp-title">${empty?"New bill":esc(itemsText(pcs))}</div></div><div class="bp-hact">${billHoldHTML(empty)}${empty?"":`<button class="link" data-act="clear">Clear</button>`}${where==="sheet"?`<button class="iconbtn" data-act="closesheet" aria-label="Close bill">${ICON.x}</button>`:""}</div></div>
-    ${custLineHTML()}${billOrderHTML()}${store.cartTable&&store.cart.length?`<div class="ordline"><span>Bill of table <b>${esc(store.cartTable.name||"")}</b></span></div>`:""}
+    ${custLineHTML()}${priceListChipHTML()}${billOrderHTML()}${store.cartTable&&store.cart.length?`<div class="ordline"><span>Bill of table <b>${esc(store.cartTable.name||"")}</b></span></div>`:""}
     <div class="bp-items">${empty?emptyBillHTML():store.cart.map((c,i)=>lineHTML(c,i,T.lines[i])).join("")}</div>
     <div class="bp-foot">
       ${sumRow("Subtotal",inr(T.sub))}${discountRowsHTML({itemDisc:T.itemDisc,billDisc:0})}

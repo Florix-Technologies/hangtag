@@ -59,3 +59,8 @@ export const saveTableSessions=()=>storage.set("rc_table_sessions",store.tableSe
 export const savePendingDocs=()=>storage.set("rc_pending_docs",store.pendingDocs||{});
 /* Quotations sent to customers from this device: each press of Send until it went out (queued → sent / failed) */
 export const saveQuoteSends=()=>storage.set("rc_quote_sends",store.quoteSends||[]);
+/* The commerce batch's records (section 3r), by kind then id: pl price lists, po purchase orders, ei / ew e-invoice / e-way
+   readiness, rpk repacks, gv gift vouchers (the cloud's copy) */
+export const saveBiz=()=>storage.set("rc_biz",store.biz||{});
+/* The price list chosen on the bill being rung up (null: the default list) */
+export const saveCartPriceList=()=>{ if(store.cartPriceList) storage.set("rc_cartpl",store.cartPriceList); else storage.remove("rc_cartpl"); };

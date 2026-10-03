@@ -15,6 +15,8 @@ import { dayKey, dayLab, hhmm } from '../../../shared/formatting/dates.js';
 import { inr } from '../../../shared/formatting/money.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { initials } from '../../../shared/utils/text.js';
+import { priceLists } from '../../sales/services/pricing.js';
+import { can } from '../../shop/services/access.js';
 
 /* store.custForm = { id?, name, phone, email, gstin, type, from: "sell" | "page", err, field, dup } while the form is open */
 const badge = c => c.type === "business" ? `<span class="ctype">Business</span>` : "";
@@ -52,7 +54,7 @@ export function custFormHTML(){
     <label class="f full"><span class="lab">${biz?"Business name":"Name"}<span class="req">*</span></span><input name="name" value="${esc(c.name||"")}" maxlength="80" autocomplete="off" required></label>
     <label class="f"><span class="lab">Mobile</span><input name="phone" type="tel" inputmode="tel" value="${esc(c.phone||"")}" maxlength="20" autocomplete="off" placeholder="10-digit mobile"></label>
     <label class="f"><span class="lab">Email</span><input name="email" type="email" inputmode="email" value="${esc(c.email||"")}" maxlength="120" autocomplete="off"></label>
-    <label class="f full"><span class="lab">GSTIN${biz?"":" (optional)"}</span><input name="gstin" value="${esc(c.gstin||"")}" maxlength="15" autocomplete="off" autocapitalize="characters" placeholder="e.g. 27ABCDE1234F1Z5"></label></div>
+    <label class="f full"><span class="lab">GSTIN${biz?"":" (optional)"}</span><input name="gstin" value="${esc(c.gstin||"")}" maxlength="15" autocomplete="off" autocapitalize="characters" placeholder="e.g. 27ABCDE1234F1Z5"></label>${priceListFieldHTML(c)}</div>
     <p id="custErr" class="autherr"${c.err?"":" hidden"} role="alert">${esc(c.err||"")} ${dupBtn}</p>
     <div class="setactions"><button class="btn sm primary" type="submit">${c.id?"Save":c.from==="sell"?"Save and add to bill":"Save customer"}</button><button class="btn sm" type="button" data-act="custback">${c.id||c.from==="sell"?"Back":"Cancel"}</button></div></form>`;
 }
@@ -64,7 +66,14 @@ function renderCustForm(){
 }
 /* The type switch relabels the form without losing what was typed */
 export function custFormType(form){ store.custForm=Object.assign(store.custForm||{},formValues(form)); renderCustForm(); }
-const formValues=form=>{const f=new FormData(form);return {name:String(f.get("name")||""),phone:String(f.get("phone")||""),email:String(f.get("email")||""),gstin:String(f.get("gstin")||""),type:String(f.get("type")||"individual")}};
+const formValues=form=>{const f=new FormData(form);return Object.assign({name:String(f.get("name")||""),phone:String(f.get("phone")||""),email:String(f.get("email")||""),gstin:String(f.get("gstin")||""),type:String(f.get("type")||"individual")},
+  f.has("priceList")?{priceList:String(f.get("priceList")||"")||null}:{})};
+/* The customer's own price list (shops with price lists; set by someone who may change prices) */
+function priceListFieldHTML(c){
+  const lists=priceLists(); if(!lists.length||!can("manage_products")) return "";
+  const cur=c.priceList!==undefined?c.priceList:(c.id&&store.customers[c.id]&&store.customers[c.id].priceList)||"";
+  return `<label class="f full"><span class="lab">Price list</span><select name="priceList"><option value="">Shop's default prices</option>${lists.map(l=>`<option value="${esc(l.id)}"${cur===l.id?" selected":""}>${esc(l.name)}</option>`).join("")}</select></label>`;
+}
 export function saveCustomerForm(form){
   const cur=store.custForm||{from:"sell"}, v=formValues(form), r=saveCustomer(v,{id:cur.id});
   if(r.error){

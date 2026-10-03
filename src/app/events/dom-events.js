@@ -37,7 +37,7 @@ import { setBillDiscount } from '../../features/sales/use-cases/discounts.js';
 import { applyLineDiscount, lineDiscountInput, lineDiscountType, openLineDiscount } from '../../features/sales/components/discount-sheet.js';
 import { cashFormChange, openCashForm, submitCashForm } from '../../features/finance/components/cash-form.js';
 import { checkUnverified, loadUnmatched, resolveUnmatched } from '../../features/finance/components/reconcile-view.js';
-import { completePayment, openPayment, payClosed, payInput, payIntent, payManualUpiReceived, payMode, payQuick, payRest, paySend, payVia } from '../../features/sales/components/payment-sheet.js';
+import { completePayment, openPayment, payClosed, payInput, payIntent, payManualUpiReceived, payMode, payQuick, payRest, paySend, payVia, payVoucher, payVoucherRemove } from '../../features/sales/components/payment-sheet.js';
 import { openBook } from '../../features/finance/components/books-view.js';
 import { enqueue, flushSbQueue } from '../../features/sync/services/outbox.js';
 import { can } from '../../features/shop/services/access.js';
@@ -57,6 +57,7 @@ import { creditOrdersChange, creditOrdersClick, creditOrdersInput, creditOrdersS
 import { inventoryChange, inventoryClick, inventoryInput, inventoryModalClose, inventorySubmit } from '../../features/inventory/components/inventory-views.js';
 import { trackingChange, trackingClick, trackingInput, trackingSubmit } from './tracking-events.js';
 import { restaurantChange, restaurantClick, restaurantInput, restaurantSubmit } from './restaurant-events.js';
+import { commerceChange, commerceClick, commerceInput, commerceSubmit } from './commerce-events.js';
 import { releaseTableBill } from '../../features/restaurant/use-cases/tables.js';
 
 /* Registered once at start-up (app/main.js). */
@@ -69,6 +70,7 @@ export function installDomEvents(){
     const re=t.closest("[data-repevent]");if(re){store.prefs.repEvent=re.dataset.repevent;store.showAllBills=false;savePrefs();closeModal();if(re.dataset.tab)setTab(re.dataset.tab);else renderReport();return}
     const tab=t.closest("[data-tab]");if(tab){closeModal();setTab(tab.dataset.tab);return}
     const tile=t.closest(".tile");if(tile){openPicker(tile.dataset.pid);return}
+    if(commerceClick(t))return;   // price lists, purchase orders, kits, vouchers, GST documents, repack, webhooks
     if(trackingClick(t))return;   // serial numbers at the till, a bill line's serials, an exchange's serial items
     if(restaurantClick(t))return;   // tables, table orders, the kitchen, table QR codes
     // variant picker
@@ -97,6 +99,8 @@ export function installDomEvents(){
     const um=t.closest("[data-unm]");if(um){resolveUnmatched(um.dataset.unm);return}
     const pvia=t.closest("[data-payvia]");if(pvia&&store.payState){payVia(pvia.dataset.payvia);return}
     if(t.closest("[data-upireceived]")&&store.payState){payManualUpiReceived();return}
+    if(t.closest("[data-payvoucher]")&&store.payState){payVoucher();return}
+    if(t.closest("[data-payvoucherrm]")&&store.payState){payVoucherRemove();return}
     const pi=t.closest("[data-payintent]");if(pi&&!pi.disabled&&store.payState){payIntent(pi.dataset.payintent);return}
     const ld=t.closest("[data-linedisc]");if(ld){openLineDiscount(+ld.dataset.linedisc);return}
     const ldt=t.closest("[data-ldtype]");if(ldt&&store.lineDisc){lineDiscountType(ldt.dataset.ldtype);return}
@@ -213,6 +217,7 @@ export function installDomEvents(){
   });
   document.addEventListener("input",e=>{
     const t=e.target;
+    if(commerceInput(t))return;
     if(creditOrdersInput(t))return;
     if(trackingInput(t))return;
     if(restaurantInput(t))return;
@@ -235,6 +240,7 @@ export function installDomEvents(){
     }
   });
   document.addEventListener("submit",e=>{
+    if(commerceSubmit(e))return;
     if(creditOrdersSubmit(e))return;
     if(trackingSubmit(e))return;
     if(restaurantSubmit(e))return;
@@ -247,6 +253,7 @@ export function installDomEvents(){
   });
   document.addEventListener("change",async e=>{
     const t=e.target;
+    if(commerceChange(t))return;
     if(creditOrdersChange(t))return;
     if(trackingChange(t))return;
     if(restaurantChange(t))return;

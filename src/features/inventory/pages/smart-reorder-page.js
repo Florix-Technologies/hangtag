@@ -7,6 +7,7 @@ import { thumb } from '../../products/components/thumb.js';
 import { liveProducts } from '../../products/services/catalog.js';
 import { can } from '../../shop/services/access.js';
 import { inventoryIntelligence } from '../services/inventory-intelligence.js';
+import { reorderPOsHTML } from '../components/purchase-orders.js';
 
 const daysText = n => n == null ? 'No recent sales' : n < 1 ? 'Under 1 day' : `${n} day${n === 1 ? '' : 's'}`;
 const lastSaleText = r => r.lastSale == null ? 'Never sold' : r.daysSinceLastSale < 1 ? 'Sold today' : `Last sold ${r.daysSinceLastSale} day${r.daysSinceLastSale === 1 ? '' : 's'} ago`;
@@ -62,6 +63,7 @@ export function renderSmartReorder(host){
   host.innerHTML = `<div class="intel-head"><div><span class="eyebrow">Inventory intelligence</span><h2 class="vt">Smart reorder</h2><p>Calculated from your stock and completed bills. Suggestions are read-only: Hangtag never orders or changes stock for you.</p></div><button type="button" class="btn sm" data-invsub="levels">View stock</button></div>
     <div class="banner intel-method"><span><b>How this is calculated</b> · last ${c.velocityDays} days of net sales · ${c.leadDays}-day lead time + ${c.safetyDays}-day buffer · reorder up to ${c.targetCoverDays} days</span><small>Deterministic · refreshes with your records</small></div>
     <div class="kpis four">${kpi('Reorder now', String(s.reorderProducts), `${s.reorderVariants} variant${s.reorderVariants === 1 ? '' : 's'} need attention`, s.reorderProducts ? 'warn' : '')}${kpi('Inventory value', inr(s.inventoryValue), 'at current selling prices')}${kpi('Potential gross margin', inr(s.marginOpportunity), marginSub)}${kpi('Dead stock value', inr(s.deadStockValue), `${s.deadStockVariants} variant${s.deadStockVariants === 1 ? '' : 's'} with no sale for ${c.deadDays}+ days`, s.deadStock ? 'crit' : '')}</div>
+    ${reorderPOsHTML()}
     <section class="intel-section"><div class="intel-section-head"><div><h3>Recommended now</h3><p>Variants at or below their velocity-based reorder point.</p></div></div>${reorder.length ? `<div class="intel-list">${reorder.map(r => recommendationCard(r, byId.get(r.id) || { id: r.id, name: r.name })).join('')}</div>` : `<div class="empty compact"><p>No calculated reorder is needed right now. Products without enough sales history are left for you to judge.</p></div>`}</section>
     <div class="intel-watch-grid">${watchList('Fast movers', fast, 'fast', `Nothing has at least ${c.minFastUnits} net sales in the last ${c.velocityDays} days yet.`)}${watchList('Slow movers', slow, 'slow', 'No slow-moving stock detected.')}${watchList('Dead stock', dead, 'dead', `No stocked product has gone ${c.deadDays} days without a sale.`)}</div>
     <p class="note intel-footnote">Stock age uses first-in, first-out movement history. Margin uses saved cost prices only; missing costs are excluded, never guessed.</p>`;

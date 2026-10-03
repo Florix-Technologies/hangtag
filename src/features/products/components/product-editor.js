@@ -30,6 +30,8 @@ import { productFieldsFor, trackingChoiceOf, trackingChoices, trackingFromChoice
 import { shopCaps } from '../../shop/services/shop-caps.js';
 
 import { UNITS, decimalsOf, unitId, unitOf, isWeighed } from '../../../domain/catalog/units.js';
+import { isKit } from '../../../domain/catalog/bundles.js';
+import { openKitEditor } from './kit-editor.js';
 
 /* ---------- product editor ----------
    store.editor = { isNew, id, name, cat, brand, desc, price, cost, color, img, archived, hsn, gst, unit (what it is sold by: pcs, kg…), tracking (none|serial|batch|expiry: batch with expiry dates),
@@ -41,6 +43,8 @@ export function openEditor(pid){
   if(refuse("manage_products","add or edit products"))return;
   const p=pid?prod(pid):null;
   if(pid&&!p)return;
+  // a kit has its own short editor (its items, not options and stock)
+  if(p&&isKit(p)){ openKitEditor(pid); return; }
   const st=editorState(p,stockOf);
   const e={isNew:!p,id:p?p.id:"p"+uid(),name:p?p.name:"",cat:p?p.cat||"":"",brand:p?p.brand||"":"",desc:p?p.desc||"":"",price:p?String(p.price):"",cost:p&&p.cost!=null?String(p.cost):"",
     color:p?okColor(p.color):COLORS[products().length%COLORS.length],img:undefined,archived:p?!!p.archived:false,hsn:p?p.hsn||"":"",gst:p&&p.gst!=null?String(p.gst):"",unit:unitId(p&&p.unit),

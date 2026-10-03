@@ -18,7 +18,7 @@ const check = (name, ok, info) => { if (ok) passed++; else failed++; console.log
 // ---------- the defaults by type of business (the owner can change them) ----------
 console.log('=== defaults ===');
 const on = (type, over) => Object.entries(capsFor(type, over)).filter(([, v]) => v).map(([k]) => k.replace('uses_', '')).sort().join(',');
-check('retail: basic POS and inventory (variants, quotations, sales orders)', on('retail') === 'quotations,sales_orders,variants', on('retail'));
+check('retail: basic POS and inventory (variants, quotations, sales orders, purchase orders)', on('retail') === 'purchase_orders,quotations,sales_orders,variants', on('retail'));
 check('grocery: batches, expiry, weight', /batches/.test(on('grocery')) && /expiry/.test(on('grocery')) && /weight/.test(on('grocery')) && !/serials|tables/.test(on('grocery')), on('grocery'));
 check('electronics: serial numbers', /serials/.test(on('electronics')) && !/batches|weight|tables/.test(on('electronics')), on('electronics'));
 check('hotel / restaurant: tables, table QR, customer and server ordering, kitchen', ['tables', 'table_qr', 'customer_ordering', 'server_ordering', 'kitchen'].every((k) => on('restaurant').split(',').includes(k)), on('restaurant'));

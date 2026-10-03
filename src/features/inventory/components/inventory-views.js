@@ -15,11 +15,14 @@ import { importChange, importClick, openProductImport } from '../../products/com
 import { chooseSubview } from '../../shop/services/modules.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { renderSmartReorder } from '../pages/smart-reorder-page.js';
+import { renderPurchaseOrdersView, usesPOs } from './purchase-orders.js';
 
 /* Who may see purchases and suppliers (the database's read rule: section 5 of schema.sql) */
 export const PURCHASE_READ=["create_purchase","manage_inventory","view_reports"];
 export const INVENTORY_SUBVIEWS=[
   {parent:"stock",id:"smart",label:"Smart reorder",perms:["manage_inventory","create_purchase","view_reports"],render:renderSmartReorder},
+  // purchase orders (section 3r): for a shop that uses them
+  {parent:"stock",id:"pos",label:"Purchase orders",perms:PURCHASE_READ,render:renderPurchaseOrdersView,available:usesPOs},
   {parent:"stock",id:"purchases",label:"Purchases",perms:PURCHASE_READ,render:renderPurchasesView},
   {parent:"stock",id:"suppliers",label:"Suppliers",perms:PURCHASE_READ,render:renderSuppliersView},
   {parent:"stock",id:"count",label:"Stock count",perms:["manage_inventory"],render:renderStockCountView},

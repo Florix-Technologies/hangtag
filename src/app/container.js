@@ -36,6 +36,8 @@ import { saveCollections, saveHeldCarts, saveOrders, savePurchases, saveSupplier
 import { createLocalFirstTableRepository } from '../infrastructure/repositories/local-first-table-repository.js';
 import { createBlobStore } from '../infrastructure/storage/blob-store.js';
 import { createBrowserSpeech } from '../infrastructure/browser/browser-speech.js';
+import { createLocalFirstBizRepository } from '../infrastructure/repositories/local-first-biz-repository.js';
+import { saveBiz } from '../shared/state/persistence.js';
 
 /* Called first at start-up (app/main.js), before the state is restored from storage */
 export function installContainer(){
@@ -75,6 +77,8 @@ export function installContainer(){
   provide("inventoryImportService", createLocalFirstStockImport({ store, cloud: cloudGateway, persist: { saveCatalog, saveMoves }, outbox: { flush: flushSbQueue }, invalidate }));
   // Customer credit, held bills and orders (section 3m)
   provide("orderRepository", createLocalFirstOrderRepository({ store, persist: { saveOrders, saveHeldCarts }, outbox }));
+  // The commerce batch (section 3r): price lists, purchase orders, e-invoice / e-way readiness, repacks, vouchers
+  provide("bizRepository", createLocalFirstBizRepository({ store, persist: { saveBiz, saveMoves }, outbox, invalidate }));
   // Files kept on this device until the cloud has them (a supplier bill's original photo or PDF)
   provide("blobStore", createBlobStore());
   // A restaurant's tables and their sessions (section 3o); their orders are orders of kind "table"

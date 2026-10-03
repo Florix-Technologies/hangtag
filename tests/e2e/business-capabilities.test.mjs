@@ -81,7 +81,7 @@ try {
   await A.click('.nav [data-tab="settings"]'); await sleep(250);
   check('the Settings tab opens the settings', await A.vis('.sheet.settings'));
   const secs = await A.$$eval('.setnav [data-setgo]', (b) => b.map((x) => x.textContent));
-  check('settings in sections', JSON.stringify(secs) === JSON.stringify(['Business', 'Capabilities', 'Receipt', 'Taxes', 'Team & devices', 'Roles & permissions', 'Hardware', 'Account']), secs);
+  check('settings in sections', JSON.stringify(secs) === JSON.stringify(['Business', 'Capabilities', 'Receipt', 'Taxes', 'Team & devices', 'Roles & permissions', 'Hardware', 'Advanced', 'Account']), secs);
   check('Business holds the profile with its type', (await A.$eval('#ps_business_type', (e) => e.value)) === 'grocery' && await A.vis('#set-business #profileForm'));
   check('Receipt, Taxes and Hardware hold their forms once (no duplicates)', await A.vis('#set-receipt #billingForm') && await A.vis('#set-taxes #taxForm') && await A.vis('#set-hardware #printerForm')
     && (await A.$$('#billingForm')).length === 1 && (await A.$$('#printerForm')).length === 1);

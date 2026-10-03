@@ -131,7 +131,9 @@ export function buildPurchase(input,ctx={}){
   }
   const t=+x.t||0, supplier=clean(x.supplierName,80);
   const purchase={id:x.id,kind:"purchase",supplierId:sid,supplier,gstin:clean(x.supplierGstin,20),invoiceNo,invoiceDate:date,t,lines:priced,
-    sub:T.sub,tax:T.tax,total:T.total,paid:toRupees(toPaise(paid)),method:method||null,status:"posted",note,dev:x.dev||""};
+    sub:T.sub,tax:T.tax,total:T.total,paid:toRupees(toPaise(paid)),method:method||null,status:"posted",note,dev:x.dev||"",
+    // received on a purchase order (domain/inventory/purchase-orders.js): the database checks it against what is still to come
+    ...(x.poId?{poId:x.poId,...(x.allowOver?{allowOver:true}:{})}:{})};
   const moveId=ctx.moveId||(i=>x.id+":"+i), mnote=purchaseNote(invoiceNo,supplier);
   const moves=priced.map((l,i)=>Object.assign({id:moveId(i),v:l.v,p:l.p,type:"RESTOCK",q:l.q,cost:Math.round(l.cost),note:mnote,t,dev:x.dev||"",imp:x.id},
     l.serials?{sn:l.serials.slice()}:{}, l.batch?{b:l.batch.no,...(l.batch.exp?{exp:l.batch.exp}:{})}:{}));

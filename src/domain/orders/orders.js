@@ -129,10 +129,38 @@ export function orderCartLines(o,avail){
   });
   return {lines,skipped};
 }
+/* Fulfilling a sales order now, line by line: what is ordered, already delivered, still to deliver, what can go out now
+   (stock allows) and what then stays for later. avail(variant id) → pieces that can be sold now (null: not in the catalog).
+   The remaining quantity is tracked by the order itself — nobody makes a separate backorder.
+   → { lines: [{ ln, name, vl, u, ordered, delivered, remaining, now, later }], now, later, canFulfil } */
+export function fulfilmentPlan(o,avail){
+  const lines=(o&&o.items||[]).map(l=>{
+    const rem=remaining(l), a=l.v?avail(l.v):null, now=a==null?0:Math.max(0,Math.min(rem,Math.floor(a*1000+1e-6)/1000));
+    return {ln:l.ln,name:l.name,vl:l.vl||"",u:l.u||"pcs",ordered:+l.q||0,delivered:+l.fq||0,remaining:rem,now,later:Math.round((rem-now)*1000)/1000};
+  });
+  const sum=k=>Math.round(lines.reduce((a,l)=>a+l[k],0)*1000)/1000;
+  return {lines,now:sum("now"),later:sum("later"),canFulfil:lines.some(l=>l.now>0)};
+}
+/* What the customer sees (never ERP words): Confirmed → Partially ready → Ready (everything handed over, payment still at
+   the counter) → Completed (handed over and paid); Cancelled */
+export const CUSTOMER_LABELS={received:"Received",confirmed:"Confirmed",partial:"Partially ready",ready:"Ready",completed:"Completed",cancelled:"Cancelled"};
+export function customerStage(o,{paid}={}){
+  if(!o) return "received";
+  if(o.status==="cancelled") return "cancelled";
+  const items=o.items||[], all=items.length>0&&items.every(l=>remaining(l)<=0), some=items.some(l=>+l.fq>0);
+  if(all||o.status==="completed") return paid?"completed":"ready";
+  if(some||o.status==="partial") return "partial";
+  return o.status==="draft"?"received":"confirmed";
+}
 /* The order lines a bill delivered: { [order line no]: quantity } for the bill's lines that came from this order */
 export function soldFromOrder(sale,orderId){
-  const out={};
-  (sale.items||[]).forEach(i=>{ if(i.ord===orderId&&i.oln!=null) out[i.oln]=(out[i.oln]||0)+(+i.q||0); });
+  const out={}, kits=new Set();
+  (sale.items||[]).forEach(i=>{
+    if(i.ord!==orderId||i.oln==null) return;
+    // a kit's items (domain/catalog/bundles.js) deliver the kit: counted once, as the number of kits
+    if(i.kit&&typeof i.kit==="object"){ if(!kits.has(i.oln)){ kits.add(i.oln); out[i.oln]=(out[i.oln]||0)+(+i.kit.n||0); } return; }
+    out[i.oln]=(out[i.oln]||0)+(+i.q||0);
+  });
   return out;
 }
 

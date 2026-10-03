@@ -10,9 +10,12 @@
 import { sumP, toPaise, toRupees, tooPrecise } from './paise.js';
 import { inrx } from '../../shared/formatting/money.js';
 import { providerFee } from './payment-provider.js';
+import { VOUCHER, voucherPartError } from './vouchers.js';
 
 export const PAY_METHODS=["cash","upi","card"];
-export const PAY_LABELS={cash:"Cash",upi:"UPI",card:"Card",due:"On account"};
+export const PAY_LABELS={cash:"Cash",upi:"UPI",card:"Card",due:"On account",voucher:"Gift voucher"};
+/* A gift voucher (domain/sales/vouchers.js) pays like a method of its own: never cash or bank money, one per bill */
+export { VOUCHER };
 /* The part of a bill left on a saved customer's account (paid later: domain/customers/credit.js). Never money in the drawer
    or the bank, so it is not a payment: the bill keeps it as dueAmt. A return may also be refunded to the account ("due"). */
 export const DUE="due";
@@ -64,7 +67,7 @@ const REF_NEEDED={card:"Enter the approval or transaction reference from the car
    or { error, method?, field?, paid, balance } (nothing is recorded) */
 export function settlePayments(due,allocations,opts){
   const D=toPaise(due), all=(allocations||[]).filter(a=>a&&amountOf(a.amount)!==0), seen=new Set();
-  const list=all.filter(a=>a.method!==DUE), acctParts=all.filter(a=>a.method===DUE);
+  const list=all.filter(a=>a.method!==DUE&&a.method!==VOUCHER), acctParts=all.filter(a=>a.method===DUE), vParts=all.filter(a=>a.method===VOUCHER);
   let paid=0, acct=0;
   const fail=(error,a,field)=>({error,method:a&&a.method,field,paid:toRupees(paid),balance:toRupees(Math.max(0,D-paid-acct))});
   if(acctParts.length>1) return fail("The amount on account is there twice. Put all of it on one line.",acctParts[1],"amount");
@@ -76,6 +79,14 @@ export function settlePayments(due,allocations,opts){
     if(!(opts&&opts.customer)) return fail("Add a saved customer to the bill to put part of it on their account.",a,"customer");
     acct=toPaise(v);
   }
+  if(vParts.length>1) return fail("One gift voucher per bill. Pay the rest another way.",vParts[1],"voucher");
+  let vouch=0;
+  for(const a of vParts){
+    const v=amountOf(a.amount);
+    if(!Number.isFinite(v)||v<0||tooPrecise(v)) return fail("Enter the voucher amount.",a,"amount");
+    vouch=toPaise(v);
+  }
+  paid+=vouch;
   for(const a of list){
     const v=amountOf(a.amount);
     if(!PAY_METHODS.includes(a.method)) return fail("Choose cash, UPI or card.",a,"method");
@@ -90,6 +101,7 @@ export function settlePayments(due,allocations,opts){
   // the amounts first (they're typed first), then how each part was confirmed
   if(paid+acct<D) return fail(`${inrx(toRupees(D-paid-acct))} still to pay.`,null,"amount");
   if(paid+acct>D) return fail(`That's ${inrx(toRupees(paid+acct-D))} more than the bill.`,null,"amount");
+  for(const a of vParts){ const e=voucherPartError(a); if(e) return fail(e,a,"voucher"); }
   for(const a of list){
     const v=amountOf(a.amount);
     if(PROVIDER_VIA.includes(viaOf(a))){
@@ -126,6 +138,8 @@ export function settlePayments(due,allocations,opts){
     }
     payments.push(p);
   }
+  // the voucher part: the database already took it off the voucher (its redemption); only the code's last 4 are shown
+  for(const a of vParts){ received+=toPaise(a.amount); payments.push({method:VOUCHER,amount:+(+a.amount).toFixed(2),verification:"recorded",voucher:a.voucher.id,redemption:a.voucher.redemption,ref:"GV ···"+String(a.voucher.code||"").slice(-4)}); }
   return {ok:true,payments,paid:toRupees(paid),received:toRupees(received),change:toRupees(change),...(acct?{onAccount:toRupees(acct)}:{})};
 }
 /* Live figures for the payment screen: paid so far, balance still due, more than due, change from cash handed over, and

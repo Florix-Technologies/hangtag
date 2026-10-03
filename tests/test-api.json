@@ -194,7 +194,20 @@
   "processQuoteSends",
   "openOrderEditor",
   "saveTable",
-  "sendTableOrder"
+  "sendTableOrder",
+  "addWebhook",
+  "issueVoucher",
+  "newPODraft",
+  "openReceive",
+  "poById",
+  "poLine",
+  "poProgressOf",
+  "receivePO",
+  "saveKit",
+  "savePO",
+  "savePriceList",
+  "setItemPrice",
+  "vRec"
  ],
  "state": [
   "access",
@@ -247,6 +260,7 @@
   "purchaseForm",
   "snPick",
   "trackView",
-  "pendingDocs"
+  "pendingDocs",
+  "biz"
  ]
 }

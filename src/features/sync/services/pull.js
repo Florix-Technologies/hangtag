@@ -15,6 +15,7 @@ import { saveCollections, saveHeldCarts, saveOrders, savePurchases, saveSupplier
 import { renderAll } from '../../../shared/ui/render.js';
 import { logger } from '../../../shared/logging/logger.js';
 import { can, isMember } from '../../shop/services/access.js';
+import { bizRepository } from '../../commerce/repositories/biz-repository.js';
 
 /* ---------- pulls (cloud is the truth, except for work still waiting in this device's queue) ---------- */
 let seen = null;   // a member's phone: the shop's fingerprints its data matches (null: not known yet; see pullShopChanges)
@@ -54,8 +55,11 @@ export async function pullMoves(){
   const pending = pendingIds("move"), next = {};
   // the stock records of a purchase (or its cancel) still on its way go up with it, so they stay too
   const withPurchase = new Set([...pendingIds("purchase"), ...pendingIds("pcancel")]);
+  // …and so do a repack's two records (rpk:<id>:out / :in) while the repack is on its way
+  const repacks = new Set(store.sbOfflineQueue.filter(q => q.type === "biz" && q.kind === "rpk").map(q => q.id));
   list.forEach(m => { next[m.id] = m; });
-  Object.values(store.moves).forEach(m => { if(pending.has(m.id) || (m.imp && withPurchase.has(m.imp))) next[m.id] = m; });
+  Object.values(store.moves).forEach(m => { const rk = /^rpk:(.+):(out|in)$/.exec(m.id);
+    if(pending.has(m.id) || (m.imp && withPurchase.has(m.imp)) || (rk && repacks.has(rk[1]))) next[m.id] = m; });
   store.moves = next; saveMoves();
 }
 export async function pullReturns(){
@@ -134,6 +138,8 @@ export async function pullFromSupabase(showToast = true){
     // orders, held bills and payments collected (section 3m): a database without them yet doesn't stop the rest
     await pullOrders().catch(e => logger.warn("Orders and credit not downloaded:", e));
     await pullPurchases();
+    // price lists, purchase orders, GST readiness, repacks, vouchers (section 3r): a database without them keeps this device's copy
+    await pullBiz().catch(e => logger.warn("Price lists, purchase orders and vouchers not downloaded:", e));
     await pullSettings();
     await pullSales();
     if(isMember()){ seen = marks; seenPurchases = pmarks; }
@@ -293,6 +299,30 @@ export async function pullTables(){
   // this device's sessions: waiting to upload, or still going here though the cloud's list (open or recent) doesn't have them
   Object.values(store.tableSessions || {}).forEach(s => { if(ps.has(s.id)) S[s.id] = s; });
   store.tables = T; saveTables(); store.tableSessions = S; saveTableSessions();
+}
+/* ---------- the commerce batch (section 3r) ---------- */
+/* The cloud's records of every kind, except what this device changed and hasn't uploaded (or the cloud refused for review):
+   those stay as they are here. A kind the database doesn't have yet (schema.sql not re-run) leaves this device's copy alone. */
+export async function pullBiz(){
+  const got = await use("cloud").fetchBiz();
+  const waiting = kind => new Set([...store.sbOfflineQueue, ...(store.syncReview || []).map(r => r.item)].filter(q => q && (q.type === "biz" || q.type === "bizdel") && q.kind === kind).map(q => q.id));
+  Object.entries(got || {}).forEach(([kind, list]) => {
+    if(!Array.isArray(list)) return;
+    const keep = waiting(kind), next = {};
+    list.forEach(r => { next[r.id] = r; });
+    bizRepository().list(kind).forEach(r => { if(keep.has(r.id)) next[r.id] = r; });
+    // a repack waiting to upload keeps its stock records here (pullMoves keeps them too)
+    bizRepository().replace(kind, next);
+  });
+}
+/* A team member's phone (no live updates): the batch's records again only when their fingerprint moved */
+let seenBiz = null;
+export async function pullBizChanges(){
+  if(!store.sbClient || store.sbStatus !== "connected") return false;
+  const now = await use("cloud").bizChanges(), was = seenBiz;
+  if(was && JSON.stringify(was) === JSON.stringify(now)) return false;
+  await pullBiz(); seenBiz = now; renderAll();
+  return true;
 }
 /* A team member's phone (no live updates): orders, held bills and collections again only when their fingerprint moved */
 let seenOrders = null;

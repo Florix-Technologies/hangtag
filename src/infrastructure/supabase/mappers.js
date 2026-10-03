@@ -30,7 +30,9 @@ export const rowToItem = i => Object.assign({ p:i.product_id, v:i.variant_id||un
   // discounts and GST of the line (bills saved since line discounts)
   i.discount_type ? { disc:{ type:i.discount_type, value:numOr0(i.discount_value) } } : {},
   i.line_total!=null ? { dAmt:numOr0(i.discount_amount), bdAmt:numOr0(i.bill_discount_share), gst:numOr0(i.gst_rate), hsn:i.hsn||"", tx:num(i.taxable_value),
-    cgst:numOr0(i.cgst_amount), sgst:numOr0(i.sgst_amount), igst:numOr0(i.igst_amount), lt:num(i.line_total) } : {});
+    cgst:numOr0(i.cgst_amount), sgst:numOr0(i.sgst_amount), igst:numOr0(i.igst_amount), lt:num(i.line_total) } : {},
+  // the kit the line was sold in (section 3r)
+  i.kit && typeof i.kit === "object" && i.kit.v ? { kit:{ v:i.kit.v, p:i.kit.p||null, name:i.kit.name||"", n:+i.kit.n||0 } } : {});
 export function rowToSale(s, items, payments){
   const sale = { id:s.id, no:s.bill_no||undefined, t:Number(s.timestamp), items:items||[], sub:numOr0(s.subtotal), disc:numOr0(s.discount), total:s.total,
     tax:numOr0(s.tax_amount), taxRate:s.tax_rate==null?0:+s.tax_rate, taxIncl:s.tax_inclusive!==false, credit:s.credit||0,
@@ -64,7 +66,7 @@ export const saleItemRows = s => (s.items||[]).map((i,k)=>{ const d = normalizeD
   color:i.c||"", size:i.s==null?"":i.s, variant_label:i.vl||null, options:ovToRow(i.ov), sku:i.sku||null, quantity:i.q, unit_price:i.price, cost_price:i.cost==null?null:i.cost,
   discount_type:d?d.type:null, discount_value:d?d.value:null, discount_amount:i.dAmt||0, bill_discount_share:i.bdAmt||0, taxable_value:i.tx==null?null:i.tx,
   gst_rate:i.gst==null?null:i.gst, cgst_amount:i.cgst||0, sgst_amount:i.sgst||0, igst_amount:i.igst||0, line_total:i.lt==null?null:i.lt, hsn:i.hsn||null,
-  serials:snRow(i.sn), batches:btRow(i.bt) }; });
+  serials:snRow(i.sn), batches:btRow(i.bt), ...(i.kit ? { kit:{ v:i.kit.v, p:i.kit.p, name:String(i.kit.name||"").slice(0,120), n:+i.kit.n||0 } } : {}) }; });
 /* A bill's payments (one row per method; bills from before split payments have one) */
 export const paymentRows = s => paymentsOf(s).map(p => ({ id:p.id, sale_id:s.id, method:p.method, amount:p.amount,
   tendered:p.method==="cash" ? (p.received==null ? p.amount : p.received) : null, change_given:p.change||0, reference:p.ref||null, t:s.t, device_id:s.dev||store.dev,
@@ -83,7 +85,10 @@ export function optionsRow(p){
 }
 export const productRow = (p, idx) => ({ id:p.id, name:p.name, price:+p.price||0, color:okColor(p.color), sort_order:idx, category:p.cat||null, brand:p.brand||null,
   description:p.desc||null, cost_price:p.cost==null?null:p.cost, archived:!!p.archived, hsn:p.hsn||null, gst_rate:p.gst==null||p.gst===""?null:+p.gst,
-  code_type:p.code||null, options:optionsRow(p), tracking:cleanTracking(p.tracking), unit:unitId(p.unit), low_stock:p.low==null||p.low===""?null:Math.round(+p.low), tracks_expiry:!!p.expiry, updated_at:new Date().toISOString() });
+  code_type:p.code||null, options:optionsRow(p), tracking:cleanTracking(p.tracking), unit:unitId(p.unit), low_stock:p.low==null||p.low===""?null:Math.round(+p.low), tracks_expiry:!!p.expiry, updated_at:new Date().toISOString(),
+  // a kit's items and a product's repack conversions (section 3r): only for products that have them
+  ...(Array.isArray(p.bundle) ? { bundle:p.bundle.length ? p.bundle.map(c => ({ v:c.v, q:+c.q })) : null } : {}),
+  ...(Array.isArray(p.repack) ? { repack:p.repack.length ? p.repack.map(r => ({ f:r.f, t:r.t, per:+r.per })) : null } : {}) });
 export const variantRows = p => variantsOf(p,true).map((v,k)=>({ id:v.id, product_id:p.id, option_values:Array.isArray(v.o)?v.o.slice():[],
   ...(cs => ({ color:cs.c, size:cs.s }))(legacyCS(p.opts, v.o)), sku:v.sku||null, barcode:v.bc||null,
   price:v.price==null?null:v.price, cost_price:v.cost==null?null:v.cost, active:v.active!==false, sort_order:k, updated_at:new Date().toISOString() }));
@@ -100,7 +105,9 @@ export const returnItemRows = r => r.items.map((i,k)=>({ return_id:r.id, line_no
   serials:snRow(i.sn), batches:btRow(i.bt) }));
 /* One return for RPC hangtag_save_return */
 export const returnArgs = r => ({ p_return:returnRow(r), p_items:returnItemRows(r) });
-export const custRow = c => ({ id:c.id, name:c.name, phone:c.phone||null, email:c.email||null, gstin:c.gstin||null, customer_type:c.type==='business'?'business':'individual', created_at:new Date(c.t||Date.now()).toISOString(), updated_at:new Date().toISOString() });
+export const custRow = c => Object.assign({ id:c.id, name:c.name, phone:c.phone||null, email:c.email||null, gstin:c.gstin||null, customer_type:c.type==='business'?'business':'individual', created_at:new Date(c.t||Date.now()).toISOString(), updated_at:new Date().toISOString() },
+  // the customer's address (e-invoices, e-way bills) and own price list (section 3r): sent once used, so an older database still takes customers
+  c.addr ? { address:{ line:c.addr.line||"", city:c.addr.city||"", pin:c.addr.pin||"", state:c.addr.state||"" } } : {}, c.priceList!==undefined ? { price_list_id:c.priceList||null } : {});
 /* Downloads: product, variant, return, return line and customer rows to app records */
 export function rowToProduct(p){
   // rows without options.opts (saved before options existed, or by an older app version) keep their colour/size lists,
@@ -108,7 +115,9 @@ export function rowToProduct(p){
   const o = p.options || {};
   const base = { id:p.id, name:p.name, cat:p.category||"", brand:p.brand||"", desc:p.description||"", price:p.price, cost:p.cost_price==null?null:p.cost_price,
     color:p.color, archived:!!p.archived, hsn:p.hsn||"", gst:p.gst_rate==null?null:+p.gst_rate, code:p.code_type||"", variants:[], ...(unitId(p.unit) !== "pcs" ? { unit:p.unit } : {}),
-    ...(cleanTracking(p.tracking) !== "none" ? { tracking:p.tracking } : {}), ...(p.low_stock!=null ? { low:+p.low_stock } : {}), ...(p.tracks_expiry ? { expiry:true } : {}) };
+    ...(cleanTracking(p.tracking) !== "none" ? { tracking:p.tracking } : {}), ...(p.low_stock!=null ? { low:+p.low_stock } : {}), ...(p.tracks_expiry ? { expiry:true } : {}),
+    ...(Array.isArray(p.bundle) && p.bundle.length ? { bundle:p.bundle.map(c => ({ v:String(c.v), q:+c.q })) } : {}),
+    ...(Array.isArray(p.repack) && p.repack.length ? { repack:p.repack.map(r => ({ f:String(r.f), t:String(r.t), per:+r.per })) } : {}) };
   if(Array.isArray(o.opts)) return { ...base, opts:o.opts.map(x => ({ n:String(x&&x.name||""), v:Array.isArray(x&&x.values)?x.values.map(String):[] })) };
   return { ...base, colors:Array.isArray(o.colors)?o.colors:undefined, sizes:Array.isArray(o.sizes)?o.sizes:undefined };
 }
@@ -137,7 +146,9 @@ export const rowToEvent = r => ({ id:r.id, name:r.name, start:String(r.start_dat
 /* A bill sent to its customer (hangtag_deliveries, written by the send-receipt Edge Function) */
 export const rowToDelivery = r => ({ id:r.id, saleId:r.sale_id, ...(r.order_id ? { orderId:r.order_id } : {}), ...(r.request_id ? { requestId:r.request_id } : {}), channel:r.channel, to:r.recipient, status:r.status, provider:r.provider||"", providerId:r.provider_message_id||"", error:r.error||"",
   mode:r.mode||"manual", t:Date.parse(r.created_at)||0, ...(r.delivered_at ? { deliveredAt:Date.parse(r.delivered_at) } : {}) });
-export const rowToCustomer = r => ({ id:r.id, name:r.name, phone:r.phone||"", email:r.email||"", gstin:r.gstin||"", type:r.customer_type==='business'?'business':'individual', t:Date.parse(r.created_at)||0 });
+export const rowToCustomer = r => Object.assign({ id:r.id, name:r.name, phone:r.phone||"", email:r.email||"", gstin:r.gstin||"", type:r.customer_type==='business'?'business':'individual', t:Date.parse(r.created_at)||0 },
+  r.address && typeof r.address === "object" && (r.address.line || r.address.pin || r.address.city) ? { addr:{ line:r.address.line||"", city:r.address.city||"", pin:r.address.pin||"", state:r.address.state||"" } } : {},
+  r.price_list_id ? { priceList:r.price_list_id } : {});
 
 /* ---------- supplier bill imports ---------- */
 export const rowToImport = r => ({ id:r.id, fileHash:r.file_hash||"", fileName:r.file_name||"", supplier:r.supplier_name||"", gstin:r.supplier_gstin||"",
@@ -225,7 +236,8 @@ export function purchaseArgs(p, moves){
   return {
     p_purchase: { id:p.id, supplier_id:p.supplierId||null, supplier_name:p.supplier||null, supplier_gstin:p.gstin||null, invoice_no:p.invoiceNo||null,
       invoice_date:/^\d{4}-\d{2}-\d{2}$/.test(p.invoiceDate||"") ? p.invoiceDate : null, t:p.t, lines:(p.lines||[]).map(purchaseLineRow),
-      subtotal:p.sub, tax_amount:p.tax, total_amount:p.total, paid_amount:p.paid||0, payment_method:p.paid>0 ? p.method : null, note:p.note||null, device_id:p.dev||store.dev },
+      subtotal:p.sub, tax_amount:p.tax, total_amount:p.total, paid_amount:p.paid||0, payment_method:p.paid>0 ? p.method : null, note:p.note||null, device_id:p.dev||store.dev,
+      ...(p.poId ? { po_id:p.poId, allow_over:!!p.allowOver } : {}) },
     p_moves: (moves||[]).map(moveRow),
     p_tracking: tracking,
   };
@@ -235,6 +247,7 @@ export const rowToPurchase = r => Object.assign({ id:r.id, kind:"purchase", supp
   lines:Array.isArray(r.lines) ? r.lines.map(l => ({ ...l, q:+l.q, cost:+l.cost, gst:+l.gst||0, tx:+l.tx, tax:+l.tax, total:+l.total })) : [],
   sub:+r.subtotal||0, tax:+r.tax_amount||0, total:+r.total_amount||0, paid:+r.paid_amount||0, method:r.payment_method||null, status:r.status==="cancelled"?"cancelled":"posted",
   note:r.note||"", dev:r.device_id||"" }, r.status === "cancelled" ? { cancelReason:r.cancel_reason||"", cancelledAt:Date.parse(r.cancelled_at)||0 } : {}, r.user_id ? { user:r.user_id } : {},
+  r.po_id ? { poId:r.po_id } : {},
   // a purchase entered from a supplier bill's photo or PDF keeps the original (section 3p)
   r.document_path ? { doc:r.document_path } : {}, r.file_name ? { fileName:r.file_name } : {});
 export const supplierPaymentRow = x => ({ id:x.id, supplier_id:x.supplierId, purchase_id:x.purchaseId||null, amount:x.amount, method:x.method, reference:x.ref||null,

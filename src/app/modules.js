@@ -36,6 +36,10 @@ import { invoicePageHTML, quotationSettingsHTML } from '../features/orders/compo
 import { installAssistantEvents, renderAssistantPage } from '../features/assistant/pages/assistant-page.js';
 import { installProductDraftEvents } from '../features/products/components/product-draft-assistant.js';
 import { installVoiceSearch } from '../features/search/components/voice-search.js';
+import { priceListsSettingsHTML } from '../features/commerce/components/settings-parts.js';
+import { gstSettingsHTML } from '../features/commerce/components/gst-documents.js';
+import { vouchersSettingsHTML } from '../features/commerce/components/vouchers.js';
+import { integrationsSettingsHTML } from '../features/commerce/components/webhooks.js';
 
 let installed = false;
 export function installModules(){
@@ -66,6 +70,12 @@ export function installModules(){
   // Settings → Receipt: the page invoice links open (the owner's), and the quotation template for shops that make quotations
   registerSettingsPart("receipt", { id: "invoice-page", order: 10, perms: ["manage_settings"], html: invoicePageHTML });
   registerSettingsPart("receipt", { id: "quotations", order: 20, perms: ["manage_settings"], html: () => hasCap("uses_quotations") ? quotationSettingsHTML() : "" });
+  // Settings → Selling (section 3r): price lists for shops that use them
+  registerSettingsPart("selling", { id: "price-lists", order: 10, perms: ["manage_products"], html: () => hasCap("uses_price_lists") ? priceListsSettingsHTML() : "" });
+  registerSettingsPart("selling", { id: "vouchers", order: 20, perms: ["create_sale", "manage_settings"], html: vouchersSettingsHTML });
+  registerSettingsPart("selling", { id: "gst-docs", order: 30, perms: ["manage_settings"], html: gstSettingsHTML });
+  // Settings → Advanced: integrations (outbound webhooks), the owner's only
+  registerSettingsPart("advanced", { id: "integrations", order: 10, html: integrationsSettingsHTML });
   // Restaurant (W2-B): the tables (a till, or servers ordering on their phones) and the kitchen screen — only with the shop's
   // table / kitchen capabilities (the registry adds them to these modules by itself)
   registerModule({ id: "tables", label: "Tables", order: 32, phone: 25, caps: ["uses_tables"], perms: ["create_sale", "create_order", "manage_tables", "manage_settings"], available: mayWorkTables, render: renderTablesPage });

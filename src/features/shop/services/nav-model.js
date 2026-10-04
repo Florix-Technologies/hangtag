@@ -1,7 +1,5 @@
-// Where every page sits: the navigation model. Destinations (a module, or a part of one: Stock → Purchases) are grouped
-// in areas. A desktop lists the areas in its sidebar; a phone keeps a few modules in its tab bar and puts the other areas
-// under "More" (Sales, Purchases, Customers, Reports, Team, Settings); an area with parts shows them in a bar on its page
-// (Stock: Stock · Products · Serials & batches · Stock count · Smart reorder). Presentation only: whether a destination
+// Where every page sits: the navigation model. A small, stable primary bar chooses the workspace; contextual navigation
+// inside Sell and Stock chooses the task. Everything secondary is grouped under More. Presentation only: whether a destination
 // exists for this person is the module registry's (services/modules.js: capabilities, permissions, available()).
 import { store } from '../../../shared/state/store.js';
 import { currentSubview, moduleDef, moduleShown, subviewsOf } from './modules.js';
@@ -10,20 +8,22 @@ import { currentSubview, moduleDef, moduleShown, subviewsOf } from './modules.js
    side: false keeps a destination out of the desktop sidebar (it is still in its area's bar and in More). */
 export const NAV_AREAS = [
   { key: "home", label: "", items: [{ tab: "home" }] },
-  { key: "sell", label: "", items: [{ tab: "sell" }] },
-  { key: "tables", label: "", items: [{ tab: "tables" }] },
-  { key: "kitchen", label: "", items: [{ tab: "kitchen" }] },
-  { key: "sales", label: "Sales", items: [{ tab: "orders" }, { tab: "store" }] },
-  { key: "stock", label: "Stock", items: [{ tab: "stock", sub: "levels", label: "Stock" }, { tab: "products" }, { tab: "stock", sub: "tracking", side: false },
-    { tab: "stock", sub: "count", side: false }, { tab: "stock", sub: "smart", side: false }] },
-  { key: "purchases", label: "Purchases", items: [{ tab: "stock", sub: "purchases" }, { tab: "stock", sub: "pos", side: false }, { tab: "stock", sub: "suppliers" }] },
+  { key: "sell", label: "Sell", items: [{ tab: "sell", label: "New sale" }, { tab: "orders", sub: "held" },
+    { tab: "orders", sub: "quote" }, { tab: "orders", sub: "sales" }, { tab: "tables" }, { tab: "kitchen" }] },
+  { key: "bills", label: "", items: [{ tab: "bills" }] },
+  { key: "stock", label: "Stock", items: [{ tab: "stock", sub: "levels", label: "Stock" }, { tab: "products" },
+    { tab: "stock", sub: "count" }, { tab: "stock", sub: "purchases" }, { tab: "stock", sub: "suppliers" },
+    { tab: "stock", sub: "pos" }, { tab: "stock", sub: "tracking" }, { tab: "stock", sub: "smart" }] },
   { key: "customers", label: "", items: [{ tab: "customers" }] },
-  { key: "reports", label: "Reports", items: [{ tab: "report" }, { tab: "assistant" }] },
+  { key: "reports", label: "", items: [{ tab: "report" }] },
+  { key: "commerce", label: "Commerce", items: [{ tab: "store" }] },
+  { key: "agent", label: "Hangtag Agent", items: [{ tab: "assistant" }] },
   { key: "team", label: "", items: [{ tab: "team" }] },
   { key: "settings", label: "", items: [{ tab: "settings" }] },
 ];
+export const PRIMARY_TABS = Object.freeze(["home", "sell", "bills", "stock", "customers", "report"]);
 /* More's headings on a phone for areas that are one destination */
-const MORE_HEADINGS = { customers: "Customers", team: "Team", settings: "Settings", home: "", sell: "Sales", tables: "Restaurant", kitchen: "Restaurant" };
+const MORE_HEADINGS = { customers: "Customers", reports: "Reports", bills: "Bills", team: "Team & Devices", settings: "Business & Settings", home: "", sell: "Sell", agent: "Hangtag Agent" };
 
 const subOf = (tab, sub) => subviewsOf(tab).find(d => d.id === sub) || null;
 /* Is this destination shown to the person signed in, in this shop? */
@@ -42,6 +42,14 @@ export function destLabel(it){
 export function navAreas(){
   return NAV_AREAS.map(a => ({ key: a.key, label: a.label, items: a.items.filter(destShown).map(it => Object.assign({}, it, { id: destId(it), label: destLabel(it) })) }))
     .filter(a => a.items.length);
+}
+/* The stable workspaces shown across the desktop. A role/capability may remove one; More remains. */
+export function primaryNav(){
+  const areas=navAreas();
+  return PRIMARY_TABS.map(tab=>{
+    const area=areas.find(a=>a.items.some(it=>it.tab===tab)), it=area&&area.items.find(x=>x.tab===tab);
+    return it?Object.assign({},it,{area:area.key,label:tab==="report"?"Reports":tab==="stock"?"Stock":tab.charAt(0).toUpperCase()+tab.slice(1)}):null;
+  }).filter(Boolean);
 }
 /* Where the page on screen is: { area, id } (the module's part decides for a module split over areas) */
 export function navWhere(tab = store.prefs && store.prefs.tab){

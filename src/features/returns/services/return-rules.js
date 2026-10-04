@@ -1,7 +1,7 @@
 // Return values and limits for the bills on this device (the rules are in domain/returns/return-value.js).
 import { store } from '../../../shared/state/store.js';
 import { lineNo, quoteReturn, returnableQty, savedLine } from '../../../domain/returns/return-value.js';
-import { nextDocNo } from '../../../domain/sales/sale.js';
+import { nextNumber } from '../../sales/services/doc-numbers.js';
 import { normalizeDiscount } from '../../../domain/sales/discounts.js';
 import { toRupees } from '../../../domain/sales/paise.js';
 import { D } from '../../inventory/services/ledger.js';
@@ -30,5 +30,5 @@ export function exAvail(vid){
 }
 /* Serials of bill line ln that earlier returns took back */
 export const returnedSerials=(s,ln)=>new Set((D().retBySale[s.id]||[]).flatMap(r=>(r.items||[]).filter(i=>i.ln===ln&&Array.isArray(i.sn)).flatMap(i=>i.sn)));
-/* The next credit note number: this device's own series that day, like bill numbers (CN-260929-K3F001) */
-export const creditNoteNo=t=>nextDocNo("CN-",D().rets,t,store.dev);
+/* The next credit note number: its own series (CN-000012; on a second till CN-B-000003) */
+export const creditNoteNo=t=>nextNumber("credit",D().rets,t,{claim:true});

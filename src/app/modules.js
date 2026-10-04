@@ -13,6 +13,7 @@ import { scaleSetupHTML } from '../features/hardware/components/scale-settings.j
 import { onSubviewClick, renderAreaNav, renderSubviews } from '../features/shop/components/module-page.js';
 import { openTeam } from '../features/shop/components/team-settings.js';
 import { renderHome } from '../features/home/pages/home-page.js';
+import { installBillsPageEvents, renderBillsPage } from '../features/bills/pages/bills-page.js';
 import { renderBill } from '../features/sales/components/bill-panel.js';
 import { renderGrid } from '../features/sales/pages/sell-page.js';
 import { renderStock } from '../features/inventory/pages/stock-page.js';
@@ -50,7 +51,8 @@ export function installModules(){
   if(installed) return;
   installed = true;
   registerModule({ id: "home", render: renderHome });
-  registerModule({ id: "sell", render(){ renderGrid(); renderBill(); } });
+  registerModule({ id: "sell", render(){ renderAreaNav("sell"); renderGrid(); renderBill(); } });
+  registerModule({ id: "bills", render: renderBillsPage });
   registerModule({ id: "orders", render: () => renderSubviews("orders") });
   // Orders (T3): held bills for every shop; quotations and sales orders where the shop uses them
   ORDERS_MODULE.submodules.forEach((m, i) => registerSubview("orders", { id: m.id, label: m.label, order: 10 * (i + 1), caps: m.capability ? [m.capability] : [], perms: m.permissions, render: host => renderOrdersPart(host, m.id) }));
@@ -59,7 +61,7 @@ export function installModules(){
   // Inventory (T2): purchases, suppliers and stock count, for the roles that use them
   INVENTORY_SUBVIEWS.forEach((d, i) => registerSubview("stock", { id: d.id, label: d.label, order: 20 + 10 * i, perms: d.perms, ...(d.available ? { available: d.available } : {}), render: host => renderInventoryPart(d, host) }));
   registerModule({ id: "report", render: renderReport });
-  registerModule({ id: "assistant", label: "Ask Hangtag", order: 85, phone: 55, perms: ["view_reports"], render: renderAssistantPage });
+  registerModule({ id: "assistant", label: "Hangtag Agent", order: 85, phone: 55, perms: ["view_reports"], render: renderAssistantPage });
   registerModule({ id: "customers", render: renderCustomers });
   // don't redraw the product list under someone typing in it (except its search box)
   registerModule({ id: "products", render(){ renderAreaNav("products"); const a = document.activeElement; if(!(a && a.closest && a.closest("#v-products") && a.id !== "prodSearch")) renderProducts(); } });
@@ -98,6 +100,7 @@ export function installModules(){
   installAssistantEvents();
   installProductDraftEvents();
   installVoiceSearch();
+  installBillsPageEvents();
   installBankEvents();
   installStoreEvents();
   installDocTemplateEvents();

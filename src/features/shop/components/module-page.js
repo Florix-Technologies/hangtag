@@ -2,15 +2,15 @@
 // to this person in this shop, and the part on screen. A part marked `main` is the module's own content (e.g. Stock →
 // Stock); any other part draws into the page's second area. With one part shown there is no bar.
 //   <div class="subnav" data-subnav="stock"></div>  <div data-submain="stock">…</div>  <div data-subalt="stock"></div>
-// A module split over areas of the navigation (services/nav-model.js: Stock is Stock · Products · Serials & batches …,
-// Purchases is Purchases · Purchase orders · Suppliers) shows the parts of the area on screen instead, Products among
-// them (a module of its own, with the same bar on its page).
+// A workspace with tasks of its own (AREA_BARS below; its tasks: services/nav-model.js — Sell is New sale · Held bills · Quotations · Sales
+// orders · Tables · Kitchen; Stock is Stock · Products · Stock count · Purchases · Suppliers · Purchase orders · Serials &
+// batches · Smart reorder) shows those tasks in the bar instead, whichever module of the workspace is on screen.
 import { chooseSubview, currentSubview, subviewsOf } from '../services/modules.js';
 import { areaBar, navWhere } from '../services/nav-model.js';
 import { $, esc } from '../../../shared/dom.js';
 import { renderAll } from '../../../shared/ui/render.js';
 
-const AREA_BARS = ["stock", "purchases"];
+const AREA_BARS = ["sell", "stock"];
 function areaBarHTML(parent){
   const where = navWhere(parent);
   if(!AREA_BARS.includes(where.area)) return null;

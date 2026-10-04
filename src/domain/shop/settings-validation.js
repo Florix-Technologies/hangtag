@@ -1,14 +1,22 @@
 // Billing and stock settings rules.
 import { checkVpa } from '../sales/upi.js';
+import { checkNumberingSettings } from '../documents/numbering.js';
 
-/* input: { lowStock, taxOn, taxRate, taxIncl, prefix, paper, footer } as read from the form.
-   Returns { error } or { patch } (the settings values to save). */
-export function checkBillingSettings(input){
+/* input: { lowStock, taxOn, taxRate, taxIncl, paper, footer } as read from the form, and the bill numbering when its form
+   was sent ({ prefix, invoiceStart, invoicePadding, invoiceSuffix }; ctx.till: this device's series, for the length check).
+   Returns { error, field } or { patch } (the settings values to save). */
+export function checkBillingSettings(input,ctx={}){
   const low=Math.round(+input.lowStock),rate=+input.taxRate;
   if(isNaN(low)||low<0)return {error:"Low-stock alert must be 0 or more."};
   if(input.taxOn&&(isNaN(rate)||rate<0||rate>40))return {error:"Enter a GST rate between 0 and 40."};
-  const prefix=String(input.prefix||"").trim();if(prefix&&!/^[A-Za-z0-9/_-]{1,10}$/.test(prefix))return {error:"Bill number prefix can use letters, numbers, - / _ only."};
-  return {patch:{lowStock:low,prefix,taxOn:!!input.taxOn,taxRate:isNaN(rate)?0:Math.round(rate*100)/100,taxIncl:!!input.taxIncl,paper:input.paper==="a4"?"a4":"80mm",footer:String(input.footer||"").trim()}};
+  // the bill numbering is checked only when its form was sent (a numbering saved before stays as it is otherwise)
+  let num={};
+  if(input.prefix!==undefined){
+    const n=checkNumberingSettings({prefix:input.prefix,start:input.invoiceStart,padding:input.invoicePadding,suffix:input.invoiceSuffix},{till:ctx.till||""});
+    if(n.error)return {error:n.error,field:n.field,preview:n.preview};
+    num={prefix:n.config.prefix,invoiceStart:n.config.start,invoicePadding:n.config.padding,invoiceSuffix:n.config.suffix};
+  }
+  return {patch:{lowStock:low,...num,taxOn:!!input.taxOn,taxRate:isNaN(rate)?0:Math.round(rate*100)/100,taxIncl:!!input.taxIncl,paper:input.paper==="a4"?"a4":"80mm",footer:String(input.footer||"").trim()}};
 }
 
 /* input: { upiId, payExpiry, whatsapp, sms, email } as read from the form; ready: which channels the server can send

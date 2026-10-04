@@ -74,7 +74,7 @@ export function initState(){
   store.weigh = null;           // the weight dialog: { vid, line (a bill line weighed again), value, err, busy, note }
   store.deliveries = {};        // bills sent to customers, by bill id (this session's sends and what the server recorded)
   store.channels = null;        // which of email / WhatsApp / SMS the server can send ({ email, whatsapp, sms }), once asked
-  store.prefs = Object.assign({tab:"sell",density:"photos",period:"today",day:"",from:"",to:""},storage.get("rc_prefs",{}));
+  store.prefs = Object.assign({tab:"sell",density:"photos",period:"today",day:"",from:"",to:"",billPeriod:"30d",billStatus:"all",billFrom:"",billTo:""},storage.get("rc_prefs",{}));
   // a module id (the navigation shows the first page this person can open when that one isn't shown in this shop)
   if(typeof store.prefs.tab!=="string"||!/^[a-z][a-z0-9_-]{0,30}$/.test(store.prefs.tab))store.prefs.tab="sell";
   store.pick = null;            // variant picker: {pid, color, qty:{vid:n}, last, target:"cart"|"exchange"}
@@ -83,6 +83,7 @@ export function initState(){
   store.editor = null;          // product editor state
   store.lastSale = null;
   store.showAllBills = false;
+  store.billQuery = "";
   store.warnedFull = false;
   store.sellQuery = "";
   store.sellCat = "";
@@ -127,6 +128,7 @@ export function initState(){
   store.custForm = null;
   store.lineDisc = null;        // line discount sheet: { i, type, value, err }
   store.payState = null;        // payment sheet: { mode:"single"|"split", method, received, ref, split:{cash,upi,card}, recv, refs, err }
+  store.checkoutFlow = null;    // guided checkout: customer → review → existing payment screen
   /* ================= returns and exchanges ================= */
 
   store.retState = null;

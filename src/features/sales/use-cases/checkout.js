@@ -3,7 +3,8 @@ import { lineLabel } from '../../../domain/catalog/options.js';
 import { checkBillDiscounts, normalizeDiscount } from '../../../domain/sales/discounts.js';
 import { DUE, paymentId, settlePayments } from '../../../domain/sales/payments.js';
 import { store } from '../../../shared/state/store.js';
-import { billCustomer, billTotals, gstContext, nextBillNo, rateOf } from '../services/totals.js';
+import { billCustomer, billTotals, gstContext, rateOf } from '../services/totals.js';
+import { nextNumber } from '../services/doc-numbers.js';
 import { explodeKits } from '../../../domain/catalog/bundles.js';
 import { D, invalidate } from '../../inventory/services/ledger.js';
 import { prod } from '../../products/services/catalog.js';
@@ -46,7 +47,7 @@ export function newSaleRecord(lines,billDisc,pay,extra){
   if(S.error) return {error:S.error,field:S.field,method:S.method};
   const id=x.id||uid(), t=Date.now(), ev=x.event!==undefined?x.event:sellingEventId();
   // this device's own series of numbers that day (domain/sales/sale.js), so two phones selling offline never make the same one
-  return {id,no:nextBillNo(D().sales,t),t,
+  return {id,no:nextNumber("invoice",D().sales,t,{claim:true}),t,
     items:lines.map((c,k)=>{const L=T.lines[k], d=normalizeDiscount(c.disc), p=prod(c.p);
       return {ln:k,v:c.v,p:c.p,n:c.name,c:c.c||"",s:c.s||"",vl:lineLabel(c),ov:c.ov||[],sku:c.sku||"",q:c.q,...(c.u?{u:c.u}:{}),price:c.price,cost:c.cost==null?null:c.cost,
         ...(d?{disc:d}:{}),...(x.order&&c.ord===x.order&&c.oln!=null?{ord:c.ord,oln:c.oln}:{}),...(c.kit&&!Array.isArray(c.kit)?{kit:c.kit}:{}),dAmt:L.itemDisc,bdAmt:L.billDisc,gst:L.rate,hsn:p&&p.hsn||"",tx:L.taxable,cgst:L.cgst,sgst:L.sgst,igst:L.igst,lt:L.total,...TK.items[k]}}),

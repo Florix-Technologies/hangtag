@@ -16,6 +16,7 @@ import { csvText } from '../../../shared/utils/csv.js';
 import { xlsxBytes } from '../../../shared/utils/xlsx.js';
 import { pdfBytes } from '../../../shared/utils/pdf.js';
 import { DEFAULT_B2CL_LIMIT, filingSections, gstr1Json, monthRange } from '../../../domain/gst/filing.js';
+import { numberingFor } from '../../sales/services/doc-numbers.js';
 import { saveSettings } from '../../../shared/state/persistence.js';
 import { enqueue, flushSbQueue } from '../../sync/services/outbox.js';
 
@@ -75,7 +76,7 @@ const lastExportOf=(month)=>(store.settings.gstExports||[]).filter(x=>x.period==
 /* { P (the month), G (the GST report), F (the filing sections), last (the month's last export) } */
 export function filingFor(month){
   const P=monthRange(month||gstMonth()), G=gstFor(P.from,P.to), last=lastExportOf(P.month);
-  return {P,G,F:filingSections(G,{b2clLimit:store.settings.b2clLimit==null?DEFAULT_B2CL_LIMIT:store.settings.b2clLimit,lastExport:last}),last};
+  return {P,G,F:filingSections(G,{b2clLimit:store.settings.b2clLimit==null?DEFAULT_B2CL_LIMIT:store.settings.b2clLimit,lastExport:last,formats:[numberingFor("invoice"),numberingFor("credit")]}),last};
 }
 const r2=v=>Math.round((+v||0)*100)/100;
 const d10=t=>dayKey(t);

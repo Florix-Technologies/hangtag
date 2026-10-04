@@ -2,10 +2,10 @@
 // Smart reorder's suggestion into drafts without typing anything again, receive what arrived (an ordinary purchase that
 // points at the PO: only receiving changes stock), keep the supplier's bill with it and let Hangtag compare the three.
 // A team member needs create_purchase (the database checks it too, and that the capability is on).
-import { PO_PREFIX, canMovePO, checkPO, checkPOBill, discrepancies, draftsFromReorder, lastSupplierOf, openDiscrepancies, poProgress, receiveBlock, receiveDefaults,
+import { canMovePO, checkPO, checkPOBill, discrepancies, draftsFromReorder, lastSupplierOf, openDiscrepancies, poProgress, receiveBlock, receiveDefaults,
   receivingInput } from '../../../domain/inventory/purchase-orders.js';
 import { vCost, vLabel } from '../../../domain/catalog/variants.js';
-import { nextDocNo } from '../../../domain/sales/sale.js';
+import { nextNumber } from '../../sales/services/doc-numbers.js';
 import { store } from '../../../shared/state/store.js';
 import { uid } from '../../../shared/utils/ids.js';
 import { denied, userId } from '../../shop/services/access.js';
@@ -52,7 +52,7 @@ export function savePO(draft){
       return { error: "Goods were already received on this purchase order: its lines stay. Make a new purchase order for anything else.", field: "items" };
   }
   const t = Date.now();
-  const saved = { ...po, no: po.no || (prev && prev.no) || nextDocNo(PO_PREFIX, poList(), t, store.dev), t: prev ? prev.t : po.t || t, updatedT: t, version: prev ? prev.version : 0, dev: prev ? prev.dev : store.dev };
+  const saved = { ...po, no: po.no || (prev && prev.no) || nextNumber("po", poList(), t, { claim: true }), t: prev ? prev.t : po.t || t, updatedT: t, version: prev ? prev.version : 0, dev: prev ? prev.dev : store.dev };
   bizRepository().save("po", saved); upload();
   return { po: saved };
 }

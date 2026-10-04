@@ -1,4 +1,4 @@
-/* App shell: the top bar, the navigation (a sidebar on a desktop, a tab bar on a phone or tablet, with "More"), the page
+/* App shell: the top bar, the navigation (a compact workspace bar on desktop, a tab bar on phone/tablet), the page
    layout and page headers, and product thumbnails. Tokens: 00-base.css. Components: 15-ui.css. */
 
 /* ---------- top bar ---------- */
@@ -23,8 +23,7 @@
 }
 
 /* ---------- navigation (app/navigation.js) ----------
-   One list of destinations. A desktop shows all of them in a sidebar, grouped; a phone or tablet shows the few in its tab
-   bar (.pb) and the rest in "More". [data-tab] opens a module; [data-navsub] a part of one (e.g. Purchases). */
+   The workspace bar stays deliberately small. Contextual page tabs hold task-level destinations; More holds the rest. */
 .nav{z-index:35;background:var(--bg)}
 .navi{display:flex;align-items:center;gap:10px;width:100%;min-height:38px;padding:8px 10px;border-radius:var(--r-sm);font-weight:600;font-size:var(--fs-body);color:var(--ink-2);text-align:left;transition:background var(--t-fast),color var(--t-fast)}
 .navi svg{width:19px;height:19px;flex:none;color:var(--ink-3);transition:color var(--t-fast)}
@@ -33,16 +32,18 @@
 .navi:hover svg{color:var(--ink-2)}
 .navi[aria-current="page"],.navi[aria-selected="true"]{background:var(--wash-2);color:var(--ink)}
 .navi[aria-current="page"] svg,.navi[aria-selected="true"] svg{color:var(--ink)}
-.navh{display:block;padding:14px 10px 4px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
 .navmore{display:none}
-.navsep{flex:1}
 @media (min-width:1000px){
-  .nav{position:fixed;left:0;bottom:0;top:calc(57px + env(safe-area-inset-top,0px));width:var(--sidebar);display:flex;flex-direction:column;gap:1px;padding:12px 10px 16px;border-right:1px solid var(--line);overflow-y:auto;scrollbar-width:thin}
-  .nav .navi.pbonly{display:none}
+  .nav{position:sticky;top:calc(57px + env(safe-area-inset-top,0px));display:flex;align-items:center;gap:4px;min-height:50px;padding:5px 24px;border-bottom:1px solid var(--line);box-shadow:0 4px 14px rgba(17,20,32,.025)}
+  .nav .navi{width:auto;min-height:38px;padding:8px 13px;gap:8px;font-size:14px}
+  .nav .navi svg{width:18px;height:18px}
+  .nav .navmore{display:flex;align-items:center;gap:8px;min-height:38px;padding:8px 13px;border-radius:var(--r-sm);font-weight:600;font-size:14px;color:var(--ink-2);margin-left:auto}
+  .nav .navmore svg{width:18px;height:18px}
+  .nav .navmore:hover,.nav .navmore[aria-current="page"]{background:var(--wash);color:var(--ink)}
 }
 @media (max-width:999px){
   .nav{position:fixed;left:0;right:0;bottom:0;display:flex;align-items:stretch;justify-content:space-around;gap:2px;height:calc(var(--tabbar) + env(safe-area-inset-bottom,0px));padding:6px 6px calc(6px + env(safe-area-inset-bottom,0px));border-top:1px solid var(--line);box-shadow:0 -6px 24px rgba(17,20,32,.05)}
-  .nav .navh,.nav .navsep,.nav .navi:not(.pb){display:none}
+  .nav .navi:not(.pb){display:none}
   .nav .navi,.nav .navmore{flex:1 1 0;max-width:120px;min-width:0;flex-direction:column;justify-content:center;gap:3px;min-height:0;padding:4px 2px;font-size:11.5px;font-weight:600;text-align:center;color:var(--ink-3);border-radius:var(--r-md)}
   .nav .navmore{display:flex;align-items:center;order:9}
   .nav .navi.pb{order:var(--pbo,0)}
@@ -70,10 +71,8 @@
 .wrap{max-width:1320px;margin:0 auto;padding-inline:16px;padding-block:18px calc(var(--tabbar) + 150px + env(safe-area-inset-bottom,0px))}
 @media (min-width:1000px){
   .appbar-in{padding:8px 24px}
-  .wrap{max-width:1320px;margin:0 auto 0 var(--sidebar);padding:28px 32px 64px}
+  .wrap{max-width:1440px;margin:0 auto;padding:26px 32px 64px}
 }
-/* a very wide screen: the page centred in the room right of the sidebar */
-@media (min-width:1800px){.wrap{margin-left:calc(var(--sidebar) + (100vw - var(--sidebar) - 1320px) / 2)}}
 /* a page's header: title, one line of what it is for, its actions */
 .viewhead{display:flex;align-items:flex-end;justify-content:space-between;gap:12px 20px;flex-wrap:wrap;margin-bottom:var(--sp-5)}
 .vt{font-size:var(--fs-xl);font-weight:700;letter-spacing:-.02em;margin:0;line-height:1.15;text-wrap:balance}

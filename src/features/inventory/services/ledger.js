@@ -1,6 +1,6 @@
 // Read model over bills, returns and stock moves (derived once per change).
 import { store } from '../../../shared/state/store.js';
-import { invoiceNo } from '../../sales/services/totals.js';
+import { legacyInvoiceNo } from '../../../domain/documents/numbering.js';
 import { products } from '../../products/services/catalog.js';
 import { dayKey } from '../../../shared/formatting/dates.js';
 import { ledgerEntries } from '../../../domain/inventory/stock-ledger.js';
@@ -26,7 +26,7 @@ export function D(){
   sales.sort((a,b)=>a.t-b.t);
   // invoice numbers for bills saved before numbering existed (display only)
   const perDay={};
-  sales.forEach(s=>{const k=dayKey(s.t);perDay[k]=(perDay[k]||0)+1;if(!s.no)s.no=invoiceNo(s.t,perDay[k])});
+  sales.forEach(s=>{const k=dayKey(s.t);perDay[k]=(perDay[k]||0)+1;if(!s.no)s.no=legacyInvoiceNo(store.settings&&store.settings.prefix||"INV-",s.t,perDay[k])});
   const vIdx={};
   products().forEach(p=>(p.variants||[]).forEach(v=>{vIdx[v.id]={v,p}}));
   const resolve=i=>{if(i.v&&vIdx[i.v])return i.v;const k=i.p+":"+(i.s==null?"":i.s);return vIdx[k]?k:(i.v||null)};

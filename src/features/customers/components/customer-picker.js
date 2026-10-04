@@ -17,6 +17,7 @@ import { renderAll } from '../../../shared/ui/render.js';
 import { initials } from '../../../shared/utils/text.js';
 import { priceLists } from '../../sales/services/pricing.js';
 import { can } from '../../shop/services/access.js';
+import { resumeCheckoutAfterCustomer } from '../../sales/components/checkout-flow.js';
 
 /* store.custForm = { id?, name, phone, email, gstin, type, from: "sell" | "page", err, field, dup } while the form is open */
 const badge = c => c.type === "business" ? `<span class="ctype">Business</span>` : "";
@@ -83,7 +84,7 @@ export function saveCustomerForm(form){
   }
   flushSbQueue();
   const c=r.customer; store.custForm=null;
-  if(r.created&&cur.from==="sell"){ setBillCustomer(c); closeModal(); renderAll(); toast(c.name+" added to the bill."); return; }
+  if(r.created&&cur.from==="sell"){ setBillCustomer(c); closeModal(); renderAll(); resumeCheckoutAfterCustomer(); toast(c.name+" added to the bill."); return; }
   renderAll(); openCustHistory(c.id); toast(r.created?"Customer saved.":"Customer details saved.");
 }
 export function custBack(){
@@ -95,7 +96,7 @@ export function custBack(){
 /* Pick a customer for the bill (from the Sell picker, a profile or the "Use …" button) */
 export function pickCustomer(id){
   const c=customerRepository().get(id); if(!c) return;
-  setBillCustomer(c); store.custForm=null; closeModal(); renderAll(); toast(c.name+" added to the bill.");
+  setBillCustomer(c); store.custForm=null; closeModal(); renderAll(); resumeCheckoutAfterCustomer(); toast(c.name+" added to the bill.");
 }
 
 /* ---------- profile: details and purchase history ---------- */

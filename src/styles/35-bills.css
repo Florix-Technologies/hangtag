@@ -1,0 +1,20 @@
+/* Bills workspace: dense enough for counter work, readable and touch-safe on a phone. */
+.bills-tools{display:grid;gap:12px;margin-bottom:var(--sp-5)}
+.billsearch{max-width:680px}
+.billfilters{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding-bottom:1px}
+.billfilters::-webkit-scrollbar{display:none}.billfilters .chipbtn{flex:none}
+.billfilters.statuses{padding-top:10px;border-top:1px solid var(--line)}
+.billcustom{display:flex;gap:10px;max-width:460px}.billcustom .f{flex:1}
+.bill-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;margin-bottom:var(--sp-5);overflow:hidden;border:1px solid var(--line);border-radius:var(--r-lg);background:var(--line);box-shadow:var(--shadow-xs)}
+.bill-kpis>div{display:flex;flex-direction:column;gap:3px;min-width:0;padding:14px 16px;background:var(--card)}
+.bill-kpis span,.bill-kpis small{font-size:12px;color:var(--ink-3)}.bill-kpis b{font-size:19px;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis}
+.bill-results-head{display:flex;justify-content:space-between;align-items:end;margin-bottom:10px}.bill-results-head h3{margin:0;font-size:var(--fs-md)}.bill-results-head p{margin:2px 0 0;color:var(--ink-3);font-size:12.5px}
+.billlist{overflow:hidden;border:1px solid var(--line);border-radius:var(--r-lg);background:var(--card);box-shadow:var(--shadow-xs)}
+.billrow{display:flex;align-items:center;gap:14px;width:100%;min-height:76px;padding:12px 15px;text-align:left}
+.billrow+.billrow{border-top:1px solid var(--line)}.billrow:hover{background:var(--wash)}
+.billrow-main{display:flex;flex:1;min-width:0;flex-direction:column;gap:3px}.billrow-top{display:flex;align-items:center;gap:8px;min-width:0}.billrow-top>b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.billrow-meta,.billrow-items{font-size:12.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.billrow-items{color:var(--ink-2)}
+.billrow-end{display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex:none;text-align:right}.billrow-end>b{font-size:15px;font-variant-numeric:tabular-nums}.billrow-end small{max-width:210px;color:var(--ink-3);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.billrow-open{font-size:24px;color:var(--ink-3)}
+@media(max-width:700px){.bill-kpis{grid-template-columns:1fr 1fr}.bill-kpis>div{padding:11px 12px}.billrow{min-height:82px;padding:11px 12px;gap:9px}.billrow-end small{max-width:115px}.billrow-open{display:none}.bills-tools{padding:12px}.billcustom{max-width:none}.bills-head .vh-acts{width:100%}.bills-head .vh-acts .btn{width:100%}}
+@media(max-width:360px){.billrow-top{align-items:flex-start;flex-direction:column;gap:4px}.billrow-end small{display:none}.billrow{align-items:flex-start}}

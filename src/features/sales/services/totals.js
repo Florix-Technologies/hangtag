@@ -4,7 +4,6 @@
 import { store } from '../../../shared/state/store.js';
 import { computeCheckout } from '../../../domain/sales/checkout-totals.js';
 import { lineRate, placeOfSupply } from '../../../domain/sales/gst.js';
-import { formatInvoiceNo, nextDocNo } from '../../../domain/sales/sale.js';
 import { prod } from '../../products/services/catalog.js';
 import { explodeKits } from '../../../domain/catalog/bundles.js';
 import { linePaise, toRupees } from '../../../domain/sales/paise.js';
@@ -37,9 +36,3 @@ export function billTotals(lines,billDisc,cust){
   const sum=k=>toRupees(out.reduce((a,o)=>a+P(o[k]),0)), sub=sum("gross"), itemDisc=sum("itemDisc");
   return {...T,lines:out,sub,itemDisc,disc:toRupees(P(itemDisc)+P(T.billDisc))};
 }
-export const invoiceNo=(t,seq,dev)=>formatInvoiceNo(store.settings.prefix,t,seq,dev);
-/* The next number of a document made on this device at time t, in this device's own series (no other device makes it,
-   even offline): bills (the shop's prefix), credit notes ("CN-"), quotations ("QT-"), sales orders ("SO-")…
-   docs: the documents of that kind this device knows ({ no, t, dev }) */
-export const deviceDocNo=(prefix,docs,t)=>nextDocNo(prefix,docs,t,store.dev);
-export const nextBillNo=(sales,t)=>deviceDocNo(store.settings.prefix||"",sales,t);

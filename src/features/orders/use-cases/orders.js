@@ -3,12 +3,12 @@
 // sync review shows it). Orders never change stock. A quotation becomes a sales order (its lines copied), and either goes
 // on the bill (what is left to deliver, at the order's prices) → the existing checkout → the bill keeps the order's id and
 // the order counts what was delivered (partly delivered / completed). The rules are in domain/orders/orders.js.
-import { FIRST_STATUS, KIND_LABELS, STATUS_LABELS, canMove, cartBlock, checkOrder, convertQuote, fulfil, isFinal, orderCartLines, orderCheckout, ORDER_PREFIX, quotePrefix,
+import { FIRST_STATUS, KIND_LABELS, STATUS_LABELS, canMove, cartBlock, checkOrder, convertQuote, fulfil, isFinal, orderCartLines, orderCheckout,
   soldFromOrder } from '../../../domain/orders/orders.js';
 import { legacyCS, optionSnapshot } from '../../../domain/catalog/options.js';
 import { vCost, vLabel } from '../../../domain/catalog/variants.js';
 import { normalizeDiscount } from '../../../domain/sales/discounts.js';
-import { nextDocNo } from '../../../domain/sales/sale.js';
+import { nextNumber } from '../../sales/services/doc-numbers.js';
 import { store } from '../../../shared/state/store.js';
 import { orderRepository } from '../repositories/order-repository.js';
 import { vRec } from '../../inventory/services/ledger.js';
@@ -34,10 +34,9 @@ const customerSnapshot = c => { if(!c||!c.id) return null; const saved=store.cus
 /* Orders of a kind, newest first */
 export const ordersOf = kind => orderRepository().list().filter(o => o.kind === kind).sort((a, b) => b.t - a.t);
 export const orderById = id => orderRepository().get(id);
-/* This device's next number of a kind that day (QT-/SO- + date + device code + running number) */
+/* The next number of an order of a kind made on this device (QT-000012, SO-000004, KOT-000031; each its own series) */
 export function nextOrderNo(kind, t){
-  const prefix = kind === "quote" ? quotePrefix(store.settings && store.settings.quotePrefix) : ORDER_PREFIX[kind] || "OR-";
-  return nextDocNo(prefix, orderRepository().list().filter(o => o.kind === kind), t, store.dev);
+  return nextNumber(kind, orderRepository().list().filter(o => o.kind === kind), t, { claim: true });
 }
 /* An order's figures: the one bill calculation, with the GST of its customer's place of supply */
 export function orderTotals(o){

@@ -5,12 +5,14 @@ import { enqueue } from '../../sync/services/outbox.js';
 import { saveSettings } from '../../../shared/state/persistence.js';
 import { can, notAllowedText } from '../services/access.js';
 import { checkDocSettings } from '../../../domain/documents/doc-settings.js';
+import { deviceTill } from '../../sales/services/doc-numbers.js';
 
-/* input: { lowStock, taxOn, taxRate, taxIncl, prefix, paper, footer } as typed. Returns { error } or { ok:true }. */
+/* input: { lowStock, taxOn, taxRate, taxIncl, paper, footer, and the bill numbering (prefix, invoiceStart, invoicePadding,
+   invoiceSuffix) when its form was sent } as typed. Returns { error, field } or { ok:true }. */
 export function saveBillingSettings(input){
   if(!can("manage_settings"))return {error:notAllowedText("change the shop's settings")};
-  const r=checkBillingSettings(input);
-  if(r.error)return {error:r.error};
+  const r=checkBillingSettings(input,{till:deviceTill()});
+  if(r.error)return {error:r.error,field:r.field};
   store.settings=Object.assign({},store.settings,r.patch);
   saveSettings();enqueue({type:"settings"});
   return {ok:true};

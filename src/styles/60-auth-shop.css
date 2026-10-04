@@ -54,7 +54,7 @@ html.gated body{overflow:hidden}
 .welcome .wx{margin-left:auto}
 /* ---------- the Settings page (features/shop/components/settings-page.js) ---------- */
 .setpage{display:grid;gap:20px;align-items:start}
-@media (min-width:760px){.setpage{grid-template-columns:minmax(240px,300px) minmax(0,1fr)}.setside{position:sticky;top:calc(env(safe-area-inset-top,0px) + 72px)}.setback{display:none!important}}
+@media (min-width:760px){.setpage{grid-template-columns:minmax(240px,300px) minmax(0,1fr)}.setside{position:sticky;top:calc(env(safe-area-inset-top,0px) + var(--stick))}.setback{display:none!important}}
 @media (max-width:759px){.setpage:not(.has-sec) .setmain,.setpage.has-sec .setside{display:none}}
 .setside .viewhead{margin-bottom:12px}
 .setside #setSub{word-break:break-all}

@@ -15,6 +15,11 @@ import { saveBillingSettings, saveGstSettings, savePaymentSettings, saveReorderS
 import { loadChannels } from '../../delivery/use-cases/send-invoice.js';
 import { loadPayConfig } from '../../sales/use-cases/provider-payment.js';
 import { expenseCats, saveExpenseCats } from '../../finance/use-cases/cash-moves.js';
+import { DOC_NO_MAX, checkNumberingSettings, formatDocNo, nextDocNo } from '../../../domain/documents/numbering.js';
+import { quotePrefix } from '../../../domain/orders/orders.js';
+import { deviceTill } from '../../sales/services/doc-numbers.js';
+import { D } from '../../inventory/services/ledger.js';
+import { hasCap } from '../services/shop-caps.js';
 
 const errHTML=id=>`<p id="${id}" class="autherr" role="alert" hidden></p>`;
 /* Products & Inventory: the low-stock alert */
@@ -30,14 +35,33 @@ export function expenseCatsHTML(){
     <label class="f full"><span class="lab">Expense categories, one per line</span><textarea name="cats" rows="4">${esc(expenseCats().join("\n"))}</textarea><span class="fhint">Offered when cash is spent from the drawer (Reports → Cash book → Expense)</span></label>
     ${errHTML("expCatErr")}${formActionsHTML({save:"Save categories"})}</form>`;
 }
+/* Billing & Documents → Bill numbering: the next bill's number on this device as the form stands, and why it can't be used
+   (domain/documents/numbering.js) */
+function numberPreviewHTML(input){
+  const till=deviceTill(), r=checkNumberingSettings(input,{till});
+  if(r.error) return `<span>Next bill</span><b>${esc(r.preview||"—")}</b><small class="bad" role="alert">${esc(r.error)}</small>`;
+  const now=Date.now(), next=nextDocNo(D().sales,r.config,now,till), of=prefix=>formatDocNo({prefix,padding:r.config.padding,suffix:r.config.suffix},now,1,till);
+  const others=[hasCap("uses_quotations")&&"Quotations "+of(quotePrefix(store.settings.quotePrefix)),hasCap("uses_sales_orders")&&"Sales orders "+of("SO-"),
+    "Credit notes "+of("CN-"),hasCap("uses_purchase_orders")&&"Purchase orders "+of("PO-")].filter(Boolean);
+  return `<span>Next bill</span><b data-nextbillno>${esc(next)}</b><small class="ok">✓ ${next.length} of ${DOC_NO_MAX} characters · ${r.yearly?"starts again on 1 April every year":"continues from year to year"}</small>
+    ${r.warning?`<small class="warn">${esc(r.warning)}</small>`:""}
+    <small>${till?`This device makes its documents in its own series (${esc(till)}): two devices never give the same number, even offline.`:`This device uses the shop's main series. Another device that makes bills gets its own letter (${esc(formatDocNo(r.config,now,r.config.start,"B"))}), so numbers never clash, even offline.`}</small>
+    <small>Each document type has its own series: ${esc(others.join(" · "))}.</small>`;
+}
+const numberingInput=form=>{const f=new FormData(form);return {prefix:f.get("prefix"),start:f.get("invoiceStart"),padding:f.get("invoicePadding"),suffix:f.get("invoiceSuffix")};};
 /* Billing & Documents: bill numbers, receipt paper and footer */
 export function receiptFormHTML(){
-  const s=store.settings;
-  return `<form id="billingForm" class="authform setblk" novalidate><h5>Bills and receipts</h5><div class="pgrid">
-    <label class="f"><span class="lab">Bill number prefix</span><input name="prefix" maxlength="10" value="${esc(s.prefix||"")}" autocomplete="off"><span class="fhint">e.g. INV- gives INV-250925-004</span></label>
+  const s=store.settings, pad=+s.invoicePadding||6;
+  return `<form id="billingForm" class="authform setblk" novalidate><h5>Bill numbering</h5><p class="note">Bill numbers are made automatically when a sale completes: nobody types them, and a number given is never changed.</p><div class="pgrid">
+    <label class="f"><span class="lab">Prefix</span><input name="prefix" maxlength="14" value="${esc(s.prefix||"INV-")}" autocomplete="off" autocapitalize="characters" spellcheck="false"><span class="fhint">e.g. INV- · add {FY} for the financial year: INV/{FY}/</span></label>
+    <label class="f"><span class="lab">Starting number</span><input name="invoiceStart" type="number" inputmode="numeric" min="1" max="99999999" value="${esc(s.invoiceStart||1)}"><span class="fhint">Continuing from another app? Start after its last bill.</span></label>
+    <label class="f"><span class="lab">Digits</span><select name="invoicePadding">${[3,4,5,6,7,8].map(x=>`<option value="${x}"${pad===x?" selected":""}>${x} digits (${"0".repeat(x-1)}1)</option>`).join("")}</select></label>
+    <label class="f"><span class="lab">Suffix <small>(optional)</small></span><input name="invoiceSuffix" maxlength="12" value="${esc(s.invoiceSuffix||"")}" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="e.g. /{FY}"></label>
+    <div class="numpreview full" id="billNoPreview" aria-live="polite">${numberPreviewHTML({prefix:s.prefix||"INV-",start:s.invoiceStart,padding:pad,suffix:s.invoiceSuffix})}</div>
+  </div><h5 class="setsubhead">Receipt output</h5><div class="pgrid">
     <label class="f"><span class="lab">Receipt paper</span><select name="paper"><option value="80mm"${s.paper!=="a4"?" selected":""}>80 mm receipt printer</option><option value="a4"${s.paper==="a4"?" selected":""}>A4 invoice</option></select></label>
     <label class="f full"><span class="lab">Receipt footer</span><input name="footer" maxlength="120" value="${esc(s.footer||"")}"></label>
-  </div>${errHTML("billErr")}${formActionsHTML({save:"Save receipt settings"})}</form>`;
+  </div>${errHTML("billErr")}${formActionsHTML({save:"Save bill settings"})}</form>`;
 }
 /* Billing & Documents: GST on bills, and GST filing preparation */
 export function taxFormsHTML(){
@@ -120,10 +144,12 @@ export function printerSetupHTML(){
 export function saveBillingForm(form){
   const s=store.settings,f=new FormData(form),has=n=>!!form.querySelector(`[name="${n}"]`),v=(n,cur)=>has(n)?f.get(n):cur;
   const err=form.querySelector(".autherr"),bad=m=>{if(err){err.textContent=m;err.hidden=false}};
-  const r=saveBillingSettings({lowStock:v("lowStock",s.lowStock),taxOn:v("taxOn",s.taxOn),taxRate:v("taxRate",s.taxRate),taxIncl:v("taxIncl",s.taxIncl),prefix:v("prefix",s.prefix),paper:v("paper",s.paper),footer:v("footer",s.footer)});
-  if(r.error)return bad(r.error);
+  // the bill numbering goes along only from its own form (a numbering saved before is otherwise left as it is)
+  const num=has("prefix")?{prefix:f.get("prefix"),invoiceStart:f.get("invoiceStart"),invoicePadding:f.get("invoicePadding"),invoiceSuffix:f.get("invoiceSuffix")}:{};
+  const r=saveBillingSettings({lowStock:v("lowStock",s.lowStock),taxOn:v("taxOn",s.taxOn),taxRate:v("taxRate",s.taxRate),taxIncl:v("taxIncl",s.taxIncl),...num,paper:v("paper",s.paper),footer:v("footer",s.footer)});
+  if(r.error){bad(r.error);const el=r.field&&form.querySelector(`[name="${{prefix:"prefix",start:"invoiceStart",padding:"invoicePadding",suffix:"invoiceSuffix",length:"prefix"}[r.field]||r.field}"]`);if(el)el.focus();return}
   renderSync();flushSbQueue();
-  if(err)err.hidden=true;renderAll();toast(form.id==="taxForm"?"GST settings saved.":form.id==="stockSetForm"?"Stock alert saved.":"Receipt settings saved.");
+  if(err)err.hidden=true;renderAll();toast(form.id==="taxForm"?"GST settings saved.":form.id==="stockSetForm"?"Stock alert saved.":"Bill settings saved.");
 }
 const printerInput=form=>{const f=new FormData(form);return {kind:f.get("kind"),host:f.get("host"),cols:f.get("cols"),devid:f.get("devid"),https:!!f.get("https")}};
 function printerMsg(text,ok){const m=$("#printerMsg");if(!m)return;m.textContent=text;m.hidden=!text;m.classList.toggle("okmsg",!!ok)}
@@ -146,6 +172,7 @@ export function installBillingSettingsEvents(){
   document.addEventListener("reset",e=>{
     // Cancel: the form goes back to what is saved; the printer form's Epson fields follow its choice again
     if(e.target.id==="printerForm") setTimeout(()=>{const k=e.target.querySelector("[data-printerkind]");if(k)k.dispatchEvent(new Event("change",{bubbles:true}))},0);
+    if(e.target.id==="billingForm") setTimeout(()=>{const box=$("#billNoPreview");if(box)box.innerHTML=numberPreviewHTML(numberingInput(e.target))},0);
     const err=e.target.querySelector&&e.target.querySelector(".autherr");if(err)err.hidden=true;
   });
   document.addEventListener("change",async e=>{
@@ -153,9 +180,14 @@ export function installBillingSettingsEvents(){
     if(t.matches&&t.matches("[data-printerkind]")){const ep=t.value==="epson";t.form.querySelectorAll("[data-epson]").forEach(x=>{x.hidden=!ep});return}
     if(t.matches&&t.matches("[data-logofile]")){const f=t.files&&t.files[0];t.value="";if(!f)return;const r=await setReceiptLogo(f);if(r.error){toast(r.error);return}redrawReceiptSetup();flushSbQueue();toast("Logo saved. It prints on every receipt.")}
   });
+  // Bill numbering: the preview follows what is typed
+  const numberPreview=e=>{const form=e.target&&e.target.closest&&e.target.closest("#billingForm");if(!form||!["prefix","invoiceStart","invoicePadding","invoiceSuffix"].includes(e.target.name))return;const box=$("#billNoPreview");if(box)box.innerHTML=numberPreviewHTML(numberingInput(form));};
+  document.addEventListener("input",numberPreview);
+  document.addEventListener("change",numberPreview);
   document.addEventListener("click",async e=>{
     const a=e.target.closest&&e.target.closest("#receiptSetup [data-act],#printerSetup [data-act]");if(!a)return;
     if(a.dataset.act==="logoremove"){removeReceiptLogo();redrawReceiptSetup();flushSbQueue();toast("Logo removed.");return}
     if(a.dataset.act==="printertest"){const form=$("#printerForm");printerMsg("Printing a test receipt…");const r=await testPrinter(printerInput(form));printerMsg(r.error||"✓ The printer printed the test receipt.",!r.error)}
   });
 }
+

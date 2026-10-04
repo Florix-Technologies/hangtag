@@ -19,7 +19,7 @@ export function showPaid(sale){
     <p class="paid-sub">${esc(how)} · Bill ${esc(sale.no)}${sale.cust?" · "+esc(sale.cust.name):""}</p>
     ${ps.some(p=>p.verification==="unverified")?`<p class="paid-change" data-unverified>UPI checked by hand: <b>Unverified</b> until it's matched with your UPI provider.</p>`:""}
     ${change>0?`<p class="paid-change" data-change>Give change <b>${inrx(change)}</b> <span>(received ${inrx(ps.find(p=>p.method==="cash").received)})</span></p>`:""}
-    <div class="paid-acts"><button class="btn" data-print="${esc(sale.id)}">Print</button><button class="btn" data-dlreceipt="${esc(sale.id)}">Download</button>${navigator.share?`<button class="btn" data-share="${esc(sale.id)}">Share</button>`:""}</div>
+    <div class="paid-acts"><button class="btn" data-billview="${esc(sale.id)}">View bill</button><button class="btn" data-print="${esc(sale.id)}">Print</button><button class="btn" data-dlreceipt="${esc(sale.id)}">Download</button>${navigator.share?`<button class="btn" data-share="${esc(sale.id)}">Share</button>`:""}</div>
     ${printStateHTML(sale.id)}
     ${sendBoxHTML(sale)}
     <button class="btn primary gbtn" data-act="newsale" id="newSaleBtn">New sale</button>

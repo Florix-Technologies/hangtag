@@ -107,6 +107,9 @@
 .req{color:var(--crit);margin-left:2px}
 .pgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px 14px}
 .pgrid .full{grid-column:1/-1}
+.setsubhead{margin:var(--sp-5) 0 var(--sp-3);padding-top:var(--sp-4);border-top:1px solid var(--line);font-size:14px}
+.numpreview{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:4px 12px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--wash)}
+.numpreview>span{font-size:12px;font-weight:700;color:var(--ink-3);text-transform:uppercase;letter-spacing:.05em}.numpreview>b{font-size:17px;letter-spacing:.035em;font-variant-numeric:tabular-nums;text-align:right}.numpreview>small{grid-column:1/-1;font-size:12.5px;color:var(--ink-3)}.numpreview>small.ok{color:var(--good-ink)}.numpreview>small.bad{color:var(--crit)}.numpreview>small.warn{color:var(--warn-ink)}.numpreview>b{min-width:0;overflow-wrap:anywhere}
 @media (max-width:520px){.pgrid{grid-template-columns:1fr}}
 .autherr{margin:12px 0 0;padding:10px 12px;border-radius:var(--r-sm);background:var(--crit-soft);color:var(--crit-ink);font-size:13.5px;line-height:1.45}
 .authnote,.okmsg{margin:12px 0 0;padding:10px 12px;border-radius:var(--r-sm);background:var(--good-soft);color:var(--good-ink);font-size:13.5px;line-height:1.45}

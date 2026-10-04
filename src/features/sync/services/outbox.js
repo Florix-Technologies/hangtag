@@ -11,7 +11,8 @@ import { persistLocal, saveLastSync, saveReturns, saveSbQueue, saveSyncReview } 
 import { logger } from '../../../shared/logging/logger.js';
 import { toast } from '../../../shared/components/toast.js';
 import { ACCESS_LOST_TEXT, can, denied, isMember, notAllowedText, refreshAccess } from '../../shop/services/access.js';
-import { deviceDocNo, nextBillNo } from '../../sales/services/totals.js';
+import { deviceTill, moveTillAfterConflict, nextNumber, numberingFor } from '../../sales/services/doc-numbers.js';
+import { parseDocNo } from '../../../domain/documents/numbering.js';
 import { requestSignOut } from '../../../shared/ui/session-actions.js';
 import { orderRepository } from '../../orders/repositories/order-repository.js';
 import { purchaseItemOff, purchaseItemOn } from '../../inventory/services/purchase-state.js';
@@ -188,15 +189,19 @@ export function discardReview(index){
   renderSync();
   return true;
 }
-/* Review list: a bill or return refused because another one of the shop already has its number (two phones with the same
-   device code, a reinstall…) gets the next number of this device's series (dated like it) and is sent again. The old number
-   was never saved in the cloud. → { ok, no } or { error }. A team member needs the right to make that record. */
+/* Review list: a bill or return refused because another one of the shop already has its number (two devices that took the
+   same series before either saw the other's documents, a reinstall…) gets a new number and is sent again. When the clash
+   is in this device's own series, the device first moves to a series no other device uses (a till letter), so it can't
+   happen again. The old number was never saved in the cloud. → { ok, no } or { error }. A team member needs the right to
+   make that record. */
 export function renumberReview(index){
   const r = (store.syncReview||[])[index]; if(!numberTaken(r)) return { error: "This one isn't waiting for a new number." };
   const sale = r.item.type === "sale", no = denied(sale ? "create_sale" : "perform_return", sale ? "renumber bills" : "renumber returns"); if(no) return no;
   let fresh;
+  const type = sale ? "invoice" : "credit", was = parseDocNo(sale ? r.item.sale.no : r.item.ret.no, numberingFor(type));
+  if(was && was.till === deviceTill()) moveTillAfterConflict();
   if(sale){
-    const id = r.item.sale.id; fresh = nextBillNo(D().sales, r.item.sale.t);
+    const id = r.item.sale.id; fresh = nextNumber("invoice", D().sales, r.item.sale.t, { claim: true });
     // the bill as kept in its day on this device (D() hands out copies)
     Object.values(store.localDays).forEach(d => (d.sales||[]).forEach(s => { if(s.id === id) s.no = fresh; }));
     if(store.lastSale && store.lastSale.id === id) store.lastSale.no = fresh;
@@ -204,7 +209,7 @@ export function renumberReview(index){
     persistLocal(); invalidate();
   } else {
     // the refused return is off this device's returns until sent again: count its number too, so the next one is past it
-    fresh = deviceDocNo("CN-", [...D().rets, r.item.ret], r.item.ret.t); r.item.ret = { ...r.item.ret, no: fresh };
+    fresh = nextNumber("credit", [...D().rets, r.item.ret], r.item.ret.t, { claim: true }); r.item.ret = { ...r.item.ret, no: fresh };
   }
   saveSyncReview(); retryReview(index);
   return { ok: true, no: fresh };

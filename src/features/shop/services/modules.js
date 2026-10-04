@@ -77,8 +77,9 @@ export function navSlots(list, current, limit){
 [
   { id: "home", label: "Home", order: 10, phone: 20 },
   { id: "sell", label: "Sell", order: 20, phone: 10 },
+  { id: "bills", label: "Bills", order: 30, phone: 25 },
   // quotations, sales orders, held carts, table orders: shown only when at least one of them is registered and in use
-  { id: "orders", label: "Orders", order: 30, phone: 30, available: () => subviewsOf("orders").length > 0 },
+  { id: "orders", label: "Orders", order: 35, phone: 30, available: () => subviewsOf("orders").length > 0 },
   { id: "stock", label: "Stock", order: 50, phone: 40 },
   { id: "products", label: "Products", order: 60, phone: 70 },
   { id: "customers", label: "Customers", order: 70, phone: 60 },

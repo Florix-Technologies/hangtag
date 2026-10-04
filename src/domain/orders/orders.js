@@ -10,7 +10,7 @@
 // Pure; rupees in and out.
 import { computeCheckout } from '../sales/checkout-totals.js';
 import { checkBillDiscounts, normalizeDiscount } from '../sales/discounts.js';
-import { deviceCode, formatInvoiceNo } from '../sales/sale.js';
+import { formatDocNo } from '../documents/numbering.js';
 import { tooPrecise } from '../sales/paise.js';
 import { checkQty, unitId } from '../catalog/units.js';
 import { mobileE164 } from '../invoices/delivery.js';
@@ -35,13 +35,13 @@ export const ORDER_NEXT={
 };
 export const FIRST_STATUS={quote:"draft",sales:"draft",table:"new"};
 export const FINAL={quote:["cancelled","converted"],sales:["completed","cancelled"],table:["served","cancelled"]};
-/* Numbers: QT-260929-K3F001, SO-…, KOT-… — T1's device-scoped series (domain/sales/sale.js): the prefix, the date (yymmdd),
-   this device's code and its running number of that kind that day, so two tills offline never make the same number. */
+/* Numbers: QT-000012, SO-000004, KOT-000031 — each kind its own series (domain/documents/numbering.js), a second till's
+   with its letter (QT-B-000003), so two tills offline never make the same number. */
 export const ORDER_PREFIX={quote:"QT-",sales:"SO-",table:"KOT-"};
 /* A quotation's number prefix from the shop's quotation settings ("QT" → "QT-"; empty: the default) */
 export const quotePrefix=p=>{const x=String(p||"").trim();return !x?ORDER_PREFIX.quote:/[-/]$/.test(x)?x:x+"-"};
-export const orderDeviceCode=deviceCode;
-export const orderNo=(kind,t,seq,dev)=>formatInvoiceNo(ORDER_PREFIX[kind]||"OR-",t,seq,dev);
+/* An order's number: kind, running number, the till's letter ("" on the main till) — QT-000007, SO-B-000001 */
+export const orderNo=(kind,t,seq,till="")=>formatDocNo({prefix:ORDER_PREFIX[kind]||"OR-"},t,seq,till);
 
 export const canMove=(kind,from,to)=>from===to||!!(ORDER_NEXT[kind]&&(ORDER_NEXT[kind][from]||[]).includes(to));
 export const isFinal=o=>!!o&&(FINAL[o.kind]||[]).includes(o.status);

@@ -43,6 +43,7 @@ import { applyLineDiscount, lineDiscountInput, lineDiscountType, openLineDiscoun
 import { cashFormChange, openCashForm, submitCashForm } from '../../features/finance/components/cash-form.js';
 import { checkUnverified, loadUnmatched, resolveUnmatched } from '../../features/finance/components/reconcile-view.js';
 import { completePayment, openPayment, payCardReceived, payClosed, payInput, payIntent, payManualUpiReceived, payMode, payQuick, payRest, paySend, payVia, payVoucher, payVoucherRemove } from '../../features/sales/components/payment-sheet.js';
+import { checkoutPayment, checkoutStep, checkoutWalkIn, openCheckout } from '../../features/sales/components/checkout-flow.js';
 import { openBook } from '../../features/finance/components/books-view.js';
 import { enqueue, flushSbQueue } from '../../features/sync/services/outbox.js';
 import { can } from '../../features/shop/services/access.js';
@@ -91,7 +92,7 @@ export function installDomEvents(){
     if(creditOrdersClick(t))return;   // customer credit, held bills, orders
     if((t.matches("[data-modal-scrim]")||t.closest("[data-modal-close]"))&&inventoryModalClose(t))return;
     if(inventoryClick(t))return;   // purchases, suppliers, stock count, stock in by barcode, product import
-    if(t.matches("[data-modal-scrim]")||t.closest("[data-modal-close]")){if(t.matches("[data-editor]")&&store.editor)return;if(t.matches("[data-billimp]")&&store.billImport)return;if(store.payState)payClosed();store.payState=null;store.lineDisc=null;store.syncOpen=false;store.evForm=null;store.cashForm=null;store.voidForm=null;closeModal();return}
+    if(t.matches("[data-modal-scrim]")||t.closest("[data-modal-close]")){if(t.matches("[data-editor]")&&store.editor)return;if(t.matches("[data-billimp]")&&store.billImport)return;if(store.payState)payClosed();store.payState=null;store.checkoutFlow=null;store.lineDisc=null;store.syncOpen=false;store.evForm=null;store.cashForm=null;store.voidForm=null;closeModal();return}
     // sync panel
     const sr=t.closest("[data-syncretry]");if(sr){syncRetry(+sr.dataset.syncretry);return}
     const sn=t.closest("[data-syncrenumber]");if(sn){syncRenumber(+sn.dataset.syncrenumber);return}
@@ -103,6 +104,9 @@ export function installDomEvents(){
     const asf=t.closest("[data-addstockfor]");if(asf){const pid=asf.dataset.addstockfor;closeModal();if(can("manage_inventory"))openStockOp("in",pid);else{openPurchaseEntry({});const p=prodOf(pid);if(p)variantsOfP(p).filter(v=>v.active!==false).forEach(v=>addPurchaseLine(v.id));renderPurchaseEntry()}return}
     // discounts and payment
     const pay=t.closest("[data-pay]");if(pay&&!pay.disabled){openPayment(pay.dataset.pay);return}
+    const cs=t.closest("[data-checkoutstep]");if(cs&&store.checkoutFlow){checkoutStep(cs.dataset.checkoutstep);return}
+    if(t.closest("[data-checkoutpay]")&&store.checkoutFlow){checkoutPayment();return}
+    if(t.closest("[data-checkoutwalkin]")&&store.checkoutFlow){checkoutWalkIn();return}
     const pm=t.closest("[data-paymode]");if(pm&&store.payState){payMode(pm.dataset.paymode);return}
     const prs=t.closest("[data-payrest]");if(prs&&store.payState){payRest(prs.dataset.payrest);return}
     const pq=t.closest("[data-payquick]");if(pq&&store.payState){payQuick(pq.dataset.payquick);return}
@@ -199,10 +203,11 @@ export function installDomEvents(){
       case "newsale":closeSheets();{const s=$("#sellSearch");if(s&&window.innerWidth>=1000)s.focus()}break;
       case "clear":store.cart=[];store.disc=null;store.cartCust=null;releaseTableBill();saveCart();closeSheets();renderAll();break;
       case "paydone":completePayment();break;
+      case "checkout":openCheckout("cash");break;
       case "ldapply":applyLineDiscount(false);break;
       case "ldremove":applyLineDiscount(true);break;
       case "pickcust":openCustPicker();break;
-      case "nocust":setBillCustomer(null);store.custForm=null;closeModal();renderAll();break;
+      case "nocust":store.custForm=null;if(store.checkoutFlow)checkoutWalkIn();else{setBillCustomer(null);closeModal();renderAll()}break;
       case "custnew":newCustomerForm("sell");break;
       case "custadd":newCustomerForm("page");break;
       case "custback":custBack();break;

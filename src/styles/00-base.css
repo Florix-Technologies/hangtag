@@ -41,9 +41,11 @@
   /* motion */
   --ease:cubic-bezier(.2,.7,.2,1); --t-fast:.12s; --t:.2s;
   /* touch target and the app's chrome */
-  --tap:44px; --sidebar:236px; --tabbar:62px;
+  /* --stick: where a sticky panel sits below the app bar (and, on a desktop, the workspace bar under it) */
+  --tap:44px; --tabbar:62px; --stick:72px;
   padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)
 }
+@media (min-width:1000px){:root{--stick:124px}}   /* app bar 57 + workspace bar 51 + room */
 *{box-sizing:border-box}
 html,body{background:var(--app)}
 body{margin:0;color:var(--ink);font-family:var(--font);font-size:var(--fs-body);line-height:var(--lh);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;-webkit-tap-highlight-color:transparent;text-rendering:optimizeLegibility}

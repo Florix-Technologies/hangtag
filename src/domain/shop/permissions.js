@@ -60,6 +60,7 @@ export const missingFor = perms => PERMISSIONS.filter(p => !(perms || []).includ
 /* Tabs: what a person needs to see each one (any of the list) */
 export const TAB_PERMISSIONS = {
   sell: ["create_sale"],
+  bills: ["view_reports", "create_sale", "perform_return", "collect_credit"],
   stock: ["view_products", "manage_inventory", "create_purchase"],
   report: ["view_reports"],
   products: ["view_products", "manage_products"],

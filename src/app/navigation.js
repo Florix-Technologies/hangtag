@@ -2,10 +2,13 @@
 // shared/ui/render.js). Where every destination sits is features/shop/services/nav-model.js (built on the module
 // registry, features/shop/services/modules.js: capabilities, permissions, whether the module exists); each module's page
 // is <section id="v-<id>"> and its render() draws it (app/modules.js).
-//   · a desktop (1000 px and wider): every destination in a sidebar, grouped by area (Sales, Stock, Purchases, Reports …);
-//   · a phone or tablet: a tab bar with three places for this person's role and kind of shop (domain/shop/
-//     mobile-workflow.js: Home · Sell · Stock, a restaurant Home · Tables · Kitchen) and "More" with the other areas.
-// One list of buttons serves both: .pb marks the tab-bar places (styles/10-shell.css shows only those on a phone).
+//   · a desktop (1000 px and wider): a workspace bar under the app bar — Home · Sell · Bills · Stock · Customers · Reports
+//     (nav-model.js PRIMARY_TABS, those this person may open) and "More" with the rest (Store, Hangtag Agent, Team, Settings);
+//   · a phone or tablet: a tab bar with four places for this person's role (domain/shop/mobile-workflow.js: Home · Sell ·
+//     Bills · Stock; a server Home · Tables · Orders) and "More" with every other area.
+// Inside a workspace, a bar on its page chooses the task (Sell: New sale · Held bills · Quotations …; Stock: Stock ·
+// Products · Purchases …; features/shop/components/module-page.js). One list of buttons serves both widths: .pb marks the
+// tab-bar places (styles/10-shell.css shows only those on a phone).
 import { store } from '../shared/state/store.js';
 import { invalidate } from '../features/inventory/services/ledger.js';
 import { renderReturnSheet } from '../features/returns/components/return-sheet.js';
@@ -21,7 +24,7 @@ import { ICON } from '../shared/constants/icons.js';
 import { NAV_ICONS } from '../shared/constants/nav-icons.js';
 import { TABS, applyAccessUI, tabOpen } from '../features/shop/components/access-ui.js';
 import { chooseSubview, moduleDef, moduleShown, registeredModules, shownModules } from '../features/shop/services/modules.js';
-import { moreGroups, navAreas, navWhere } from '../features/shop/services/nav-model.js';
+import { moreGroups, navWhere, primaryNav } from '../features/shop/services/nav-model.js';
 import { currentPerms, currentRole } from '../features/shop/services/access.js';
 import { mobileLandingModule, mobileModulesFor, phoneBarFor } from '../domain/shop/mobile-workflow.js';
 
@@ -38,23 +41,16 @@ const destAttrs = it => it.sub ? `data-navsub="${esc(it.id)}"${it.sub === "level
 let navSig = "";
 function drawNav(){
   const nav = $(".nav"); if(!nav) return;
-  const areas = navAreas(), { bar } = phoneNav();
-  const sig = JSON.stringify([areas, bar]);
+  const top = primaryNav(), { bar } = phoneNav();
+  const sig = JSON.stringify([top, bar]);
   if(sig === navSig && nav.querySelector("[data-navmore]")) return;
   navSig = sig;
-  let h = "";
-  areas.forEach(a => {
-    const side = a.items.filter(it => it.side !== false);
-    if(a.key === "team" || (a.key === "settings" && !areas.some(x => x.key === "team"))) h += '<span class="navsep" aria-hidden="true"></span>';
-    if(a.label && side.length > 1) h += `<span class="navh">${esc(a.label)}</span>`;
-    a.items.forEach(it => {
-      const pb = !it.sub || it.sub === "levels" ? bar.indexOf(it.tab) : -1;
-      if(it.side === false && pb < 0) return;   // in its area's bar on the page, and in More
-      // the tab bar names a place by its area (Stock, not Stock levels)
-      const label = pb >= 0 && a.key === "stock" ? "Stock" : it.label;
-      h += `<button type="button" class="navi${pb >= 0 ? " pb" : ""}${it.side === false ? " pbonly" : ""}" ${destAttrs(it)} data-dest="${esc(it.id)}" data-area="${esc(a.key)}"${pb >= 0 ? ` style="--pbo:${pb}"` : ""}>${iconOf(it)}<span>${esc(label)}</span></button>`;
-    });
-  });
+  const byTab=new Map(top.map(it=>[it.tab,it]));
+  bar.forEach(tab=>{ if(!byTab.has(tab)){ const d=moduleDef(tab); if(d) byTab.set(tab,{tab,id:tab,label:d.label,area:tab}); } });
+  const h=[...byTab.values()].map(it=>{
+    const pb=bar.indexOf(it.tab), label=it.tab==="report"?"Reports":it.label;
+    return `<button type="button" class="navi${pb>=0?" pb":""}" ${destAttrs(it)} data-dest="${esc(it.id)}" data-area="${esc(it.area)}"${pb>=0?` style="--pbo:${pb}"`:""}>${iconOf(it)}<span>${esc(label)}</span></button>`;
+  }).join("");
   nav.innerHTML = h + `<button type="button" class="navmore" data-navmore aria-haspopup="dialog">${NAV_ICONS.more}<span>More</span></button>`;
 }
 /* The page of a module (made when a later batch registers a module without one in index.html) */
@@ -75,16 +71,17 @@ export function renderNav(){
   }
   const none = !tabOpen(store.prefs.tab);
   drawNav();
-  const where = none ? { area: "", id: "" } : navWhere(), { bar } = phoneNav();
-  const barAreas = new Set($$(".nav .navi.pb").map(b => b.dataset.area));
+  const where = none ? { area: "", id: "" } : navWhere(), { bar } = phoneNav(), wide = window.innerWidth >= 1000;
+  // the places the bar shows at this width: every workspace on a desktop, the tab-bar places on a phone
+  const barAreas = new Set($$(wide ? ".nav .navi" : ".nav .navi.pb").map(b => b.dataset.area));
   $$(".nav .navi").forEach(b => {
-    const on = b.dataset.dest === where.id;
+    const on = b.dataset.dest === where.id || b.dataset.area === where.area;
     if(on) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
     // a tab-bar place stands for its whole area (Stock is lit on Products too)
     b.classList.toggle("areaon", b.classList.contains("pb") && b.dataset.area === where.area);
   });
   const more = $(".nav [data-navmore]");
-  if(more){ if(where.area && !barAreas.has(where.area) && !bar.includes(store.prefs.tab)) more.setAttribute("aria-current", "page"); else more.removeAttribute("aria-current"); }
+  if(more){ if(where.area && !barAreas.has(where.area) && (wide || !bar.includes(store.prefs.tab))) more.setAttribute("aria-current", "page"); else more.removeAttribute("aria-current"); }
   registeredModules().forEach(id => { if(moduleDef(id).view === false) return; const s = sectionOf(id); if(s) s.hidden = none || id !== store.prefs.tab; });
   $("#v-none").hidden = !none;
   $("#billBar").hidden = none || store.prefs.tab !== "sell";
@@ -117,10 +114,10 @@ export function openDestination(id){
   if(sub){ chooseSubview(tab, sub); if(tab === "stock" && store.supplierView) store.supplierView.id = null; }
   if(store.prefs.tab === tab){ renderViews(); window.scrollTo(0, 0); } else switchTab(tab);
 }
-/* "More" on a phone or tablet: every area the tab bar doesn't hold, in groups */
+/* "More": every area the bar doesn't hold, in groups (a phone or tablet: its tab bar; a desktop: its workspace bar) */
 export function openNavMore(){
-  const { bar, allowed } = phoneNav(), where = navWhere();
-  const groups = moreGroups(bar, window.innerWidth < 1000 ? allowed : null);
+  const phone = phoneNav(), where = navWhere(), bar=window.innerWidth<1000?phone.bar:primaryNav().map(x=>x.tab);
+  const groups = moreGroups(bar, window.innerWidth < 1000 ? phone.allowed : null);
   $("#modalHost").innerHTML = `<div class="scrim" data-modal-scrim><div class="sheet navsheet" role="dialog" aria-modal="true" aria-labelledby="navMoreT">
     <div class="sh-head"><h3 id="navMoreT" style="margin:0;flex:1">More</h3><button class="iconbtn" type="button" data-modal-close aria-label="Close">${ICON.x}</button></div>
     ${groups.map(g => `<div class="navgrp">${g.label ? `<h4>${esc(g.label)}</h4>` : ""}<div class="navlist">${g.items.map(it =>

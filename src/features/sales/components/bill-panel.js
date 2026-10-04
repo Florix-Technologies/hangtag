@@ -37,7 +37,7 @@ function batchHTML(c,i){
 /* ---------- the bill ---------- */
 
 /* Cash / UPI / Card open the payment screen with that method chosen (Split is there too) */
-export function payBtns(dis){const d=dis?" disabled":"";return `<button class="pay cash" data-pay="cash"${d}>Cash<span class="kh">C</span></button><button class="pay upi" data-pay="upi"${d}>UPI<span class="kh">U</span></button><button class="pay card" data-pay="card"${d}>Card<span class="kh">K</span></button>`}
+export function payBtns(dis){const d=dis?" disabled":"";return `<button class="payreview" data-act="checkout"${d}>Review &amp; pay <span>Customer · items · total</span></button><span class="quickpay-label">Quick payment</span><button class="pay cash" data-pay="cash"${d}>Cash<span class="kh">C</span></button><button class="pay upi" data-pay="upi"${d}>UPI<span class="kh">U</span></button><button class="pay card" data-pay="card"${d}>Card<span class="kh">K</span></button>`}
 export function lineHTML(c,i,L){
   const p=prod(c.p)||{id:c.p,name:c.name,color:c.color};
   const lab=lineLabel(c), a=availOf(c.v), what=esc((c.name+" "+lab).trim()), d=normalizeDiscount(c.disc), off=L?L.itemDisc:0, gross=toRupees(linePaise(c.q,c.price));

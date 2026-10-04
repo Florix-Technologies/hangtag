@@ -94,8 +94,8 @@ html.kbd .kc{display:block}
 
 /* bill panel */
 .billpanel{display:none}
-@media (min-width:1000px){.billpanel{display:block;position:sticky;top:calc(env(safe-area-inset-top,0px) + 80px)}}
-.bp{display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow);overflow:hidden;max-height:calc(100vh - 104px)}
+@media (min-width:1000px){.billpanel{display:block;position:sticky;top:calc(env(safe-area-inset-top,0px) + var(--stick))}}
+.bp{display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow);overflow:hidden;max-height:calc(100vh - var(--stick) - 24px)}
 .billsheet{padding:0;max-width:520px}
 .billsheet .bp{border:0;box-shadow:none;border-radius:0;max-height:none}
 .billsheet .bp-foot{padding-bottom:calc(16px + env(safe-area-inset-bottom,0px))}
@@ -116,6 +116,9 @@ html.kbd .kc{display:block}
 .bp-foot .tot{color:var(--ink);font-weight:600;padding-top:4px;border-top:1px dashed var(--line-2)}
 .grand{font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1.1}
 .pays{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.payreview{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:46px;padding:10px 14px;border-radius:12px;background:var(--ink);color:var(--ink-inv);font-size:15px;font-weight:700;text-align:left}
+.payreview span{font-size:11.5px;font-weight:500;opacity:.72}.payreview:hover:not(:disabled){background:#262b3d}.payreview:disabled{opacity:.35}
+.quickpay-label{grid-column:1/-1;margin:1px 0 -3px;font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3)}
 .pay{position:relative;border-radius:12px;padding:14px 6px;font-weight:700;font-size:16px;color:#fff;text-align:center;transition:filter .12s,transform .08s}
 .pay:hover:not(:disabled){filter:brightness(1.08)}
 .pay:active:not(:disabled){transform:scale(.97)}
@@ -148,6 +151,7 @@ html.kbd .kc{display:block}
 .bb-cnt small{display:inline-flex;align-items:center;gap:3px;color:var(--accent);font-weight:600;font-size:12.5px}
 .bb-total{margin-left:auto;font-size:24px;font-weight:700;letter-spacing:-.02em}
 .billbar .pay{padding:13px 6px}
+.billbar .payreview{min-height:42px;padding:8px 12px}.billbar .quickpay-label{display:none}
 
 /* toast + tooltip */
 .tip{position:fixed;z-index:80;pointer-events:none;background:var(--bg);border:1px solid var(--line);box-shadow:0 8px 24px rgba(16,19,31,.14);border-radius:10px;padding:8px 11px;font-size:12.5px;max-width:240px}

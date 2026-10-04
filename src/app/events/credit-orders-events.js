@@ -5,7 +5,7 @@ import { openCustHistory, openCustPicker } from '../../features/customers/compon
 import { cancelCollectionAction, collectInput, collectMethod, openCollectForm, submitCollect } from '../../features/customers/components/customer-account.js';
 import { detachAction, holdAction, openHeldList } from '../../features/orders/components/bill-extras.js';
 import { billAction, convertAction, openOrderEditor, orderFormChange, orderFormClick, orderFormInput } from '../../features/orders/components/order-editor.js';
-import { quotationDocumentClick } from '../../features/orders/components/quotation-document.js';
+import { orderDocClick, quotationDocumentClick } from '../../features/orders/components/quotation-document.js';
 import { invoicePageClick, quotationSettingsSubmit } from '../../features/orders/components/quotation-settings.js';
 import { renderOrders } from '../../features/orders/pages/orders-page.js';
 import { chooseSubview } from '../../features/shop/services/modules.js';
@@ -15,6 +15,7 @@ import { toast } from '../../shared/components/toast.js';
 import { renderAll, setTab } from '../../shared/ui/render.js';
 
 export function creditOrdersClick(t){
+  if(orderDocClick(t)) return true;   // a sales order's print, PDF, share and delivery challan
   if(quotationDocumentClick(t) || invoicePageClick(t)) return true;
   // closing a sheet or clearing the bill: forget what belonged to it, then let the usual handling run
   if(t.matches("[data-modal-scrim]") || t.closest("[data-modal-close]") || t.closest("[data-custhist]")){ store.orderForm = null; store.collectForm = null; return false; }

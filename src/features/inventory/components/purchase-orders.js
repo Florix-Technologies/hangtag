@@ -3,6 +3,8 @@
 //   open PO:  what is ordered / received / still to come, and one main action: Receive
 //   receive:  each line starts at what is still to come; change only what differs; scan to count; Confirm
 //   compare:  "✓ Everything matches", or the differences with Accept / Note (only when something differs)
+import { purchaseOrderModel } from '../../receipts/services/doc-models.js';
+import { downloadDocumentPdf, printDocument, shareDocumentPdf } from '../../receipts/components/doc-actions.js';
 import { PO_LABELS } from '../../../domain/inventory/purchase-orders.js';
 import { qtyText } from '../../../domain/catalog/units.js';
 import { vLabel, variantsOf } from '../../../domain/catalog/variants.js';
@@ -86,6 +88,7 @@ export function openPODetail(id){
     if(!["closed", "cancelled"].includes(po.status) && P.received > 0) acts.push(`<button type="button" class="btn sm" data-postatus="closed">Close</button>`);
     if(["draft", "sent"].includes(po.status) && !P.received) acts.push(`<button type="button" class="btn sm danger" data-postatus="cancelled">Cancel PO</button>`);
   }
+  acts.push(`<button type="button" class="btn sm" data-podoc="print" data-id="${esc(po.id)}">Print</button>`, `<button type="button" class="btn sm" data-podoc="pdf" data-id="${esc(po.id)}">Download PDF</button>`, `<button type="button" class="btn sm" data-podoc="share" data-id="${esc(po.id)}">Share</button>`);
   bizSheet({ label: sup ? sup.name : "Purchase order", sub: `${po.no || ""}${po.expected ? ` · expected ${po.expected}` : ""}`,
     body: `<div>${stat(P.status)}</div><div class="bizlist">${lines}</div>${compare}${acts.length ? `<div class="setactions">${acts.join("")}</div>` : ""}${po.notes ? `<p class="note">${esc(po.notes)}</p>` : ""}`,
     foot: canRecv ? `<button type="button" class="btn sm primary" data-porecv="${esc(po.id)}">Receive</button>` : `<button type="button" class="btn sm" data-biz="close">Done</button>` });
@@ -134,6 +137,7 @@ export function purchaseOrdersClick(t){
   const op = t.closest("[data-poopen]"); if(op){ openPODetail(op.dataset.poopen); return true; }
   if(t.closest("[data-poedit]") && V().kind === "podetail"){ openPOEditor(V().id); return true; }
   const rc = t.closest("[data-porecv]"); if(rc){ openReceive(rc.dataset.porecv); return true; }
+  const pd = t.closest("[data-podoc]"); if(pd){ const m = purchaseOrderModel(poById(pd.dataset.id)); if(m){ if(pd.dataset.podoc === "print") printDocument(m); else if(pd.dataset.podoc === "pdf") downloadDocumentPdf(m); else shareDocumentPdf(m, `${m.title} ${m.number} from ${m.seller.name}`); } return true; }
   if(t.closest("[data-pobill]") && V().kind === "podetail"){ openPOBill(V().id); return true; }
   const st = t.closest("[data-postatus]");
   if(st && V().kind === "podetail"){ const r = setPOStatus(V().id, st.dataset.postatus); if(r.error){ bizError(r.error); return true; } toast(`Purchase order ${PO_LABELS[st.dataset.postatus].toLowerCase()}.`); renderAll(); openPODetail(V().id); return true; }

@@ -3,6 +3,8 @@
 import { EINV_LABELS } from '../../../domain/gst/einvoice.js';
 import { EWAY_LABELS, TRANSPORT_MODES, transportFieldsNeeded } from '../../../domain/gst/eway.js';
 import { store } from '../../../shared/state/store.js';
+import { D } from '../../inventory/services/ledger.js';
+import { inr } from '../../../shared/formatting/money.js';
 import { esc } from '../../../shared/dom.js';
 import { toast } from '../../../shared/components/toast.js';
 import { renderAll } from '../../../shared/ui/render.js';
@@ -41,9 +43,18 @@ export function openGstDoc(kind, saleId){
   store.bizView = { kind: "gst", what: kind, saleId, values: {}, transport: {}, err: "" };
   renderGstDoc();
 }
+/* What generating it would need, said plainly: nothing is sent to the GST portal from Hangtag yet */
+const NO_PROVIDER = { einv: "Generating the e-invoice (its IRN and signed QR) needs a GST e-invoicing provider, and none is connected to Hangtag. Export the JSON to upload it in your GST software or on the e-invoice portal. Hangtag has not generated an IRN for this bill.",
+  eway: "Generating the e-way bill (its EWB number) needs an e-way bill provider, and none is connected to Hangtag. Export the JSON to upload it on the e-way bill portal. Hangtag has not generated an e-way bill." };
 export function renderGstDoc(){
   const F = V(), eway = F.what === "eway", st = eway ? ewayOf(F.saleId) : einvoiceOf(F.saleId);
-  if(!st){ closeBiz(); return; }
+  if(!st){ bizSheet({ label: eway ? "E-way bill" : "E-invoice", body: `<p class="note">${eway ? "E-way bills are switched off for this shop." : "E-invoicing is switched off for this shop."} Switch it on in Settings → Billing &amp; Documents → E-invoice and e-way bill.</p>`, foot: `<button type="button" class="btn sm" data-biz="close">Close</button>` }); return; }
+  if(st.state === "not_required"){
+    const s = D().saleById[F.saleId], why = eway ? `An e-way bill is needed when goods worth more than ${inr((store.settings.eway && store.settings.eway.threshold) || 50000)} are moved${store.settings.eway && store.settings.eway.on ? "" : ", once e-way bills are switched on in Settings → Billing & Documents"}. This bill is ${inr(s ? s.total : 0)}.`
+      : `E-invoices are made for bills to registered businesses (a buyer with a GSTIN)${store.settings.einv && store.settings.einv.on ? "" : ", once e-invoicing is switched on in Settings → Billing & Documents"}, with GST on the bill. ${s && s.cust && s.cust.gstin ? "" : "This bill's buyer has no GSTIN."}`;
+    bizSheet({ label: eway ? "E-way bill" : "E-invoice", body: `<div class="biznote">Not needed for this bill</div><p class="note">${esc(why)}</p>`, foot: `<button type="button" class="btn sm" data-biz="close">Close</button>` });
+    return;
+  }
   const needs = st.state === "needs", missing = st.missing || [], tfields = eway ? transportFieldsNeeded(missing) : [];
   const T = (st.transport || (st.record && st.record.transport) || {});
   const transportInputs = eway && (needs || st.state === "ready") ? `<div class="pgrid">
@@ -56,8 +67,8 @@ export function renderGstDoc(){
       <details class="full"><summary>Transporter (optional)</summary><div class="pgrid"><label class="f">Transporter id<input data-gstt="transporterId" maxlength="15" autocapitalize="characters" value="${esc(T.transporterId || "")}"></label><label class="f">Name<input data-gstt="transporterName" maxlength="100" value="${esc(T.transporterName || "")}"></label></div></details></div>` : "";
   const other = missing.filter(m => m.where !== "transport");
   const body = needs
-    ? `<div class="biznote warn">Needs ${missing.length ? missing.map(m => esc(m.label)).join(", ") : esc(st.problems[0] || "")}</div>${st.problems.length && missing.length ? `<p class="note">${st.problems.map(esc).join("<br>")}</p>` : ""}${other.length ? `<div class="pgrid">${missingInputs(other)}</div>` : ""}${transportInputs}`
-    : st.state === "ready" ? `<div class="biznote ok">✓ Ready${st.record ? "" : " — everything needed is on the bill"}</div>${transportInputs}<p class="note">Hangtag isn't connected to the GST portal yet. Export the JSON for your GST software, or keep it ready to send once a provider is connected.</p>`
+    ? `<div class="biznote warn">Needs ${missing.length ? missing.map(m => esc(m.label)).join(", ") : esc(st.problems[0] || "")}</div>${st.problems.length && missing.length ? `<p class="note">${st.problems.map(esc).join("<br>")}</p>` : ""}${other.length ? `<div class="pgrid">${missingInputs(other)}</div>` : ""}${transportInputs}<p class="note">Fill in only what is missing; then you can export the JSON. ${esc(NO_PROVIDER[eway ? "eway" : "einv"])}</p>`
+    : st.state === "ready" ? `<div class="biznote ok">✓ Ready${st.record ? "" : " — everything needed is on the bill"}</div>${transportInputs}<p class="note">${esc(NO_PROVIDER[eway ? "eway" : "einv"])}</p>`
     : `<div class="biznote">${esc((eway ? EWAY_LABELS : EINV_LABELS)[st.state] || st.state)}</div>${st.record && st.record.irn ? `<p class="note">IRN ${esc(st.record.irn)}</p>` : ""}`;
   const foot = needs ? `<button type="button" class="btn sm" data-biz="close">Later</button><button type="button" class="btn sm primary" data-biz="gstsave">Save details</button>`
     : st.state === "ready" ? `<button type="button" class="btn sm" data-biz="gstjson">Export JSON</button><button type="button" class="btn sm primary" data-biz="gstkeep">${eway ? "Save" : "Keep ready"}</button>`

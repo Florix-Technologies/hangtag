@@ -13,10 +13,11 @@ import { savePrinter } from '../../../shared/state/persistence.js';
 
 /* → { ok: true, via: "epson", confirmed: true } when the printer confirmed; { ok: true, via: "browser" } when the dialog
    opened; { error, retry } when it didn't print. browser: true skips the thermal printer. */
-export async function printReceipt(sid,{browser}={}){
+export async function printReceipt(sid,{browser,paper}={}){
   const s=D().saleById[sid]; if(!s) return {error:"That bill isn't on this device."};
   const cfg=store.printer;
-  if(browser||!cfg||cfg.kind!=="epson"){ printSale(sid); return {ok:true,via:"browser"}; }
+  // an A4 document goes to the print dialog; the receipt printer prints receipts
+  if(browser||paper==="a4"||!cfg||cfg.kind!=="epson"){ printSale(sid,paper); return {ok:true,via:"browser"}; }
   try{
     await use("receiptPrinter").print(thermalReceipt(invoiceFor(s),{cols:cfg.cols}),cfg);
     return {ok:true,via:"epson",confirmed:true};

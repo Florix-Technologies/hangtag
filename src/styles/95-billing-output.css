@@ -27,3 +27,31 @@
 .logoprev img{max-width:100%;max-height:100%;object-fit:contain}.logoedit .btn input[type=file]{display:none}
 #printerMsg.okmsg{background:var(--accent-soft);color:var(--good-ink)}
 @media (max-width:699px){.sendacts .btn{min-height:46px}.logoedit{flex-direction:column}}
+
+/* the bill view: the receipt / A4 switch, Print and the Actions menu; A4 documents in their own frame */
+.billtools{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px}
+.billview .sh-t h3{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.docprev{background:var(--wash);border-radius:var(--r-md);padding:10px;overflow:hidden}
+.docframe{display:block;width:100%;min-height:420px;border:0;background:#fff;border-radius:4px;box-shadow:var(--shadow-sm)}
+.rcpt-prev.a4prev{padding:0;background:none;max-height:none}
+.sheet.billview.wide{max-width:900px}
+
+/* Settings → Billing & Documents → Templates */
+.tplpick{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:10px 0 4px}
+.tplcard{position:relative;display:flex;flex-direction:column;gap:4px;padding:12px;border:1.5px solid var(--line-2);border-radius:var(--r-md);cursor:pointer;background:var(--bg);transition:border-color var(--t-fast),box-shadow var(--t-fast)}
+.tplcard:has(input:checked){border-color:var(--accent);box-shadow:var(--ring)}
+.tplcard input{position:absolute;opacity:0;pointer-events:none}
+.tplcard b{font-size:14px}.tplcard small{font-size:12px;color:var(--ink-3);line-height:1.35}
+.tplmini{display:flex;flex-direction:column;gap:4px;height:64px;padding:8px;border-radius:6px;background:#fff;border:1px solid var(--line);margin-bottom:6px}
+.tplmini i{display:block;height:6px;border-radius:2px;background:var(--wash-2)}
+.tplmini i:first-child{height:14px}
+.tpl-modern i:first-child{background:var(--accent)}
+.tpl-classic{border-style:double;border-width:3px}.tpl-classic i{border:1px solid var(--line-2);background:none}
+.tpl-minimal i:first-child{background:none;border-bottom:1px solid var(--ink-3);border-radius:0}
+.accpick{display:flex;gap:10px;flex-wrap:wrap}
+.accsw{display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer}
+.accsw input{position:absolute;opacity:0;pointer-events:none}
+.accsw span{width:30px;height:30px;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(0,0,0,.12)}
+.accsw:has(input:checked) span{box-shadow:0 0 0 2px var(--bg),0 0 0 4px var(--ink)}
+.accsw:has(input:focus-visible) span{outline:2px solid var(--accent);outline-offset:3px}
+.accsw small{font-size:11.5px;color:var(--ink-3)}

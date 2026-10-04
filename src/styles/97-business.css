@@ -1,25 +1,32 @@
 /* ================= business type, capabilities, adaptive navigation, Home ================= */
 
-/* ---------- Home ---------- */
-.qa{display:grid;grid-template-columns:repeat(auto-fill,minmax(78px,1fr));gap:8px;margin:0 0 16px}
-@media (min-width:600px){.qa{grid-template-columns:repeat(auto-fill,minmax(104px,1fr))}}
-.qa-b{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;min-height:64px;padding:8px 4px;border:1px solid var(--line);border-radius:14px;background:var(--bg);font-weight:600;font-size:12.5px;line-height:1.2;color:var(--ink);text-align:center}
-.qa-b svg{width:22px;height:22px}
-.qa-b:hover{background:var(--wash)}
+/* ---------- Home (features/home/pages/home-page.js) ---------- */
+.qa{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 var(--sp-5)}
+.qa .qa-b svg{width:20px;height:20px}
+@media (max-width:599px){.qa .qa-b{flex:1 1 140px}}
 .homegrid{display:grid;gap:14px;grid-template-columns:minmax(0,1fr)}
 @media (min-width:900px){.homegrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-.homegrid .card{padding:14px 16px}
-.homegrid .card-h{padding:0;margin-bottom:12px}
-.homegrid .kpis.hk3{grid-template-columns:repeat(3,minmax(0,1fr))}
-.hbills{display:flex;flex-direction:column;gap:4px}
-.hbill{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;text-align:left;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);font-size:14px}
-.hbill > span{display:flex;flex-direction:column;min-width:0}
-.hbill small{color:var(--ink-3);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.hbill.void b{text-decoration:line-through;color:var(--ink-3)}
-.hsync{display:flex;align-items:center;gap:8px;margin:0 0 6px;font-size:14px}
+.hcard .card-h{margin-bottom:12px}
+.hstats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+.hstat{display:flex;flex-direction:column;gap:2px;padding:12px 14px;border-radius:var(--r-md);background:var(--wash);min-width:0}
+.hstat span{font-size:12.5px;font-weight:600;color:var(--ink-2)}
+.hstat b{font-size:var(--fs-xl);font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1.2}
+.hstat small{font-size:12px;color:var(--ink-3)}
+.hstat.up small{color:var(--good-ink)}.hstat.down small{color:var(--crit)}
+.hstat.warn{background:var(--warn-soft)}.hstat.warn b{color:var(--warn-ink)}
+.hstat.bad{background:var(--crit-soft)}.hstat.bad b{color:var(--crit-ink)}
+.hmoney{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.hmoney .pm{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:var(--r-sm);border:1px solid var(--line);font-size:13px;color:var(--ink-2)}
+.hmoney .pm::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--c)}
+.hmoney .pm.cash{--c:var(--s-cash)}.hmoney .pm.upi{--c:var(--s-upi)}.hmoney .pm.card{--c:var(--s-card)}
+.hmoney .pm b{color:var(--ink);font-variant-numeric:tabular-nums}
+.hlist{margin-top:12px;box-shadow:none}
+.hlist .orow{min-height:48px}
+.hlist .orow.void .o-t{text-decoration:line-through;color:var(--ink-3)}
+.hsync{display:flex;align-items:center;gap:8px;margin:var(--sp-5) 0 0;font-size:13px;color:var(--ink-2)}
 .hsync i{width:9px;height:9px;border-radius:50%;background:var(--ink-3);flex:none}
 .hsync.ok i{background:var(--good)} .hsync.wait i{background:var(--warn)} .hsync.off i{background:var(--crit)}
-
+.hsync .link{margin-left:auto}
 /* ---------- Ask Hangtag ---------- */
 .ask-shell{display:grid;gap:12px;max-width:780px;margin:0 auto}
 .ask-form{display:grid;gap:10px;padding:14px}

@@ -31,6 +31,7 @@ import { closeSheets, renderBill, renderBillSheet, updateBillTotals } from '../.
 import { addPicked, openPicker, renderPicker, setPickQty } from '../../features/sales/components/variant-picker.js';
 import { openKeyboardHelp, renderGrid, sellCatClick } from '../../features/sales/pages/sell-page.js';
 import { openProductView } from '../../features/products/components/product-view.js';
+import { billViewClick } from '../../features/receipts/components/bill-view.js';
 import { addPurchaseLine, openPurchaseEntry, renderPurchaseEntry } from '../../features/inventory/components/purchase-entry.js';
 import { variantsOf as variantsOfP } from '../../domain/catalog/variants.js';
 import { prod as prodOf } from '../../features/products/services/catalog.js';
@@ -128,7 +129,8 @@ export function installDomEvents(){
     // bills
     const bv=t.closest("[data-billview]");if(bv){closeSheets();openBillView(bv.dataset.billview);return}
     const bp=t.closest("[data-billpaper]");if(bp){const i=bp.dataset.billpaper.indexOf(":");openBillView(bp.dataset.billpaper.slice(i+1),bp.dataset.billpaper.slice(0,i));return}
-    const pr=t.closest("[data-print]");if(pr){onPrint(pr.dataset.print);return}
+    if(billViewClick(t))return;   // the bill view: PDF, share, send, credit notes
+    const pr=t.closest("[data-print]");if(pr){onPrint(pr.dataset.print,{paper:pr.dataset.paper});return}
     const pb=t.closest("[data-printbrowser]");if(pb){onPrint(pb.dataset.printbrowser,{browser:true});return}
     const dl=t.closest("[data-dlreceipt]");if(dl){downloadReceipt(dl.dataset.dlreceipt);return}
     const il=t.closest("[data-invlink]");if(il){onInvoiceLink(il.dataset.invlink);return}

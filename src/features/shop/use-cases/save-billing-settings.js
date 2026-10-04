@@ -4,6 +4,7 @@ import { checkBillingSettings, checkGstSettings, checkPaymentSettings, checkReor
 import { enqueue } from '../../sync/services/outbox.js';
 import { saveSettings } from '../../../shared/state/persistence.js';
 import { can, notAllowedText } from '../services/access.js';
+import { checkDocSettings } from '../../../domain/documents/doc-settings.js';
 
 /* input: { lowStock, taxOn, taxRate, taxIncl, prefix, paper, footer } as typed. Returns { error } or { ok:true }. */
 export function saveBillingSettings(input){
@@ -37,6 +38,15 @@ export function saveGstSettings(input){
   if(!can("manage_settings"))return {error:notAllowedText("change the shop's settings")};
   const r=checkGstSettings(input);
   if(r.error)return {error:r.error};
+  store.settings=Object.assign({},store.settings,r.patch);
+  saveSettings();enqueue({type:"settings"});
+  return {ok:true};
+}
+/* Billing & Documents → Templates: { docTpl, docAccent, docGst, docTerms, docSign, docBank } → { ok } or { error, field } */
+export function saveDocSettings(input){
+  if(!can("manage_settings"))return {error:notAllowedText("change the shop's document templates")};
+  const r=checkDocSettings(input);
+  if(r.error)return r;
   store.settings=Object.assign({},store.settings,r.patch);
   saveSettings();enqueue({type:"settings"});
   return {ok:true};

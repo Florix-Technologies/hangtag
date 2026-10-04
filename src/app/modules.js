@@ -42,6 +42,8 @@ import { gstSettingsHTML } from '../features/commerce/components/gst-documents.j
 import { vouchersSettingsHTML } from '../features/commerce/components/vouchers.js';
 import { integrationsSettingsHTML } from '../features/commerce/components/webhooks.js';
 import { bankAccountsSettingsHTML, installBankEvents } from '../features/finance/components/bank-accounts-view.js';
+import { installStoreEvents, renderStorePage, storeOpen } from '../features/commerce/pages/store-page.js';
+import { docTemplatesHTML, installDocTemplateEvents } from '../features/receipts/components/doc-templates.js';
 
 let installed = false;
 export function installModules(){
@@ -78,6 +80,8 @@ export function installModules(){
   registerSettingsPart("sales", { id: "price-lists", order: 10, perms: ["manage_products"], html: () => hasCap("uses_price_lists") ? priceListsSettingsHTML() : "" });
   registerSettingsPart("sales", { id: "vouchers", order: 20, perms: ["create_sale", "manage_settings"], html: vouchersSettingsHTML });
   registerSettingsPart("billing", { id: "gst-docs", order: 50, perms: ["manage_settings"], html: gstSettingsHTML });
+  // Settings → Billing & Documents → Templates: one look for every A4 document
+  registerSettingsPart("billing", { id: "templates", order: 5, perms: ["manage_settings"], html: docTemplatesHTML });
   // Settings → Advanced: integrations (outbound webhooks), the owner's only
   registerSettingsPart("integrations", { id: "webhooks", order: 10, html: integrationsSettingsHTML });
   // Settings → Payments & Banks: the shop's bank accounts (section 3s)
@@ -86,11 +90,16 @@ export function installModules(){
   // table / kitchen capabilities (the registry adds them to these modules by itself)
   registerModule({ id: "tables", label: "Tables", order: 32, phone: 25, caps: ["uses_tables"], perms: ["create_sale", "create_order", "manage_tables", "manage_settings"], available: mayWorkTables, render: renderTablesPage });
   registerModule({ id: "kitchen", label: "Kitchen", order: 34, phone: 26, caps: ["uses_kitchen"], perms: ["manage_kitchen"], render: renderKitchenPage });
+  // Store (UX pass): the public mobile store as its own area for the owner and managers, where the shop takes sales orders
+  registerModule({ id: "store", label: "Store", order: 36, phone: 65, caps: ["uses_sales_orders", "uses_mobile_store"], perms: ["manage_settings"], render: renderStorePage });
+  registerSettingsPart("storefront", { id: "store", order: 10, perms: ["manage_settings"], html: () => `<div class="setblk"><h5>Mobile store</h5><p class="note" style="margin:0 0 12px">${storeOpen() ? "Your store is open: customers can browse and order from their phones." : "Your store is closed. Open it, share the link or QR, and see the orders in the Store area."}</p><button type="button" class="btn primary" data-tab="store">Open the Store area</button></div>` });
   installRestaurantTimers();
   installAssistantEvents();
   installProductDraftEvents();
   installVoiceSearch();
   installBankEvents();
+  installStoreEvents();
+  installDocTemplateEvents();
   document.addEventListener("click", e => {
     // a destination that is a part of a module (Purchases is Stock → Purchases): open the module on that part
     const ns = e.target && e.target.closest && e.target.closest("[data-navsub]");

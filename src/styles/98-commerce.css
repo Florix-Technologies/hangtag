@@ -81,3 +81,18 @@ html[data-noperm~="create_purchase"] :is([data-ponew],[data-poreorder],[data-por
 .whevents{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:6px}
 .ofulfil{display:block;font-size:12.5px;color:var(--ink-3)}
 .ofulfil b{color:var(--good-ink)}
+
+/* ---------- the Store area (features/commerce/pages/store-page.js) ---------- */
+.storestatus{display:flex;align-items:center;justify-content:space-between;gap:12px 20px;flex-wrap:wrap;margin-bottom:14px}
+.ss-main{display:flex;gap:12px;align-items:flex-start;flex:1;min-width:240px}
+.ss-main b{font-size:var(--fs-md)}
+.ss-main .note{margin:4px 0 0;max-width:62ch}
+.ss-dot{width:12px;height:12px;border-radius:50%;background:var(--ink-3);margin-top:5px;flex:none;box-shadow:0 0 0 4px var(--wash)}
+.ss-dot.on{background:var(--good);box-shadow:0 0 0 4px var(--good-soft)}
+.storegrid{display:grid;gap:14px;margin-bottom:14px}
+@media (min-width:900px){.storegrid{grid-template-columns:minmax(0,1.4fr) minmax(0,1fr)}}
+.storelink{margin:0 0 12px;padding:10px 12px;border-radius:var(--r-sm);background:var(--wash);border:1px solid var(--line);overflow-wrap:anywhere}
+.storelink code{font-size:13px;color:var(--ink)}
+.storeqr .sq-code{display:flex;justify-content:center;padding:8px;background:#fff;border:1px solid var(--line);border-radius:var(--r-md);margin-bottom:10px}
+.storeqr .sq-code svg{width:180px;height:180px}
+#v-store > .card{margin-bottom:14px}

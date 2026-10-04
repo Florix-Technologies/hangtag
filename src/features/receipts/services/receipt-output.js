@@ -1,5 +1,7 @@
 // Browser print, image, download, share and "open WhatsApp" for receipts — all from the bill's invoice.
 // (Thermal printers: features/printing. Sending through a provider: features/delivery.)
+import { printDocument } from '../components/doc-actions.js';
+import { invoiceModel } from './doc-models.js';
 import { gstLines } from '../../../domain/invoices/invoice.js';
 import { store } from '../../../shared/state/store.js';
 import { D } from '../../inventory/services/ledger.js';
@@ -13,9 +15,11 @@ import { inr, inrx } from '../../../shared/formatting/money.js';
 import { logger } from '../../../shared/logging/logger.js';
 
 /* The browser's print dialog, with a print-only page (80 mm receipt or A4 invoice, as set in Billing settings) */
-export function printSale(sid){
+export function printSale(sid,want){
   const s=D().saleById[sid]; if(!s) return;
-  const paper=store.settings.paper==="a4"?"a4":"80mm";
+  const paper=(want||store.settings.paper)==="a4"?"a4":"80mm";
+  // an A4 bill prints in the shop's document template (the same as its PDF)
+  if(paper==="a4"){ printDocument(invoiceModel(s)); return; }
   const f=document.createElement("iframe");
   f.setAttribute("aria-hidden","true"); f.style.cssText="position:fixed;right:0;bottom:0;width:0;height:0;border:0";
   document.body.appendChild(f);

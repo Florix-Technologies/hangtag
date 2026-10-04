@@ -31,7 +31,9 @@ function add(id){ const v = variant(id); if(!v || v.available <= 0) return; cons
 function heading(back){
   const top = el('div', 'top'), h = el('div', 'head');
   if(back) h.appendChild(button('←', 'ghost', () => { view = back; error = ''; render(); }));
-  h.appendChild(el('h1', '', menu && menu.shop || 'Shop'));
+  // the shop's own look: its logo and name (the logo only when the shop has one)
+  if(menu && typeof menu.logo === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(menu.logo)){ const img = el('img', 'logo'); img.alt = ''; img.src = menu.logo; h.appendChild(img); }
+  const t = el('div', 'title'); t.appendChild(el('h1', '', menu && menu.shop || 'Shop')); if(menu && menu.city) t.appendChild(el('span', 'muted small', menu.city)); h.appendChild(t);
   if(link.mode === 'assisted') h.appendChild(el('span', 'pill', 'In-store cart'));
   top.appendChild(h); return top;
 }
@@ -50,9 +52,18 @@ function renderMenu(){
     shown++; const card = el('article', 'product'); card.appendChild(imageBox(p)); const body = el('div', 'body');
     body.appendChild(el('h2', '', p.name)); if(p.brand) body.appendChild(el('p', 'muted small', p.brand)); if(p.description) body.appendChild(el('p', 'muted small', p.description));
     if(menu.tax_on && +p.gst > 0) body.appendChild(el('p', 'muted small', 'GST ' + p.gst + '%' + (menu.tax_inclusive ? ' included' : ' added at checkout')));
+    // the choice of variant: tappable chips for a few options, a list for many
     const options = (p.variants || []), select = el('select'), chosen = options.find(v => v.available > 0) || options[0];
     options.forEach(v => { const o = el('option', '', (v.label || 'Standard') + ' · ' + money(v.price) + (v.available > 0 ? '' : ' · sold out')); o.value = v.v; o.disabled = v.available <= 0; select.appendChild(o); });
-    if(chosen) select.value = chosen.v; if(options.length > 1) body.appendChild(select);
+    if(chosen) select.value = chosen.v;
+    if(options.length > 1 && options.length <= 8){
+      const chips = el('div', 'vchips'); chips.setAttribute('role', 'radiogroup'); chips.setAttribute('aria-label', 'Choose an option for ' + p.name);
+      options.forEach(v => { const c = button(v.label || 'Standard', 'vchip' + (v.available > 0 ? '' : ' out'), () => { select.value = v.v; select.dispatchEvent(new Event('change')); });
+        c.setAttribute('role', 'radio'); c.dataset.v = v.v; c.disabled = v.available <= 0; chips.appendChild(c); });
+      select.addEventListener('change', () => chips.querySelectorAll('.vchip').forEach(c => c.setAttribute('aria-checked', String(c.dataset.v === select.value))));
+      chips.querySelectorAll('.vchip').forEach(c => c.setAttribute('aria-checked', String(c.dataset.v === select.value)));
+      body.appendChild(chips);
+    } else if(options.length > 1) body.appendChild(select);
     const price = el('p', 'price'), stock = el('p', 'stock small'); body.append(price, stock);
     const addButton = button('Add', 'add primary', () => add(select.value)); body.appendChild(addButton);
     const update = () => { const v = variant(select.value) || chosen; price.textContent = v ? money(v.price) + (v.unit && v.unit !== 'pcs' ? '/' + v.unit : '') : '';

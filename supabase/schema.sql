@@ -5833,6 +5833,83 @@ REVOKE ALL ON FUNCTION public.hangtag_biz_changes() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.hangtag_biz_changes() TO authenticated;
 
 -- ==============================================================================
+-- 3s. Bank accounts (UX productization): the shop's bank accounts and the money moved in them by hand
+--   An account has its opening balance on a date, is active or switched off, may be the default account, and may take
+--   payment methods (UPI → one account, card machine settlements → another; unmapped methods go to the default account).
+--   Entries made by hand: money in, money out, a transfer between two accounts of the shop, an adjustment with its reason
+--   (signed), and a reversal of a whole entry made by mistake. Like cash entries (section 3h) they are added, never changed
+--   or removed. The UPI and card money of the bank book (section 3e) is counted into the mapped account by the app; this
+--   section adds no trigger to sales. Accounts are switched off, never deleted, so their entries keep their account.
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.hangtag_bank_accounts (
+    owner_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    id TEXT NOT NULL CHECK (char_length(id) BETWEEN 1 AND 64),
+    name TEXT NOT NULL CHECK (char_length(btrim(name)) BETWEEN 1 AND 60),
+    bank TEXT CHECK (bank IS NULL OR char_length(bank) <= 60),
+    last4 TEXT CHECK (last4 IS NULL OR last4 ~ '^[0-9]{4}$'),
+    opening NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (abs(opening) <= 1000000000),
+    opening_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    active BOOLEAN NOT NULL DEFAULT true,
+    is_default BOOLEAN NOT NULL DEFAULT false,
+    methods TEXT[] NOT NULL DEFAULT '{}' CHECK (methods <@ ARRAY['upi','card']::TEXT[]),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (owner_id, id)
+);
+CREATE TABLE IF NOT EXISTS public.hangtag_bank_moves (
+    owner_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    id TEXT NOT NULL CHECK (char_length(id) BETWEEN 1 AND 64),
+    account_id TEXT NOT NULL,
+    type TEXT NOT NULL CHECK (type IN ('in','out','transfer','adjust','reversal')),
+    amount NUMERIC(14,2) NOT NULL CHECK (amount <> 0 AND abs(amount) <= 1000000000),
+    to_account TEXT,
+    reason TEXT CHECK (reason IS NULL OR char_length(reason) BETWEEN 3 AND 200),
+    reverses TEXT,
+    t BIGINT NOT NULL,
+    device_id TEXT,
+    user_id UUID DEFAULT auth.uid(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (owner_id, id),
+    CONSTRAINT hangtag_bank_moves_account_fkey FOREIGN KEY (owner_id, account_id) REFERENCES public.hangtag_bank_accounts (owner_id, id),
+    CONSTRAINT hangtag_bank_moves_to_fkey FOREIGN KEY (owner_id, to_account) REFERENCES public.hangtag_bank_accounts (owner_id, id),
+    CONSTRAINT hangtag_bank_moves_reverses_fkey FOREIGN KEY (owner_id, reverses) REFERENCES public.hangtag_bank_moves (owner_id, id)
+);
+-- a transfer names another account (its reversal names the same two); an adjustment and a reversal say why; only they may be
+-- negative (an adjustment down, and the reversal of one)
+ALTER TABLE public.hangtag_bank_moves DROP CONSTRAINT IF EXISTS hangtag_bank_moves_kind_check;
+ALTER TABLE public.hangtag_bank_moves ADD CONSTRAINT hangtag_bank_moves_kind_check CHECK (
+    (type IN ('transfer','reversal') OR to_account IS NULL) AND (type <> 'transfer' OR (to_account IS NOT NULL AND to_account <> account_id))
+    AND (type = 'reversal') = (reverses IS NOT NULL)
+    AND (type NOT IN ('adjust','reversal') OR reason IS NOT NULL)
+    AND (type IN ('adjust','reversal') OR amount > 0));
+CREATE UNIQUE INDEX IF NOT EXISTS hangtag_bank_moves_reversed_once ON public.hangtag_bank_moves (owner_id, reverses) WHERE reverses IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_hangtag_bank_moves_account ON public.hangtag_bank_moves (owner_id, account_id, t);
+-- a reversal is of a whole entry that is not itself a reversal, on the same accounts
+CREATE OR REPLACE FUNCTION public.hangtag_bank_move_check()
+RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
+DECLARE o RECORD;
+BEGIN
+    IF NEW.type = 'reversal' THEN
+        SELECT type, amount, account_id, to_account INTO o FROM public.hangtag_bank_moves WHERE owner_id = NEW.owner_id AND id = NEW.reverses;
+        IF o.type IS NULL THEN RAISE EXCEPTION 'Bank entry % was not found', NEW.reverses USING ERRCODE = 'foreign_key_violation'; END IF;
+        IF o.type = 'reversal' OR o.amount <> NEW.amount OR o.account_id <> NEW.account_id OR o.to_account IS DISTINCT FROM NEW.to_account THEN
+            RAISE EXCEPTION 'A reversal must be for the whole of an entry that is not itself a reversal' USING ERRCODE = 'check_violation';
+        END IF;
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS hangtag_bank_move_check ON public.hangtag_bank_moves;
+CREATE TRIGGER hangtag_bank_move_check BEFORE INSERT ON public.hangtag_bank_moves FOR EACH ROW EXECUTE FUNCTION public.hangtag_bank_move_check();
+REVOKE EXECUTE ON FUNCTION public.hangtag_bank_move_check() FROM PUBLIC, anon;
+-- an account's changes keep when they were made
+CREATE OR REPLACE FUNCTION public.hangtag_bank_account_touch()
+RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
+BEGIN NEW.updated_at := NOW(); RETURN NEW; END $$;
+DROP TRIGGER IF EXISTS hangtag_bank_account_touch ON public.hangtag_bank_accounts;
+CREATE TRIGGER hangtag_bank_account_touch BEFORE UPDATE ON public.hangtag_bank_accounts FOR EACH ROW EXECUTE FUNCTION public.hangtag_bank_account_touch();
+REVOKE EXECUTE ON FUNCTION public.hangtag_bank_account_touch() FROM PUBLIC, anon;
+
+-- ==============================================================================
 -- 4. Indexes for reports
 -- ==============================================================================
 DROP INDEX IF EXISTS public.idx_hangtag_sizes_prod;
@@ -5919,6 +5996,10 @@ BEGIN
         ('hangtag_webhook_endpoints', NULL,                                         NULL),
         ('hangtag_webhook_events',  NULL,                                           NULL),
         ('hangtag_webhook_deliveries', NULL,                                        NULL),
+
+        -- tables of section 3s (accounts are switched off, never removed; entries are added, never changed)
+        ('hangtag_bank_accounts',   'view_reports,manage_settings',                 'manage_settings|manage_settings|owner'),
+        ('hangtag_bank_moves',      'view_reports,manage_settings',                 'view_reports,manage_settings|owner|owner'),
 
         ('hangtag_roles',           '',                                             'owner'),
         ('hangtag_audit_log',       'view_reports',                                 '-'),
@@ -6030,6 +6111,10 @@ GRANT UPDATE (revoked_at) ON TABLE public.hangtag_invoice_links TO authenticated
 REVOKE ALL ON TABLE public.hangtag_cash_moves FROM authenticated;
 GRANT SELECT, INSERT ON TABLE public.hangtag_cash_moves TO authenticated;
 GRANT SELECT, INSERT, UPDATE ON TABLE public.hangtag_day_closes TO authenticated;
+-- bank accounts (section 3s) are added and changed (switched off, never deleted); their entries are added, never changed
+REVOKE ALL ON TABLE public.hangtag_bank_accounts, public.hangtag_bank_moves FROM anon, authenticated;
+GRANT SELECT, INSERT, UPDATE ON TABLE public.hangtag_bank_accounts TO authenticated;
+GRANT SELECT, INSERT ON TABLE public.hangtag_bank_moves TO authenticated;
 -- team (section 3i): members, devices and enrollment tokens are written by the team Edge Function; the owner may only
 -- change a member's name, role and status, and rename, revoke or remove a device. The audit log is read-only for everyone.
 REVOKE ALL ON TABLE public.hangtag_members, public.hangtag_devices, public.hangtag_enrollments, public.hangtag_audit_log FROM authenticated;
@@ -6048,7 +6133,8 @@ BEGIN
     FOREACH t IN ARRAY ARRAY['hangtag_products','hangtag_sizes','hangtag_images','hangtag_sales','hangtag_sale_items',
                              'hangtag_variants','hangtag_stock_moves','hangtag_customers','hangtag_returns','hangtag_return_items','hangtag_meta','hangtag_stock_imports',
                              'hangtag_events','hangtag_payment_intents','hangtag_cash_moves','hangtag_day_closes',
-                             'hangtag_price_lists','hangtag_purchase_orders','hangtag_vouchers','hangtag_einvoices','hangtag_eway_bills'] LOOP
+                             'hangtag_price_lists','hangtag_purchase_orders','hangtag_vouchers','hangtag_einvoices','hangtag_eway_bills',
+                             'hangtag_bank_accounts','hangtag_bank_moves'] LOOP
         BEGIN
             EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I', t);
         EXCEPTION WHEN OTHERS THEN
@@ -6344,4 +6430,10 @@ SELECT check_name, value, expected, value = expected AS ok FROM (
            (SELECT count(*) FROM public.hangtag_einvoices e WHERE (e.irn IS NOT NULL) = (e.status IN ('generated','cancelled')))::bigint
              + (SELECT count(*) FROM public.hangtag_eway_bills w WHERE (w.ewb_no IS NOT NULL) = (w.status IN ('generated','cancelled')))::bigint,
            (SELECT count(*) FROM public.hangtag_einvoices)::bigint + (SELECT count(*) FROM public.hangtag_eway_bills)::bigint
+    UNION ALL
+    SELECT 73, 'Bank entries: transfers between two accounts, reversals of a whole entry',
+           (SELECT count(*) FROM public.hangtag_bank_moves m WHERE (m.type <> 'transfer' OR m.to_account <> m.account_id)
+               AND (m.type <> 'reversal' OR EXISTS (SELECT 1 FROM public.hangtag_bank_moves o WHERE o.owner_id = m.owner_id AND o.id = m.reverses
+                   AND o.type <> 'reversal' AND o.amount = m.amount AND o.account_id = m.account_id)))::bigint,
+           (SELECT count(*) FROM public.hangtag_bank_moves)::bigint
 ) r ORDER BY n;

@@ -41,6 +41,7 @@ import { priceListsSettingsHTML } from '../features/commerce/components/settings
 import { gstSettingsHTML } from '../features/commerce/components/gst-documents.js';
 import { vouchersSettingsHTML } from '../features/commerce/components/vouchers.js';
 import { integrationsSettingsHTML } from '../features/commerce/components/webhooks.js';
+import { bankAccountsSettingsHTML, installBankEvents } from '../features/finance/components/bank-accounts-view.js';
 
 let installed = false;
 export function installModules(){
@@ -79,6 +80,8 @@ export function installModules(){
   registerSettingsPart("billing", { id: "gst-docs", order: 50, perms: ["manage_settings"], html: gstSettingsHTML });
   // Settings → Advanced: integrations (outbound webhooks), the owner's only
   registerSettingsPart("integrations", { id: "webhooks", order: 10, html: integrationsSettingsHTML });
+  // Settings → Payments & Banks: the shop's bank accounts (section 3s)
+  registerSettingsPart("payments", { id: "banks", order: 10, perms: ["manage_settings", "view_reports"], html: bankAccountsSettingsHTML });
   // Restaurant (W2-B): the tables (a till, or servers ordering on their phones) and the kitchen screen — only with the shop's
   // table / kitchen capabilities (the registry adds them to these modules by itself)
   registerModule({ id: "tables", label: "Tables", order: 32, phone: 25, caps: ["uses_tables"], perms: ["create_sale", "create_order", "manage_tables", "manage_settings"], available: mayWorkTables, render: renderTablesPage });
@@ -87,6 +90,7 @@ export function installModules(){
   installAssistantEvents();
   installProductDraftEvents();
   installVoiceSearch();
+  installBankEvents();
   document.addEventListener("click", e => {
     // a destination that is a part of a module (Purchases is Stock → Purchases): open the module on that part
     const ns = e.target && e.target.closest && e.target.closest("[data-navsub]");

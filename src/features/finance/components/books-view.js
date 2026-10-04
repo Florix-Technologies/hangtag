@@ -1,5 +1,6 @@
 // Cash book and bank book: a card for each on Reports (for the chosen period), and the full list of entries.
 // Every entry names the bill it came from; cancelled bills' entries stay listed, marked, and leave the balances.
+import { bankSummaryHTML } from './bank-accounts-view.js';
 import { PAY_LABELS } from '../../../domain/sales/payments.js';
 import { CASH_MOVE_LABELS } from '../../../domain/finance/cash-moves.js';
 import { closeState } from '../use-cases/cash-moves.js';
@@ -25,7 +26,7 @@ export function cashCardHTML(R){
 export function bankCardHTML(R){
   const B=bankBookFor(R.from,R.to);
   return `<div class="bookkpis">${kv("UPI",inrx(B.upiIn))}${kv("Card",inrx(B.cardIn))}${kv("Refunds","−"+inrx(B.refunds))}${kv("Net to bank",inrx(B.net),"hl")}</div>
-    <p class="note">${count(B.entries.length,B.cancelled)}${B.upiUnverified?` · <span class="btag warn" data-unverified>${inrx(B.upiUnverified)} UPI unverified</span>`:""}${B.verifiedIn?` · ${inrx(B.verifiedIn)} verified by the provider`:""}</p><button class="btn xs" data-book="bank">Open bank book</button>`;
+    <p class="note">${count(B.entries.length,B.cancelled)}${B.upiUnverified?` · <span class="btag warn" data-unverified>${inrx(B.upiUnverified)} UPI unverified</span>`:""}${B.verifiedIn?` · ${inrx(B.verifiedIn)} verified by the provider`:""}</p><button class="btn xs" data-book="bank">Open bank book</button>${bankSummaryHTML()}`;
 }
 /* kind: "cash" | "bank" — the entries for the period chosen on Reports */
 export function openBook(kind){

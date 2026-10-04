@@ -13,16 +13,25 @@ import { inr } from '../../../shared/formatting/money.js';
 import { isLight, okColor, swatchOf } from '../../../shared/utils/colors.js';
 import { initials } from '../../../shared/utils/text.js';
 import { sellingBannerHTML } from '../../events/components/events-view.js';
+import { emptyStateHTML, sheetHTML } from '../../../shared/ui/kit.js';
 
+/* A product on the Sell grid: photo (or initials on its colour), name, its options in short, price, how many are left, and the
+   add action (the whole card adds; a sold-out card stays readable but says so). Keys 1–0 show only once the keyboard is used. */
 export function tileHTML(p,i){
   const left=productLeft(p)-cartQtyP(p.id), st=left<=0?"out":left<=lowAt()?"low":"", q=cartQtyP(p.id);
   const lab=left<=0?"Sold out":left+" left", src=store.imgs[p.id], c=okColor(p.color), vs=variantsOf(p);
   const bg=src?"":` style="background:${c};color:${isLight(c)?"#10131F":"#FFFFFF"}"`;
-  const inner=src?`<img src="${esc(src)}" alt="" decoding="async">`:`<span class="ini">${esc(initials(p.name))}</span>`;
-  const nc=colourCount(p), sum=(nc>1?nc+" colours · ":"")+(vs.length>1?vs.length+" options":"");
-  return `<button class="tile${q?" on":""}" data-pid="${esc(p.id)}" aria-label="${esc(p.name)}, ${esc(priceRange(p))}, ${esc(lab)}${q?", "+q+" in bill":""}">`+
-    `<span class="ph"${bg}>${inner}${i<10?`<span class="kc" aria-hidden="true">${(i+1)%10}</span>`:""}<span class="lf ${st}" aria-hidden="true">${st?"<i></i>":""}${esc(lab)}</span>${q?`<span class="qb${store.justAdded===p.id?" pop":""}" aria-hidden="true">${q}</span>`:""}</span>`+
-    `<span class="tb"><span class="tn">${esc(p.name)}</span><span class="tpr"><span class="tp">${esc(priceRange(p))}</span><span class="tl ${st}">${esc(lab)}</span></span>${sum?`<span class="tv">${esc(sum)}</span>`:""}</span></button>`;
+  const inner=src?`<img src="${esc(src)}" alt="" decoding="async" loading="lazy">`:`<span class="ini">${esc(initials(p.name))}</span>`;
+  const nc=colourCount(p), sum=(nc>1?nc+" colours":"")+(nc>1&&vs.length>1?" · ":"")+(vs.length>1?vs.length+" options":"");
+  return `<button class="tile${q?" on":""}${st==="out"?" out":""}" data-pid="${esc(p.id)}" aria-label="${esc(p.name)}, ${esc(priceRange(p))}, ${esc(lab)}${q?", "+q+" in bill":""}">`+
+    `<span class="ph"${bg}>${inner}${i<10?`<span class="kc" aria-hidden="true">${(i+1)%10}</span>`:""}${q?`<span class="qb${store.justAdded===p.id?" pop":""}" aria-hidden="true">${q}</span>`:""}</span>`+
+    `<span class="tb"><span class="tn">${esc(p.name)}</span>${sum?`<span class="tv">${esc(sum)}</span>`:""}<span class="tpr"><span class="tp">${esc(priceRange(p))}</span><span class="tl ${st}">${st?"<i></i>":""}${esc(lab)}</span></span></span>`+
+    `${st==="out"?"":`<span class="tadd" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>`}</button>`;
+}
+/* The category chips over the grid (none when the shop has no categories) */
+function catChipsHTML(cs){
+  if(!cs.length) return "";
+  return [["","All"],...cs.map(c=>[c,c])].map(([k,l])=>`<button type="button" class="chipbtn" data-sellcat="${esc(k)}" aria-pressed="${(store.sellCat||"")===k}">${esc(l)}</button>`).join("");
 }
 export function hitHTML(h){
   const a = availOf(h.v.id), lv = levelOf(a);
@@ -30,19 +39,31 @@ export function hitHTML(h){
 }
 export function renderGrid(){
   const g=$("#grid"),ban=$("#sellBanner"),hits=$("#sellHits"),all=liveProducts();
-  const cs=categories(),sel=$("#sellCat");
-  if(sel){ const opts=`<option value="">All categories</option>`+cs.map(c=>`<option${c===store.sellCat?" selected":""}>${esc(c)}</option>`).join(""); if(sel._h!==opts){sel.innerHTML=opts;sel._h=opts} sel.hidden=!cs.length; }
+  const cs=categories(),chips=$("#sellCats");
+  if(store.sellCat&&!cs.includes(store.sellCat)) store.sellCat="";
+  if(chips){ const h=catChipsHTML(cs); if(chips._h!==h){chips.innerHTML=h;chips._h=h} chips.hidden=!h; }
   g.className="grid"+(store.prefs.density==="list"?" list":"");
   if(!all.length){
     g.innerHTML="";hits.innerHTML="";
-    ban.innerHTML=`<div class="empty"><b>No products yet</b><p>Add products you'll sell, with their colours, sizes and stock — or start with example products.</p><div class="row c"><button class="btn primary" data-act="examples">Load example products</button><button class="btn" data-act="gosetup">Add my own</button></div></div>`;
+    ban.innerHTML=emptyStateHTML({icon:"box",title:"No products yet",text:"Add what you sell with its price and stock — or start from example products and edit them.",actions:`<button class="btn primary" data-act="gosetup">Add products</button><button class="btn" data-act="examples">Load example products</button>`});
     return;
   }
   ban.innerHTML=sellingBannerHTML()+(store.catalog&&store.catalog.example?`<div class="banner"><span><b>These are example products.</b> Rename them, add photos and set your real stock before the sale.</span><button class="btn sm" data-act="gosetup">Edit products</button></div>`:"");
   const vh=variantHits();
   hits.innerHTML=vh.length?`<div class="hits" aria-label="Matching sizes and colours">${vh.map(hitHTML).join("")}</div>`:"";
   const ps=sellProducts();
-  if(!ps.length){g.innerHTML=`<p class="muted">No products match “${esc(store.sellQuery)}”.</p>`;g._n=0;return}
+  if(!ps.length){g.innerHTML=emptyStateHTML({icon:"search",title:"Nothing matches",text:store.sellQuery?`No product matches “${store.sellQuery}”${store.sellCat?" in "+store.sellCat:""}. Check the spelling, or search by SKU or barcode.`:`No products in ${store.sellCat}.`,cls:"compact"});g._n=0;return}
   patchList(g,ps.map(tileHTML));
   store.justAdded=null;
+}
+
+/* A tap on a category chip: true when it was one */
+export function sellCatClick(t){
+  const c=t.closest("[data-sellcat]"); if(!c) return false;
+  store.sellCat=c.dataset.sellcat; renderGrid(); return true;
+}
+/* The keyboard shortcuts, for whoever wants them (kept out of the way of everyone else) */
+export function openKeyboardHelp(){
+  const rows=[["/","Search"],["1 – 0","Open product 1 to 10"],["1 – 9","Size in the open product"],["+ / −","Quantity"],["Enter","Add to the bill"],["C · U · K","Pay by cash, UPI, card"],["Esc","Close"]];
+  $("#modalHost").innerHTML=sheetHTML({id:"kbdHelp",title:"Keyboard shortcuts",sub:"Barcode scanners work anywhere on Sell.",body:`<dl class="kv kbdkv">${rows.map(([k,v])=>`<dt>${k.split(" ").map(x=>/^[A-Za-z0-9/+−–·]+$/.test(x)&&x!=="·"&&x!=="–"?`<kbd>${esc(x)}</kbd>`:esc(x)).join(" ")}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`});
 }

@@ -36,7 +36,7 @@ const due=()=>billTotals(store.cart,store.disc).total;
 const vAmt=()=>{const s=store.payState;return s&&s.voucher&&s.voucher.redemption?+s.voucher.amount:0};
 const rest=()=>toRupees(Math.max(0,toPaise(due())-toPaise(vAmt())));
 const blankState=method=>({mode:"single",method:PAY_METHODS.includes(method)?method:"cash",recv:"",ref:{upi:"",card:""},last4:"",amt:{cash:"",upi:"",card:""},
-  via:{upi:"manual",card:"terminal"},viaSet:{},pi:{},upiReceived:false,err:""});
+  via:{upi:"manual",card:"terminal"},viaSet:{},pi:{},upiReceived:false,cardReceived:false,err:""});
 /* store.payState = { mode: "single" | "split" | "credit" (the amounts in amt are paid now, the rest goes on account), method, recv (cash handed over), ref: { upi, card }, last4 (card), amt: { cash, upi, card },
      via: { upi: "manual"|"qr", card: "terminal"|"link" }, pi: { upi?, card? } (provider intents), saleId, err } */
 export function openPayment(method){
@@ -86,7 +86,7 @@ function accountPart(D){
 export function allocations(){
   const s=store.payState, D=due();
   const part=(m,amount)=>({method:m,amount,received:m==="cash"?s.recv:undefined,ref:s.ref[m],via:m==="cash"?undefined:s.via[m],last4:m==="card"?s.last4:undefined,intent:s.pi[m],
-    confirmed:m==="upi"&&s.via.upi==="manual"?!!s.upiReceived:undefined});
+    confirmed:m==="upi"&&s.via.upi==="manual"?!!s.upiReceived:m==="card"&&s.via.card==="terminal"?!!s.cardReceived:undefined});
   const v=s.voucher&&s.voucher.redemption?[{method:VOUCHER,amount:s.voucher.amount,voucher:s.voucher}]:[];
   if(s.mode==="single") return [...v,part(s.method,rest())];
   if(s.mode==="credit") return [...v,...PAY_METHODS.map(m=>part(m,s.amt[m])),{method:DUE,amount:accountPart(D)}];
@@ -130,16 +130,18 @@ function intentHTML(m){
 /* UPI checked by hand: show the shop's QR, then require the cashier's explicit confirmation; UTR is useful but optional. */
 function manualUpiHTML(amount,split){
   const s=store.payState, vpa=store.settings.upiId, uri=upiPayUri({vpa,name:store.profile&&store.profile.shop_name||"Shop",amount,note:"Bill "+billNo()});
-  return (uri&&amount>0?`<div class="pi-qr small">${qr(uri,180)}</div><p class="note">Pay to <b>${esc(vpa)}</b> · ${inrx(amount)}</p>`:!vpa?`<p class="note">Add your shop's UPI ID in Settings → Billing to show the payment QR here.</p>`:split?`<p class="note">Enter the UPI amount to show its QR.</p>`:"")+
-    inp("ref:upi",`UPI reference (UTR) <small>(optional)</small>`,s.ref.upi,'maxlength="40"')+
-    `<button type="button" class="btn ${s.upiReceived?"ok":"primary"}" data-upireceived aria-pressed="${s.upiReceived}"${amount>0?"":" disabled"}>${s.upiReceived?"✓ Payment marked received":"Mark payment received"}</button>`+
+  return (uri&&amount>0?`<div class="pi-qr small">${qr(uri,180)}</div><p class="note">Pay to <b>${esc(vpa)}</b> · ${inrx(amount)}</p>`:!vpa?`<p class="note">Add your shop's UPI ID in Settings → Payments &amp; Banks to show the payment QR here.</p>`:split?`<p class="note">Enter the UPI amount to show its QR.</p>`:"")+
+    `<button type="button" class="btn block ${s.upiReceived?"ok":"primary"}" data-upireceived aria-pressed="${s.upiReceived}"${amount>0?"":" disabled"}>${s.upiReceived?"✓ UPI payment marked received":"Mark UPI payment received"}</button>`+
+    inp("ref:upi",`UPI reference (UTR) <small>(optional)</small>`,s.ref.upi,'maxlength="40" autocomplete="off"')+
     `<p class="note">Check the customer's successful payment screen before marking it received. It is saved as <b>Unverified</b> for reconciliation${split?".":" until it is matched with the UPI records."}</p>`;
 }
-/* Card on a separate card machine: its approval/transaction reference; never the card number */
+/* Card on the shop's own card machine: marked received once the machine approves it; its approval number and the card's last
+   4 digits are optional. Never the card number, CVV or PIN. */
 function terminalHTML(split){
-  const s=store.payState;
-  return `<div class="pgrid2">${inp("ref:card","Card machine reference <small>(approval / transaction no.)</small>",s.ref.card,'maxlength="40" required')}${inp("last4","Last 4 digits <small>(optional)</small>",s.last4,'inputmode="numeric" maxlength="4" pattern="[0-9]{4}"')}</div>`+
-    (split?"":`<p class="note">Complete the sale once the card machine says approved. Never type the card number, CVV or PIN.</p>`);
+  const s=store.payState, amount=partAmount("card");
+  return `<button type="button" class="btn block ${s.cardReceived?"ok":"primary"}" data-cardreceived aria-pressed="${s.cardReceived}"${amount>0?"":" disabled"}>${s.cardReceived?"✓ Card payment marked received":"Mark card payment received"}</button>`+
+    `<div class="pgrid2">${inp("ref:card","Approval / transaction no. <small>(optional)</small>",s.ref.card,'maxlength="40" autocomplete="off"')}${inp("last4","Last 4 digits <small>(optional)</small>",s.last4,'inputmode="numeric" maxlength="4" pattern="[0-9]{4}" autocomplete="off"')}</div>`+
+    (split?"":`<p class="note">Mark it received once the card machine says approved. Never type the card number, CVV or PIN.</p>`);
 }
 function partHTML(m,split){
   const s=store.payState;
@@ -216,7 +218,7 @@ export function renderPayment(focus){
 export function payInput(t){
   const s=store.payState; if(!s) return;
   const f=t.dataset.payf, [k,m]=f.split(":");
-  if(k==="recv") s.recv=t.value; else if(k==="ref") s.ref[m]=t.value; else if(k==="last4") s.last4=t.value.replace(/\D/g,"").slice(0,4); else if(k==="amt"){ s.amt[m]=t.value; if(m==="upi") s.upiReceived=false; }
+  if(k==="recv") s.recv=t.value; else if(k==="ref") s.ref[m]=t.value; else if(k==="last4") s.last4=t.value.replace(/\D/g,"").slice(0,4); else if(k==="amt"){ s.amt[m]=t.value; if(m==="upi") s.upiReceived=false; if(m==="card") s.cardReceived=false; }
   if(k==="last4"&&t.value!==s.last4) t.value=s.last4;
   s.err=""; updatePayLive();
 }
@@ -252,12 +254,14 @@ export function payVia(spec){
 export function payRest(m){
   const s=store.payState; if(!s) return;
   const others=PAY_METHODS.filter(x=>x!==m).reduce((a,x)=>a+Math.max(0,toPaise(s.amt[x])),0)+toPaise(vAmt()), left=toPaise(due())-others;
-  s.amt[m]=left>0?String(toRupees(left)):""; if(m==="upi") s.upiReceived=false; renderPayment(false);
+  s.amt[m]=left>0?String(toRupees(left)):""; if(m==="upi") s.upiReceived=false; if(m==="card") s.cardReceived=false; renderPayment(false);
   const i=$(`#paySheet [data-payf="amt:${m}"]`); if(i) i.focus({preventScroll:true});
 }
 export function paySend(on){ const s=store.payState; if(s) s.send=!!on; }
 export function payQuick(v){ const s=store.payState; if(!s) return; s.recv=String(v); renderPayment(false); }
 export function payManualUpiReceived(){ const s=store.payState; if(!s||s.via.upi!=="manual"||!(partAmount("upi")>0)) return; s.upiReceived=true; s.err=""; renderPayment(false); }
+/* The card machine approved the card part: it counts as received (its reference stays optional) */
+export function payCardReceived(){ const s=store.payState; if(!s||s.via.card!=="terminal"||!(partAmount("card")>0)) return; s.cardReceived=true; s.err=""; renderPayment(false); }
 
 /* ---------- provider payments: start, watch, cancel ---------- */
 let pollT=null, tick=0;

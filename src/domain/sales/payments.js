@@ -2,7 +2,7 @@
 // before a sale can complete; cash may be handed over in excess, and the rest is change.
 // How each part was confirmed is kept with it (its verification):
 //   verified   — the payment provider confirmed the money (a UPI QR or a card payment link paid through the provider);
-//   recorded   — cash, or a card paid on a separate card machine with the machine's reference;
+//   recorded   — cash, or a card paid on a separate card machine, marked received by the cashier (its reference optional);
 //   unverified — UPI checked by eye by the cashier; its transaction reference (UTR) is optional.
 // Showing a QR never pays anything: a provider part counts only once its payment intent says "verified".
 // No card number, CVV or PIN is ever taken: at most the last 4 digits, and a reference that looks like a card number is
@@ -56,7 +56,6 @@ export function checkLast4(v){
 }
 const amountOf=v=>v==null||String(v).trim()===""?0:+v;
 export const viaOf=a=>a.via||(a.method==="upi"?"manual":a.method==="card"?"terminal":undefined);
-const REF_NEEDED={card:"Enter the approval or transaction reference from the card machine."};
 
 /* Checks the parts of a payment against the amount due (rupees).
    allocations: [{ method, amount, received? (cash handed over), ref?, via?, last4? (card), intent? ({ id, status, amount, paymentId }) }]
@@ -110,8 +109,9 @@ export function settlePayments(due,allocations,opts){
       if(toPaise(I.amount)!==toPaise(v)) return fail(`The ${PAY_LABELS[a.method]} payment received was ${inrx(I.amount)}, not ${inrx(v)}.`,a,"intent");
     }else{
       const r=checkReference(a.ref); if(r) return fail(r.error,a,"ref");
-      if(REF_NEEDED[a.method]&&!String(a.ref==null?"":a.ref).trim()) return fail(REF_NEEDED[a.method],a,"ref");
       if(a.method==="upi"&&!a.confirmed) return fail("Mark the UPI payment received after checking the customer's payment screen.",a,"confirmed");
+      // a card on the shop's own machine: marked received once the machine approves it (a typed approval number says so too)
+      if(a.method==="card"&&!a.confirmed&&!String(a.ref==null?"":a.ref).trim()) return fail("Mark the card payment received once the card machine approves it.",a,"confirmed");
     }
     if(a.method==="card"){ const l=checkLast4(a.last4); if(l) return fail(l.error,a,"last4"); }
   }

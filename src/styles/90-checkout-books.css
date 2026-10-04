@@ -85,3 +85,18 @@
 .um-acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
 .rt-prov{margin:6px 0 0}
 .warnline{color:var(--warn-ink);background:var(--warn-soft);border-radius:10px;padding:8px 10px}
+
+/* ---------- bank accounts (features/finance/components/bank-accounts-view.js) ---------- */
+.bankic{display:grid;place-items:center;width:36px;height:36px;border-radius:var(--r-sm);background:var(--wash);color:var(--ink-2);flex:none}
+.orow .o-chips{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+.bankhead{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:var(--sp-4)}
+.bankhead .o-chips{display:flex;gap:4px;flex-wrap:wrap}
+.bankbal{font-size:var(--fs-2xl);font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1.15;margin:2px 0}
+.bankacts{margin-bottom:var(--sp-2)}
+.banksheet{max-width:680px}
+.banklist{max-height:52vh;overflow:auto}
+.banklist .orow{align-items:flex-start}
+.banksum{display:flex;flex-direction:column;margin-top:12px;border-top:1px solid var(--line)}
+.banksum-r{display:flex;justify-content:space-between;gap:10px;padding:9px 2px;border-bottom:1px solid var(--line);font-size:13.5px;text-align:left}
+.banksum-r:hover{background:var(--wash)}
+.banksum-r b{font-variant-numeric:tabular-nums}

@@ -78,16 +78,19 @@ function provRefundHTML(R,s){
   if(!canRefundThroughProvider(s,R.pay)) return "";
   return `<label class="chk rt-prov"><input type="checkbox" data-rtprov${R.provRefund!==false?" checked":""}> Send the refund back to the customer's ${PAY_LABELS[R.pay]} through the payment provider</label>`;
 }
-/* UPI or card collected on an exchange: the transaction / card machine reference (never a card number) */
+/* UPI or card collected on an exchange: marked received like on a sale; the UTR / approval number and last 4 digits are
+   optional (never a card number) */
 function collectRefHTML(R){
   if(R.collect==="cash") return "";
-  return `<div class="pgrid2"><label class="f"><span class="lab">${R.collect==="upi"?"UPI reference (UTR)":"Card machine reference"}</span><input id="rtRef" value="${esc(R.collectRef||"")}" maxlength="40" autocomplete="off"></label>`+
+  const what=R.collect==="upi"?"UPI":"card";
+  return `<button type="button" class="btn block ${R.collectRecv?"ok":"primary"}" data-rtrecv aria-pressed="${!!R.collectRecv}">${R.collectRecv?`✓ ${what==="UPI"?"UPI":"Card"} payment marked received`:`Mark ${what} payment received`}</button>`+
+    `<div class="pgrid2"><label class="f"><span class="lab">${R.collect==="upi"?"UPI reference (UTR)":"Approval / transaction no."} <small>(optional)</small></span><input id="rtRef" value="${esc(R.collectRef||"")}" maxlength="40" autocomplete="off"></label>`+
     (R.collect==="card"?`<label class="f"><span class="lab">Last 4 digits <small>(optional)</small></span><input id="rtLast4" value="${esc(R.collectLast4||"")}" inputmode="numeric" maxlength="4" autocomplete="off"></label>`:"")+`</div>`;
 }
 export function saveReturn(){
   const R=store.retState; if(!R) return;
   const reason=($("#rtReason")||{}).value||R.reason;
-  const r=recordReturn({sid:R.sid,picks:R.q,serials:R.sn,mode:R.mode,pay:R.pay,collect:R.collect==="cash"?"cash":{method:R.collect,ref:R.collectRef||"",last4:R.collectLast4||""},reason,notForResale:R.nfr,newItems:R.newItems,keepDiscount:R.keepDisc!==false});
+  const r=recordReturn({sid:R.sid,picks:R.q,serials:R.sn,mode:R.mode,pay:R.pay,collect:R.collect==="cash"?"cash":{method:R.collect,ref:R.collectRef||"",last4:R.collectLast4||"",confirmed:!!R.collectRecv},reason,notForResale:R.nfr,newItems:R.newItems,keepDiscount:R.keepDisc!==false});
   if(r.error){const err=$("#rtErr");if(err){err.textContent=r.error;err.hidden=false}return}
   const s=D().saleById[R.sid], viaProvider=r.refund>0&&R.provRefund!==false&&canRefundThroughProvider(s,r.ret.pay);
   store.retState=null; closeSheets(); renderAll();

@@ -21,6 +21,7 @@ import { renderAll } from '../../shared/ui/render.js';
 
 export function runShortcut(e){
   const k=e.key.toLowerCase();
+  document.documentElement.classList.add("kbd");   // the number keys' badges show from now on (styles/20-sell.css)
   if(/^[0-9]$/.test(k)){
     const i=(+k||10)-1;
     if(store.pick){const p=prod(store.pick.pid);if(!p)return;const {sizes,find}=pickRows(p);const s=sizes[i];if(s!=null&&k!=="0"){const v=find(store.pick.color||(pickRows(p).colors[0]||""),s);if(v){setPickQty(v.id,(store.pick.qty[v.id]||0)+1);const b=$("#addPickBtn");if(b&&!b.disabled)b.focus({preventScroll:true})}}}

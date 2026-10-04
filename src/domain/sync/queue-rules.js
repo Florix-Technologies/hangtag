@@ -65,6 +65,8 @@ export function dependsOn(item){
     if(item.kind==="po") return [...(r.supplierId?["supplier:"+r.supplierId]:[]),...new Set((r.items||[]).map(l=>"prod:"+l.p))];
     if(item.kind==="ei"||item.kind==="ew") return ["sale:"+item.id];
     if(item.kind==="rpk") return [...new Set([r.fromP,r.toP].filter(Boolean).map(p=>"prod:"+p))];
+    // a bank entry needs its accounts in the cloud first, and a reversal the entry it reverses
+    if(item.kind==="bm") return [...new Set([r.account,r.to].filter(Boolean).map(a=>"biz:ba:"+a)),...(r.reverses?["biz:bm:"+r.reverses]:[])];
   }
   return [];
 }
@@ -110,7 +112,8 @@ export const UPLOAD_PERMISSIONS={
 };
 /* The commerce batch (section 3r), by kind: price lists with products, purchase orders and repacks with stock, GST
    readiness with bills */
-export const BIZ_UPLOAD_PERMISSIONS={pl:["manage_products"],po:["create_purchase"],ei:["create_sale","view_reports"],ew:["create_sale","view_reports"],rpk:["manage_inventory"]};
+export const BIZ_UPLOAD_PERMISSIONS={pl:["manage_products"],po:["create_purchase"],ei:["create_sale","view_reports"],ew:["create_sale","view_reports"],rpk:["manage_inventory"],
+  ba:["manage_settings"],bm:["view_reports","manage_settings"]};
 /* May someone with these permissions upload this item? (unknown kinds: yes) */
 export const uploadAllowed=(item,has)=>{const need=item&&(item.type==="biz"||item.type==="bizdel"?BIZ_UPLOAD_PERMISSIONS[item.kind]:UPLOAD_PERMISSIONS[item.type]);return !need||need.some(p=>has(p))};
 /* A bill or return refused because another one of the shop already has its number (hangtag_doc_no_check): it can be given

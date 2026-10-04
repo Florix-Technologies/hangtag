@@ -1,10 +1,6 @@
 /* Variants, search, picker, payment, receipts, customers, returns, stock, reports, products and the product editor. */
 /* ---------- variants, search, bills, stock, products (v2) ---------- */
 .sel{border:1px solid var(--line-2);border-radius:10px;padding:8px 10px;background:var(--bg);font-size:14px;font-weight:600;color:var(--ink-2);max-width:200px}
-.search{position:relative;flex:1;min-width:180px}
-.search input{width:100%;padding:10px 12px 10px 36px;border:1px solid var(--line-2);border-radius:10px;background:var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2380859A' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E") no-repeat 12px center;font-size:15px;color:var(--ink)}
-.search input:focus{border-color:var(--ink);outline:none;box-shadow:0 0 0 3px rgba(16,19,31,.08)}
-.sellbar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
 .hits{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:14px;margin-bottom:12px;overflow:hidden}
 .hit-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border-top:1px solid var(--wash-2)}
 .hit-row:first-child{border-top:0}

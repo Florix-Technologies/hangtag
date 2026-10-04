@@ -5,12 +5,13 @@
 //   ei  e-invoice readiness  → hangtag_einvoices          ew  e-way bill readiness → hangtag_eway_bills
 //   rpk repacks              → RPC hangtag_save_repack with its two stock records (shown in the stock ledger at once)
 //   gv  gift vouchers        → made and spent online through RPCs; kept here only as the cloud's copy (never uploaded)
+//   ba  bank accounts        → hangtag_bank_accounts       bm  bank entries (in, out, transfer, adjustment, reversal) → hangtag_bank_moves
 // Dependencies come from app/container.js.
 
 /* store: the state store · persist: { saveBiz, saveMoves } · outbox: { enqueue, dropQueued } · invalidate: the ledger's refresh */
 /* What the queue needs to know of a record to send it after what it depends on (domain/sync/queue-rules.js dependsOn) */
 const depsOf = (kind, r) => kind === "po" ? { supplierId: r.supplierId, items: (r.items || []).map(l => ({ p: l.p })) }
-  : kind === "rpk" ? { fromP: r.fromP, toP: r.toP } : {};
+  : kind === "rpk" ? { fromP: r.fromP, toP: r.toP } : kind === "bm" ? { account: r.account, to: r.to, reverses: r.reverses } : {};
 export function createLocalFirstBizRepository({ store, persist, outbox, invalidate }){
   const kinds = () => store.biz || (store.biz = {});
   const slice = k => kinds()[k] || (kinds()[k] = {});

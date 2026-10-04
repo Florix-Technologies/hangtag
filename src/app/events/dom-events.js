@@ -29,7 +29,7 @@ import { openReturn, renderReturnSheet, saveReturn, setReturnQty } from '../../f
 import { exAvail } from '../../features/returns/services/return-rules.js';
 import { closeSheets, renderBill, renderBillSheet, updateBillTotals } from '../../features/sales/components/bill-panel.js';
 import { addPicked, openPicker, renderPicker, setPickQty } from '../../features/sales/components/variant-picker.js';
-import { renderGrid } from '../../features/sales/pages/sell-page.js';
+import { openKeyboardHelp, renderGrid, sellCatClick } from '../../features/sales/pages/sell-page.js';
 import { addOne, availOf, removeLine, setLineQty } from '../../features/sales/services/cart.js';
 import { unvoid } from '../../features/sales/use-cases/checkout.js';
 import { openVoidForm, submitVoidForm, voidFormChange } from '../../features/sales/components/void-form.js';
@@ -37,7 +37,7 @@ import { setBillDiscount } from '../../features/sales/use-cases/discounts.js';
 import { applyLineDiscount, lineDiscountInput, lineDiscountType, openLineDiscount } from '../../features/sales/components/discount-sheet.js';
 import { cashFormChange, openCashForm, submitCashForm } from '../../features/finance/components/cash-form.js';
 import { checkUnverified, loadUnmatched, resolveUnmatched } from '../../features/finance/components/reconcile-view.js';
-import { completePayment, openPayment, payClosed, payInput, payIntent, payManualUpiReceived, payMode, payQuick, payRest, paySend, payVia, payVoucher, payVoucherRemove } from '../../features/sales/components/payment-sheet.js';
+import { completePayment, openPayment, payCardReceived, payClosed, payInput, payIntent, payManualUpiReceived, payMode, payQuick, payRest, paySend, payVia, payVoucher, payVoucherRemove } from '../../features/sales/components/payment-sheet.js';
 import { openBook } from '../../features/finance/components/books-view.js';
 import { enqueue, flushSbQueue } from '../../features/sync/services/outbox.js';
 import { can } from '../../features/shop/services/access.js';
@@ -70,6 +70,7 @@ export function installDomEvents(){
     const re=t.closest("[data-repevent]");if(re){store.prefs.repEvent=re.dataset.repevent;store.showAllBills=false;savePrefs();closeModal();if(re.dataset.tab)setTab(re.dataset.tab);else renderReport();return}
     const tab=t.closest("[data-tab]");if(tab){closeModal();setTab(tab.dataset.tab);return}
     const tile=t.closest(".tile");if(tile){openPicker(tile.dataset.pid);return}
+    if(sellCatClick(t))return;
     if(commerceClick(t))return;   // price lists, purchase orders, kits, vouchers, GST documents, repack, webhooks
     if(trackingClick(t))return;   // serial numbers at the till, a bill line's serials, an exchange's serial items
     if(restaurantClick(t))return;   // tables, table orders, the kitchen, table QR codes
@@ -99,6 +100,8 @@ export function installDomEvents(){
     const um=t.closest("[data-unm]");if(um){resolveUnmatched(um.dataset.unm);return}
     const pvia=t.closest("[data-payvia]");if(pvia&&store.payState){payVia(pvia.dataset.payvia);return}
     if(t.closest("[data-upireceived]")&&store.payState){payManualUpiReceived();return}
+    if(t.closest("[data-cardreceived]")&&store.payState){payCardReceived();return}
+    if(t.closest("[data-rtrecv]")&&store.retState){store.retState.collectRecv=true;renderReturnSheet();return}
     if(t.closest("[data-payvoucher]")&&store.payState){payVoucher();return}
     if(t.closest("[data-payvoucherrm]")&&store.payState){payVoucherRemove();return}
     const pi=t.closest("[data-payintent]");if(pi&&!pi.disabled&&store.payState){payIntent(pi.dataset.payintent);return}
@@ -132,7 +135,7 @@ export function installDomEvents(){
     const rtm=t.closest("[data-rtm]");if(rtm&&store.retState){const ln=+rtm.dataset.rtm;store.retState.q[ln]=Math.max(0,(store.retState.q[ln]||0)-1);renderReturnSheet();return}
     const rtp=t.closest("[data-rtp]");if(rtp&&store.retState){const ln=+rtp.dataset.rtp;store.retState.q[ln]=(store.retState.q[ln]||0)+1;renderReturnSheet();return}
     const rmo=t.closest("[data-rtmode]");if(rmo&&store.retState){store.retState.mode=rmo.dataset.rtmode;renderReturnSheet();return}
-    const rpy=t.closest("[data-rtpay]");if(rpy&&store.retState){const [k,val]=rpy.dataset.rtpay.split(":");store.retState[k]=val;renderReturnSheet();return}
+    const rpy=t.closest("[data-rtpay]");if(rpy&&store.retState){const [k,val]=rpy.dataset.rtpay.split(":");if(k==="collect"&&store.retState.collect!==val)store.retState.collectRecv=false;store.retState[k]=val;renderReturnSheet();return}
     const exm=t.closest("[data-exm]");if(exm&&store.retState){const i=+exm.dataset.exm,c=store.retState.newItems[i];if(c){c.q--;if(c.q<=0)store.retState.newItems.splice(i,1)}renderReturnSheet();return}
     const exp=t.closest("[data-exp]");if(exp&&store.retState){const c=store.retState.newItems[+exp.dataset.exp];if(c&&exAvail(c.v)>0)c.q++;renderReturnSheet();return}
     // events
@@ -191,6 +194,7 @@ export function installDomEvents(){
       case "custback":custBack();break;
       case "gosetup":setTab("products");break;
       case "examples":loadExamples();break;
+      case "kbdhelp":openKeyboardHelp();break;
       case "export":exportCsv();break;
       case "backup":downloadBackup();break;
       case "restorego":applyRestore();break;
@@ -258,7 +262,6 @@ export function installDomEvents(){
     if(trackingChange(t))return;
     if(restaurantChange(t))return;
     if(t.id==="repFrom"||t.id==="repTo"){if(t.value){store.prefs[t.id==="repFrom"?"from":"to"]=t.value;store.prefs.period="custom";savePrefs();renderReport()}return}
-    if(t.id==="sellCat"){store.sellCat=t.value;renderGrid();return}
     if(t.id==="sellAt"){chooseSellingAt(t.value);return}
     if(t.id==="shProd"||t.id==="shVar"||t.id==="shType"){const F=store.stockHist;if(F){if(t.id==="shProd"){F.pid=t.value;F.vid=""}else if(t.id==="shVar")F.vid=t.value;else F.type=t.value;F.n=30}renderStock();return}
     if(t.id==="prodCat"){store.prodCat=t.value;renderProducts();return}

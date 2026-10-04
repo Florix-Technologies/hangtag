@@ -40,7 +40,8 @@ const eq = (a, b) => JSON.stringify(sortKeys(a)) === JSON.stringify(sortKeys(b))
   S = settlePayments(500, [{ method: 'upi', amount: 500, ref: '412345678901', confirmed: true }]);
   check('an optional UTR is kept when entered', S.ok && S.payments[0].ref === '412345678901');
   S = settlePayments(800, [{ method: 'card', amount: 800 }]);
-  check('card on a card machine needs its reference', S.error && S.field === 'ref' && /card machine/.test(S.error));
+  check('card on a card machine: marked received (or its approval number typed) before the sale completes; never a required reference', S.error && S.field === 'confirmed' && /card machine/.test(S.error)
+    && settlePayments(800, [{ method: 'card', amount: 800, confirmed: true }]).ok && settlePayments(800, [{ method: 'card', amount: 800, confirmed: true }]).payments[0].verification === 'recorded');
   S = settlePayments(800, [{ method: 'card', amount: 800, ref: 'APPR77', last4: '4242' }]);
   check('…then it is "recorded", with the last 4 digits kept and nothing else', S.ok && S.payments[0].verification === 'recorded' && S.payments[0].last4 === '4242' && S.payments[0].via === 'terminal');
   S = settlePayments(800, [{ method: 'card', amount: 800, ref: 'APPR77', last4: '4242424242424242' }]);

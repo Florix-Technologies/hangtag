@@ -116,17 +116,20 @@
   <section id="v-sell" class="sell">
     <div class="sell-main">
       <div id="welcome" class="welcome" hidden></div>
-      <div class="viewhead">
-        <div>
-          <h2 class="vt">Tap to sell</h2>
-          <p>Product → colour and size → how they paid. <span class="deskonly">Keys: <kbd>/</kbd> search, <kbd>1</kbd>–<kbd>0</kbd> product, <kbd>1</kbd>–<kbd>9</kbd> size, <kbd>+</kbd>/<kbd>−</kbd> quantity, <kbd>Enter</kbd> add, then <kbd>C</kbd> cash · <kbd>U</kbd> UPI · <kbd>K</kbd> card. Barcode scanners work anywhere.</span></p>
+      <h2 class="sr">Sell</h2>
+      <div class="sellbar">
+        <div class="search sellsearch">
+          <input id="sellSearch" type="search" placeholder="Search products, sizes, SKU — or scan" autocomplete="off" enterkeyhint="search" aria-label="Search products">
+          <button type="button" class="sb-ic voicebtn" data-voice-search="sellSearch" aria-label="Search by voice" title="Search by voice" hidden><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button>
+          <button type="button" class="sb-ic scanbtn" data-act="scan" aria-label="Scan a barcode with the camera" title="Scan a barcode"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 8v8M10 8v8M13.5 8v8M17 8v8"/></svg><span>Scan</span></button>
         </div>
         <div class="seg" role="group" aria-label="Product view">
-          <button data-density="photos" aria-pressed="true">Photos</button>
-          <button data-density="list" aria-pressed="false">List</button>
+          <button data-density="photos" aria-pressed="true" aria-label="Grid view">Grid</button>
+          <button data-density="list" aria-pressed="false" aria-label="List view">List</button>
         </div>
       </div>
-      <div class="sellbar"><button type="button" class="btn scanbtn" data-act="scan" aria-label="Scan a barcode with the camera"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 8v8M10 8v8M13 8v8M17 8v8"/></svg><span>Scan</span></button><div class="search"><input id="sellSearch" type="search" placeholder="Search name, colour, size, SKU — or scan" autocomplete="off" enterkeyhint="search" aria-label="Search products"></div><button type="button" class="btn voicebtn" data-voice-search="sellSearch" aria-label="Search by voice" title="Search by voice" hidden><span aria-hidden="true">🎙</span><span class="voice-label">Voice</span></button><select id="sellCat" class="sel" aria-label="Category" hidden></select></div>
+      <div id="vs-sellSearch" class="voicestatus" role="status" aria-live="polite" hidden></div>
+      <div class="catrow"><div id="sellCats" class="catchips" role="group" aria-label="Category"></div><button type="button" class="link xs deskonly kbdlink" data-act="kbdhelp">Keyboard shortcuts</button></div>
       <div id="sellHits"></div>
       <div id="sellBanner"></div>
       <div id="grid" class="grid"></div>

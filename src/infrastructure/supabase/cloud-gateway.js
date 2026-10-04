@@ -9,7 +9,7 @@ import { collectionRow, heldRow, orderArgs, rowToCollection, rowToHeld, rowToOrd
 import { purchaseArgs, rowToPurchase, rowToSupplier, rowToSupplierPayment, supplierPaymentRow, supplierRow } from './mappers.js';
 import { rowToSession, rowToTable, sessionRow, tableRow } from './mappers.js';
 import { einvRow, ewayRow, poArgs, priceListRow, repackArgs, rowToDelivery as rowToHookDelivery, rowToEinv, rowToEndpoint, rowToEway, rowToPO, rowToPriceList, rowToRepack,
-  rowToVoucher } from './biz-mappers.js';
+  rowToVoucher, bankAccountRow, bankMoveRow, rowToBankAccount, rowToBankMove } from './biz-mappers.js';
 
 /* deviceKey: () => this phone's team device key or "" (sent as x-hangtag-device by every client this makes; see client.js) */
 export function createCloudGateway({ getClient, url, key, storageKey, deviceKey }){
@@ -106,7 +106,7 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
       // section 3o: a restaurant's tables and sessions
       if(h.tables){ ch = on(ch, '*', 'hangtag_tables', h.tables); ch = on(ch, '*', 'hangtag_table_sessions', h.tables); }
       // section 3r: price lists, purchase orders, vouchers
-      if(h.biz) ['hangtag_price_lists','hangtag_purchase_orders','hangtag_vouchers','hangtag_einvoices','hangtag_eway_bills'].forEach(t => { ch = on(ch, '*', t, h.biz); });
+      if(h.biz) ['hangtag_price_lists','hangtag_purchase_orders','hangtag_vouchers','hangtag_einvoices','hangtag_eway_bills','hangtag_bank_accounts','hangtag_bank_moves'].forEach(t => { ch = on(ch, '*', t, h.biz); });
       return ch.subscribe(onStatus);
     },
     removeChannel: ch => db().removeChannel(ch),
@@ -319,6 +319,9 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
       if(kind === "ei"){ sbOk(await table('hangtag_einvoices').upsert(einvRow(rec), { onConflict: 'owner_id,sale_id' })); return {}; }
       if(kind === "ew"){ sbOk(await table('hangtag_eway_bills').upsert(ewayRow(rec), { onConflict: 'owner_id,sale_id' })); return {}; }
       if(kind === "rpk"){ sbOk(await db().rpc('hangtag_save_repack', repackArgs(rec, rec.moves))); return {}; }
+      // bank accounts and their entries (section 3s): an account is saved again when it changes; an entry only once
+      if(kind === "ba"){ sbOk(await table('hangtag_bank_accounts').upsert(bankAccountRow(rec), { onConflict: 'owner_id,id' })); return {}; }
+      if(kind === "bm"){ sbOk(await table('hangtag_bank_moves').upsert(bankMoveRow(rec), { onConflict: 'owner_id,id', ignoreDuplicates: true })); return {}; }
       throw new AppError(ERROR_CODES.VALIDATION, "Unknown record: " + kind);
     },
     /* A price list removed (customers on it go back to the default list) */
@@ -331,7 +334,8 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
       const [pl, po, ei, ew, gv, rpk] = await Promise.all([get('hangtag_price_lists', ['created_at','id'], rowToPriceList), get('hangtag_purchase_orders', ['t','id'], rowToPO),
         get('hangtag_einvoices', ['created_at','sale_id'], rowToEinv), get('hangtag_eway_bills', ['created_at','sale_id'], rowToEway),
         get('hangtag_vouchers', ['t','id'], rowToVoucher), get('hangtag_repacks', ['t','id'], rowToRepack)]);
-      return { pl, po, ei, ew, gv, rpk };
+      const [ba, bm] = await Promise.all([get('hangtag_bank_accounts', ['created_at','id'], rowToBankAccount), get('hangtag_bank_moves', ['t','id'], rowToBankMove)]);
+      return { pl, po, ei, ew, gv, rpk, ba, bm };
     },
     /* A team member's poll: fingerprints of price lists, POs, vouchers and GST records (RPC hangtag_biz_changes) */
     async bizChanges(){

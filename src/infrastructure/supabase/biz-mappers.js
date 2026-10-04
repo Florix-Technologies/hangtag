@@ -48,3 +48,13 @@ export const rowToEndpoint = r => ({ id: r.id, url: r.url, events: Array.isArray
   lastSuccess: r.last_success_at || "", lastFailure: r.last_failure_at || "", created: r.created_at || "" });
 export const rowToDelivery = r => ({ id: r.id, endpointId: r.endpoint_id, eventId: r.event_id, status: r.status, attempts: +r.attempts || 0, lastStatus: r.last_status == null ? null : +r.last_status,
   lastError: r.last_error || "", deliveredAt: r.delivered_at || "", created: r.created_at || "", type: r.hangtag_webhook_events && r.hangtag_webhook_events.type || "" });
+
+/* ---------- bank accounts and their entries (section 3s) ---------- */
+export const bankAccountRow = a => ({ id: a.id, name: a.name, bank: a.bank || null, last4: a.last4 || null, opening: +a.opening || 0, opening_date: a.openingDate,
+  active: a.active !== false, is_default: !!a.isDefault, methods: (a.methods || []).filter(m => m === "upi" || m === "card") });
+export const rowToBankAccount = r => ({ id: r.id, name: r.name || "", bank: r.bank || "", last4: r.last4 || "", opening: +r.opening || 0, openingDate: day(r.opening_date) || "",
+  active: r.active !== false, isDefault: !!r.is_default, methods: Array.isArray(r.methods) ? r.methods : [] });
+export const bankMoveRow = m => ({ id: m.id, account_id: m.account, type: m.type, amount: m.amount, to_account: m.to || null, reason: m.reason || null,
+  reverses: m.reverses || null, t: m.t, device_id: m.dev || store.dev });
+export const rowToBankMove = r => Object.assign({ id: r.id, account: r.account_id, type: r.type, amount: +r.amount, t: Number(r.t) || 0, dev: r.device_id || "" },
+  r.to_account ? { to: r.to_account } : {}, r.reason ? { reason: r.reason } : {}, r.reverses ? { reverses: r.reverses } : {}, r.user_id ? { user: r.user_id } : {});

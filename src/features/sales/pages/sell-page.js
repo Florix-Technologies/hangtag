@@ -1,5 +1,5 @@
 // Sell page: product grid and search hits.
-import { colourCount, legacyCS } from '../../../domain/catalog/options.js';
+import { colourCount, colVals, legacyCS } from '../../../domain/catalog/options.js';
 import { store } from '../../../shared/state/store.js';
 import { priceRange, vLabel, vPrice, variantsOf } from '../../../domain/catalog/variants.js';
 import { levelOf, lowAt } from '../../inventory/services/stock-levels.js';
@@ -17,18 +17,24 @@ import { emptyStateHTML, sheetHTML } from '../../../shared/ui/kit.js';
 import { businessExamples } from '../../../domain/shop/capabilities.js';
 import { shopType } from '../../shop/services/shop-caps.js';
 
-/* A product on the Sell grid: photo (or initials on its colour), name, its options in short, price, how many are left, and the
-   add action (the whole card adds; a sold-out card stays readable but says so). Keys 1–0 show only once the keyboard is used. */
+/* A product on the Sell grid: photo (or initials on its colour), name, option chips (sizes), price, stock level,
+   and a full-width + Add button. Keys 1–0 show only once the keyboard is used. */
 export function tileHTML(p,i){
   const left=productLeft(p)-cartQtyP(p.id), st=left<=0?"out":left<=lowAt()?"low":"", q=cartQtyP(p.id);
   const lab=left<=0?"Sold out":left+" left", src=store.imgs[p.id], c=okColor(p.color), vs=variantsOf(p);
   const bg=src?"":` style="background:${c};color:${isLight(c)?"#10131F":"#FFFFFF"}"`;
   const inner=src?`<img src="${esc(src)}" alt="" decoding="async" loading="lazy">`:`<span class="ini">${esc(initials(p.name))}</span>`;
   const nc=colourCount(p), sum=(nc>1?nc+" colours":"")+(nc>1&&vs.length>1?" · ":"")+(vs.length>1?vs.length+" options":"");
-  return `<button class="tile${q?" on":""}${st==="out"?" out":""}" data-pid="${esc(p.id)}" aria-label="${esc(p.name)}, ${esc(priceRange(p))}, ${esc(lab)}${q?", "+q+" in bill":""}">`+
+  // Size/option chips: up to 3 shown, remainder as +N
+  const optVals=colVals(p); // values of the last option (usually Size)
+  const CHIP_MAX=3;
+  const chipsHTML=optVals.length>1
+    ? `<span class="tchips" aria-hidden="true">${optVals.slice(0,CHIP_MAX).map(v=>`<span class="tchip">${esc(v)}</span>`).join("")}${optVals.length>CHIP_MAX?`<span class="tchip more">+${optVals.length-CHIP_MAX}</span>`:""}</span>`
+    : "";
+  return `<button class="tile${q?" on":""}${st==="out"?" out":""}" data-pid="${esc(p.id)}" aria-label="${esc(p.name)}, ${esc(priceRange(p))}, ${esc(lab)}${q?", "+q+" in bill":""}">` +
     `<span class="ph"${bg}>${inner}${i<10?`<span class="kc" aria-hidden="true">${(i+1)%10}</span>`:""}${q?`<span class="qb${store.justAdded===p.id?" pop":""}" aria-hidden="true">${q}</span>`:""}</span>`+
-    `<span class="tb"><span class="tn">${esc(p.name)}</span>${sum?`<span class="tv">${esc(sum)}</span>`:""}<span class="tpr"><span class="tp">${esc(priceRange(p))}</span><span class="tl ${st}">${st?"<i></i>":""}${esc(lab)}</span></span></span>`+
-    `${st==="out"?"":`<span class="tadd" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>`}</button>`;
+    `<span class="tb"><span class="tn">${esc(p.name)}</span>${sum?`<span class="tv">${esc(sum)}</span>`:""}<span class="tpr"><span class="tp">${esc(priceRange(p))}</span><span class="tl ${st}">${st?"<i></i>":""}${esc(lab)}</span></span>${chipsHTML}${st==="out"?"":`<span class="tadd-btn" aria-hidden="true">+ Add</span>`}</span>`+
+    `</button>`;
 }
 /* The category chips over the grid (none when the shop has no categories) */
 function catChipsHTML(cs){
@@ -70,3 +76,4 @@ export function openKeyboardHelp(){
   const rows=[["/","Search"],["1 – 0","Open product 1 to 10"],["1 – 9","Size in the open product"],["+ / −","Quantity"],["Enter","Add to the bill"],["C · U · K","Pay by cash, UPI, card"],["Esc","Close"]];
   $("#modalHost").innerHTML=sheetHTML({id:"kbdHelp",title:"Keyboard shortcuts",sub:"Barcode scanners work anywhere on Sell.",body:`<dl class="kv kbdkv">${rows.map(([k,v])=>`<dt>${k.split(" ").map(x=>/^[A-Za-z0-9/+−–·]+$/.test(x)&&x!=="·"&&x!=="–"?`<kbd>${esc(x)}</kbd>`:esc(x)).join(" ")}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`});
 }
+

@@ -125,9 +125,11 @@ const qt = (await q(`SELECT o.version, o.status, i.qty::float AS q, i.disc FROM 
 check('in the cloud: version 1, its line with the discount', qt && qt.version === 1 && qt.q === 3 && qt.disc && +qt.disc.value === 10 && (await run(`return orderById(${JSON.stringify(QT.id)}).version`)) === 1, qt);
 check('quotation actions are available from the saved quotation', (await A.$$('#orderSheet [data-qdoc="preview"],#orderSheet [data-qdoc="print"],#orderSheet [data-qdoc="download"],#orderSheet [data-qdoc="send"],#orderSheet [data-ofdup]')).length === 5);
 await A.$eval('#orderSheet [data-qdoc="preview"]', (b) => b.click()); await sleep(250);
-const preview = await text('.quotation');
+// the preview shows the quotation in the shop's document template, in its own frame
+await A.waitForFunction(() => { const f = document.querySelector('.qprevsheet iframe'); return !!(f && f.contentDocument && f.contentDocument.body && f.contentDocument.body.innerText.trim()); });
+const preview = await A.evaluate(() => { const f = document.querySelector('.qprevsheet iframe'); return f && f.contentDocument ? f.contentDocument.body.innerText.replace(/\s+/g, ' ').trim() : null; });
 // this shop charges no GST, so the quotation has no Taxable / GST columns (a GST shop's are checked in quotations.test.mjs)
-check('preview is a full QUOTATION, never an invoice', /QUOTATION/.test(preview || '') && /Valid until/.test(preview || '') && /Unit price/.test(preview || '') && /Discount/.test(preview || '') && !/Taxable/.test(preview || '') && /Blue stock only/.test(preview || '') && /Prices valid/.test(preview || '') && /not a bill/.test(preview || '') && !/INVOICE/.test(preview || ''), preview);
+check('preview is a full QUOTATION, never an invoice', /QUOTATION/.test(preview || '') && /Valid until/.test(preview || '') && /Unit price/i.test(preview || '') && /Discount/i.test(preview || '') && !/Taxable/i.test(preview || '') && /Blue stock only/.test(preview || '') && /Prices valid/.test(preview || '') && /not a bill/.test(preview || '') && !/INVOICE/.test(preview || ''), preview);
 await A.click('[data-modal-close]'); await sleep(150);
 await run(`openOrderEditor(${JSON.stringify(QT.id)})`); await sleep(150);
 await A.click('#orderSheet [data-ofconvert]'); await sleep(300);

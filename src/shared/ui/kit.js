@@ -5,7 +5,7 @@
 //   sheetHTML        a sheet (a phone) / dialog (wider): title, line under it, body, actions at the foot
 //   formActionsHTML  a form's Save / Cancel (Cancel puts the form back as it was saved: a reset button)
 //   actionsMenuHTML  "More actions" for a record or document: a menu (a sheet on a phone); only the actions given
-//   kvHTML           a record's facts as label / value rows
+//   kvHTML           a record's facts as label / value rows ([label, value html, optional id for the value])
 // The menus open and close through installMenus() (one listener, app/main.js).
 import { esc } from '../dom.js';
 
@@ -83,7 +83,7 @@ export function formActionsHTML({ save = "Save changes", cancel = "Cancel", note
 }
 
 /* rows: [[label, value markup], …] (a row with an empty value is left out) */
-export const kvHTML = rows => `<dl class="kv">${(rows || []).filter(r => r && r[1] !== "" && r[1] != null).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("")}</dl>`;
+export const kvHTML = rows => `<dl class="kv">${(rows || []).filter(r => r && r[1] !== "" && r[1] != null).map(([k, v, id]) => `<dt>${esc(k)}</dt><dd${id ? ` id="${esc(id)}"` : ""}>${v}</dd>`).join("")}</dl>`;
 
 /* "More actions" for one record: items [{ label, attrs (the action's data-* attributes), icon, hint, danger, disabled, sep }].
    Only real actions go in (a caller leaves out what can't be done). → the button with its menu, or "" with no actions */

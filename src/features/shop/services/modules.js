@@ -22,7 +22,8 @@ const MODULE_CAPS = { tables: ["uses_tables"], kitchen: ["uses_kitchen"] };
 /* def: { id (the tab id; its page is <section id="v-<id>">), label, icon (svg), order (place in the tab bar),
    phone (which stay on a phone's short tab bar: lower first), view: true (a page) | false (an action: open()),
    caps: [any of these capabilities] (none: every business), perms: [any of these permissions] (default: TAB_PERMISSIONS),
-   available(): false while it can't be used here, render(): draws its page, open(): an action module's action }.
+   available(): false while it can't be used here, render(): draws its page, open(): an action module's action,
+   landing: false (a page you go to, never one the app opens by itself: Settings) }.
    Registering an id again adds to it (the app shell adds render functions to the core modules). */
 export function registerModule(def){
   const was = MODULES.get(def.id);

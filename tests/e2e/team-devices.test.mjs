@@ -163,8 +163,8 @@ try {
   check('owner: products uploaded', +(await q(`SELECT count(*) AS n FROM public.hangtag_products WHERE owner_id = $1`, [OWNER]))[0].n === 10);
 
   console.log('--- the owner adds a cashier with a sign-in QR ---');
-  await A.run('openSettings()'); await sleep(200);
-  check('Settings shows Team & devices with the shop code', await A.vis('#teamSec [data-team="open"]') && (await A.text('#teamSec')).includes(core.shopCode(OWNER)));
+  await A.run('openSettings("devices")'); await sleep(200);
+  check('Settings → Team & Devices shows the team with the shop code', await A.vis('#teamSec [data-team="open"]') && (await A.text('#teamSec')).includes(core.shopCode(OWNER)));
   await A.click('#teamSec [data-team="open"]');
   check('Team & devices opens (empty team)', await A.until('team&&!team.loading') && /No team members yet/.test(await A.text('.teamsheet') || ''));
   await A.click('[data-team="add"]'); await sleep(150);
@@ -299,9 +299,13 @@ try {
   await D.fill('#staffPass', 'counter-pass-1'); await D.click('#staffSubmit');
   check('the right one: signed in as the manager, this phone registered', await D.until('authUser&&sbStatus==="connected"&&isMember()', 20000) && await D.run('return access.role==="manager"')
     && +(await q(`SELECT count(*) AS n FROM public.hangtag_devices WHERE user_id = $1`, [meera]))[0].n === 1, await D.text('#authErr'));
-  const managerAccess = { report: await D.vis('.nav [data-tab="report"]'), permissions: await D.run('return {products:can("manage_products"),users:can("manage_users")}'), settings: await D.run('openSettings();return {team:!!document.getElementById("teamSec"),sub:document.getElementById("setSub").textContent}') };
+  // on a phone Reports is under More (the bar is Home · Sell · Stock)
+  await D.click('.nav [data-navmore]'); await sleep(200);
+  const reportInMore = await D.vis('.navsheet [data-tab="report"]');
+  await D.run('closeModal()'); await sleep(100);
+  const managerAccess = { report: reportInMore, permissions: await D.run('return {products:can("manage_products"),users:can("manage_users")}'), settings: await D.run('openSettings("devices");return {team:!!document.getElementById("teamSec"),you:!!document.getElementById("kvRole"),sub:document.getElementById("setSub").textContent}') };
   check('a manager sees Reports and can edit products, but has no Team & devices', managerAccess.report && managerAccess.permissions.products && !managerAccess.permissions.users
-    && !managerAccess.settings.team && /Signed in as Meera \(Manager\) at Aura Threads/.test(managerAccess.settings.sub), managerAccess);
+    && !managerAccess.settings.team && managerAccess.settings.you && /Signed in as Meera \(Manager\) at Aura Threads/.test(managerAccess.settings.sub), managerAccess);
   await D.run('closeSettings();await requestSignOut()'); await sleep(300);
   check('signing out puts the key away (not sent any more)', await D.run('return !authUser&&localStorage.getItem("hangtag_device_key")===null'));
   await D.click('#staffSwitch [data-switchto="staff"]'); await sleep(100);

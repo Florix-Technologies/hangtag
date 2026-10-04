@@ -8,6 +8,7 @@
 -- It is exactly section 3s of schema.sql plus the row security rules and grants section 5 gives these tables, so running
 -- the whole schema.sql again gives the same result.
 --
+-- Requires: supabase/schema.sql (applied first; supabase/tests/bank-accounts.test.mjs runs this file on top of it)
 -- How to apply: Supabase → SQL Editor → New query → paste this file → Run (or `supabase db push`).
 -- ==============================================================================
 -- ==============================================================================

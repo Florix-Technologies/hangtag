@@ -56,8 +56,10 @@ const RIYA = await run(`return Object.values(customers).find(c=>c.name==="Riya")
 // ---------- the invoice-link page and the quotation template ----------
 check('the owner\'s app keeps the shop\'s invoice-link page (this app\'s receipt page), in the cloud too', await until('settings.receiptUrl==="http://localhost:3210/receipt.html"')
   && (await until('true', 300)) && (await (async () => { const t0 = Date.now(); while (Date.now() - t0 < 8000) { if ((await meta()).receiptUrl === 'http://localhost:3210/receipt.html') return true; await sleep(200); } return false; })()));
-await run('openSettings()'); await sleep(250);
-check('Settings → Receipt: Invoice links and Quotations', /Invoice links/.test(await text('#invoicePage')) && /localhost:3210\/receipt\.html/.test(await text('#invoicePage')) && !!(await A.$('#quoteSetForm')));
+await run('openSettings("integrations")'); await sleep(250);
+check('Settings → Integrations keeps the invoice-link page', /Invoice links/.test(await text('#invoicePage')) && /localhost:3210\/receipt\.html/.test(await text('#invoicePage')));
+await run('openSettings("billing")'); await sleep(200);
+check('Settings → Billing & Documents has the quotation template', !!(await A.$('#quoteSetForm')));
 await type('#quoteSetForm [name="quoteTitle"]', 'Tax invoice');
 await A.click('#quoteSetForm [type="submit"]'); await sleep(200);
 check('a quotation title that says invoice is refused', /can't say invoice/.test(await text('#quoteSetErr')));
@@ -86,7 +88,9 @@ check('numbered with the shop\'s prefix (PQ-…), its total kept', QT && /^PQ-\d
 await run('await flushSbQueue()');
 check('…in the cloud with its total', +((await q(`SELECT total FROM public.hangtag_orders WHERE id = $1`, [QT.id]))[0] || {}).total === 2100);
 await A.$eval('#orderSheet [data-qdoc="preview"]', (b) => b.click()); await sleep(250);
-const pv = await text('.quotation');
+// the preview shows the quotation in the shop's document template, in its own frame
+await A.waitForFunction(() => { const f = document.querySelector('.qprevsheet iframe'); return !!(f && f.contentDocument && f.contentDocument.body && f.contentDocument.body.innerText.trim()); });
+const pv = await A.evaluate(() => { const f = document.querySelector('.qprevsheet iframe'); return f && f.contentDocument ? f.contentDocument.body.innerText.replace(/\s+/g, ' ').trim() : null; });
 check('the document: the shop\'s title, number, validity, customer, GST, terms, signature, footer — and not a bill', /PRICE QUOTE/.test(pv) && pv.includes(QT.no) && /Valid until/.test(pv) && /Riya/.test(pv) && /CGST/.test(pv) && /Taxable/.test(pv)
   && /50% advance/.test(pv) && /For Aura Threads/.test(pv) && /Thank you for asking us/.test(pv) && /not a bill/.test(pv) && !/invoice/i.test(pv), pv.slice(0, 400));
 await run('override({files:{...use("files"),saveFile:async(n,b,t)=>{window.__saved={n,t,len:b.length,head:typeof b==="string"?b.slice(0,5):String.fromCharCode(...b.slice(0,5))};return true;}}})');

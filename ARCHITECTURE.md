@@ -702,6 +702,44 @@ Migration report rows 66–72 check them: one default list per shop, customers o
 the PO's supplier, voucher balances, kit items, repacks with both stock records, provider numbers only when generated.
 Migration: `supabase/migrations/20261003120000_hangtag_commerce_batch.sql` (exactly section 3r plus its row security).
 
+## UX pass: design system, navigation, Settings page, banks, documents, Store (section 3s)
+
+- **Design system.** Tokens (colour, type scale, 4 px spacing, radii, elevation, motion) live in `styles/00-base.css`; the
+  shared components (buttons, status chips, cards, fields, sheets, action menus, object lists, detail views, empty and
+  loading states) in `styles/15-ui.css`, drawn by `shared/ui/kit.js` (`UI_ICON`, `statusChip`, `emptyStateHTML`,
+  `sheetHTML`, `formActionsHTML`, `kvHTML`, `actionsMenuHTML` + `installMenus`). Colour says something (a state, a payment
+  method, a chart series); it is never decoration.
+- **Navigation.** `features/shop/services/nav-model.js` groups destinations into areas (Sales, Stock, Purchases, Reports …).
+  A desktop shows them in a sidebar; a phone keeps three places for the role and kind of shop (`domain/shop/mobile-workflow.js`
+  `phoneBarFor`: Home · Sell · Stock, a restaurant Home · Tables · Kitchen) and puts the other areas under More. Stock and
+  Purchases are one module (`stock`) whose parts split over two areas; Products sits in the Stock area's bar.
+- **Settings** is a page (`features/shop/components/settings-page.js`): searchable sections (`services/settings-sections.js`)
+  shown by role, capability and business type; every form has Save and Cancel. Backup and restore are in Advanced.
+- **Bank accounts** (`domain/finance/bank-accounts.js`, `features/finance/use-cases/bank-accounts.js`): accounts with opening
+  balances, money in / out, transfers, adjustments with a reason, reversals, and which account UPI and card money lands in.
+  They travel with the commerce records (`bizRepository` kinds `ba`, `bm`) to `hangtag_bank_accounts` and
+  `hangtag_bank_moves`.
+- **Documents.** One model per document (`features/receipts/services/doc-models.js`: tax invoice / bill, quotation, sales
+  order, delivery challan, credit note, purchase order), one A4 renderer with three templates
+  (`components/doc-render.js`; settings in `domain/documents/doc-settings.js`), the same model as a PDF
+  (`shared/utils/pdf.js` `docPdfBytes`). The 80 mm receipt keeps its own layout. Each document's actions show only what can
+  be done with it; e-invoice and e-way bill open from the invoice's Actions and say plainly that generating needs a provider.
+- **Store area** (`features/commerce/pages/store-page.js`): status, Share Store, link, QR (show, download, print), store
+  orders, and the separate assisted-cart link. The public page is `store.html` (see README → Pages your customers open).
+
+### Database (schema.sql section 3s)
+
+| Table / column | Relationship |
+|---|---|
+| `hangtag_bank_accounts` | per shop; switched off, never deleted; `methods` ⊆ {upi, card} |
+| `hangtag_bank_moves.account_id`, `.to_account` | → `hangtag_bank_accounts (owner_id, id)`; a transfer names another account |
+| `hangtag_bank_moves.reverses` | → `hangtag_bank_moves (owner_id, id)`: a reversal of a whole entry, at most once |
+
+Read: `view_reports` or `manage_settings`; accounts written with `manage_settings`; entries added with `view_reports` or
+`manage_settings`, never changed or removed. `hangtag_mobile_catalog` also returns the shop's city and logo. Migration report
+row 73 checks the entries. Migration: `supabase/migrations/20261004120000_hangtag_bank_accounts.sql` (exactly section 3s plus
+its row security and grants).
+
 ## State
 
 One store object (`shared/state/store.js`) holds the app's state. `app/state-init.js` restores it at start-up.

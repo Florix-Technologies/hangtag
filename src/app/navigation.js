@@ -68,7 +68,7 @@ export function renderNav(){
   // can't use opens the first one it can, and a role with no tab at all (e.g. kitchen, before its screen exists) sees a
   // plain note instead of any screen
   applyAccessUI();
-  if(!tabOpen(store.prefs.tab)){ const t = TABS.find(tabOpen) || shownModules().map(d => d.id).find(tabOpen); if(t) store.prefs.tab = t; }
+  if(!tabOpen(store.prefs.tab)){ const t = TABS.find(tabOpen) || shownModules().filter(d => d.landing !== false).map(d => d.id).find(tabOpen); if(t) store.prefs.tab = t; }
   if(window.innerWidth < 600){
     const landing = mobileLandingModule(currentRole(), shownModules(), currentPerms(), store.prefs.tab);
     if(landing && landing !== store.prefs.tab){ store.prefs.tab = landing; savePrefs(); }

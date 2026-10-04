@@ -48,10 +48,16 @@ const TEE = await A.run(`const p=products().find(p=>p.name==="Tee");return {pid:
 const RICE = await A.run(`const p=products().find(p=>p.name==="Rice");return {pid:p.id,vid:p.variants[0].id,unit:p.unit}`);
 check('products saved (rice by the kg)', !!TEE.vid && RICE.unit === 'kg', RICE);
 
-console.log('--- Inventory parts in the navigation ---');
+console.log('--- Stock and Purchases in the navigation (phone) ---');
 await A.run(`setTab("stock");renderAll()`); await sleep(200);
-const parts = await A.P.$$eval('[data-subnav="stock"] [data-subview]', (b) => b.map((x) => x.dataset.subview));
-check('Inventory shows Stock, Purchases, Suppliers and Stock count', ['stock:levels', 'stock:purchases', 'stock:suppliers', 'stock:count'].every((p) => parts.includes(p)), parts);
+const parts = await A.P.$$eval('[data-subnav="stock"] [data-navsub],[data-subnav="stock"] [data-tab]', (b) => b.map((x) => x.dataset.navsub || x.dataset.tab));
+check('Stock shows its parts in a bar: Stock, Products and Stock count (purchasing is its own area)', ['stock:levels', 'products', 'stock:count'].every((p) => parts.includes(p)) && !parts.includes('stock:purchases'), parts);
+await A.P.click('.nav [data-navmore]'); await sleep(200);
+const moreP = await A.P.$$eval('.navsheet .navgrp', (g) => g.map((x) => ({ h: ((x.querySelector('h4') || {}).textContent || '').trim(), items: [...x.querySelectorAll('[data-navsub],[data-tab]')].map((e) => e.dataset.navsub || e.dataset.tab) })).find((x) => x.h === 'Purchases'));
+check('More → Purchases lists Purchases and Suppliers', !!moreP && ['stock:purchases', 'stock:suppliers'].every((p) => moreP.items.includes(p)), moreP);
+await A.P.click('.navsheet [data-navsub="stock:purchases"]'); await sleep(250);
+const pparts = await A.P.$$eval('[data-subnav="stock"] [data-navsub]', (b) => b.map((x) => x.dataset.navsub + (x.getAttribute('aria-pressed') === 'true' ? '*' : '')));
+check('Purchases opens with its own bar (Purchases · Suppliers), Purchases chosen', pparts.includes('stock:purchases*') && pparts.includes('stock:suppliers'), pparts);
 
 console.log('--- suppliers and a purchase ---');
 const SUP = await A.run(`const r=saveSupplier({name:"Ravi Textiles",phone:"9876543210",gstin:"27ABCDE1234F1Z5"});await flushSbQueue();return r.supplier&&r.supplier.id`);

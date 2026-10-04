@@ -37,6 +37,9 @@ const check = (name, ok, info) => { if(ok) passed++; else failed++; console.log(
   check('a custom report permission surfaces Reports without weakening permission checks', custom.includes('report') && !cashier.includes('report'), custom);
   check('owner phone keeps future modules after the known workflow instead of ranking them first', owner.at(-1) === 'extension', owner);
   check('a role switch moves a phone off a newly hidden current tab', mobileLandingModule('cashier', modules, ['view_products', 'create_sale'], 'stock') === 'sell');
+  const withSettingsPage = modules.map((m) => (m.id === 'settings' ? { ...m, landing: false } : m));
+  check('a role with no work screen lands nowhere (never on Settings by itself), but stays on Settings it chose',
+    mobileLandingModule('kitchen', withSettingsPage, ['manage_kitchen'], 'sell') === null && mobileLandingModule('kitchen', withSettingsPage, ['manage_kitchen'], 'settings') === 'settings');
   check('role home actions are ordered and unknown actions are omitted', JSON.stringify(orderMobileActions('server', [{ id: 'orders' }, { id: 'sale' }, { id: 'tables' }]).map(x => x.id)) === JSON.stringify(['tables', 'orders']));
 }
 

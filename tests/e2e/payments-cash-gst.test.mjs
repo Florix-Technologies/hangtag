@@ -147,7 +147,7 @@ await A.click('#reconcileCard [data-act="verifyupi"]');
 check('"Check with the provider" matches it: verified on this device and in the cloud', await until(`D().saleById[${JSON.stringify(S2.id)}].payments[0].verification==="verified"`)
   && (await q(`SELECT verification FROM public.hangtag_payments WHERE sale_id = $1`, [S2.id]))[0].verification === 'verified');
 
-console.log('--- card machine: reference required, never a card number, last 4 kept ---');
+console.log('--- card machine: reference and last 4 optional, marked received, never a card number, CVV or PIN ---');
 await run(`setTab("sell");addOne(${JSON.stringify(PID)});openPayment("card")`); await sleep(400);
 await type('#paySheet [data-payf="ref:card"]', '4111 1111 1111 1111');
 check('a card number typed as the reference is refused', await A.$eval('#payDone', (b) => b.disabled) && /card number/.test(await text('#payErr')));
@@ -158,6 +158,18 @@ const S3 = await run('return lastSale');
 await run('closeSheets();await flushSbQueue()');
 const p3 = (await q(`SELECT verification, via, card_last4, reference FROM public.hangtag_payments WHERE sale_id = $1`, [S3.id]))[0];
 check('card on the machine: recorded, reference and last 4 in the cloud', p3.verification === 'recorded' && p3.via === 'terminal' && p3.card_last4 === '4242' && p3.reference === 'APPR77', p3);
+// no approval number at hand: the cashier marks it received once the machine approves (nothing else is required)
+await run(`setTab("sell");addOne(${JSON.stringify(PID)});openPayment("card")`); await sleep(400);
+const cardLabels = await A.$$eval('#paySheet [data-payf]', (els) => els.map((e) => (e.closest('label') || e).textContent.trim()));
+check('the card fields are the approval number and last 4, both optional (never a card number, CVV or PIN)', cardLabels.length === 2 && cardLabels.every((l) => /optional/.test(l)) && !cardLabels.some((l) => /card number|cvv|pin|expiry/i.test(l)), cardLabels);
+check('without a reference it waits for "Mark card payment received"', await A.$eval('#payDone', (b) => b.disabled) && /Mark the card payment received/.test(await text('#payErr')));
+await A.click('#paySheet [data-cardreceived]'); await sleep(150);
+check('marked received: it can complete', !(await A.$eval('#payDone', (b) => b.disabled)) && (await A.$eval('#paySheet [data-cardreceived]', (b) => b.getAttribute('aria-pressed'))) === 'true');
+await A.click('#payDone'); await sleep(400);
+const S3b = await run('return lastSale');
+await run('closeSheets();await flushSbQueue()');
+const p3b = (await q(`SELECT verification, via, card_last4, reference FROM public.hangtag_payments WHERE sale_id = $1`, [S3b.id]))[0];
+check('card marked received with no reference: recorded on the machine, nothing invented', S3b.id !== S3.id && p3b && p3b.verification === 'recorded' && p3b.via === 'terminal' && !p3b.reference && !p3b.card_last4, p3b);
 
 console.log('--- the receipt goes out by itself (SMS), once ---');
 await run(`settings.autoSend={whatsapp:false,sms:true,email:false};saveSettings();channels=null;await loadChannels();addOne(${JSON.stringify(PID)});pickCustomer(${JSON.stringify(RIYA)});openPayment("cash")`); await sleep(300);
@@ -211,7 +223,9 @@ check('an entry reversed (never edited): a reversal in the cloud, and the day sh
 
 console.log('--- cancelling a bill needs a reason ---');
 await run(`openBillView(${JSON.stringify(S3.id)})`); await sleep(250);
-await A.click('[data-void]'); await sleep(200);
+// Cancel bill is in the bill's Actions menu
+await A.click(`[data-menu="bill-${S3.id}"]`); await sleep(100);
+await A.click(`[data-void="${S3.id}"]`); await sleep(200);
 check('the cancel form asks why', await vis('#voidForm') && (await A.$$eval('#voidForm select option', (o) => o.length)) >= 4);
 await A.select('#voidForm [name="reason"]', 'Duplicate bill'); await A.click('#voidForm button[type="submit"]'); await sleep(300); await run('await flushSbQueue()');
 const v = (await q(`SELECT is_void, void_reason FROM public.hangtag_sales WHERE id = $1`, [S3.id]))[0];

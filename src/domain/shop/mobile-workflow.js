@@ -37,7 +37,7 @@ export function mobileModulesFor(role, modules, permissions){
 export function mobileLandingModule(role, modules, permissions, current){
   const list = mobileModulesFor(role, modules, permissions);
   if(list.some(def => def.id === current && def.view !== false)) return current;
-  const first = list.find(def => def.view !== false);
+  const first = list.find(def => def.view !== false && def.landing !== false);   // (never a page like Settings by itself)
   return first ? first.id : null;
 }
 

@@ -63,7 +63,8 @@ export function installModules(){
   registerModule({ id: "customers", render: renderCustomers });
   // don't redraw the product list under someone typing in it (except its search box)
   registerModule({ id: "products", render(){ renderAreaNav("products"); const a = document.activeElement; if(!(a && a.closest && a.closest("#v-products") && a.id !== "prodSearch")) renderProducts(); } });
-  registerModule({ id: "settings", view: true, render: () => renderSettingsPage() });
+  // a page you choose (account menu, More), never where the app lands: a role with no work screen sees "Nothing to open here yet"
+  registerModule({ id: "settings", view: true, landing: false, render: () => renderSettingsPage() });
   // Team (the owner's): the people who sell in the shop, their roles and phones
   registerModule({ id: "team", label: "Team", order: 88, phone: 75, view: false, perms: ["manage_users"], open: () => openTeam() });
   // Settings → Team & Devices: the weighing scale (T1), for shops that sell by weight (the capability, or a product sold by the kg or

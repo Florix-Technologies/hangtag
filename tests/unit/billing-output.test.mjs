@@ -10,6 +10,7 @@ import { checkPrinterSettings, printerOf } from '../../src/domain/shop/printer-s
 import { createEpsonPrinter, eposUrl, eposXml, parseEposResponse, printerErrorMessage } from '../../src/infrastructure/printing/epson-epos.js';
 import { monoRaster } from '../../src/infrastructure/printing/raster.js';
 import { createDeliveryClient } from '../../src/infrastructure/messaging/delivery-client.js';
+import { docPdfBytes } from '../../src/shared/utils/pdf.js';
 import { createCloudGateway } from '../../src/infrastructure/supabase/cloud-gateway.js';
 import { AppError, ERROR_CODES as C } from '../../src/shared/errors/app-error.js';
 import { override } from '../../src/shared/di/services.js';
@@ -103,6 +104,11 @@ check('columns: one line when it fits, otherwise the left text wrapped and the r
   && eq(columns('  Discount Festive offer for loyal customers only', '-1,234.00', 32), ['  Discount Festive offer for', '  loyal customers only', '                       -1,234.00']));
 const narrow = thermalReceipt({ ...inv, placeOfSupply: { code: '26', name: 'Dadra and Nagar Haveli and Daman and Diu' }, payments: [{ ...inv.payments[1], ref: 'UTR-0123456789-ABCDEFGHIJ-0123456789' }] }, { cols: 32 }).lines.map((l) => l.text);
 check('58 mm: a long place of supply and a long payment reference wrap instead of running off the paper', narrow.every((t) => t.length <= 32) && narrow.join(' ').includes('Daman and Diu (26)') && narrow.join('').includes('UTR-0123456789-ABCDEFGHIJ-0123456789'.slice(0, 20)));
+// the A4 PDF: a long place of supply wraps in the header instead of losing its state code
+const a4pdf = Buffer.from(docPdfBytes({ seller: { name: 'Aura Threads', lines: ['12 MG Road'] }, title: 'Tax Invoice',
+  meta: [['Invoice no.', 'INV-1'], ['Date', '25 September 2026'], ['Place of supply', 'Dadra and Nagar Haveli and Daman and Diu (26)']],
+  parties: [], columns: ['#', 'Item', 'Amount'], left: 2, rows: [['1', { t: 'Kurta' }, 'Rs 999']], totals: [['Total', 'Rs 999', true]] })).toString('latin1');
+check('A4 PDF: a long place of supply wraps and keeps its code (26), nothing cut off', a4pdf.startsWith('%PDF') && a4pdf.includes('(Daman and Diu \\(26\\))') && !/Dadra and Nagar[^)]*\.\.\./.test(a4pdf), a4pdf.match(/\((?:Dadra|Haveli|Daman)[^)]*\)/g));
 const longNo = thermalReceipt({ ...inv, number: 'INV-260925-001' }, { cols: 32 }).lines.map((l) => l.text), cashBig = { ...inv, payments: [{ ...inv.payments[0], received: 12000, change: 1499.5 }] };
 check('58 mm: the bill number and the cash received are printed whole', longNo.some((t) => t.includes('Bill: INV-260925-001')) && longNo.every((t) => t.length <= 32)
   && thermalReceipt(cashBig, { cols: 32 }).lines.some((l) => l.text.includes('Received 12,000.00')));

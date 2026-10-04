@@ -69,23 +69,39 @@ try {
   // ================= the navigation =================
   await A.run('setTab("home");renderAll()'); await sleep(200);
   const tabs = await A.tabs();
-  check('tab bar: Home, Sell, Inventory, Products, Customers, Reports, Ask, Settings (in that order, Orders only with a part)',
-    JSON.stringify(tabs.filter((t) => t !== 'orders')) === JSON.stringify(['home', 'sell', 'stock', 'products', 'customers', 'report', 'assistant', 'settings'])
-    && tabs.includes('orders') === (await A.run('return subviewsOf("orders").length>0')), tabs);
-  check('Inventory is the Stock tab (same id), labelled Inventory', (await A.text('.nav [data-tab="stock"]')) === 'Inventory');
+  check('sidebar: Home, Sell, then Sales (Orders, Store), Stock (Stock, Products), Customers, Reports (Reports, Ask Hangtag), Team, Settings',
+    JSON.stringify(tabs) === JSON.stringify(['home', 'sell', 'orders', 'store', 'stock', 'products', 'customers', 'report', 'assistant', 'team', 'settings']), tabs);
+  check('purchases and suppliers are destinations of their own in the Purchases group (parts of Stock)', !!(await A.$('.nav [data-navsub="stock:purchases"]')) && !!(await A.$('.nav [data-navsub="stock:suppliers"]')));
+  check('Stock is the stock tab (same id), labelled Stock', (await A.text('.nav [data-tab="stock"]')) === 'Stock');
   check('no Tables or Kitchen for a grocery', !tabs.includes('tables') && !tabs.includes('kitchen') && !(await A.run('return moduleShown("tables")||moduleShown("kitchen")')));
   check('Home: today, stock, sync and quick actions', await A.vis('#v-home') && await A.vis('#homeBody .qa') && /Today/.test(await A.text('#homeBody') || '') && /Sync/.test(await A.text('#homeBody') || '')
     && /Grocery/.test(await A.text('#homeBody .viewhead') || ''));
   await A.click('#homeBody .qa [data-tab="sell"]'); await sleep(200);
   check('a quick action opens its module', await A.run('return prefs.tab==="sell"') && await A.vis('#v-sell'));
   await A.click('.nav [data-tab="settings"]'); await sleep(250);
-  check('the Settings tab opens the settings', await A.vis('.sheet.settings'));
-  const secs = await A.$$eval('.setnav [data-setgo]', (b) => b.map((x) => x.textContent));
-  check('settings in sections', JSON.stringify(secs) === JSON.stringify(['Business', 'Capabilities', 'Receipt', 'Taxes', 'Team & devices', 'Roles & permissions', 'Hardware', 'Advanced', 'Account']), secs);
+  check('the Settings tab opens the Settings page', await A.vis('#v-settings .setpage') && await A.vis('#setQ'));
+  const secs = await A.$$eval('.setlist [data-setgo] b', (b) => b.map((x) => x.textContent));
+  check('settings in sections (a grocery: no Restaurant)', JSON.stringify(secs) === JSON.stringify(['Business', 'Payments & Banks', 'Billing & Documents', 'Products & Inventory', 'Sales & Customers', 'Purchasing', 'Storefront', 'Team & Devices', 'Integrations', 'Advanced']), secs);
+  await A.run('const q=document.getElementById("setQ");q.value="printer";q.dispatchEvent(new Event("input",{bubbles:true}))'); await sleep(150);
+  check('settings search finds the printer in Team & Devices', /Receipt printer on this device/.test(await A.text('#setResults') || '') && /Team & Devices/.test(await A.text('#setResults') || ''), await A.text('#setResults'));
+  await A.run('const q=document.getElementById("setQ");q.value="";q.dispatchEvent(new Event("input",{bubbles:true}))');
   check('Business holds the profile with its type', (await A.$eval('#ps_business_type', (e) => e.value)) === 'grocery' && await A.vis('#set-business #profileForm'));
-  check('Receipt, Taxes and Hardware hold their forms once (no duplicates)', await A.vis('#set-receipt #billingForm') && await A.vis('#set-taxes #taxForm') && await A.vis('#set-hardware #printerForm')
-    && (await A.$$('#billingForm')).length === 1 && (await A.$$('#printerForm')).length === 1);
-  check('Team & devices is there for a grocery', await A.vis('#teamSec [data-team="open"]') && await A.vis('#set-roles [data-team="roles"]'));
+  await A.run('openSettings("billing")'); await sleep(150);
+  const billingOk = await A.vis('#set-billing #billingForm') && await A.vis('#set-billing #taxForm') && (await A.$$('#billingForm')).length === 1 && await A.vis('#set-billing #docTplForm');
+  await A.run('openSettings("devices")'); await sleep(150);
+  check('Billing & Documents holds the bill, GST and template forms once; Team & Devices the printer', billingOk && await A.vis('#set-devices #printerForm') && (await A.$$('#printerForm')).length === 1);
+  // each setting has one editor in the whole of Settings: open every section and see where each form is
+  const formsIn = {};
+  for (const key of await A.$$eval('.setlist [data-setgo]', (b) => b.map((x) => x.dataset.setgo))) {
+    await A.run(`openSettings(${JSON.stringify(key)})`); await sleep(80);
+    for (const id of await A.$$eval('#v-settings form[id]', (f) => f.map((x) => x.id))) (formsIn[id] = formsIn[id] || []).push(key);
+  }
+  const twice = Object.entries(formsIn).filter(([, at]) => at.length > 1);
+  check('no settings form is in two sections (one place to change each setting)', !twice.length && JSON.stringify(formsIn.billingForm) === '["billing"]' && JSON.stringify(formsIn.taxForm) === '["billing"]'
+    && JSON.stringify(formsIn.printerForm) === '["devices"]' && JSON.stringify(formsIn.profileForm) === '["business"]', formsIn);
+  await A.run('openSettings("devices")'); await sleep(150);
+  check('Team & devices is there for a grocery, with roles', await A.vis('#teamSec [data-team="open"]') && await A.vis('#teamSec [data-team="roles"]'));
+  await A.run('openSettings("business")'); await sleep(150);
   check('Capabilities: recommended for Grocery first, with human names', /Recommended for Grocery/.test(await A.text('#capsForm .capgrp') || '') && /Batch tracking/.test(await A.text('#capsForm') || '')
     && !/uses_/.test(await A.text('#capsForm') || ''));
   check('restaurant capabilities folded away for a grocery', await A.$eval('#capsForm [data-capgrp="restaurant"]', (d) => !d.open));
@@ -100,12 +116,19 @@ try {
   await A.click('[data-act="edsave"]'); await sleep(300);
   check('saved with batch tracking', await A.run('return products().some(p=>p.name==="Basmati Rice"&&p.tracking==="batch")'));
   check('...and uploaded (hangtag_products.tracking)', await A.until('!sbOfflineQueue.length') && ((await q(`SELECT tracking FROM public.hangtag_products WHERE owner_id = $1 AND name = 'Basmati Rice'`, [OWNER]))[0] || {}).tracking === 'batch');
+  check('a tracked product offers the existing stock-receiving next step', await A.vis('#modalHost .addedsheet [data-addstockfor]')
+    && /Add stock & batch/.test(await A.text('#modalHost .addedsheet') || ''));
+  await A.click('#modalHost .addedsheet [data-modal-close]'); await sleep(100);
 
   // ================= a capability switched on: saved in the synced settings =================
-  await A.run('openSettings()'); await sleep(200);
+  await A.click('.nav [data-tab="settings"]'); await sleep(200);
+  check('serial-number feature can be changed in Business → Features', await A.vis('#capsForm [data-cap="uses_serials"]')
+    && !(await A.$eval('#capsForm [data-cap="uses_serials"]', (e) => e.disabled)));
   await A.click('#capsForm [data-cap="uses_serials"]');
+  const serialChecked = await A.$eval('#capsForm [data-cap="uses_serials"]', (e) => e.checked);
   await A.click('#capsForm button[type="submit"]'); await sleep(300);
-  check('serial numbers on for this grocery', await A.run('return hasCap("uses_serials")&&settings.caps.uses_serials===true&&typeof settings.capsAt==="number"'));
+  const serialState = await A.run('return {on:hasCap("uses_serials"),caps:settings.caps,at:settings.capsAt}');
+  check('serial numbers on for this grocery', serialChecked && serialState.on && serialState.caps.uses_serials === true && typeof serialState.at === 'number', serialState);
   check('...uploaded with the shop\'s settings (only the difference from the defaults)', await A.until('!sbOfflineQueue.length') && JSON.stringify((await settingsRow() || {}).caps) === '{"uses_serials":true}');
   await A.run('closeSettings();openEditor(null)'); await sleep(200);
   check('the form now offers serial numbers too', JSON.stringify(await A.$$eval('#edTracking option', (o) => o.map((x) => x.value))) === '["none","serial","batch","expiry"]');
@@ -119,14 +142,17 @@ try {
   check('...and the till still has it after downloading', await A.run('return hasCap("uses_serials")&&settings.lowStock===7'));
 
   // ================= another type: Hotel / Restaurant =================
-  await A.run('openSettings()'); await sleep(200);
+  await A.run('openSettings("business")'); await sleep(200);
   await A.select('#ps_business_type', 'restaurant');
   await A.click('#profileSave');
-  check('the type changed to Hotel / Restaurant', await A.until('profile.business_type==="restaurant"&&!document.querySelector("#modalHost .settings")'));
+  check('the type changed to Hotel / Restaurant', await A.until('profile.business_type==="restaurant"'));
   check('restaurant defaults (serial numbers kept as the shop chose)', await A.run(`const c=shopCaps();return c.uses_tables&&c.uses_kitchen&&c.uses_table_qr&&!c.uses_batches&&c.uses_serials`));
   check('restaurant modules appear when their capabilities are on', (await A.tabs()).includes('tables') && (await A.tabs()).includes('kitchen'));
-  await A.run('openSettings()'); await sleep(200);
-  check('Capabilities recommended for Hotel / Restaurant; Team & devices still there', /Recommended for Hotel \/ Restaurant/.test(await A.text('#capsForm .capgrp') || '') && await A.vis('#teamSec [data-team="open"]'));
+  await A.run('openSettings("business")'); await sleep(200);
+  const recRest = /Recommended for Hotel \/ Restaurant/.test(await A.text('#capsForm .capgrp') || '');
+  await A.run('openSettings("devices")'); await sleep(150);
+  check('Features recommended for Hotel / Restaurant; Team & devices still there; a Restaurant section', recRest && await A.vis('#teamSec [data-team="open"]')
+    && (await A.$$eval('.setlist [data-setgo]', (b) => b.map((x) => x.dataset.setgo))).includes('restaurant'));
   await A.run('closeSettings();openEditor(null)'); await sleep(200);
   check('restaurant product form kept simple: no variants section for a new product', !(await A.$('[data-edtoggle="hasOpts"]')) && !(await A.$('[data-capnote="weight"]')));
   await A.run('closeModal()');
@@ -137,13 +163,14 @@ try {
   await P.until('sbStatus==="connected"');
   await P.run('setTab("home");renderAll()'); await sleep(250);
   const ptabs = await P.tabs();
-  check('phone: at most 5 tabs and More', ptabs.length <= 5 && await P.vis('.nav [data-navmore]') && ptabs.includes('sell') && ptabs.includes('home'), ptabs);
+  check('phone (a restaurant now): Home · Tables · Kitchen and More', JSON.stringify(ptabs) === JSON.stringify(['home', 'tables', 'kitchen']) && await P.vis('.nav [data-navmore]'), ptabs);
   check('phone: no horizontal scroll', await P.evaluate(() => document.documentElement.scrollWidth - window.innerWidth) <= 1);
   await P.click('.nav [data-navmore]'); await sleep(200);
   const more = await P.$$eval('.navsheet [data-tab]', (b) => b.map((x) => x.dataset.tab));
-  check('More lists the rest (Settings among them)', more.length >= 1 && more.includes('settings') && !more.some((t) => ptabs.includes(t)), more);
+  check('More lists the rest in groups (Sell among Sales, Settings among them, nothing from the bar)', more.length >= 1 && more.includes('settings') && more.includes('sell') && !more.some((t) => ptabs.includes(t))
+    && (await P.$$eval('.navsheet .navgrp h4', (h) => h.map((x) => x.textContent))).includes('Sales'), more);
   await P.click('.navsheet [data-tab="settings"]'); await sleep(250);
-  check('phone: Settings opens from More', await P.vis('.sheet.settings'));
+  check('phone: Settings opens from More (its sections first)', await P.vis('#v-settings .setlist'));
   check('phone: the settings fit the width', await P.evaluate(() => document.documentElement.scrollWidth - window.innerWidth) <= 1);
   await P.screenshot({ path: H.ARTIFACTS + '/f2_phone_settings.png' });
 

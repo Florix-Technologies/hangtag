@@ -42,13 +42,13 @@ const teamHTML = () => store.authUser ? `<div class="setblk" id="teamSec"><h5>Te
 function youHTML(){
   if(isMember()){
     const a = store.access || {};
-    return block("You", kvHTML([["Name", esc(a.name || "—")], ["Username", esc(a.username ? "@" + a.username : "—")], ["Role", esc(roleLabel(a.role) || "—")],
-      ["Shop", esc(a.shopName || (store.profile && store.profile.shop_name) || "—")], ["Shop code", esc(a.shopId ? shopCode(a.shopId) : "—")], ["This phone", esc(a.deviceId || "—")]])
+    return block("You", kvHTML([["Name", esc(a.name || "—"), "kvName"], ["Username", esc(a.username ? "@" + a.username : "—"), "kvUser"], ["Role", esc(roleLabel(a.role) || "—"), "kvRole"],
+      ["Shop", esc(a.shopName || (store.profile && store.profile.shop_name) || "—"), "kvShop"], ["Shop code", esc(a.shopId ? shopCode(a.shopId) : "—"), "kvCode"], ["This phone", esc(a.deviceId || "—"), "kvDevice"]])
       + '<p class="note" style="margin:10px 0 0">The owner manages your role and your phones. Signing out keeps this phone ready for your next sign-in.</p><div class="btnrow" style="margin-top:12px"><button class="btn danger" type="button" data-settings-act="signout">Sign out</button></div>');
   }
   const p = store.profile || {}, u = store.authUser, since = (u && u.created_at) || p.created_at;
-  return block("Your account", kvHTML([["Email", esc((u && u.email) || storage.get("hangtag_auth_email", "") || "—")], ["Signs in with", esc(methodNames())],
-    ["Member since", esc(since ? new Date(since).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) : "—")], ["Account ID", esc(u ? u.id.slice(0, 8) : "—")]])
+  return block("Your account", kvHTML([["Email", esc((u && u.email) || storage.get("hangtag_auth_email", "") || "—"), "kvEmail"], ["Signs in with", esc(methodNames()), "kvMethod"],
+    ["Member since", esc(since ? new Date(since).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) : "—"), "kvSince"], ["Account ID", esc(u ? u.id.slice(0, 8) : "—"), "kvId"]])
     + '<div class="btnrow" style="margin-top:12px"><button class="btn danger" type="button" data-settings-act="signout">Sign out</button></div>');
 }
 function sectionBody(key){

@@ -65,6 +65,8 @@ await A.goto('http://localhost:3210/', { waitUntil: 'networkidle0' });
 const run = (b) => A.evaluate((b) => __ev('(async()=>{' + b + '})()'), b);
 async function until(cond, ms = 15000) { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await run('return !!(' + cond + ')').catch(() => false)) return true; await sleep(100); } return false; }
 const text = (sel) => A.$eval(sel, (e) => e.innerText.replace(/\s+/g, ' ').trim()).catch(() => null);
+// an A4 document is shown in its own frame (receipts/components/doc-render.js): its text, or the receipt's
+const docText = () => A.evaluate(() => { const f = document.querySelector('.rcpt-prev iframe'); const t = f && f.contentDocument ? f.contentDocument.body.innerText : (document.querySelector('.rcpt-prev') || {}).innerText; return String(t || '').replace(/\s+/g, ' ').trim(); });
 const vis = (sel) => A.$eval(sel, (e) => !e.hidden && getComputedStyle(e).display !== 'none' && e.getClientRects().length > 0).catch(() => false);
 check('signed in and connected', await until('sbStatus==="connected"'));
 
@@ -77,8 +79,10 @@ const KURTA = await run('return prod(products().find(p=>p.name==="Kurta").id).va
 const custId = await run('return Object.values(customers).find(c=>c.name==="Blr Traders").id');
 
 // ---------- Phase 14: the logo, from settings ----------
-await run('openSettings()'); await sleep(200);
-check('settings: Receipts and printer section with the logo and this device\'s printer', await vis('#receiptSetup') && /No logo/.test(await text('#receiptSetup .logoprev')) && !!(await A.$('#printerForm [name=kind]')));
+await run('openSettings("devices")'); await sleep(200);
+const printerHere = !!(await A.$('#printerForm [name=kind]'));
+await run('openSettings("billing")'); await sleep(200);
+check('settings: Billing & Documents has the logo; Team & Devices has this device\'s printer', await vis('#receiptSetup') && /No logo/.test(await text('#receiptSetup .logoprev')) && printerHere);
 const logoInput = await A.$('#receiptSetup [data-logofile]'); await logoInput.uploadFile(LOGO); await sleep(700);
 check('logo uploaded: shown in settings and kept for this shop', !!(await A.$('#receiptSetup .logoprev img')) && await run('return /^data:image\\/jpeg;base64,/.test(logo)'));
 await run('await flushSbQueue()');
@@ -121,10 +125,10 @@ check('Print (no thermal printer set): the print-only 80 mm receipt with the log
   && /IGST/.test(printedPage.text) && /Paid by Cash/.test(printedPage.text) && /Paid by UPI/.test(printedPage.text), printedPage && printedPage.text.slice(0, 300));
 await run('closeSheets()');
 await run(`openBillView(${JSON.stringify(sid)},"a4")`); await sleep(300);
-const a4 = await text('.rcpt-prev');
+const a4 = await docText();
 const sale = await run(`const s=D().saleById[${JSON.stringify(sid)}];return {no:s.no,total:s.total,igst:s.igst,taxable:s.taxable}`);
 check('A4 invoice: TAX INVOICE, invoice number, place of supply, Bill to with GSTIN, HSN, taxable value and IGST per line', /TAX INVOICE/.test(a4) && a4.includes(sale.no) && /Place of supply Karnataka \(29\)/.test(a4)
-  && /Bill to Blr Traders \(business\)/i.test(a4) && /GSTIN 29ABCDE1234F1Z5/.test(a4) && /6109/.test(a4) && /IGST/.test(a4), a4.slice(0, 400));
+  && /Bill to Blr Traders/i.test(a4) && /Business customer/.test(a4) && /GSTIN 29ABCDE1234F1Z5/.test(a4) && /6109/.test(a4) && /IGST/.test(a4), a4.slice(0, 400));
 check('A4 invoice: totals from the saved bill, GST by rate, amount in words, payments', a4.includes('₹' + sale.total.toLocaleString('en-IN')) && /Amount in words Rupees .+ Only/i.test(a4) && /GST rate/i.test(a4) && /Paid by Cash/.test(a4));
 await A.screenshot({ path: H.ARTIFACTS + '/bo2_invoice_a4.png' });
 await sleep(400);
@@ -134,7 +138,7 @@ check('switch to the 80 mm receipt view', !(await A.$('.rcpt.a4')) && /Bill/.tes
 await run('closeModal()');
 
 // ---------- Phase 16: the Epson printer ----------
-await run('openSettings()'); await sleep(200);
+await run('openSettings("devices")'); await sleep(200);
 await A.select('#printerForm [name=kind]', 'epson'); await sleep(100);
 await A.type('#printerForm [name=host]', '192.168.1.50');
 await A.click('#printerForm [data-act="printertest"]'); await sleep(600);
@@ -178,7 +182,7 @@ await run('channels=null');
 await A.click(`#sheetHost [data-undosale="${wid}"]`); await sleep(300);
 await A.click('#voidForm button[type="submit"]'); await sleep(300);   // cancelling asks why (the first reason is chosen)
 await run(`openBillView(${JSON.stringify(wid)},"a4")`); await sleep(200);
-check('cancelled bill: the invoice says CANCELLED — not a valid invoice, and it can\'t be sent', /CANCELLED — not a valid invoice/.test(await text('.rcpt-prev')) && /A cancelled bill can't be sent/.test(await text('.billview .sendbox'))
+check('cancelled bill: the invoice says CANCELLED — not a valid invoice, and it can\'t be sent', /CANCELLED — not a valid invoice/.test(await docText()) && /A cancelled bill can't be sent/.test(await text('.billview .sendbox'))
   && await A.$eval(`.billview [data-send="email:${wid}"]`, (b) => b.disabled));
 await run('closeModal()');
 

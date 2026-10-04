@@ -40,11 +40,12 @@ export function invoiceModel(s){
   totals.push(["Total", inr(T.total), true]);
   if(show && I.inclusive) totals.push(["Includes GST", inrx(T.tax)]);
   if(T.credit) totals.push(["Exchange credit", "−" + inr(T.credit)], ["Amount due", inr(T.due)]);
-  if(I.payments.length) totals.push(["Paid" + (I.payments.length === 1 ? " · " + I.payments[0].label : ""), inrx(I.paid)]);
+  // A split payment must show where every part landed. A generic "Paid" line loses useful reconciliation detail.
+  I.payments.forEach(p => totals.push(["Paid by " + p.label, inrx(p.amount)]));
   if(I.balance > 0) totals.push(["Balance due", inr(I.balance)]);
   const b = I.buyer;
   return Object.assign(base(), { kind: taxed ? "invoice" : "bill", title: taxed ? "Tax Invoice" : "Bill", number: I.number,
-    meta: [[taxed ? "Invoice no." : "Bill no.", I.number], ["Date", dtLong(I.t)], ["Place of supply", I.placeOfSupply && I.gstMode !== "none" ? I.placeOfSupply.name : ""]],
+    meta: [[taxed ? "Invoice no." : "Bill no.", I.number], ["Date", dtLong(I.t)], ["Place of supply", I.placeOfSupply && I.gstMode !== "none" ? `${I.placeOfSupply.name} (${I.placeOfSupply.code})` : ""]],
     parties: [{ label: "Bill to", name: b ? b.name : "Walk-in customer", lines: b ? [b.phone, b.email, b.gstin && "GSTIN " + b.gstin, b.business ? "Business customer" : ""] : [] }],
     columns, left: hsn ? 3 : 2, rows, totals,
     tax: show && I.taxSummary.length ? { head: ["GST rate", "Taxable", ...(inter ? ["IGST"] : ["CGST", "SGST"]), "Total GST"], rows: I.taxSummary.map(r => [pct(r.rate), inrx(r.taxable), ...(inter ? [inrx(r.igst)] : [inrx(r.cgst), inrx(r.sgst)]), inrx(r.tax)]) } : null,

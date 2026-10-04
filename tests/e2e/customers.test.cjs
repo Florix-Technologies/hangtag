@@ -110,10 +110,26 @@ let fails = 0; const check = (n, ok, i) => { if (!ok) fails++; console.log((ok ?
   check("another account on this phone sees none of this shop's customers", iso.b === 0 && iso.a === 3, iso);
 
   // ---------- phone ----------
-  await p.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true }); await sleep(1000);   // (reloads the page)
-  await init(); await run('setTab("customers");renderAll()'); await sleep(300);
-  const nav = await p.$eval('.nav [data-tab="customers"]', (e) => { const r = e.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height), vis: r.width > 0 }; });
-  check('phone: the Customers tab fits in the tab bar', nav.vis && nav.h >= 44, nav);
+  await p.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
+  // Changing the mobile/touch emulation can reload Chrome; navigate explicitly so the hooked test page is ready.
+  await p.goto('http://localhost:3210/', { waitUntil: 'domcontentloaded' });
+  await p.waitForFunction(() => typeof window.__ev === 'function', { timeout: 15000 });
+  await init(); await run('setTab("home");renderAll()'); await sleep(300);
+  const phoneNav = await p.$$eval('.nav > button', (buttons) => buttons.map((e) => {
+    const r = e.getBoundingClientRect();
+    return { label: e.textContent.trim(), w: Math.round(r.width), h: Math.round(r.height), vis: r.width > 0 && r.height > 0 };
+  }).filter((e) => e.vis));
+  check('phone: the primary navigation is Home, Sell, Stock and More', JSON.stringify(phoneNav.map((e) => e.label)) === '["Home","Sell","Stock","More"]', phoneNav);
+  check('phone: every primary navigation item is a proper touch target', phoneNav.length === 4 && phoneNav.every((e) => e.h >= 44), phoneNav);
+  await p.tap('.nav [data-navmore]'); await sleep(200);
+  const customerGroup = await p.$eval('.navsheet [data-tab="customers"]', (e) => ({
+    label: e.textContent.trim(),
+    group: e.closest('.navgrp')?.querySelector('h4')?.textContent.trim() || '',
+    h: Math.round(e.getBoundingClientRect().height),
+  }));
+  check('phone: Customers is discoverable in its grouped More destination', customerGroup.label === 'Customers' && customerGroup.group === 'Customers' && customerGroup.h >= 44, customerGroup);
+  await p.tap('.navsheet [data-tab="customers"]'); await sleep(300);
+  check('phone: More opens the Customers page', await run('return prefs.tab==="customers"') && await p.$eval('#v-customers', (e) => !e.hidden));
   check('phone: the page fits the width', await p.evaluate(() => document.documentElement.scrollWidth - window.innerWidth) <= 1);
   const card = await p.$eval('#custList .custcard', (e) => Math.round(e.getBoundingClientRect().height));
   check('phone: customer rows are big touch targets', card >= 56, card);

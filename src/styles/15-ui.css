@@ -191,8 +191,9 @@ button.orow:hover,a.orow:hover,.orow.tap:hover{background:var(--wash)}
 .neg{color:var(--crit)}.pos{color:var(--good-ink)}
 
 /* ---------- toast ---------- */
-#toastHost .toast{position:fixed;left:50%;bottom:calc(var(--tabbar) + 132px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:70;background:var(--ink);color:#fff;border-radius:var(--r-md);padding:10px 10px 10px 16px;display:flex;align-items:center;gap:14px;font-size:14px;font-weight:500;box-shadow:var(--shadow-lg);width:max-content;max-width:calc(100% - 32px);animation:toastup .2s ease}
-#toastHost .toast button{border:1px solid rgba(255,255,255,.4);color:#fff;border-radius:var(--r-xs);padding:5px 12px;font-weight:700;font-size:13px}
+/* A toast only reports: taps pass through it to what it covers (a sheet's buttons); only its Undo button takes a tap */
+#toastHost .toast{pointer-events:none;position:fixed;left:50%;bottom:calc(var(--tabbar) + 132px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:70;background:var(--ink);color:#fff;border-radius:var(--r-md);padding:10px 10px 10px 16px;display:flex;align-items:center;gap:14px;font-size:14px;font-weight:500;box-shadow:var(--shadow-lg);width:max-content;max-width:calc(100% - 32px);animation:toastup .2s ease}
+#toastHost .toast button{pointer-events:auto;border:1px solid rgba(255,255,255,.4);color:#fff;border-radius:var(--r-xs);padding:5px 12px;font-weight:700;font-size:13px}
 @media (min-width:1000px){#toastHost .toast{bottom:28px}}
 
 @keyframes up{from{transform:translateY(14px);opacity:.5}to{transform:none;opacity:1}}

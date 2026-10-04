@@ -107,7 +107,8 @@ export function docPdfBytes(m,o={}){
   text(fit(m.seller.name,250,13),lx,y-12,13,true);
   let sy=y-26; (m.seller.lines||[]).filter(Boolean).forEach(l=>{ text(fit(l,250,8),lx,sy,8,false,GRAY); sy-=10; });
   rtext(fit(String(m.title||"").toUpperCase(),220,16),PW-PM,y-14,16,true,minimal?INK:ACC);
-  let my=y-30; (m.meta||[]).filter(r=>r&&r[1]).forEach(([k,v])=>{ rtext(fit(v,120,8.5),PW-PM,my,8.5,true); rtext(k,PW-PM-128,my,8.5,false,GRAY); my-=11; });
+  // a long value wraps onto the next line instead of losing its end (a place of supply keeps its state code)
+  let my=y-30; (m.meta||[]).filter(r=>r&&r[1]).forEach(([k,v])=>{ wrap(v,120,8.5).forEach((l,i)=>{ rtext(l,PW-PM,my,8.5,true); if(!i) rtext(k,PW-PM-128,my,8.5,false,GRAY); my-=11; }); });
   y=Math.min(sy,my,y-(logo?52:30))-6;
   if(classic){ line(PM,y,PW-PM,y,1.2,ACC); line(PM,y-2.5,PW-PM,y-2.5,0.5,ACC); y-=10; } else { line(PM,y,PW-PM,y,minimal?0.6:1.6,minimal?"0.84 0.85 0.89":ACC); y-=12; }
   if(m.cancelled){ box(PM,y-18,PW-2*PM,18,"0.99 0.93 0.93"); text("CANCELLED"+(m.cancelled===true?"":" - "+m.cancelled),PM+8,y-12.5,9,true,"0.79 0.21 0.21"); y-=26; }

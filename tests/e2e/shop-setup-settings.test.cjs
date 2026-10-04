@@ -79,16 +79,21 @@ const USER=(extra)=>`({user:Object.assign({id:'u1',email:'raj@example.com',creat
     // settings
     await A.click('#acctBtn');await A.click('[data-am="settings"]');await sleep(200);
     check('settings open with your details filled in',(await A.$eval('#ps_shop_name',e=>e.value))==='Raj Boutique'&&(await A.$eval('#ps_gstin',e=>e.value))==='27ABCDE1234F1Z5');
+    // your account (email, how you sign in) is under Team & Devices
+    await A.click('.setlist [data-setgo="devices"]');await sleep(150);
     check('settings: account info (email, method, member since)',(await txt(A,'#kvEmail'))==='raj@example.com'&&(await txt(A,'#kvMethod'))==='Google'&&(await txt(A,'#kvSince'))==='15 January 2026',[await txt(A,'#kvMethod'),await txt(A,'#kvSince')]);
     await A.screenshot({path:SHOT+'e7-settings.png',fullPage:false});
+    await A.click('.setlist [data-setgo="business"]');await sleep(150);
     await type(A,'#ps_shop_name','Raj Fashion House');await type(A,'#ps_city','Mumbai');
     await run(A,`window.__calls=[]`);
     await A.click('#profileSave');await sleep(500);
     const up2=await A.evaluate(()=>{const c=__calls.find(c=>c.t==='hangtag_profiles'&&c.ops[0][0]==='upsert');return c&&c.ops[0][1][0]});
     check('settings: changes saved',up2&&up2.shop_name==='Raj Fashion House'&&up2.city==='Mumbai'&&!('onboarded_at' in up2&&up2.onboarded_at!==undefined&&false),up2);
     check('settings: header and welcome update right away',(await txt(A,'#welcome .ws'))==='Raj Fashion House · Mumbai'&&(await A.title())==='Raj Fashion House · Hangtag');
-    check('settings closed after save',(await A.$eval('#modalHost',e=>e.innerHTML))==='');
-    // welcome can be hidden for the day
+    // Settings is a page: saving keeps you on it and says so
+    check('settings: saved in place (still on the Settings page, "Profile saved." shown)',await vis(A,'#v-settings .setpage')&&/Profile saved/.test(await txt(A,'#toastHost')||'')&&(await A.$eval('#ps_shop_name',e=>e.value))==='Raj Fashion House');
+    // welcome (on Home) can be hidden for the day
+    await A.click('.nav [data-tab="home"]');await sleep(150);
     await A.click('[data-welcome-close]');await sleep(100);
     check('welcome line can be hidden for today',!(await vis(A,'#welcome')));
     // sign out from the menu
@@ -105,6 +110,7 @@ const USER=(extra)=>`({user:Object.assign({id:'u1',email:'raj@example.com',creat
     check('complete profile: no setup screen, till opens',!(await vis(A,'#setupGate'))&&!(await vis(A,'#authGate')));
     check('email account: greeting uses the saved name',/Meera$/.test(await txt(A,'#welcome b')||''));
     await A.click('#acctBtn');await A.click('[data-am="settings"]');await sleep(200);
+    await A.click('.setlist [data-setgo="devices"]');await sleep(150);
     check('email account: settings show "Email and password"',(await txt(A,'#kvMethod'))==='Email and password');
     await ctx.close();
 

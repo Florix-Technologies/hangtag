@@ -1,6 +1,6 @@
 /* Sell screen: product grid, sheets, bill panel, mobile bill bar, toast and tooltip. */
 /* ---------- sell ---------- */
-.sell{display:grid;gap:24px}
+.sell{display:grid;gap:24px;grid-template-columns:minmax(0,1fr)}   /* one column that never grows past the screen (the category chips scroll inside their row) */
 @media (min-width:1000px){.sell{grid-template-columns:minmax(0,1fr) 380px;align-items:start}}
 /* search with scan and voice inside it, the Grid / List switch */
 .sellbar{display:flex;gap:10px;align-items:center;margin-bottom:12px}
@@ -9,12 +9,12 @@
 .search input:hover{border-color:var(--ink-3)}
 .search input:focus{border-color:var(--accent);outline:none;box-shadow:var(--ring)}
 .sellsearch input{padding-right:132px}
-.sellsearch .sb-ic{position:absolute;top:50%;transform:translateY(-50%);display:inline-flex;align-items:center;justify-content:center;gap:6px;height:34px;min-width:34px;padding:0 8px;border-radius:var(--r-sm);color:var(--ink-2);font-weight:600;font-size:13.5px;transition:background var(--t-fast),color var(--t-fast)}
+.sellsearch .sb-ic{position:absolute;top:50%;transform:translateY(-50%);display:inline-flex;align-items:center;justify-content:center;gap:6px;height:40px;min-width:40px;padding:0 9px;border-radius:var(--r-sm);color:var(--ink-2);font-weight:600;font-size:13.5px;transition:background var(--t-fast),color var(--t-fast)}
 .sellsearch .sb-ic:hover{background:var(--wash);color:var(--ink)}
 .sellsearch .scanbtn{right:5px;border:1px solid var(--line)}
 .sellsearch .voicebtn{right:92px}
 .sellsearch:has(.voicebtn[hidden]) input{padding-right:96px}
-@media (max-width:599px){.sellsearch .scanbtn span{display:none}.sellsearch .voicebtn{right:46px}.sellsearch input{padding-right:88px}.sellsearch:has(.voicebtn[hidden]) input{padding-right:50px}.sellbar .seg{display:none}}
+@media (max-width:599px){.sellsearch input{min-height:48px}.sellsearch .sb-ic{height:44px;min-width:44px;padding:0}.sellsearch .scanbtn{right:2px}.sellsearch .scanbtn span{display:none}.sellsearch .voicebtn{right:48px}.sellsearch input{padding-right:94px}.sellsearch:has(.voicebtn[hidden]) input{padding-right:52px}.sellbar .seg{display:none}}
 .catrow{display:flex;align-items:center;gap:12px;margin:0 0 14px}
 .catrow:has(.catchips:empty) .kbdlink{margin-top:-6px}
 .catchips{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;flex:1;min-width:0;padding:1px}

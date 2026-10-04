@@ -77,6 +77,8 @@ const vid=(c,s)=>`const p=products().find(x=>x.name==="Street Tee");return p.var
     // ---------------- TEST 5: return Black/L x1 ----------------
     const bl0=await run(A,`return stockOf(${JSON.stringify(ids.BL)})`);
     await run(A,`openBillView(${JSON.stringify(sid)})`);await sleep(150);
+    // Return / exchange is in the bill's Actions menu
+    await A.click(`[data-menu="bill-${sid}"]`);await sleep(100);
     await A.click(`[data-return="${sid}"]`);await sleep(150);
     await A.click('[data-rtp="0"]');await sleep(100);
     await A.screenshot({path:SHOT+'t12_return.png'});

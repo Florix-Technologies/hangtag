@@ -371,6 +371,9 @@ console.log('=== shop A and shop B never meet ===');
     await db.query(`INSERT INTO public.hangtag_webhook_secrets (endpoint_id, owner_id, secret) VALUES ($1, $2, $3)`, [ep, owner, 'whsec_' + String(n).repeat(64)]);
     await db.query(`INSERT INTO public.hangtag_webhook_events (owner_id, id, type, event_key, payload) VALUES ($1, $2, 'sale.completed', 's1', '{}')`, [owner, ev]);
     await db.query(`INSERT INTO public.hangtag_webhook_deliveries (owner_id, endpoint_id, event_id) VALUES ($1, $2, $3)`, [owner, ep, ev]);
+    // bank accounts and their entries (section 3s)
+    await db.query(`INSERT INTO public.hangtag_bank_accounts (owner_id, id, name, opening, is_default, methods) VALUES ($1, 'ba1', 'Current account', 1000, true, '{upi}')`, [owner]);
+    await db.query(`INSERT INTO public.hangtag_bank_moves (owner_id, id, account_id, type, amount, reason, t) VALUES ($1, 'bm1', 'ba1', 'in', 250, 'Deposit', 1)`, [owner]);
   }
   await db.exec(`SET session_replication_role = DEFAULT`);
   // the webhook secrets are read by nobody in the app (only the dispatch function, with the service role)
@@ -391,7 +394,7 @@ console.log('=== shop A and shop B never meet ===');
     const n = await count(db, CA, t, `WHERE owner_id = '${B}'`);
     if (n) leaks.push(`A cashier sees ${n} of B's ${t}`);
   }
-  check(`shop A has rows in every one of the ${tables.length} shop tables (so the check below means something)`, empty.length === 0 && tables.length === 46, empty);
+  check(`shop A has rows in every one of the ${tables.length} shop tables (so the check below means something)`, empty.length === 0 && tables.length === 48, empty);
   check('no one from shop B (owner or cashier), nor an outsider, sees any row of shop A in any table; nor A\'s cashier any of B\'s', leaks.length === 0, leaks);
   check('B sees none of A\'s team, and A none of B\'s', (await count(db, B, 'hangtag_members', `WHERE shop_id = '${A}'`)) === 0 && (await count(db, A, 'hangtag_members', `WHERE shop_id = '${B}'`)) === 0
     && (await count(db, CB, 'hangtag_members')) === 1);

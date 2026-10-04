@@ -35,6 +35,7 @@ import { flushSbQueue } from '../features/sync/services/outbox.js';
 import { sendPendingDocs } from '../features/inventory/use-cases/import-supplier-bill.js';
 import { processQuoteSends } from '../features/orders/use-cases/send-quotation.js';
 import { rememberReceiptPage } from '../features/shop/use-cases/receipt-page.js';
+import { installMenus } from '../shared/ui/kit.js';
 
 installContainer();    // ports first: everything below may use them
 installNavigation();   // the render bus (shared/ui/render.js) now reaches this app shell
@@ -49,6 +50,7 @@ installAccountMenuEvents();
 installSyncStatusTimer();
 installSyncRetryTimer();
 installTooltips();
+installMenus();       // every record's and document's "More actions" menu
 installDomEvents();
 installKeyboard();
 installWindowEvents();

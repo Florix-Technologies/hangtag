@@ -1,4 +1,4 @@
-// Settings → Receipt → Quotations: the quotation document's light template — its title, number prefix, footer, the terms
+// Settings → Billing & Documents → Quotations: the quotation document's light template — its title, number prefix, footer, the terms
 // a new quotation starts with, a signature line and whether GST is shown. Part of the shop's synced settings
 // (settings.quote*); shown to a shop that makes quotations. Also on Receipt: the page invoice links open (the owner's
 // app keeps it; use-cases/receipt-page.js in the shop feature).

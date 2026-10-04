@@ -11,5 +11,7 @@ export const DEFAULT_SETTINGS={lowStock:3,taxOn:false,taxRate:5,taxIncl:true,pre
   expiryDays:30,sellExpired:false,
   // quotations: the document's title, number prefix, footer, default terms for a new quotation, signature line, GST shown
   quoteTitle:"QUOTATION",quotePrefix:"QT",quoteFooter:"",quoteTerms:"",quoteSignature:"",quoteGst:true,
+  // Smart reorder's planning (domain/inventory/inventory-intelligence.js): supplier lead time, safety stock, days an order covers
+  reorder:{leadDays:7,safetyDays:3,targetCoverDays:21},
   // the receipt page of the app the owner uses (https …/receipt.html): invoice links open it unless the server sets RECEIPT_URL
   receiptUrl:""};

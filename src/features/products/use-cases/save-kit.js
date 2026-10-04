@@ -20,7 +20,7 @@ export function saveKit(input){
   const repo = productRepository(), old = input && input.id ? repo.get(input.id) : null;
   if(input.id && !old) return { error: "That kit isn't on this device." };
   if(old && !isKit(old)) return { error: "That product isn't a kit." };
-  if(!old && !hasCap("uses_bundles")) return { error: "Kits are switched off for this shop. Switch them on in Settings → Capabilities first." };
+  if(!old && !hasCap("uses_bundles")) return { error: "Kits are switched off for this shop. Switch them on in Settings → Business → Features first." };
   const id = old ? old.id : "p" + uid(), bundle = cleanBundle(input.bundle);
   const name = String(input.name || "").trim().replace(/\s+/g, " "), price = +String(input.price == null ? "" : input.price).replace(/[₹,\s]/g, "");
   const bad = checkBundle({ id, name, price, bundle }, v => vRec(v), trackingOfP); if(bad) return bad;

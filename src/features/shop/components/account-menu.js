@@ -32,6 +32,7 @@ export function renderAccount(){
   b.title = isMember() ? "Signed in as " + signedInAs() : "Signed in as " + displayName() + (displayName() !== email ? " (" + email + ")" : "");
   b.setAttribute("aria-label", "Account: " + displayName());
   document.title = (store.profile && store.profile.shop_name ? store.profile.shop_name + " · " : "") + "Hangtag";
+  const sn = aEl("shopName"); if(sn) sn.textContent = (isMember() && store.access.shopName) || (store.profile && store.profile.shop_name) || "";
   renderWelcome();
 }
 export function renderWelcome(){
@@ -56,7 +57,7 @@ export function openAcctMenu(){
   const m = aEl("acctMenu"), email = (store.authUser && store.authUser.email) || storage.get("hangtag_auth_email", "");
   m.innerHTML = '<div class="am-head"><span class="avatar lg">' + avatarHTML() + '</span><div><b></b><span class="ame"></span><span class="ams"></span></div></div>' +
     cashDrawerHTML() +
-    '<button type="button" role="menuitem" data-am="settings">Profile &amp; shop settings</button>' +
+    '<button type="button" role="menuitem" data-am="settings">Settings</button>' +
     '<button type="button" role="menuitem" data-am="backup">Download backup</button>' +
     '<hr><button type="button" role="menuitem" data-am="signout" class="danger">Sign out</button>';
   m.querySelector("b").textContent = displayName();

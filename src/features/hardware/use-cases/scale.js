@@ -1,4 +1,4 @@
-// This device's weighing scale: save its settings, connect and disconnect it (Settings → Hardware). The settings stay on
+// This device's weighing scale: save its settings, connect and disconnect it (Settings → Team & Devices). The settings stay on
 // this device (each counter has its own scale). Whoever sells or runs the shop's settings may set it up.
 import { checkScaleSettings } from '../../../domain/shop/scale-settings.js';
 import { store } from '../../../shared/state/store.js';

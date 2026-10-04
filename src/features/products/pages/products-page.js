@@ -42,7 +42,6 @@ export function renderProducts(){
   if(!all.length)h+=`<div class="empty"><b>No products yet</b><p>Add each product with its colours, sizes and how many pieces you have of each.</p><div class="row c"><button class="btn primary" data-act="addp">Add a product</button><button class="btn" data-act="examples">Load example products</button></div></div>`;
   else if(!list.length)h+=`<p class="muted">${store.prodView==="archived"?"No archived products.":"No products match."}</p>`;
   else h+=`<div class="plist2">${list.map(productCardHTML).join("")}</div>`;
-  h+=`<div class="card datacard"><div class="card-h"><div><h3>Backup &amp; restore</h3><p class="note">Download everything — products, variants, stock history, bills, returns, customers, photos and settings — as one file. Restoring checks the file and shows you what it will add first.</p></div></div><div class="row" style="justify-content:flex-start;flex-wrap:wrap;gap:8px"><button class="btn sm" data-act="backup">Download backup (.json)</button><label class="btn sm" for="restoreIn">Restore from backup</label><input id="restoreIn" class="sr" type="file" accept="application/json,.json" data-restore></div></div>`;
   const host=$("#prodBody"),a=document.activeElement,keep=a&&a.id==="prodSearch"?a.selectionStart:null;
   host.innerHTML=h;
   if(keep!=null){const i=$("#prodSearch");i.focus();i.setSelectionRange(keep,keep)}

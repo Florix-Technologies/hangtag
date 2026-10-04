@@ -35,7 +35,7 @@ export function saveProduct({ draft }){
   // it is tracked changes only while it has no stock (pieces already in hand have no serials or batch to go by)
   const trk=trackingFromChoice(e.tracking), wasTrk=cleanTracking(old&&old.tracking);
   // a capability the shop has switched off can't be started on a product (one already using it keeps working)
-  const capOff=(cap,what)=>({error:`${what} ${what.endsWith("s")?"are":"is"} switched off for this shop. Switch it on in Settings → Capabilities first.`,cap});
+  const capOff=(cap,what)=>({error:`${what} ${what.endsWith("s")?"are":"is"} switched off for this shop. Switch it on in Settings → Business → Features first.`,cap});
   if(trk.tracking==="serial"&&wasTrk!=="serial"&&!hasCap("uses_serials")) return capOff("uses_serials","Serial numbers");
   if(trk.tracking==="batch"&&wasTrk!=="batch"&&!hasCap("uses_batches")) return capOff("uses_batches","Batch tracking");
   if(trk.expiry&&!(old&&old.expiry)&&!hasCap("uses_expiry")) return capOff("uses_expiry","Expiry dates");

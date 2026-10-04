@@ -3,9 +3,9 @@
 import { ROLE_DEFAULTS } from './permissions.js';
 
 export const MOBILE_MODULE_ORDER = Object.freeze({
-  owner: ['home', 'sell', 'report', 'stock', 'customers', 'orders', 'products', 'tables', 'kitchen', 'assistant', 'settings'],
-  manager: ['home', 'report', 'stock', 'orders', 'customers', 'products', 'tables', 'kitchen', 'assistant', 'sell', 'settings'],
-  cashier: ['sell', 'orders', 'customers', 'home', 'settings'],
+  owner: ['home', 'sell', 'report', 'stock', 'customers', 'orders', 'products', 'tables', 'kitchen', 'assistant', 'store', 'team', 'settings'],
+  manager: ['home', 'report', 'stock', 'orders', 'customers', 'products', 'tables', 'kitchen', 'assistant', 'store', 'sell', 'settings'],
+  cashier: ['sell', 'tables', 'orders', 'customers', 'home', 'settings'],
   server: ['tables', 'orders', 'home', 'settings'],
   kitchen: ['kitchen', 'settings'],
 });
@@ -39,6 +39,24 @@ export function mobileLandingModule(role, modules, permissions, current){
   if(list.some(def => def.id === current && def.view !== false)) return current;
   const first = list.find(def => def.view !== false);
   return first ? first.id : null;
+}
+
+/* The phone tab bar: three places and "More". A shop: Home · Sell · Stock; a restaurant (one with Tables): Home · Tables ·
+   Kitchen; each role its own (a cashier sells and looks up customers, a server takes table orders, the kitchen cooks).
+   A place the shop or the role doesn't have goes to the next module the role uses on a phone. */
+export const PHONE_BAR = Object.freeze({
+  owner: { shop: ['home', 'sell', 'stock'], restaurant: ['home', 'tables', 'kitchen'] },
+  manager: { shop: ['home', 'sell', 'stock'], restaurant: ['home', 'tables', 'kitchen'] },
+  cashier: { shop: ['home', 'sell', 'customers'], restaurant: ['home', 'tables', 'sell'] },
+  server: { shop: ['home', 'tables', 'orders'], restaurant: ['home', 'tables', 'orders'] },
+  kitchen: { shop: ['kitchen'], restaurant: ['kitchen'] },
+});
+/* ids: the modules this person may open on a phone (mobileModulesFor), in its order. → the bar's module ids, at most `room` */
+export function phoneBarFor(role, restaurant, ids, room = 3){
+  const have = Array.isArray(ids) ? ids : [], want = (PHONE_BAR[role] || PHONE_BAR.owner)[restaurant ? 'restaurant' : 'shop'];
+  const bar = want.filter(id => have.includes(id));
+  for(const id of have){ if(bar.length >= room) break; if(!bar.includes(id) && id !== 'settings') bar.push(id); }
+  return bar.slice(0, room);
 }
 
 export function orderMobileActions(role, actions){

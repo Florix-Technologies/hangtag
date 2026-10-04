@@ -30,6 +30,17 @@ export function checkExpirySettings(input){
   if(String(input.expiryDays==null?"":input.expiryDays).trim()===""||!Number.isInteger(d)||d<0||d>365) return {error:"Warn from 0 to 365 days before expiry (a whole number)."};
   return {patch:{expiryDays:d,sellExpired:!!input.sellExpired}};
 }
+/* input: { leadDays, safetyDays, targetCoverDays } — Smart reorder's planning: the days a supplier takes to deliver, the
+   days of extra stock kept in hand, and the days of sales one order should cover (at least lead + safety) */
+export function checkReorderSettings(input){
+  const day=(v,min,max)=>{const s=String(v==null?"":v).trim(),n=+s;return s!==""&&Number.isInteger(n)&&n>=min&&n<=max?n:null;};
+  const lead=day(input.leadDays,0,120),safety=day(input.safetyDays,0,120),cover=day(input.targetCoverDays,1,365);
+  if(lead==null) return {error:"Supplier lead time: a whole number of days from 0 to 120."};
+  if(safety==null) return {error:"Safety stock: a whole number of days from 0 to 120."};
+  if(cover==null) return {error:"An order covers 1 to 365 days of sales."};
+  if(cover<lead+safety) return {error:`An order should cover at least the lead time plus safety stock (${lead+safety} days).`};
+  return {patch:{reorder:{leadDays:lead,safetyDays:safety,targetCoverDays:cover}}};
+}
 /* input: { b2clLimit } — the invoice value above which an inter-state B2C invoice is "B2C large" */
 export function checkGstSettings(input){
   const n=+input.b2clLimit;

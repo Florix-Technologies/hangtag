@@ -275,7 +275,7 @@
 /**
  * "weightScale": a weighing scale on this device. Implementation: infrastructure/hardware/weight-scale.js — a scale on a
  * cable through Web Serial (any scale that prints "a number and a unit"; baud rate, bare-number unit and an optional
- * request command from Settings → Hardware, store.scale), else the manual provider (the weight is typed). Reach it through
+ * request command from Settings → Team & Devices, store.scale), else the manual provider (the weight is typed). Reach it through
  * features/hardware/services/scale.js. Nothing here throws: failures come back as { error } with a message a person can
  * act on, and typing the weight is always possible.
  * @typedef {Object} WeightScalePort

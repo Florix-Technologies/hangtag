@@ -1,105 +1,88 @@
-/* Design tokens, app bar, layout, buttons and product thumbnails. */
-:root{
-  color-scheme:light;
-  --bg:#FFFFFF; --wash:#F5F6F8; --wash-2:#ECEEF2;
-  --line:#E6E8EE; --line-2:#D3D6DF;
-  --ink:#10131F; --ink-2:#4A4F62; --ink-3:#80859A;
-  --accent:#1F5FBF; --accent-soft:#EAF2FD;
-  --s1:#2A78D6; --s1-track:#DCEAFB;
-  --s-upi:#2A78D6; --s-cash:#1BAF7A; --s-card:#EB6834;
-  --b-upi:#1C5CAB; --b-cash:#0D7652; --b-card:#B4481D;
-  --warn:#FAB219; --warn-ink:#8A5A00; --warn-soft:#FFF6DF; --warn-track:#FCE7B4;
-  --crit:#D03B3B; --crit-soft:#FDEDED; --crit-track:#F6D5D5;
-  --good:#0CA30C; --good-ink:#006300; --good-soft:#ECF8EC;
-  --grid:#EEF0F4; --axis:#C6CAD4;
-  --h1:#CDE2FB; --h2:#9EC5F4; --h3:#6DA7EC; --h4:#3987E5; --h5:#256ABF; --h6:#184F95;
-  --shadow-sm:0 1px 2px rgba(16,19,31,.06);
-  --shadow:0 1px 2px rgba(16,19,31,.04),0 6px 20px rgba(16,19,31,.06);
-  --shadow-lg:0 14px 44px rgba(16,19,31,.18);
-  --font:"Instrument Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-}
-*{box-sizing:border-box}
-html,body{background:var(--bg)}
-body{color:var(--ink);font-family:var(--font);font-size:15px;line-height:1.45;-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent}
-button,input,select,textarea{font:inherit;color:inherit}
-button{cursor:pointer;background:none;border:0;padding:0;text-align:inherit}
-button:disabled{cursor:default}
-:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.sr{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
-.tnum{font-variant-numeric:tabular-nums}
-.muted{color:var(--ink-3);font-size:14px;margin:4px 0}
-.cond{font-stretch:75%}
-kbd{font-family:inherit;font-size:11.5px;font-weight:700;border:1px solid var(--line-2);border-bottom-width:2px;border-radius:5px;padding:0 5px;background:var(--bg);color:var(--ink-2)}
-.eyebrow{font-stretch:75%;font-weight:700;font-size:12.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);line-height:1.2}
-.szl{display:inline-block;font-stretch:75%;font-weight:700;font-size:13px;letter-spacing:.03em;line-height:1.35;border:1px solid var(--line-2);border-radius:4px;padding:0 5px;color:var(--ink);background:var(--bg);vertical-align:1px}
-.ic{flex:none;vertical-align:-3px}
+/* App shell: the top bar, the navigation (a sidebar on a desktop, a tab bar on a phone or tablet, with "More"), the page
+   layout and page headers, and product thumbnails. Tokens: 00-base.css. Components: 15-ui.css. */
 
-/* ---------- app bar ---------- */
-.appbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:30;background:rgba(255,255,255,.94);-webkit-backdrop-filter:saturate(1.5) blur(12px);backdrop-filter:saturate(1.5) blur(12px);border-bottom:1px solid var(--line)}
-.appbar-in{max-width:1320px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:10px 16px;flex-wrap:wrap}
-.brand{display:flex;align-items:center;gap:9px;margin-right:auto}
+/* ---------- top bar ---------- */
+.appbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:30;background:rgba(255,255,255,.96);-webkit-backdrop-filter:saturate(1.4) blur(12px);backdrop-filter:saturate(1.4) blur(12px);border-bottom:1px solid var(--line)}
+.appbar-in{display:flex;align-items:center;gap:10px;min-height:56px;padding:8px 16px}
+.brand{display:flex;align-items:center;gap:10px;margin-right:auto;min-width:0}
 .brand svg{width:26px;height:26px;flex:none}
-.wordmark{font-stretch:75%;font-weight:700;font-size:22px;letter-spacing:.07em;text-transform:uppercase;line-height:1}
-.nav{order:3;width:100%;display:flex;gap:3px;background:var(--wash);padding:4px;border-radius:12px}
-.nav button{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;padding:8px 6px;border-radius:9px;font-weight:600;font-size:14px;color:var(--ink-2);transition:background .15s,color .15s}
-.nav button svg{width:18px;height:18px;flex:none}
-.nav button:hover{color:var(--ink)}
-.nav button[aria-selected="true"]{background:var(--bg);color:var(--ink);box-shadow:0 0 0 1px var(--line),var(--shadow-sm)}
-.sync{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;color:var(--ink-2);padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:var(--bg);white-space:nowrap;cursor:pointer;transition:border-color .15s,background .15s}
-.sync:hover{border-color:var(--ink-3);background:var(--wash)}
+.wordmark{font-stretch:75%;font-weight:700;font-size:21px;letter-spacing:.07em;text-transform:uppercase;line-height:1}
+.shopname{min-width:0;padding-left:10px;border-left:1px solid var(--line);font-size:var(--fs-sm);font-weight:600;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:32ch}
+.shopname:empty{display:none}
+.sync{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;color:var(--ink-2);padding:6px 10px;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--bg);white-space:nowrap;cursor:pointer;transition:border-color var(--t-fast),background var(--t-fast)}
+.sync:hover{border-color:var(--line-2);background:var(--wash)}
 .sync i{width:8px;height:8px;border-radius:50%;background:var(--ink-3)}
 .sync.ok i{background:var(--good)} .sync.wait i{background:var(--warn);animation:pulse 1.2s infinite} .sync.off i{background:var(--crit)}
 @keyframes pulse{0%{opacity:1}50%{opacity:.3}100%{opacity:1}}
-@media (min-width:1000px){
-  .appbar-in{padding:12px 28px}
-  .brand{margin-right:18px}
-  .nav{order:0;width:auto;margin-right:auto}
-  .nav button{flex:none;padding:8px 16px}
-}
 @media (max-width:599px){
-  .nav button{flex-direction:column;gap:3px;padding:7px 2px 6px;font-size:12px}.nav button svg{width:20px;height:20px}
-  .wordmark{font-size:19px;letter-spacing:.05em}.brand svg{width:22px;height:22px}
-  .sync{font-size:12px;padding:5px 9px}
+  .appbar-in{min-height:52px;padding:6px 12px;gap:8px}
+  .wordmark{font-size:18px;letter-spacing:.05em}.brand svg{width:22px;height:22px}
+  .brand .wordmark:has(+ .shopname:not(:empty)){display:none}
+  .shopname{border-left:0;padding-left:0;font-size:15px;font-weight:700;color:var(--ink);max-width:16ch}
+  .sync{font-size:12px;padding:5px 8px}
 }
 
-/* ---------- layout ---------- */
-.wrap{max-width:1320px;margin:0 auto;padding-inline:16px;padding-block:20px 190px}
-@media (min-width:1000px){.wrap{padding-inline:28px;padding-block:28px 64px}}
-.viewhead{display:flex;align-items:flex-end;justify-content:space-between;gap:12px 20px;flex-wrap:wrap;margin-bottom:18px}
-.vt{font-size:24px;font-weight:700;letter-spacing:-.02em;margin:0;line-height:1.15;text-wrap:balance}
-.viewhead p{margin:5px 0 0;color:var(--ink-2);font-size:14px;max-width:64ch}
-.card{background:var(--bg);border:1px solid var(--line);border-radius:16px;padding:16px}
-.card.flush{padding:0;overflow:hidden}
-.card-h{display:flex;align-items:center;justify-content:space-between;gap:8px 12px;margin-bottom:14px;flex-wrap:wrap}
-.card.flush .card-h{padding:16px 16px 0}
-.card-h h3{margin:0;font-size:15.5px;font-weight:700;letter-spacing:-.01em}
-.note{font-size:12.5px;color:var(--ink-3)}
-.banner{display:flex;align-items:center;justify-content:space-between;gap:10px 16px;flex-wrap:wrap;background:var(--accent-soft);border:1px solid #D5E5FA;border-radius:12px;padding:10px 14px;font-size:14px;margin-bottom:16px}
-.empty{border:1px dashed var(--line-2);border-radius:16px;padding:32px 20px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:10px}
-.empty p{margin:0;color:var(--ink-2);max-width:48ch}
+/* ---------- navigation (app/navigation.js) ----------
+   One list of destinations. A desktop shows all of them in a sidebar, grouped; a phone or tablet shows the few in its tab
+   bar (.pb) and the rest in "More". [data-tab] opens a module; [data-navsub] a part of one (e.g. Purchases). */
+.nav{z-index:35;background:var(--bg)}
+.navi{display:flex;align-items:center;gap:10px;width:100%;min-height:38px;padding:8px 10px;border-radius:var(--r-sm);font-weight:600;font-size:var(--fs-body);color:var(--ink-2);text-align:left;transition:background var(--t-fast),color var(--t-fast)}
+.navi svg{width:19px;height:19px;flex:none;color:var(--ink-3);transition:color var(--t-fast)}
+.navi > span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.navi:hover{background:var(--wash);color:var(--ink)}
+.navi:hover svg{color:var(--ink-2)}
+.navi[aria-current="page"],.navi[aria-selected="true"]{background:var(--wash-2);color:var(--ink)}
+.navi[aria-current="page"] svg,.navi[aria-selected="true"] svg{color:var(--ink)}
+.navh{display:block;padding:14px 10px 4px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+.navmore{display:none}
+.navsep{flex:1}
+@media (min-width:1000px){
+  .nav{position:fixed;left:0;bottom:0;top:calc(57px + env(safe-area-inset-top,0px));width:var(--sidebar);display:flex;flex-direction:column;gap:1px;padding:12px 10px 16px;border-right:1px solid var(--line);overflow-y:auto;scrollbar-width:thin}
+  .nav .navi.pbonly{display:none}
+}
+@media (max-width:999px){
+  .nav{position:fixed;left:0;right:0;bottom:0;display:flex;align-items:stretch;justify-content:space-around;gap:2px;height:calc(var(--tabbar) + env(safe-area-inset-bottom,0px));padding:6px 6px calc(6px + env(safe-area-inset-bottom,0px));border-top:1px solid var(--line);box-shadow:0 -6px 24px rgba(17,20,32,.05)}
+  .nav .navh,.nav .navsep,.nav .navi:not(.pb){display:none}
+  .nav .navi,.nav .navmore{flex:1 1 0;max-width:120px;min-width:0;flex-direction:column;justify-content:center;gap:3px;min-height:0;padding:4px 2px;font-size:11.5px;font-weight:600;text-align:center;color:var(--ink-3);border-radius:var(--r-md)}
+  .nav .navmore{display:flex;align-items:center;order:9}
+  .nav .navi.pb{order:var(--pbo,0)}
+  .nav .navi svg,.nav .navmore svg{width:22px;height:22px;color:inherit}
+  .nav .navi:hover,.nav .navmore:hover{background:none;color:var(--ink)}
+  .nav .navi[aria-current="page"]{background:none;color:var(--ink-3)}
+  .nav .navi[aria-current="page"] svg{color:inherit}
+  .nav .navi.areaon,.nav .navmore[aria-current="page"]{background:none;color:var(--ink)}
+  .nav .navi.areaon svg,.nav .navmore[aria-current="page"] svg{background:var(--wash-2);border-radius:var(--r-sm);padding:2px 10px;width:22px;box-sizing:content-box;margin:-2px 0}
+}
+/* "More": every other destination, in groups */
+.navsheet{max-width:520px}
+.navgrp + .navgrp{margin-top:14px}
+.navgrp > h4{margin:0 0 6px;font-size:11.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+.navgrp .navlist{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:var(--r-lg);overflow:hidden;background:var(--bg)}
+.navitem{display:flex;align-items:center;gap:12px;width:100%;min-height:var(--tap);padding:10px 14px;font-weight:600;font-size:15px;color:var(--ink);text-align:left}
+.navitem + .navitem{border-top:1px solid var(--line)}
+.navitem svg{width:20px;height:20px;flex:none;color:var(--ink-2)}
+.navitem::after{content:"";margin-left:auto;width:8px;height:8px;border-right:2px solid var(--ink-3);border-top:2px solid var(--ink-3);transform:rotate(45deg);flex:none}
+.navitem:hover,.navitem:focus-visible{background:var(--wash)}
+.navitem[aria-current="page"]{background:var(--accent-soft)}
+.navitem small{display:block;font-weight:500;font-size:12.5px;color:var(--ink-3)}
+
+/* ---------- page layout ---------- */
+.wrap{max-width:1320px;margin:0 auto;padding-inline:16px;padding-block:18px calc(var(--tabbar) + 150px + env(safe-area-inset-bottom,0px))}
+@media (min-width:1000px){
+  .appbar-in{padding:8px 24px}
+  .wrap{max-width:1320px;margin:0 auto 0 var(--sidebar);padding:28px 32px 64px}
+}
+/* a very wide screen: the page centred in the room right of the sidebar */
+@media (min-width:1800px){.wrap{margin-left:calc(var(--sidebar) + (100vw - var(--sidebar) - 1320px) / 2)}}
+/* a page's header: title, one line of what it is for, its actions */
+.viewhead{display:flex;align-items:flex-end;justify-content:space-between;gap:12px 20px;flex-wrap:wrap;margin-bottom:var(--sp-5)}
+.vt{font-size:var(--fs-xl);font-weight:700;letter-spacing:-.02em;margin:0;line-height:1.15;text-wrap:balance}
+.viewhead p{margin:5px 0 0;color:var(--ink-2);font-size:var(--fs-sm);max-width:68ch;line-height:1.5}
+.viewhead .vh-acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+@media (min-width:1000px){.vt{font-size:26px}}
+@media (max-width:599px){.viewhead{margin-bottom:var(--sp-4)}.vt{font-size:20px}}
 .row{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .row.c{justify-content:center;flex-wrap:wrap}
-
-/* ---------- buttons ---------- */
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid var(--line-2);background:var(--bg);color:var(--ink);border-radius:10px;padding:9px 14px;font-weight:600;font-size:14px;white-space:nowrap;transition:border-color .15s,background .15s}
-.btn:hover:not(:disabled){border-color:var(--ink-3)}
-.btn.primary{background:var(--ink);border-color:var(--ink);color:#fff}
-.btn.primary:hover:not(:disabled){background:#23283B}
-.btn.accent{background:var(--accent);border-color:var(--accent);color:#fff}
-.btn.accent:hover:not(:disabled){background:#174EA6}
-.btn:disabled{opacity:.4}
-.btn.sm{padding:7px 12px;font-size:13.5px;border-radius:9px}
-.btn.xs{padding:5px 10px;font-size:12.5px;border-radius:8px}
-.btn.danger{color:var(--crit);border-color:#F0CACA}
-.btn.danger:hover:not(:disabled){background:var(--crit-soft)}
-.link{color:var(--accent);font-weight:600;font-size:13.5px;padding:4px 2px}
-.link.danger{color:var(--crit)}
-.link.xs{font-size:12.5px}
-.iconbtn{width:36px;height:36px;display:grid;place-items:center;border-radius:10px;color:var(--ink-2)}
-.iconbtn:hover{background:var(--wash)}
-.seg{display:inline-flex;background:var(--wash);border-radius:10px;padding:3px;gap:2px}
-.seg button{padding:6px 12px;border-radius:8px;font-size:13px;font-weight:600;color:var(--ink-2)}
-.seg button[aria-pressed="true"]{background:var(--bg);color:var(--ink);box-shadow:0 0 0 1px var(--line),var(--shadow-sm)}
 
 /* ---------- product thumbs ---------- */
 .ph{position:relative;display:block;flex:none;background:var(--wash)}
@@ -109,4 +92,3 @@ kbd{font-family:inherit;font-size:11.5px;font-weight:700;border:1px solid var(--
 .ph.sm{width:42px;height:42px;border-radius:9px}.ph.sm .ini{font-size:15px}
 .ph.md{width:60px;height:60px;border-radius:12px}.ph.md .ini{font-size:21px}
 .ph.lg{width:96px;height:96px;border-radius:14px}.ph.lg .ini{font-size:30px}
-

@@ -15,7 +15,7 @@ import { bizRepository } from '../repositories/biz-repository.js';
 
 const online = () => !!store.sbClient && store.sbStatus === "connected";
 const OFFLINE = { error: "Gift vouchers need the internet (the balance is checked in the cloud). Connect, then try again." };
-const off = () => hasCap("uses_vouchers") ? null : { error: "Gift vouchers are switched off for this shop. Switch them on in Settings → Capabilities." };
+const off = () => hasCap("uses_vouchers") ? null : { error: "Gift vouchers are switched off for this shop. Switch them on in Settings → Business → Features." };
 export const usesVouchers = () => hasCap("uses_vouchers");
 export const voucherList = () => bizRepository().list("gv").slice().sort((a, b) => b.t - a.t);
 export const voucherStatus = v => voucherState(v, dayKey(Date.now()));

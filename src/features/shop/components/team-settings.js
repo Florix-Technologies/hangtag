@@ -20,7 +20,7 @@ import { agoText } from '../../../shared/formatting/dates.js';
 import { HOME_URL } from '../../../shared/config/app-config.js';
 import { initials } from '../../../shared/utils/text.js';
 
-/* The owner's section in Profile & shop settings */
+/* The owner's section in Settings → Business */
 export function teamSectionHTML(){
   if(isMember() || !store.authUser) return "";
   return `<div class="setsec" id="teamSec"><h4>Team &amp; devices</h4><p class="note" style="margin:0">People who sell in your shop, each with their own sign-in and role. Their phones join with a QR code you show here. Shop code for staff: <b>${esc(shopCode(store.authUser.id))}</b></p>

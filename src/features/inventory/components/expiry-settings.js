@@ -1,4 +1,4 @@
-// Settings → Capabilities → Expiry: how many days before a batch expires it shows as "expiring soon", and whether expired
+// Settings → Products & Inventory: how many days before a batch expires it shows as "expiring soon", and whether expired
 // stock may still be sold (by default it can't: a bill takes only batches that haven't expired). Part of the shop's synced
 // settings (settings.expiryDays, settings.sellExpired); shown to a shop that keeps expiry dates or batches.
 import { store } from '../../../shared/state/store.js';

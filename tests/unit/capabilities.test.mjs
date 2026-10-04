@@ -189,24 +189,27 @@ const ids = () => shownModules().map((d) => d.id);
   check('9 tracking survives a backup restore (catalog upgrade)', cat.products[0].tracking === 'batch');
 }
 
-// ---------- 10: Team & devices and Roles & permissions for every business ----------
+// ---------- 10: the settings sections: Team & Devices for every business, the rest by role, features and type ----------
 {
-  check('10 the settings sections: Business, Capabilities, Receipt, Taxes, Team & devices, Roles & permissions, Selling, Hardware, Advanced, Account',
-    eq(SETTINGS_SECTIONS.map((s) => s.label), ['Business', 'Capabilities', 'Receipt', 'Taxes', 'Team & devices', 'Roles & permissions', 'Selling', 'Hardware', 'Advanced', 'Account']));
-  check('10 the owner of every type of business has Team & devices and Roles & permissions', BUSINESS_TYPE_KEYS.concat(['Clothing boutique', null]).every((t) => {
-    store.profile = { shop_name: 'S', business_type: t }; const k = settingsSections().map((s) => s.key); return k.includes('team') && k.includes('roles') && k.includes('advanced') && k.length === 10; }));
+  check('10 the settings sections: Business, Payments & Banks, Billing & Documents, Products & Inventory, Sales & Customers, Purchasing, Storefront, Restaurant, Team & Devices, Integrations, Advanced',
+    eq(SETTINGS_SECTIONS.map((s) => s.label), ['Business', 'Payments & Banks', 'Billing & Documents', 'Products & Inventory', 'Sales & Customers', 'Purchasing', 'Storefront', 'Restaurant', 'Team & Devices', 'Integrations', 'Advanced']));
+  check('10 the owner of every type of business has Team & Devices, Integrations and Advanced', BUSINESS_TYPE_KEYS.concat(['Clothing boutique', null]).every((t) => {
+    store.profile = { shop_name: 'S', business_type: t }; const k = settingsSections().map((s) => s.key); return ['business', 'payments', 'billing', 'devices', 'integrations', 'advanced'].every((x) => k.includes(x)); }));
+  store.profile = { shop_name: 'S', business_type: 'restaurant' };
+  check('10 a restaurant has the Restaurant section; a shop that takes sales orders has Storefront', settingsSections().some((s) => s.key === 'restaurant') && !settingsSections().some((s) => s.key === 'storefront'));
+  store.profile = { shop_name: 'S', business_type: 'retail' };
+  check('10 ...a retail shop: Storefront, no Restaurant', settingsSections().some((s) => s.key === 'storefront') && !settingsSections().some((s) => s.key === 'restaurant'));
   check('10 roles offered by type (one source): restaurant adds server and kitchen', eq(roleSuggestionsFor('restaurant'), ['manager', 'cashier', 'server', 'kitchen']) && eq(roleSuggestionsFor('Clothing boutique'), ['manager', 'cashier'])
     && eq(ROLE_SUGGESTIONS.grocery, ['manager', 'cashier']) && !('ROLE_SUGGESTIONS' in permissionsModule));
   store.authUser = { id: MEMBER, user_metadata: { staff: true } };
   setAccess({ userId: MEMBER, shopId: SHOP, role: 'cashier', perms: ROLE_DEFAULTS.cashier, overrides: {} });
-  // Selling is made only of parts (vouchers for a cashier): the settings screen hides it while none has anything to show
-  check('10 a cashier: Selling (its parts), Hardware and its own account (no team, no shop settings, no Advanced)', eq(settingsSections().map((s) => s.key), ['selling', 'hardware', 'account']));
+  check('10 a cashier: only Team & Devices (itself and this device): no shop settings, integrations or Advanced', eq(settingsSections().map((s) => s.key), ['devices']));
   setAccess({ userId: MEMBER, shopId: SHOP, role: 'custom', perms: ['view_products', 'manage_settings'], overrides: {} });
-  check('10 a member allowed to manage settings: the shop\'s settings, still no team screens or Advanced', eq(settingsSections().map((s) => s.key), ['business', 'capabilities', 'receipt', 'taxes', 'selling', 'hardware', 'account']));
-  registerSettingsPart('hardware', { id: 'scale', order: 20, perms: ['manage_settings'], html: () => '<div id="scaleSet"></div>' });
-  check('10 later batches add parts to a section (with their own permission)', settingsPartsHTML('hardware') === '<div id="scaleSet"></div>');
+  check('10 a member allowed to manage settings: the shop settings, still no Integrations or Advanced', eq(settingsSections().map((s) => s.key), ['business', 'payments', 'billing', 'inventory', 'sales', 'purchasing', 'storefront', 'devices']));
+  registerSettingsPart('devices', { id: 'scale', order: 20, perms: ['manage_settings'], html: () => '<div id="scaleSet"></div>' });
+  check('10 later batches add parts to a section (with their own permission)', settingsPartsHTML('devices') === '<div id="scaleSet"></div>');
   setAccess({ userId: MEMBER, shopId: SHOP, role: 'cashier', perms: ROLE_DEFAULTS.cashier, overrides: {} });
-  check('10 ...hidden from a role without it', settingsPartsHTML('hardware') === '');
+  check('10 ...hidden from a role without it', settingsPartsHTML('devices') === '');
 }
 
 // ---------- 11: capabilities never grant permissions ----------

@@ -13,7 +13,7 @@ import { renderSync } from '../../sync/components/sync-status.js';
 import { flushSbQueue } from '../../sync/services/outbox.js';
 
 const upload = () => { renderSync(); flushSbQueue(); };
-const off = () => hasCap("uses_price_lists") ? null : { error: "Price lists are switched off for this shop. Switch them on in Settings → Capabilities." };
+const off = () => hasCap("uses_price_lists") ? null : { error: "Price lists are switched off for this shop. Switch them on in Settings → Business → Features." };
 export const allLists = () => bizRepository().list("pl").slice().sort((a, b) => (b.isDefault - a.isDefault) || a.name.localeCompare(b.name));
 export const listById = id => bizRepository().get("pl", id);
 

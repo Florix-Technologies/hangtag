@@ -1,6 +1,6 @@
 // Quotation output: one model feeds preview, browser print, PDF download and sharing. It is deliberately headed
 // QUOTATION (never Invoice), and uses the order's saved prices, discounts, GST and customer snapshot. The shop's
-// quotation template (Settings → Receipt → Quotations: title, footer, terms, signature, GST shown, number prefix) is light
+// quotation template (Settings → Billing & Documents → Quotations: title, footer, terms, signature, GST shown, number prefix) is light
 // settings, not a designer. Send opens a sheet: Email / WhatsApp through the server (use-cases/send-quotation.js, each
 // send Queued → Sent / Failed) or the PDF shared from this phone.
 import { discountLabel, normalizeDiscount } from '../../../domain/sales/discounts.js';

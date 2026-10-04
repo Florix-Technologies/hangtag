@@ -1,34 +1,5 @@
 /* ================= business type, capabilities, adaptive navigation, Home ================= */
 
-/* ---------- tab bar: the modules shown in this shop (app/navigation.js). n<p|t|d>: no room on a phone / tablet /
-   desktop (behind "More"); m<p|t|d>: "More" is needed there ---------- */
-.nav .navmore{display:none}
-.nav button > span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-@media (max-width:599px){
-  .nav{gap:2px;padding:3px}
-  .nav button{min-width:0;font-size:11px;padding:7px 1px 6px}
-  .nav .np,.nav .phoneoff{display:none}
-  .nav .navmore.mp{display:flex}
-}
-@media (min-width:600px) and (max-width:999px){
-  .nav button{min-width:0}
-  .nav .nt{display:none}
-  .nav .navmore.mt{display:flex}
-}
-@media (min-width:1000px){
-  .nav button{padding:8px 12px}
-  .nav .nd{display:none}
-  .nav .navmore.md{display:flex}
-}
-.navsheet{max-width:420px}
-.navlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;margin-top:12px}
-.navitem{display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 8px;border:1px solid var(--line);border-radius:14px;background:var(--bg);font-weight:600;font-size:13.5px;color:var(--ink)}
-.navitem svg{width:22px;height:22px}
-.navitem:hover{background:var(--wash)}
-
-/* ---------- a module's parts (Inventory → Stock, Purchases …; Orders → Held carts, Quotations …) ---------- */
-.subnav{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
-
 /* ---------- Home ---------- */
 .qa{display:grid;grid-template-columns:repeat(auto-fill,minmax(78px,1fr));gap:8px;margin:0 0 16px}
 @media (min-width:600px){.qa{grid-template-columns:repeat(auto-fill,minmax(104px,1fr))}}
@@ -65,11 +36,6 @@
 .ask-answer dt{font-weight:600}.ask-answer dd{margin:0;text-align:right;color:var(--ink-2)}
 
 /* ---------- Settings: sections and capabilities ---------- */
-.setnav{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 2px}
-.setnav .chipbtn{padding:6px 11px;font-size:12.5px}
-.setsec[id^="set-"]{scroll-margin-top:12px}
-.setsec h4.secT{font-size:15px;margin:0 0 4px}
-.setsec .secsub{margin:0 0 10px}
 .capgrp{border:1px solid var(--line);border-radius:12px;padding:4px 12px;margin:10px 0 0}
 .capgrp > summary{cursor:pointer;font-weight:700;font-size:13.5px;padding:8px 0;list-style-position:inside}
 .capgrp[open] > summary{border-bottom:1px dashed var(--line);margin-bottom:6px}

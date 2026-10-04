@@ -33,7 +33,7 @@ export function previewRepack({ fromV, toV, q, per }){
 /* x: { fromV, toV, q, per, remember } → { record } or { error } */
 export function repackStock(x){
   const no = denied("manage_inventory", "repack stock"); if(no) return no;
-  if(!usesRepack()) return { error: "Repack is switched off for this shop. Switch it on in Settings → Capabilities." };
+  if(!usesRepack()) return { error: "Repack is switched off for this shop. Switch it on in Settings → Business → Features." };
   const f = vRec(x.fromV), t = vRec(x.toV); if(!f || !t) return { error: "Choose what is opened and what it becomes." };
   const from = side(f), to = side(t), tt = Date.now(), id = "rp" + uid();
   const batch = from.tracking === "batch" ? batchesOf(x.fromV).find(b => b.qty >= +x.q) : null;

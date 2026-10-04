@@ -19,6 +19,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wdth,wght@75..100,400..700&display=swap">
 <link rel="stylesheet" href="src/styles/10-shell.css">
+<link rel="stylesheet" href="src/styles/15-ui.css">
 <link rel="stylesheet" href="src/styles/20-sell.css">
 <link rel="stylesheet" href="src/styles/30-reports.css">
 <link rel="stylesheet" href="src/styles/40-stock.css">
@@ -90,7 +91,7 @@
       <svg class="logo" viewBox="0 0 28 28" aria-hidden="true"><path d="M3.5 13.6V5.5a2 2 0 0 1 2-2h8.1a2 2 0 0 1 1.42.59l9.2 9.2a2 2 0 0 1 0 2.83l-8.1 8.1a2 2 0 0 1-2.83 0l-9.2-9.2a2 2 0 0 1-.59-1.42z" fill="#10131F"/><circle cx="9.2" cy="9.2" r="2.1" fill="#fff"/></svg>
       <h2 id="setupTitle" class="setup-t">Set up your shop</h2>
     </div>
-    <p class="authsub">A few details to get started. You can change them any time in Profile &amp; shop settings.</p>
+    <p class="authsub">A few details to get started. You can change them any time in Settings → Business.</p>
     <form id="setupForm" class="authform" novalidate></form>
     <p id="setupErr" class="autherr" role="alert" hidden></p>
     <div class="authcenter"><button id="setupSignOut" class="link" type="button">Not you? Sign out</button></div>
@@ -100,15 +101,8 @@
   <div class="appbar-in">
     <div class="brand">
       <svg viewBox="0 0 28 28" aria-hidden="true"><path d="M3.5 13.6V5.5a2 2 0 0 1 2-2h8.1a2 2 0 0 1 1.42.59l9.2 9.2a2 2 0 0 1 0 2.83l-8.1 8.1a2 2 0 0 1-2.83 0l-9.2-9.2a2 2 0 0 1-.59-1.42z" fill="#10131F"/><circle cx="9.2" cy="9.2" r="2.1" fill="#fff"/></svg>
-      <span class="wordmark">Hangtag</span>
+      <span class="wordmark">Hangtag</span><span id="shopName" class="shopname"></span>
     </div>
-    <nav class="nav" role="tablist" aria-label="Sections">
-      <button role="tab" data-tab="sell" aria-selected="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 8h13l-1.1 12.1a1 1 0 0 1-1 .9H7.6a1 1 0 0 1-1-.9z"/><path d="M9 10V7a3 3 0 0 1 6 0v3"/></svg><span>Sell</span></button>
-      <button role="tab" data-tab="stock" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 5.5a2 2 0 1 1 3 1.7c-.6.4-1 .9-1 1.6V10"/><path d="M12 10 3.4 16.3c-.8.6-.4 1.7.6 1.7h16c1 0 1.4-1.1.6-1.7z"/></svg><span>Inventory</span></button>
-      <button role="tab" data-tab="report" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M5 20v-8M10 20V5M15 20v-5M20 20V9"/></svg><span>Reports</span></button>
-      <button role="tab" data-tab="products" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 4 3.5 6.6l1.8 4.1 2.2-.9V20h9V9.8l2.2.9 1.8-4.1-5-2.6c-.5 1.3-1.9 2.2-3.5 2.2S9 5.3 8.5 4z"/></svg><span>Products</span></button>
-      <button role="tab" data-tab="customers" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.6a3.5 3.5 0 0 1 0 6.8M21.5 20a6.5 6.5 0 0 0-4-6"/></svg><span>Customers</span></button>
-    </nav>
     <button id="sync" class="sync" type="button" data-act="syncpanel" aria-label="Cloud sync status"><i></i><span>Connecting…</span></button>
     <div class="acctwrap">
       <button id="acctBtn" class="acctbtn" type="button" aria-haspopup="menu" aria-expanded="false" hidden><span id="acctAvatar" class="avatar"></span><span id="acctName" class="an"></span></button>
@@ -116,6 +110,7 @@
     </div>
   </div>
 </header>
+<nav class="nav" aria-label="Sections"></nav>
 
 <main class="wrap">
   <section id="v-sell" class="sell">
@@ -150,9 +145,9 @@
   </section>
 
   <section id="v-stock" hidden>
-    <div class="subnav" data-subnav="stock" role="group" aria-label="Inventory" hidden></div>
+    <div class="subnav" data-subnav="stock" role="group" aria-label="Stock" hidden></div>
     <div data-submain="stock">
-    <div class="viewhead"><div><h2 class="vt">Stock on the shelf</h2><p>Every variant (colour, size, storage…) has its own count. Bills and returns change it by themselves; record deliveries with Stock in and recounts with Adjust stock.</p></div><div class="vh-acts"><button class="btn sm primary" data-act="stockin">+ Stock in</button><button class="btn sm" data-act="billimport">Upload bill</button><button class="btn sm" data-act="stockadj">Adjust stock</button></div></div>
+    <div class="viewhead"><div><h2 class="vt">Stock</h2><p>What is on the shelf, variant by variant. Sales and returns change it by themselves; record deliveries with Stock in and recounts with Adjust stock.</p></div><div class="vh-acts"><button class="btn sm primary" data-act="stockin">+ Stock in</button><button class="btn sm" data-act="billimport">Upload bill</button><button class="btn sm" data-act="stockadj">Adjust stock</button></div></div>
     <div id="stockBody"></div>
     </div>
     <div data-subalt="stock" hidden></div>
@@ -179,13 +174,14 @@
 
 
   <section id="v-products" hidden>
-    <div class="viewhead"><div><h2 class="vt">Products & Inventory</h2><p>Each product can come in several colours and sizes, with its own stock, SKU and barcode for every combination. Archive products you no longer sell — their bills stay.</p></div></div>
+    <div class="subnav" data-subnav="products" role="group" aria-label="Stock" hidden></div>
+    <div class="viewhead"><div><h2 class="vt">Products</h2><p>What you sell, with prices, codes and stock for every variant. Open one to see it all; archive what you no longer sell — its bills stay.</p></div></div>
     <div id="prodBody"></div>
     <div id="saveBar" class="savebar" hidden></div>
   </section>
 
   <section id="v-none" hidden>
-    <div class="empty"><h2 class="vt">Nothing to open here yet</h2><p class="muted">Your role has no screens in this app yet. Ask the shop's owner to change your role in Settings → Roles &amp; permissions.</p></div>
+    <div class="empty"><h2 class="vt">Nothing to open here yet</h2><p class="muted">Your role has no screens in this app yet. Ask the shop's owner to change your role in Settings → Team &amp; Devices → Roles &amp; permissions.</p></div>
   </section>
 </main>
 

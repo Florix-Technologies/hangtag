@@ -1,6 +1,6 @@
 // SaveBillingSettings: check and store the billing and stock settings (this device first, then uploaded).
 import { store } from '../../../shared/state/store.js';
-import { checkBillingSettings, checkGstSettings, checkPaymentSettings } from '../../../domain/shop/settings-validation.js';
+import { checkBillingSettings, checkGstSettings, checkPaymentSettings, checkReorderSettings } from '../../../domain/shop/settings-validation.js';
 import { enqueue } from '../../sync/services/outbox.js';
 import { saveSettings } from '../../../shared/state/persistence.js';
 import { can, notAllowedText } from '../services/access.js';
@@ -21,6 +21,15 @@ export function savePaymentSettings(input){
   if(r.error)return {error:r.error};
   store.settings=Object.assign({},store.settings,r.patch);
   saveSettings();enqueue({type:"settings"});
+  return {ok:true};
+}
+/* Purchasing → reorder planning: { leadDays, safetyDays, targetCoverDays } (manage_settings or create_purchase) */
+export function saveReorderSettings(input){
+  if(!can("manage_settings")&&!can("create_purchase"))return {error:notAllowedText("change how Smart reorder plans")};
+  const r=checkReorderSettings(input);
+  if(r.error)return {error:r.error};
+  store.settings=Object.assign({},store.settings,r.patch);
+  saveSettings();if(can("manage_settings"))enqueue({type:"settings"});
   return {ok:true};
 }
 /* GST filing preparation: { b2clLimit } */

@@ -10,7 +10,8 @@ import { registerModule, registerSubview } from '../features/shop/services/modul
 import { registerSettingsPart } from '../features/shop/services/settings-sections.js';
 import { hasCap } from '../features/shop/services/shop-caps.js';
 import { scaleSetupHTML } from '../features/hardware/components/scale-settings.js';
-import { onSubviewClick, renderSubviews } from '../features/shop/components/module-page.js';
+import { onSubviewClick, renderAreaNav, renderSubviews } from '../features/shop/components/module-page.js';
+import { openTeam } from '../features/shop/components/team-settings.js';
 import { renderHome } from '../features/home/pages/home-page.js';
 import { renderBill } from '../features/sales/components/bill-panel.js';
 import { renderGrid } from '../features/sales/pages/sell-page.js';
@@ -18,8 +19,8 @@ import { renderStock } from '../features/inventory/pages/stock-page.js';
 import { renderReport } from '../features/reports/pages/report-page.js';
 import { renderCustomers } from '../features/customers/pages/customers-page.js';
 import { renderProducts } from '../features/products/pages/products-page.js';
-import { openSettings } from '../features/shop/components/settings-modal.js';
-import { openNavMore } from './navigation.js';
+import { renderSettingsPage } from '../features/shop/components/settings-page.js';
+import { openDestination, openNavMore } from './navigation.js';
 import { ORDERS_MODULE } from '../features/orders/module.js';
 import { INVENTORY_SUBVIEWS, renderInventoryPart } from '../features/inventory/components/inventory-views.js';
 import { renderOrdersPart } from '../features/orders/pages/orders-page.js';
@@ -55,27 +56,29 @@ export function installModules(){
   // Inventory (T2): purchases, suppliers and stock count, for the roles that use them
   INVENTORY_SUBVIEWS.forEach((d, i) => registerSubview("stock", { id: d.id, label: d.label, order: 20 + 10 * i, perms: d.perms, ...(d.available ? { available: d.available } : {}), render: host => renderInventoryPart(d, host) }));
   registerModule({ id: "report", render: renderReport });
-  registerModule({ id: "assistant", label: "Ask", order: 85, phone: 55, perms: ["view_reports"], render: renderAssistantPage });
+  registerModule({ id: "assistant", label: "Ask Hangtag", order: 85, phone: 55, perms: ["view_reports"], render: renderAssistantPage });
   registerModule({ id: "customers", render: renderCustomers });
   // don't redraw the product list under someone typing in it (except its search box)
-  registerModule({ id: "products", render(){ const a = document.activeElement; if(!(a && a.closest && a.closest("#v-products") && a.id !== "prodSearch")) renderProducts(); } });
-  registerModule({ id: "settings", open: openSettings });
-  // Settings → Hardware: the weighing scale (T1), for shops that sell by weight (the capability, or a product sold by the kg or
+  registerModule({ id: "products", render(){ renderAreaNav("products"); const a = document.activeElement; if(!(a && a.closest && a.closest("#v-products") && a.id !== "prodSearch")) renderProducts(); } });
+  registerModule({ id: "settings", view: true, render: () => renderSettingsPage() });
+  // Team (the owner's): the people who sell in the shop, their roles and phones
+  registerModule({ id: "team", label: "Team", order: 88, phone: 75, view: false, perms: ["manage_users"], open: () => openTeam() });
+  // Settings → Team & Devices: the weighing scale (T1), for shops that sell by weight (the capability, or a product sold by the kg or
   // litre) or that already set one up on this device
   const weighs = () => hasCap("uses_weight") || !!storage.get("hangtag_scale", null) || products().some(p => /^(weight|volume)$/.test(unitOf(p.unit).kind));
-  registerSettingsPart("hardware", { id: "scale", order: 20, html: () => weighs() ? scaleSetupHTML() : "" });
-  // Settings → Capabilities → Expiry (Wave 2): for shops that keep expiry dates or batches
+  registerSettingsPart("devices", { id: "scale", order: 20, html: () => weighs() ? scaleSetupHTML() : "" });
+  // Settings → Products & Inventory (Wave 2): for shops that keep expiry dates or batches
   const expires = () => hasCap("uses_expiry") || hasCap("uses_batches") || products().some(p => trackingOfP(p) === "batch");
-  registerSettingsPart("capabilities", { id: "expiry", order: 20, perms: ["manage_settings"], html: () => expires() ? expirySettingsHTML() : "" });
-  // Settings → Receipt: the page invoice links open (the owner's), and the quotation template for shops that make quotations
-  registerSettingsPart("receipt", { id: "invoice-page", order: 10, perms: ["manage_settings"], html: invoicePageHTML });
-  registerSettingsPart("receipt", { id: "quotations", order: 20, perms: ["manage_settings"], html: () => hasCap("uses_quotations") ? quotationSettingsHTML() : "" });
-  // Settings → Selling (section 3r): price lists for shops that use them
-  registerSettingsPart("selling", { id: "price-lists", order: 10, perms: ["manage_products"], html: () => hasCap("uses_price_lists") ? priceListsSettingsHTML() : "" });
-  registerSettingsPart("selling", { id: "vouchers", order: 20, perms: ["create_sale", "manage_settings"], html: vouchersSettingsHTML });
-  registerSettingsPart("selling", { id: "gst-docs", order: 30, perms: ["manage_settings"], html: gstSettingsHTML });
+  registerSettingsPart("inventory", { id: "expiry", order: 20, perms: ["manage_settings"], html: () => expires() ? expirySettingsHTML() : "" });
+  // Settings → Billing & Documents: the page invoice links open (the owner's), and the quotation template for shops that make quotations
+  registerSettingsPart("integrations", { id: "invoice-page", order: 20, perms: ["manage_settings"], html: invoicePageHTML });
+  registerSettingsPart("billing", { id: "quotations", order: 60, perms: ["manage_settings"], html: () => hasCap("uses_quotations") ? quotationSettingsHTML() : "" });
+  // Settings → Sales & Customers (section 3r): price lists for shops that use them
+  registerSettingsPart("sales", { id: "price-lists", order: 10, perms: ["manage_products"], html: () => hasCap("uses_price_lists") ? priceListsSettingsHTML() : "" });
+  registerSettingsPart("sales", { id: "vouchers", order: 20, perms: ["create_sale", "manage_settings"], html: vouchersSettingsHTML });
+  registerSettingsPart("billing", { id: "gst-docs", order: 50, perms: ["manage_settings"], html: gstSettingsHTML });
   // Settings → Advanced: integrations (outbound webhooks), the owner's only
-  registerSettingsPart("advanced", { id: "integrations", order: 10, html: integrationsSettingsHTML });
+  registerSettingsPart("integrations", { id: "webhooks", order: 10, html: integrationsSettingsHTML });
   // Restaurant (W2-B): the tables (a till, or servers ordering on their phones) and the kitchen screen — only with the shop's
   // table / kitchen capabilities (the registry adds them to these modules by itself)
   registerModule({ id: "tables", label: "Tables", order: 32, phone: 25, caps: ["uses_tables"], perms: ["create_sale", "create_order", "manage_tables", "manage_settings"], available: mayWorkTables, render: renderTablesPage });
@@ -85,6 +88,9 @@ export function installModules(){
   installProductDraftEvents();
   installVoiceSearch();
   document.addEventListener("click", e => {
+    // a destination that is a part of a module (Purchases is Stock → Purchases): open the module on that part
+    const ns = e.target && e.target.closest && e.target.closest("[data-navsub]");
+    if(ns){ e.stopImmediatePropagation(); openDestination(ns.dataset.navsub); return; }
     if(onSubviewClick(e)) return;
     if(e.target && e.target.closest && e.target.closest("[data-navmore]")) openNavMore();
   });

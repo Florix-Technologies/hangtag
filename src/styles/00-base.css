@@ -1,6 +1,67 @@
-/* Base resets applied before anything else. */
-/* base styles */
-:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
-body{margin:0}
+/* Design tokens and base element styles: the one source of colour, type, spacing, shape, elevation and motion for every
+   screen. Components built on them live in 15-ui.css; the app shell in 10-shell.css. Colour says something (a state, a
+   payment method, a chart series) — it is never decoration. */
+:root{
+  color-scheme:light;
+  /* surfaces: the page canvas, the surface cards and sheets sit on, quiet fills inside a surface */
+  --app:#F5F6F8;
+  --bg:#FFFFFF; --card:#FFFFFF;
+  --wash:#F3F4F7; --wash-2:#E9EBF0;
+  --line:#E4E6EC; --line-2:#CED2DB;
+  /* text: primary, secondary, meta (4.6:1 on white) */
+  --ink:#111420; --ink-2:#454B5E; --ink-3:#6B7185; --ink-inv:#FFFFFF;
+  /* interactive (links, focus, selection, information) */
+  --accent:#1D5BBF; --accent-ink:#164A9C; --accent-soft:#EBF2FD; --accent-line:#C9DCF8;
+  /* states */
+  --good:#12A150; --good-ink:#0B6B35; --good-soft:#EAF7EF; --good-line:#BFE5CD;
+  --ok:var(--good-ink); --ok-soft:var(--good-soft);
+  --warn:#E8A317; --warn-ink:#8A5A00; --warn-soft:#FFF6E0; --warn-line:#F2DDA4; --warn-track:#FCE7B4;
+  --crit:#C93636; --crit-ink:#A82828; --crit-soft:#FDEEEE; --crit-line:#F2CBCB; --crit-track:#F6D5D5;
+  --info:var(--accent); --info-soft:var(--accent-soft);
+  /* data: chart series and payment methods (the same colour for a method everywhere) */
+  --s1:#2A78D6; --s1-track:#DCEAFB;
+  --s-upi:#2A78D6; --s-cash:#1BAF7A; --s-card:#E06A35;
+  --b-upi:#1C5CAB; --b-cash:#0D7652; --b-card:#B4481D;
+  --grid:#EEF0F4; --axis:#C6CAD4;
+  --h1:#CDE2FB; --h2:#9EC5F4; --h3:#6DA7EC; --h4:#3987E5; --h5:#256ABF; --h6:#184F95;
+  /* type: one family, a short scale */
+  --font:"Instrument Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --fs-xs:12px; --fs-sm:13px; --fs-body:14.5px; --fs-md:16px; --fs-lg:18px; --fs-xl:22px; --fs-2xl:28px; --fs-3xl:36px;
+  --lh-tight:1.2; --lh:1.45;
+  /* spacing on a 4 px grid */
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:20px; --sp-6:24px; --sp-8:32px; --sp-10:40px;
+  /* shape: controls, inner blocks, cards, sheets */
+  --r-xs:6px; --r-sm:8px; --r-md:10px; --r-lg:14px; --r-xl:20px;
+  /* elevation */
+  --shadow-xs:0 1px 2px rgba(17,20,32,.05);
+  --shadow-sm:0 1px 2px rgba(17,20,32,.06);
+  --shadow:0 1px 2px rgba(17,20,32,.04),0 6px 20px rgba(17,20,32,.06);
+  --shadow-lg:0 18px 48px rgba(17,20,32,.18);
+  --ring:0 0 0 3px rgba(29,91,191,.24);
+  /* motion */
+  --ease:cubic-bezier(.2,.7,.2,1); --t-fast:.12s; --t:.2s;
+  /* touch target and the app's chrome */
+  --tap:44px; --sidebar:236px; --tabbar:62px;
+  padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)
+}
+*{box-sizing:border-box}
+html,body{background:var(--app)}
+body{margin:0;color:var(--ink);font-family:var(--font);font-size:var(--fs-body);line-height:var(--lh);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;-webkit-tap-highlight-color:transparent;text-rendering:optimizeLegibility}
 img{max-width:100%}
 [hidden]{display:none!important}
+h1,h2,h3,h4,h5{color:var(--ink);letter-spacing:-.01em;line-height:var(--lh-tight)}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer;background:none;border:0;padding:0;text-align:inherit}
+button:disabled{cursor:not-allowed}
+a{color:var(--accent);text-underline-offset:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+::selection{background:var(--accent-soft)}
+.sr{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
+.tnum{font-variant-numeric:tabular-nums}
+.muted{color:var(--ink-3);font-size:var(--fs-sm);margin:4px 0}
+.cond{font-stretch:75%}
+kbd{font-family:inherit;font-size:11.5px;font-weight:700;border:1px solid var(--line-2);border-bottom-width:2px;border-radius:5px;padding:0 5px;background:var(--bg);color:var(--ink-2)}
+.eyebrow{font-weight:700;font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);line-height:1.2}
+.szl{display:inline-block;font-stretch:75%;font-weight:700;font-size:13px;letter-spacing:.03em;line-height:1.35;border:1px solid var(--line-2);border-radius:4px;padding:0 5px;color:var(--ink);background:var(--bg);vertical-align:1px}
+.ic{flex:none;vertical-align:-3px}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}

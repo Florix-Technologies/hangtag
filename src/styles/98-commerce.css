@@ -16,11 +16,6 @@ html[data-noperm~="create_purchase"] :is([data-ponew],[data-poreorder],[data-por
 .bizinline{display:flex;gap:8px}
 .bizinline input{flex:1;min-width:0;height:44px;border:1px solid var(--line);border-radius:12px;padding:0 12px;font:inherit;background:var(--bg);color:inherit}
 .bizsearch{height:44px;border:1px solid var(--line);border-radius:12px;padding:0 12px;font:inherit;background:var(--bg);color:inherit;width:100%}
-.bizchip{display:inline-block;font-size:11.5px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--wash);color:var(--ink-2);white-space:nowrap}
-.bizchip.ok{background:var(--good-soft);color:var(--good-ink)}
-.bizchip.warn{background:var(--warn-soft);color:var(--warn-ink)}
-.bizchip.bad{background:var(--crit-soft);color:var(--crit)}
-.bizchip.info{background:var(--accent-soft);color:var(--accent)}
 .biznote{padding:10px 12px;border-radius:12px;background:var(--wash);font-size:13.5px}
 .biznote.ok{background:var(--good-soft);color:var(--good-ink)}
 .biznote.warn{background:var(--warn-soft);color:var(--warn-ink)}

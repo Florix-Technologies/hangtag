@@ -1,5 +1,5 @@
 // E-invoice and e-way bill on the phone: on a bill, one line each — "E-invoice ✓ Ready" or "Needs: Buyer GSTIN" — and a
-// short sheet that asks only for what is missing. Never a tax form. Settings → Selling → GST documents switches them on.
+// short sheet that asks only for what is missing. Never a tax form. Settings → Billing & Documents → E-invoice and e-way bill switches them on.
 import { EINV_LABELS } from '../../../domain/gst/einvoice.js';
 import { EWAY_LABELS, TRANSPORT_MODES, transportFieldsNeeded } from '../../../domain/gst/eway.js';
 import { store } from '../../../shared/state/store.js';
@@ -64,7 +64,7 @@ export function renderGstDoc(){
     : `<button type="button" class="btn sm" data-biz="gstjson">Export JSON</button>`;
   bizSheet({ label: eway ? "E-way bill" : "E-invoice", body, foot });
 }
-/* Settings → Selling → GST documents */
+/* Settings → Billing & Documents → E-invoice and e-way bill */
 export function gstSettingsHTML(){
   if(!(usesEinvoice() || usesEway())) return "";
   const e = store.settings.einv || {}, w = store.settings.eway || {};

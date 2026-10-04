@@ -1,4 +1,4 @@
-// Settings → Hardware: this device's weighing scale. Connect a scale on a cable (Web Serial) with its baud rate, the unit a
+// Settings → Team & Devices: this device's weighing scale. Connect a scale on a cable (Web Serial) with its baud rate, the unit a
 // bare number is in and an optional command that asks for the weight; read a test weight; disconnect. Typing weights on the
 // bill always works, with or without a scale.
 import { BAUD_RATES, SCALE_UNITS } from '../../../domain/shop/scale-settings.js';

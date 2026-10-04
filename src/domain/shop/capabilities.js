@@ -31,7 +31,7 @@ export function businessKind(type){
 export const businessLabel = type => BUSINESS_TYPES.find(t => t.key === businessKind(type)).label;
 
 /* ---------- capabilities ----------
-   group: where Settings → Capabilities lists it; needs: it builds on that one (off while that one is off) */
+   group: where Settings → Business → Features lists it; needs: it builds on that one (off while that one is off) */
 export const CAPABILITIES = [
   { key: "uses_variants", label: "Product variants", help: "Sizes, colours, storage … each with its own stock, SKU, barcode and price.", group: "products" },
   { key: "uses_serials", label: "Serial number tracking", help: "Each piece's serial or IMEI number, recorded when it comes in and when it is sold.", group: "products" },
@@ -116,7 +116,7 @@ export function keepNewerCaps(incoming, kept){
   return incoming;
 }
 
-/* ---------- Settings → Capabilities: grouped and recommended by business type ---------- */
+/* ---------- Settings → Business → Features: grouped and recommended by business type ---------- */
 /* [{ key, label, caps: [capability], open }]: first what the type recommends, then the other groups. The restaurant
    group stays folded for other businesses unless one of its capabilities is on. */
 export function capSections(type, caps){

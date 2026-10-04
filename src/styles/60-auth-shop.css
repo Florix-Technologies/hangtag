@@ -28,16 +28,8 @@ html.gated body{overflow:hidden}
 .authfp{display:flex;justify-content:flex-end;margin:-6px 0 -2px}.authfp[hidden],.authfp:has(#forgotBtn[hidden]){display:none}
 .authfp .link{font-size:13.5px;padding:2px 0}
 .authstaff{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:6px 8px}.authstaff .btn.sm{padding:6px 14px;font-size:13.5px}
-.authnote{margin:14px 0 0;padding:10px 12px;border-radius:10px;background:var(--good-soft);color:var(--good-ink);font-size:13.5px;line-height:1.45}
-.autherr{margin:14px 0 0;padding:10px 12px;border-radius:10px;background:var(--crit-soft);color:var(--crit);font-size:13.5px;line-height:1.45}
 .authcenter{text-align:center;margin-top:12px}
 /* profile form (setup screen + settings) */
-.pgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.pgrid .full{grid-column:1/-1}
-@media (max-width:520px){.pgrid{grid-template-columns:1fr}}
-.req{color:var(--crit);margin-left:2px}
-.fhint{font-size:12px;font-weight:500;color:var(--ink-3)}
-.f.bad input,.f.bad select{border-color:var(--crit)}
 /* account button + menu */
 .acctwrap{position:relative}
 .acctbtn{display:inline-flex;align-items:center;gap:8px;padding:3px 10px 3px 3px;border:1px solid var(--line);border-radius:999px;background:var(--bg);font-weight:600;font-size:13px;color:var(--ink);max-width:220px}
@@ -60,11 +52,34 @@ html.gated body{overflow:hidden}
 .welcome b{font-size:16px}
 .welcome .ws{font-size:13px;color:var(--ink-2);margin-top:1px}
 .welcome .wx{margin-left:auto}
-/* settings sheet */
-.settings{max-width:640px}
-.setsec{border-top:1px solid var(--line);margin-top:18px;padding-top:16px}
-.setsec h4{margin:0 0 10px;font-size:14px}
-.kv{display:grid;grid-template-columns:140px 1fr;gap:8px 12px;font-size:13.5px}
-.kv dt{color:var(--ink-3)} .kv dd{margin:0;word-break:break-all}
-@media (max-width:520px){.kv{grid-template-columns:1fr}.kv dd{margin-bottom:6px}}
-.setactions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+/* ---------- the Settings page (features/shop/components/settings-page.js) ---------- */
+.setpage{display:grid;gap:20px;align-items:start}
+@media (min-width:760px){.setpage{grid-template-columns:minmax(240px,300px) minmax(0,1fr)}.setside{position:sticky;top:calc(env(safe-area-inset-top,0px) + 72px)}.setback{display:none!important}}
+@media (max-width:759px){.setpage:not(.has-sec) .setmain,.setpage.has-sec .setside{display:none}}
+.setside .viewhead{margin-bottom:12px}
+.setside #setSub{word-break:break-all}
+.setside .search{margin-bottom:12px}
+.setlist{display:flex;flex-direction:column;gap:2px;background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);padding:6px;box-shadow:var(--shadow-xs)}
+.setitem{display:flex;align-items:flex-start;gap:12px;width:100%;padding:10px;border-radius:var(--r-sm);text-align:left;color:var(--ink);transition:background var(--t-fast)}
+.setitem svg{flex:none;margin-top:1px;color:var(--ink-3)}
+.setitem b{display:block;font-size:14.5px;font-weight:600}
+.setitem small{display:block;margin-top:2px;font-size:12.5px;color:var(--ink-3);line-height:1.35}
+.setitem:hover{background:var(--wash)}
+.setitem[aria-current="page"]{background:var(--wash-2)}
+.setitem[aria-current="page"] svg{color:var(--ink)}
+@media (min-width:760px) and (max-width:1199px){.setitem small{display:none}}
+.setmain{min-width:0;background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);padding:var(--sp-5) var(--sp-5) var(--sp-6);box-shadow:var(--shadow-xs)}
+@media (max-width:599px){.setmain{padding:var(--sp-4)}}
+.sethead{margin-bottom:var(--sp-2)}
+.sethead .setback{margin:-4px 0 8px -8px}
+.sethead h3{margin:0;font-size:var(--fs-xl);letter-spacing:-.02em}
+.sethead p{margin:6px 0 0;color:var(--ink-2);font-size:var(--fs-sm);max-width:64ch}
+.setmain .setblk,.setmain .setsec{margin:0;padding:var(--sp-5) 0 0;border-top:1px solid var(--line);margin-top:var(--sp-5)}
+.setmain .setsec .setblk{border-top:0;margin-top:var(--sp-3);padding-top:0}
+.setmain .setblk > h5,.setmain .setsec > h4,.setmain .setsec h5.subh{margin:0 0 4px;font-size:var(--fs-md);font-weight:700;color:var(--ink)}
+.setmain .setblk > h5 + .pgrid,.setmain .setblk > h5 + .note{margin-top:10px}
+.setmain .setsec .setsec{border-top:0;padding-top:0}
+.setmain .flash{animation:flash 1.6s ease}
+@keyframes flash{0%,40%{background:var(--accent-soft);box-shadow:0 0 0 8px var(--accent-soft)}100%{background:transparent;box-shadow:0 0 0 8px transparent}}
+.setfeat{display:flex;align-items:center;justify-content:space-between;gap:10px 16px;flex-wrap:wrap;margin-top:var(--sp-5);padding:12px 14px;border-radius:var(--r-md);background:var(--wash);font-size:13.5px;line-height:1.5}
+.setnone{margin:8px 2px}

@@ -3,10 +3,12 @@
 import { analyzeInventory } from '../../../domain/inventory/inventory-intelligence.js';
 import { liveProducts } from '../../products/services/catalog.js';
 import { D } from './ledger.js';
+import { store } from '../../../shared/state/store.js';
 
 /* The synchronous, deterministic snapshot used by Smart Reorder and read-only business queries. */
 export function inventoryIntelligence({ now = Date.now(), config } = {}){
-  return analyzeInventory({ products: liveProducts(), entries: D().ledger, now, config });
+  // the shop's planning (Settings → Purchasing) unless a caller asks for its own
+  return analyzeInventory({ products: liveProducts(), entries: D().ledger, now, config: Object.assign({}, store.settings && store.settings.reorder, config) });
 }
 
 /* `enhancer` may later be an AI-backed function. It gets the immutable-in-practice baseline as its only business input and

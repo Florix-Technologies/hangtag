@@ -19,7 +19,7 @@ import { inventoryIntelligence } from '../services/inventory-intelligence.js';
 import { savePurchase } from './record-purchase.js';
 
 const upload = () => { renderSync(); flushSbQueue(); };
-const off = () => hasCap("uses_purchase_orders") ? null : { error: "Purchase orders are switched off for this shop. Switch them on in Settings → Capabilities." };
+const off = () => hasCap("uses_purchase_orders") ? null : { error: "Purchase orders are switched off for this shop. Switch them on in Settings → Business → Features." };
 export const poList = () => bizRepository().list("po").slice().sort((a, b) => b.t - a.t);
 export const poById = id => bizRepository().get("po", id);
 /* What is ordered, received and still to come on each line, and the shown status */

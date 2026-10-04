@@ -22,9 +22,9 @@ import { uid } from '../../../shared/utils/ids.js';
 import { canAny, denied, notAllowedText, userId } from '../../shop/services/access.js';
 
 const upload = () => { renderSync(); flushSbQueue(); };
-const off = () => ({ error: "This shop doesn't use tables. Switch on Table ordering in Settings → Capabilities." });
-const qrOff = () => ({ error: "This shop doesn't use table QR codes. Switch on Table QR in Settings → Capabilities." });
-const kitchenOff = () => ({ error: "This shop doesn't use the kitchen screen. Switch on Kitchen in Settings → Capabilities." });
+const off = () => ({ error: "This shop doesn't use tables. Switch on Table ordering in Settings → Business → Features." });
+const qrOff = () => ({ error: "This shop doesn't use table QR codes. Switch on Table QR in Settings → Business → Features." });
+const kitchenOff = () => ({ error: "This shop doesn't use the kitchen screen. Switch on Kitchen in Settings → Business → Features." });
 /* A new QR token for a table: 32 random bytes (the QR identifies the shop's table and nothing else) */
 export function newTableToken(){ const b = new Uint8Array(32); crypto.getRandomValues(b); return tokenFromBytes(b); }
 

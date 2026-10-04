@@ -54,8 +54,6 @@
 .intel-card-head{display:flex;align-items:flex-start;gap:10px}
 .intel-name{min-width:0;flex:1}.intel-name>div{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.intel-name h4{font-size:15.5px;margin:0;line-height:1.25}
 .intel-name p{margin:4px 0 0;color:var(--ink-2);font-size:12.5px}
-.intel-badge{display:inline-flex;align-items:center;border-radius:999px;padding:2px 8px;background:var(--warn-soft);color:var(--warn-ink);font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
-.intel-badge.critical{background:var(--crit-soft);color:var(--crit)}
 .intel-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:12px}
 .intel-metrics>div{display:flex;flex-direction:column;gap:1px;padding:8px 9px;border-radius:10px;background:rgba(255,255,255,.78);border:1px solid rgba(230,232,238,.8);min-width:0}
 .intel-metrics span,.intel-action span{font-size:11.5px;color:var(--ink-3)}

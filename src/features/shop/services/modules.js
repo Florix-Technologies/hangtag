@@ -78,7 +78,7 @@ export function navSlots(list, current, limit){
   { id: "sell", label: "Sell", order: 20, phone: 10 },
   // quotations, sales orders, held carts, table orders: shown only when at least one of them is registered and in use
   { id: "orders", label: "Orders", order: 30, phone: 30, available: () => subviewsOf("orders").length > 0 },
-  { id: "stock", label: "Inventory", order: 50, phone: 40 },
+  { id: "stock", label: "Stock", order: 50, phone: 40 },
   { id: "products", label: "Products", order: 60, phone: 70 },
   { id: "customers", label: "Customers", order: 70, phone: 60 },
   { id: "report", label: "Reports", order: 80, phone: 50 },

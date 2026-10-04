@@ -25,9 +25,11 @@ import { use } from '../../../shared/di/services.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { COLORS, okColor, swatchOf } from '../../../shared/utils/colors.js';
 import { uid } from '../../../shared/utils/ids.js';
-import { refuse } from '../../shop/services/access.js';
+import { can, refuse } from '../../shop/services/access.js';
+import { sheetHTML } from '../../../shared/ui/kit.js';
 import { productFieldsFor, trackingChoiceOf, trackingChoices, trackingFromChoice } from '../../../domain/shop/capabilities.js';
-import { shopCaps } from '../../shop/services/shop-caps.js';
+import { shopCaps, shopType } from '../../shop/services/shop-caps.js';
+import { businessExamples } from '../../../domain/shop/capabilities.js';
 
 import { UNITS, decimalsOf, unitId, unitOf, isWeighed } from '../../../domain/catalog/units.js';
 import { isKit } from '../../../domain/catalog/bundles.js';
@@ -98,12 +100,12 @@ export function renderEditor(){
   const nSel=combos.filter(x=>e.sel[x.key]).length;
   const fx=productFieldsFor(shopCaps(),{hasOpts:e.hasOpts,...trackingFromChoice(e.tracking)});   // the fields this shop uses
   const stockNote=e.isNew?"":`<p class="note">Changing a stock number here records a stock adjustment, so history is kept. For new deliveries use Stock in on the Stock page.</p>`;
-  const trackHTML=fx.tracking||fx.expiry||fx.weight?`<div class="edsec edcap" data-edcap><h4>Stock tracking</h4>
-      ${fx.tracking?`<div class="pgrid"><label class="f"><span class="lab">Track stock by</span><select data-ed="tracking" id="edTracking">${trackingChoices(fx).map(m=>`<option value="${m.key}"${m.key===e.tracking?" selected":""}>${esc(m.label)}</option>`).join("")}</select><span class="fhint">Serial: each piece has its own serial or IMEI number. Batch: stock kept by batch or lot number${fx.expiry?", with its expiry date if you choose it":""}.</span></label></div>`:""}
+  const trackHTML=fx.tracking||fx.expiry||fx.weight?`<div class="edsec edcap" id="ed-tracking" data-edcap><h4>Tracking</h4>
+      ${fx.tracking?`<div class="pgrid"><label class="f"><span class="lab">Track stock by</span><select data-ed="tracking" id="edTracking">${trackingChoices(fx).map(m=>`<option value="${m.key}"${m.key===e.tracking?" selected":""}>${esc(m.label)}</option>`).join("")}</select><span class="fhint"><b>Serial number</b>: best for phones, electronics and IMEI items. Each piece's own number is recorded when it comes in and when it is sold. <b>Batch</b>: stock kept by batch or lot number${fx.expiry?", with its expiry date if you choose it":""}.</span></label></div>`:""}
       ${fx.expiry?`<p class="capnote" data-capnote="expiry">Expiry dates are kept with each batch: choose “Batch with expiry date” for a product that expires.</p>`:""}
       ${tracked(e)?`<p class="capnote" data-capnote="tracked">Stock of this product comes in through Purchases or Stock in, with its ${trackingFromChoice(e.tracking).tracking==="serial"?"serial numbers":"batch number"}, and leaves on bills; the stock boxes here are read-only.</p>`:""}
       ${fx.weight?`<p class="capnote" data-capnote="weight">Sold loose by weight or volume? Set the price for one kg (or litre) and sell any amount, typed in or read from the weighing scale. Packed items with a fixed weight are sold by the piece.</p>`:""}
-    </div>`:"";
+    </div>`:!shopCaps().uses_serials&&can("manage_settings")?`<div class="edsec edcap" id="ed-tracking"><h4>Tracking</h4><p class="note" style="margin:0">Selling phones, electronics or IMEI items? Serial number tracking records each piece's own number when it comes in and when it is sold. Turn it on in Settings → Business → Features.</p></div>`:"";
   const simpleHTML=simple&&one?`<div class="pgrid">
       <label class="f"><span class="lab">SKU</span><input data-edf="sku" data-k="${esc(one.key)}" value="${esc(one.cell.sku)}" maxlength="40" placeholder="Optional" autocomplete="off"></label>
       <label class="f"><span class="lab">${unitOf(e.unit).id==="pcs"?"Pieces in stock now":"In stock now ("+esc(unitOf(e.unit).sym)+")"}</span><input type="number" inputmode="${decimalsOf(e.unit)?"decimal":"numeric"}" min="0" step="${decimalsOf(e.unit)?"any":"1"}" data-edf="stock" data-k="${esc(one.key)}" value="${esc(one.cell.stock)}" placeholder="0"${tracked(e)?" disabled":""}></label>
@@ -122,38 +124,42 @@ export function renderEditor(){
   const html=`<div class="scrim" data-modal-scrim data-editor><div class="sheet editor" role="dialog" aria-modal="true" aria-labelledby="edTitle">
     <div class="sh-head"><div class="sh-t"><h3 id="edTitle">${e.isNew?"Add product":"Edit product"}</h3><p>${e.isNew?(fx.variants?"Basic details first. Tick “multiple options” for sizes, colours, storage and so on.":"Basic details first."):esc(e.name)}</p></div><button class="iconbtn" data-edclose aria-label="Close">${ICON.x}</button></div>
     <form id="edForm" novalidate>
-    <div class="edsec"><h4>Basic information</h4>
+    <nav class="ednav" aria-label="Product sections"><button type="button" data-edgo="basics">Basics</button><button type="button" data-edgo="price">Price &amp; Tax</button><button type="button" data-edgo="inventory">Inventory</button>${trackHTML?`<button type="button" data-edgo="tracking">Tracking</button>`:""}<button type="button" data-edgo="advanced">Advanced</button></nav>
+    <div class="edsec" id="ed-basics"><h4>Basics</h4>
       <div class="edtop"><div class="pc-photo">${thumb({id:e.id,name:e.name||"New",color:e.color},"lg",src||null)}<label class="btn xs" for="edPhoto">${ICON.cam}${src?"Change":"Add photo"}</label><input id="edPhoto" class="sr" type="file" accept="image/*" data-edphoto>${src?`<button type="button" class="link xs danger" data-edact="edrmphoto">Remove photo</button>`:""}</div>
       <div class="pgrid grow">
-        <label class="f full"><span class="lab">Product name<span class="req">*</span></span><input id="edName" data-ed="name" value="${esc(e.name)}" maxlength="80" autocomplete="off" placeholder="e.g. Oversized Tee"></label>
-        <label class="f"><span class="lab">Category</span><input data-ed="cat" value="${esc(e.cat)}" list="catList" maxlength="40" autocomplete="off" placeholder="e.g. T-shirts"><datalist id="catList">${cats.map(c=>`<option value="${esc(c)}">`).join("")}</datalist></label>
+        <label class="f full"><span class="lab">Product name<span class="req">*</span></span><input id="edName" data-ed="name" value="${esc(e.name)}" maxlength="80" autocomplete="off" placeholder="e.g. ${esc(businessExamples(shopType()).product)}"></label>
+        <label class="f"><span class="lab">Category</span><input data-ed="cat" value="${esc(e.cat)}" list="catList" maxlength="40" autocomplete="off" placeholder="e.g. ${esc(businessExamples(shopType()).category)}"><datalist id="catList">${cats.map(c=>`<option value="${esc(c)}">`).join("")}</datalist></label>
         <label class="f"><span class="lab">Brand</span><input data-ed="brand" value="${esc(e.brand)}" maxlength="40" autocomplete="off" placeholder="Optional"></label>
-        <label class="f"><span class="lab">Selling price ₹<span class="req">*</span></span><input data-ed="price" type="number" inputmode="numeric" min="0" value="${esc(e.price)}"></label>
-        <label class="f"><span class="lab">Cost price ₹</span><input data-ed="cost" type="number" inputmode="numeric" min="0" value="${esc(e.cost)}" placeholder="For gross profit"></label>
-        <label class="f"><span class="lab">HSN code</span><input data-ed="hsn" value="${esc(e.hsn)}" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="4, 6 or 8 digits"></label>
-        <label class="f"><span class="lab">GST %</span><input data-ed="gst" type="number" inputmode="decimal" min="0" max="100" step="0.01" value="${esc(e.gst)}" placeholder="e.g. 5"></label>
         <label class="f"><span class="lab">Sold by</span><select data-ed="unit" id="edUnit">${UNITS.filter(u=>!isWeighed(u.id)||fx.weight||isWeighed(e.unit)).map(u=>`<option value="${u.id}"${unitId(e.unit)===u.id?" selected":""}>${esc(u.label)}${u.dp?` (up to ${u.dp} decimals)`:""}</option>`).join("")}</select><span class="fhint">Kg and litres are weighed on the bill; prices are per ${esc(unitOf(e.unit).id==="pcs"?"piece":unitOf(e.unit).sym)}</span></label>
       </div></div>
-      <label class="f"><span class="lab">Description</span><textarea data-ed="desc" rows="2" maxlength="300" placeholder="Optional">${esc(e.desc)}</textarea></label>
-      <div class="f"><span>Tile colour <span class="hintx">· shown when there's no photo</span></span><div class="colors">${COLORS.map(cc=>`<button type="button" data-tilecolor="${cc}" aria-label="Tile colour ${cc}" aria-pressed="${cc===e.color}" style="background:${cc}"></button>`).join("")}</div></div>
     </div>
-    <div class="edsec"><h4>Barcode / QR code</h4>
+    <div class="edsec" id="ed-price"><h4>Price &amp; Tax</h4><div class="pgrid">
+        <label class="f"><span class="lab">Selling price ₹<span class="req">*</span></span><input data-ed="price" type="number" inputmode="numeric" min="0" value="${esc(e.price)}"></label>
+        <label class="f"><span class="lab">Cost price ₹</span><input data-ed="cost" type="number" inputmode="numeric" min="0" value="${esc(e.cost)}" placeholder="For gross profit"></label>
+        <label class="f"><span class="lab">GST %</span><input data-ed="gst" type="number" inputmode="decimal" min="0" max="100" step="0.01" value="${esc(e.gst)}" placeholder="e.g. 5"></label>
+        <label class="f"><span class="lab">HSN code</span><input data-ed="hsn" value="${esc(e.hsn)}" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="4, 6 or 8 digits"></label>
+    </div></div>
+    <div class="edsec" id="ed-inventory"><h4>Inventory</h4>
       <label class="chk"><input type="checkbox" data-edtoggle="codesOn"${e.codesOn?" checked":""}> Enable barcode / QR code</label>
       ${e.codesOn?`<div class="codetype" role="radiogroup" aria-label="Code type"><span class="lab">Code type:</span><label class="chk"><input type="radio" name="edCode" value="barcode" data-edcode${e.code!=="qr"?" checked":""}> Barcode <small>(EAN-13 for new codes)</small></label><label class="chk"><input type="radio" name="edCode" value="qr" data-edcode${e.code==="qr"?" checked":""}> QR code</label></div>
         <p class="note">Enter a code that's already on the product, or tap Generate. A code belongs to one ${simple?"product":"variant"} and scanning it finds exactly that one.</p>`:""}
       ${simpleHTML}
       ${fx.variants?"":stockNote}
-    </div>
-    ${fx.variants?`<div class="edsec"><h4>Options and variants</h4>
-      <label class="chk"><input type="checkbox" data-edtoggle="hasOpts"${e.hasOpts?" checked":""}> This product has multiple options / variants</label>
+      ${fx.variants?`<div class="edvars">      <label class="chk"><input type="checkbox" data-edtoggle="hasOpts"${e.hasOpts?" checked":""}> This product has multiple options / variants</label>
       ${e.hasOpts?`${e.opts.map(optionHTML).join("")}
         ${e.opts.length<OPTION_LIMITS.maxOptions?`<div class="optadd"><input id="optAdd" list="optNames" value="${esc(e.addName)}" maxlength="${OPTION_LIMITS.nameLen}" placeholder="Option name, e.g. Size" autocomplete="off" aria-label="New option name"><button type="button" class="btn xs" data-edact="addopt">+ Add option</button>
           <span class="optsugg">${OPTION_SUGGESTIONS.filter(n=>!e.opts.some(op=>op.n.toLowerCase()===n.toLowerCase())).slice(0,8).map(n=>`<button type="button" class="btn xs ghost" data-optsugg="${esc(n)}">${esc(n)}</button>`).join("")}</span></div>`:""}
         <datalist id="optNames">${OPTION_SUGGESTIONS.map(n=>`<option value="${esc(n)}">`).join("")}</datalist>
         ${tableHTML}`:`<p class="note">Sold as one product. Tick the box for sizes, colours, storage, weight and so on — every combination becomes a variant with its own stock, SKU, code and price.</p>`}
+      </div>`:""}
       ${stockNote}
-    </div>`:""}
+    </div>
     ${trackHTML}
+    <details class="edsec edadv" id="ed-advanced"${e.advOpen?" open":""}><summary><h4>Advanced</h4><span class="note">Description and tile colour</span></summary>
+      <label class="f"><span class="lab">Description</span><textarea data-ed="desc" rows="2" maxlength="300" placeholder="Optional">${esc(e.desc)}</textarea></label>
+      <div class="f"><span>Tile colour <span class="hintx">· shown when there's no photo</span></span><div class="colors">${COLORS.map(cc=>`<button type="button" data-tilecolor="${cc}" aria-label="Tile colour ${cc}" aria-pressed="${cc===e.color}" style="background:${cc}"></button>`).join("")}</div></div>
+    </details>
     <p id="edErr" class="autherr"${e.err?"":" hidden"}>${esc(e.err)}</p>
     </form>
     <div class="sh-foot edfoot">${e.isNew?"":e.archived?`<button class="btn sm" data-unarchive="${esc(e.id)}">Unarchive</button>`:`<button class="btn sm" data-archive="${esc(e.id)}">Archive</button>`}${!e.isNew&&!soldAny?`<button class="link xs danger" data-delp="${esc(e.id)}">Delete</button>`:""}
@@ -260,13 +266,24 @@ export function edCodeTyped(key){
 }
 
 /* ---------- save ---------- */
-export function saveEditor(){
+export function saveEditor(quiet){
   const e=store.editor, err=m=>{e.err=m;renderEditor();const x=$("#edErr");if(x)x.scrollIntoView({block:"nearest"})};
   const r=saveProduct({draft:e});
   if(r.error){err(r.error);return null}
+  const tracking=trackingFromChoice(e.tracking).tracking;
   store.editor=null;closeModal();renderAll();renderSync();flushSbQueue();
-  toast(r.created?`${r.name} added with ${r.activeCount} variant${r.variantCount===1?"":"s"}.`:"Product saved.");
+  // a new product kept by serial number or batch has no stock until it comes in with its numbers: offer that next
+  if(r.created&&tracking!=="none"&&!quiet) showProductAdded(e.id,r.name,tracking);
+  else toast(r.created?`${r.name} added with ${r.activeCount} variant${r.variantCount===1?"":"s"}.`:"Product saved.");
   return r;
+}
+/* "Product added ✓ — Add stock & serial numbers / Done": the receiving flow opens with this product (app/events/dom-events.js) */
+export function showProductAdded(pid,name,tracking){
+  const serial=tracking==="serial", mayReceive=can("manage_inventory")||can("create_purchase");
+  $("#modalHost").innerHTML=sheetHTML({id:"prodAdded",cls:"addedsheet",title:"Product added ✓",
+    sub:esc(name)+(serial?" is ready to sell once its pieces come in with their serial or IMEI numbers.":" is ready to sell once its stock comes in with its batch number."),
+    body:`<div class="addedacts">${mayReceive?`<button type="button" class="btn primary lg block" data-addstockfor="${esc(pid)}">${serial?"Add stock &amp; serial numbers":"Add stock &amp; batch"}</button>`:""}<button type="button" class="btn lg block" data-modal-close>Done</button></div>
+      ${serial?`<p class="note">Type, scan or paste the serial numbers — one per line, or a range like SN001..SN010. The quantity is the number of valid serials.</p>`:""}${mayReceive?"":`<p class="note">Ask someone who receives stock to add it.</p>`}`});
 }
 
 /* ---------- events (wired in app/events) ---------- */
@@ -292,7 +309,7 @@ export function edAction(act){
     case "print1":case "printsel":case "printall":{
       // stickers show what is saved, so the codes printed are the ones stored against the variants
       const keys=act==="printsel"?edCombos().filter(x=>e.sel[x.key]).map(x=>x.key):edCombos().filter(x=>x.cell.active!==false).map(x=>x.key);
-      const pid=e.id,r=saveEditor();if(!r)return;
+      const pid=e.id,r=saveEditor(true);if(!r)return;
       openStickers(pid,keys.map(k=>r.ids[k]).filter(Boolean));
       break;
     }

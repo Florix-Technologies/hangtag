@@ -6,12 +6,14 @@ import { inventoryIntelligence } from '../../inventory/services/inventory-intell
 
 const SUGGESTIONS = [
   'How much did I sell today?',
-  'What was my profit yesterday?',
-  'What are my fastest selling products?',
-  'What stock is running low?',
-  'How much UPI did I receive?',
-  'What are my outstanding customer dues?',
+  'Profit this month',
   'What should I reorder?',
+  'Who owes me money?',
+  'Payments today',
+  'Bank balances',
+  'Expenses this week',
+  'Open orders',
+  'What can you do?',
 ];
 
 let state = { busy: false, question: '', answer: null }, requestVersion = 0;
@@ -24,12 +26,14 @@ let inventorySource = kind => {
   return rows;
 };
 
-export function configureAssistantInventory(source){ inventorySource = typeof source === 'function' ? source : () => []; }
-const assistant = () => createBusinessAssistant({ query: createReadOnlyBusinessQuery({ inventory: inventorySource }) });
+export function configureAssistantInventory(source){ inventorySource = typeof source === 'function' ? source : () => []; one = null; }
+/* one assistant for the page, so a follow-up ("and yesterday?") knows the question before it */
+let one = null;
+const assistant = () => one || (one = createBusinessAssistant({ query: createReadOnlyBusinessQuery({ inventory: kind => inventorySource(kind) }) }));
 
 function answerHTML(answer){
-  if(!answer) return `<div class="ask-empty"><b>Ask in plain language</b><p>Answers use the shop data already on this device. Ask Hangtag is read-only and cannot change bills, stock, payments, prices or GST records.</p></div>`;
-  return `<article class="card ask-answer" aria-live="polite"><span class="btag">${answer.source === 'local' ? 'Calculated locally' : answer.source === 'provider' ? 'AI provider' : 'Unavailable'}</span><h3>${esc(answer.title)}</h3><p>${esc(answer.text)}</p>${answer.rows && answer.rows.length ? `<dl>${answer.rows.map(row => `<div><dt>${esc(row.label)}</dt><dd>${esc(row.value)}</dd></div>`).join('')}</dl>` : ''}</article>`;
+  if(!answer) return `<div class="ask-empty"><b>Hi 👋 Ask in plain language</b><p>Sales, profit, stock, payments, customer dues, reordering and more — answered from this shop's data on this device. Ask Hangtag only reads: it never changes bills, stock, payments, prices or GST records.</p></div>`;
+  return `<article class="card ask-answer" aria-live="polite">${answer.source === 'local' ? '<span class="btag ok">From your shop&rsquo;s data</span>' : answer.source === 'provider' ? '<span class="btag c">AI provider</span>' : '<span class="btag">Not understood</span>'}${state.question ? `<p class="ask-q">“${esc(state.question)}”</p>` : ''}<h3>${esc(answer.title)}</h3><p>${esc(answer.text)}</p>${answer.rows && answer.rows.length ? `<dl>${answer.rows.map(row => `<div><dt>${esc(row.label)}</dt><dd>${esc(row.value)}</dd></div>`).join('')}</dl>` : ''}</article>`;
 }
 
 export function renderAssistantPage(){
@@ -65,4 +69,4 @@ export function installAssistantEvents(){
   });
 }
 
-export function resetAssistant(){ requestVersion++; state = { busy: false, question: '', answer: null }; }
+export function resetAssistant(){ requestVersion++; one = null; state = { busy: false, question: '', answer: null }; }

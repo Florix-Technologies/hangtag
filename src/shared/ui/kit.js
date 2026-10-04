@@ -92,7 +92,7 @@ export function actionsMenuHTML(id, items, { label = "More", primary = false, up
   if(!list.length) return "";
   const body = list.map(it => it.sep ? "<hr>" : it.head ? `<div class="menu-h">${esc(it.head)}</div>`
     : `<button type="button" role="menuitem" ${it.attrs || ""}${it.danger ? ' class="danger"' : ""}${it.disabled ? " disabled" : ""}>${it.icon ? UI_ICON[it.icon] || "" : ""}<span>${esc(it.label)}${it.hint ? `<small>${esc(it.hint)}</small>` : ""}</span></button>`).join("");
-  return `<span class="menuwrap"><button type="button" class="btn${primary ? " primary" : ""}" data-menu="${esc(id)}" aria-haspopup="menu" aria-expanded="false">${esc(label)} ${UI_ICON.more}</button><div class="menu${up ? " up" : ""}" role="menu" data-menufor="${esc(id)}" hidden>${body}</div></span>`;
+  return `<span class="menuwrap"><button type="button" class="btn${primary ? " primary" : ""}" data-menu="${esc(id)}" aria-haspopup="menu" aria-expanded="false"${label ? "" : ' aria-label="More actions" title="More actions"'}>${esc(label)}${label ? " " : ""}${UI_ICON.more}</button><div class="menu${up ? " up" : ""}" role="menu" data-menufor="${esc(id)}" hidden>${body}</div></span>`;
 }
 export function closeMenus(except){
   document.querySelectorAll(".menu[data-menufor]:not([hidden])").forEach(m => { if(m === except) return; m.hidden = true; const b = m.parentElement && m.parentElement.querySelector("[data-menu]"); if(b) b.setAttribute("aria-expanded", "false"); });

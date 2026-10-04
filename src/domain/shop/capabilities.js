@@ -30,6 +30,16 @@ export function businessKind(type){
 }
 export const businessLabel = type => BUSINESS_TYPES.find(t => t.key === businessKind(type)).label;
 
+/* Examples that fit the kind of shop: the product form's and the search box's hints */
+export const BUSINESS_EXAMPLES = {
+  retail: { product: "Cotton Kurta", category: "Kurtas", search: "Search products, colours, sizes, SKU — or scan" },
+  grocery: { product: "Basmati Rice 5 kg", category: "Staples", search: "Search items, brands, SKU — or scan" },
+  restaurant: { product: "Masala Dosa", category: "Breakfast", search: "Search the menu" },
+  electronics: { product: "Galaxy A15 5G 128 GB", category: "Mobiles", search: "Search models, brands, SKU or IMEI — or scan" },
+  other: { product: "Product name", category: "Category", search: "Search products or SKU — or scan" },
+};
+export const businessExamples = type => BUSINESS_EXAMPLES[businessKind(type)];
+
 /* ---------- capabilities ----------
    group: where Settings → Business → Features lists it; needs: it builds on that one (off while that one is off) */
 export const CAPABILITIES = [

@@ -7,6 +7,14 @@ import { addDays, dayKey } from '../../../shared/formatting/dates.js';
 import { D } from '../../inventory/services/ledger.js';
 import { periodData, netLines, kstats } from '../../reports/services/report-data.js';
 import { outstandingAll } from '../../customers/services/customer-account.js';
+import { suppliersList, supplierAccountOf } from '../../inventory/services/purchase-state.js';
+import { liveProducts } from '../../products/services/catalog.js';
+import { variantsOf, vCost, vPrice } from '../../../domain/catalog/variants.js';
+import { stockOf } from '../../inventory/services/stock.js';
+import { levelOf } from '../../inventory/services/stock-levels.js';
+import { cashBookFor } from '../../finance/services/books-data.js';
+import { accountBalances } from '../../finance/use-cases/bank-accounts.js';
+import { bizRepository } from '../../commerce/repositories/biz-repository.js';
 
 const frozen = value => Object.freeze(value);
 
@@ -18,6 +26,8 @@ export function periodRangeFor(period, now = Date.now()){
   }
   if(period === 'month') return frozen({ from: today.slice(0, 8) + '01', to: today, label: 'this month' });
   if(period === '30d') return frozen({ from: addDays(today, -29), to: today, label: 'the last 30 days' });
+  if(period === '7d') return frozen({ from: addDays(today, -6), to: today, label: 'the last 7 days' });
+  if(period === 'lastmonth'){ const first = today.slice(0, 8) + '01', end = addDays(first, -1); return frozen({ from: end.slice(0, 8) + '01', to: end, label: 'last month' }); }
   return frozen({ from: today, to: today, label: 'today' });
 }
 
@@ -84,8 +94,62 @@ export function createReadOnlyBusinessQuery({ now = () => Date.now(), inventory 
       const rows = inventory(kind) || [];
       return frozen(rows.slice(0, Math.max(1, Math.min(30, +limit || 8))).map(row => frozen({ ...row })));
     },
+    /* what the shop owes its suppliers (posted purchases not fully paid) */
+    supplierDues(){
+      const rows = suppliersList(true).map(x => ({ name: x.name || 'Supplier', amount: supplierAccountOf(x.id).outstanding })).filter(r => r.amount > 0.004)
+        .sort((a, b) => b.amount - a.amount || a.name.localeCompare(b.name));
+      return frozen({ total: Math.round(rows.reduce((a, r) => a + r.amount, 0) * 100) / 100, suppliers: rows.length, rows: frozen(rows.map(frozen)) });
+    },
+    /* what is on the shelf: pieces, value at selling price and at cost, variants low and sold out */
+    stock(){
+      let pieces = 0, value = 0, cost = 0, costKnown = true, low = 0, out = 0;
+      const ps = liveProducts();
+      ps.forEach(p => variantsOf(p).forEach(v => { const l = stockOf(v.id), n = Math.max(0, l); pieces = roundQty(pieces + n); value += n * vPrice(p, v); const c = vCost(p, v); if(c == null){ if(n) costKnown = false; } else cost += n * c; const lv = levelOf(l, p); if(lv === 'out') out++; else if(lv === 'low') low++; }));
+      return frozen({ products: ps.length, pieces, value: Math.round(value * 100) / 100, cost: Math.round(cost * 100) / 100, costKnown, low, out });
+    },
+    /* purchase orders still to be received */
+    purchaseOrders(){
+      const open = bizRepository().list('po').filter(o => o && (o.status === 'draft' || o.status === 'sent'));
+      const value = open.reduce((a, o) => a + (o.items || []).reduce((b, l) => b + (+l.q || 0) * (+l.price || 0), 0), 0);
+      return frozen({ open: open.length, sent: open.filter(o => o.status === 'sent').length, drafts: open.filter(o => o.status === 'draft').length, value: Math.round(value * 100) / 100 });
+    },
+    /* quotations and sales orders still open */
+    orders(){
+      const all = Object.values(store.orders || {}).filter(Boolean);
+      const quotes = all.filter(o => o.kind === 'quote' && ['draft', 'sent'].includes(o.status)), sales = all.filter(o => o.kind === 'sales' && !['completed', 'cancelled'].includes(o.status));
+      const value = list => Math.round(list.reduce((a, o) => a + (+o.total || 0), 0) * 100) / 100;
+      return frozen({ quotes: quotes.length, quoteValue: value(quotes), sales: sales.length, salesValue: value(sales), mobile: sales.filter(o => o.source === 'customer').length });
+    },
+    /* returns in a period: how many and their value */
+    returns(period = 'today'){
+      const x = records(period), k = kstats(x.live, x.rets);
+      return frozen({ ...x.range, count: x.rets.length, value: k.returns || 0 });
+    },
+    /* cash spent from the drawer in a period, by category */
+    expenses(period = 'today'){
+      const range = periodRangeFor(period, now()), cats = {};
+      const all = Object.values(store.cashMoves || {}), reversed = new Set(all.filter(m => m.type === 'reversal').map(m => m.reverses));
+      let total = 0;
+      all.forEach(m => { if(m.type !== 'expense' || reversed.has(m.id)) return; const d = dayKey(m.t); if(d < range.from || d > range.to) return; total += +m.amount || 0; cats[m.category || 'Other'] = (cats[m.category || 'Other'] || 0) + (+m.amount || 0); });
+      return frozen({ ...range, total: Math.round(total * 100) / 100, rows: frozen(Object.entries(cats).sort((a, b) => b[1] - a[1]).map(([name, amount]) => frozen({ name, amount: Math.round(amount * 100) / 100 }))) });
+    },
+    /* GST on the bills of a period */
+    gst(period = 'month'){
+      const x = records(period), k = kstats(x.live, x.rets);
+      return frozen({ ...x.range, gst: k.gst || 0, cgst: k.cgst || 0, sgst: k.sgst || 0, igst: k.igst || 0, taxable: k.netSales || 0 });
+    },
+    /* the shop's bank accounts and their balances */
+    banks(){
+      const B = accountBalances();
+      return frozen({ total: B.total, rows: frozen(B.rows.filter(r => r.account.active !== false).map(r => frozen({ name: r.account.name, amount: r.balance }))) });
+    },
+    /* cash the drawer should hold today */
+    cashInHand(){
+      const today = dayKey(now()), B = cashBookFor(today, today);
+      return frozen({ closing: B.closing, opening: B.opening, in: (B.cashSales || 0) + (B.cashIn || 0) + (B.openingFloat || 0), out: (B.refunds || 0) + (B.cashOut || 0) + (B.expenses || 0) });
+    },
     describe(){
-      return frozen(['sales', 'profit', 'payments', 'products', 'dues', 'inventory']);
+      return frozen(['sales', 'profit', 'payments', 'products', 'dues', 'inventory', 'supplierDues', 'stock', 'purchaseOrders', 'orders', 'returns', 'expenses', 'gst', 'banks', 'cashInHand']);
     },
   };
   return frozen(api);

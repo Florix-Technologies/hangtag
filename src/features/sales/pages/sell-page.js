@@ -14,6 +14,8 @@ import { isLight, okColor, swatchOf } from '../../../shared/utils/colors.js';
 import { initials } from '../../../shared/utils/text.js';
 import { sellingBannerHTML } from '../../events/components/events-view.js';
 import { emptyStateHTML, sheetHTML } from '../../../shared/ui/kit.js';
+import { businessExamples } from '../../../domain/shop/capabilities.js';
+import { shopType } from '../../shop/services/shop-caps.js';
 
 /* A product on the Sell grid: photo (or initials on its colour), name, its options in short, price, how many are left, and the
    add action (the whole card adds; a sold-out card stays readable but says so). Keys 1–0 show only once the keyboard is used. */
@@ -39,6 +41,7 @@ export function hitHTML(h){
 }
 export function renderGrid(){
   const g=$("#grid"),ban=$("#sellBanner"),hits=$("#sellHits"),all=liveProducts();
+  const si=$("#sellSearch"),ph=businessExamples(shopType()).search; if(si&&si.placeholder!==ph) si.placeholder=ph;
   const cs=categories(),chips=$("#sellCats");
   if(store.sellCat&&!cs.includes(store.sellCat)) store.sellCat="";
   if(chips){ const h=catChipsHTML(cs); if(chips._h!==h){chips.innerHTML=h;chips._h=h} chips.hidden=!h; }

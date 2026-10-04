@@ -30,6 +30,10 @@ import { exAvail } from '../../features/returns/services/return-rules.js';
 import { closeSheets, renderBill, renderBillSheet, updateBillTotals } from '../../features/sales/components/bill-panel.js';
 import { addPicked, openPicker, renderPicker, setPickQty } from '../../features/sales/components/variant-picker.js';
 import { openKeyboardHelp, renderGrid, sellCatClick } from '../../features/sales/pages/sell-page.js';
+import { openProductView } from '../../features/products/components/product-view.js';
+import { addPurchaseLine, openPurchaseEntry, renderPurchaseEntry } from '../../features/inventory/components/purchase-entry.js';
+import { variantsOf as variantsOfP } from '../../domain/catalog/variants.js';
+import { prod as prodOf } from '../../features/products/services/catalog.js';
 import { addOne, availOf, removeLine, setLineQty } from '../../features/sales/services/cart.js';
 import { unvoid } from '../../features/sales/use-cases/checkout.js';
 import { openVoidForm, submitVoidForm, voidFormChange } from '../../features/sales/components/void-form.js';
@@ -63,6 +67,8 @@ import { releaseTableBill } from '../../features/restaurant/use-cases/tables.js'
 /* Registered once at start-up (app/main.js). */
 export function installDomEvents(){
   /* ================= events ================= */
+  // the product editor's Advanced section stays as it was left (the editor redraws on every change)
+  document.addEventListener("toggle",e=>{if(e.target&&e.target.id==="ed-advanced"&&store.editor)store.editor.advOpen=e.target.open},true);
 
   document.addEventListener("click",async e=>{
     const t=e.target;if(!t.closest)return;
@@ -90,6 +96,10 @@ export function installDomEvents(){
     const sn=t.closest("[data-syncrenumber]");if(sn){syncRenumber(+sn.dataset.syncrenumber);return}
     const sd=t.closest("[data-syncdiscard]");if(sd){if(sd.dataset.confirm){syncDiscard(+sd.dataset.syncdiscard)}else{sd.dataset.confirm="1";sd.textContent="Tap again to discard"}return}
     if(t.closest("[data-edclose]")){store.editor=null;closeModal();return}
+    // the product editor's sections; Advanced opens when chosen
+    const eg=t.closest("[data-edgo]");if(eg){const sec=document.getElementById("ed-"+eg.dataset.edgo);if(sec){if(sec.tagName==="DETAILS"){sec.open=true;if(store.editor)store.editor.advOpen=true}sec.scrollIntoView({block:"start",behavior:"smooth"})}return}
+    // after adding a product kept by serial or batch: straight into receiving it (Stock in, or a purchase for a buyer)
+    const asf=t.closest("[data-addstockfor]");if(asf){const pid=asf.dataset.addstockfor;closeModal();if(can("manage_inventory"))openStockOp("in",pid);else{openPurchaseEntry({});const p=prodOf(pid);if(p)variantsOfP(p).filter(v=>v.active!==false).forEach(v=>addPurchaseLine(v.id));renderPurchaseEntry()}return}
     // discounts and payment
     const pay=t.closest("[data-pay]");if(pay&&!pay.disabled){openPayment(pay.dataset.pay);return}
     const pm=t.closest("[data-paymode]");if(pm&&store.payState){payMode(pm.dataset.paymode);return}
@@ -161,6 +171,8 @@ export function installDomEvents(){
     const ar=t.closest("[data-archive]");if(ar){setArchived(ar.dataset.archive,true);return}
     const ua=t.closest("[data-unarchive]");if(ua){setArchived(ua.dataset.unarchive,false);return}
     const dp=t.closest("[data-delp]");if(dp){deleteProduct(dp.dataset.delp);return}
+    // a product in the list: its details (buttons and menus in the row do their own thing)
+    const po=t.closest("[data-prodopen]");if(po&&!t.closest("button,a,.menu,.menuwrap")){openProductView(po.dataset.prodopen);return}
     const pv=t.closest("[data-prodview]");if(pv){store.prodView=pv.dataset.prodview;renderProducts();return}
     const gr=t.closest("[data-grouprev]");if(gr){openGroupPreview(gr.dataset.grouprev);return}
     const gg=t.closest("[data-groupgo]");if(gg){applyGroup(gg.dataset.groupgo);return}

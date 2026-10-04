@@ -90,7 +90,16 @@ const check = (name, ok, info) => { if(ok) passed++; else failed++; console.log(
   });
   const assistant = createBusinessAssistant({ query }), answer = await assistant.ask('How much did I sell today?'), unsupported = await assistant.ask('Write a poem');
   check('assistant answers supported questions from deterministic queries', answer.source === 'local' && /₹1,250/.test(answer.text), answer);
-  check('no provider: unsupported questions show a clear unavailable state', unsupported.source === 'unavailable' && /not configured/i.test(unsupported.text), unsupported);
+  check('no provider: unsupported questions say what can be asked (never an AI error)', unsupported.source === 'unavailable' && /sales/.test(unsupported.text) && /Try/.test(unsupported.text) && unsupported.rows.length > 0, unsupported);
+  const hi = await assistant.ask('hi'), morning = await assistant.ask('Good morning'), help = await assistant.ask('what can you do?');
+  check('greetings and help are answered locally, never "could not answer"', hi.source === 'local' && /I can help/.test(hi.text) && morning.source === 'local' && help.source === 'local' && help.rows.length >= 5
+    && ![hi, morning, help].some((a) => /could not answer/i.test(a.title + a.text)), { hi, help });
+  const rev = await assistant.ask('today revenue'), y = await assistant.ask('and yesterday?');
+  check('loose phrasing ("today revenue") and a follow-up for another period ("and yesterday?")', rev.intent.kind === 'sales' && y.intent.kind === 'sales' && y.intent.period === 'yesterday', { rev: rev.intent, y: y.intent });
+  check('card, all payments, supplier dues, bank balances, expenses, GST, purchase orders, returns, stock value are understood', parseBusinessQuestion('card payments yesterday').method === 'card'
+    && parseBusinessQuestion('how did customers pay today').kind === 'payments' && parseBusinessQuestion('what do I owe suppliers').kind === 'supplierDues'
+    && parseBusinessQuestion('bank balance').kind === 'banks' && parseBusinessQuestion('expenses this week').period === '7d' && parseBusinessQuestion('gst this month').kind === 'gst'
+    && parseBusinessQuestion('purchase orders to receive').kind === 'purchaseOrders' && parseBusinessQuestion('returns today').kind === 'returns' && parseBusinessQuestion('stock value').kind === 'stock');
   const realSurface = createReadOnlyBusinessQuery();
   check('assistant query surface is frozen and read-only by construction', Object.isFrozen(realSurface) && realSurface.describe().every(k => typeof realSurface[k] === 'function')
     && !Object.keys(realSurface).some(k => /save|create|update|delete|checkout|stockin|record/i.test(k)), Object.keys(realSurface));

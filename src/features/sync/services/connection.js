@@ -51,7 +51,7 @@ export async function initSupabaseOnce(){
     connectedHooks.forEach(f => { try{ Promise.resolve(f()).catch(e => logger.warn("After connecting:", e)); }catch(e){ logger.warn("After connecting:", e); } });
     return true;
   }catch(e){
-    logger.error("Failed to connect to Supabase:", e);
+    logger.event("sync", "connect-failed", { code: e && e.code });
     store.sbStatus = "error"; store.sbErrorText = userMessage(e, "Unexpected error."); store.mode = "standalone"; renderSync(); return false;
   }
 }

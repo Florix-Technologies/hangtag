@@ -20,6 +20,7 @@ import { isUnverified } from '../../../domain/sales/payments.js';
 import { can, canAny, signedInAs } from '../../shop/services/access.js';
 import { hasCap } from '../../shop/services/shop-caps.js';
 import { enqueue } from '../../sync/services/outbox.js';
+import { logger } from '../../../shared/logging/logger.js';
 
 const DAY = 864e5;
 const SNOOZE = { reorder: DAY, dues: 3 * DAY };
@@ -77,7 +78,7 @@ export function automationFindings(now = Date.now()){
     try{
       if(r.key === "reorder") out.push(...reorderFindings());
       if(r.key === "dues") out.push(...dueFindings(A.dueDays, now));
-    }catch{ /* a rule that can't read its data finds nothing this time */ }
+    }catch(e){ logger.event("automation", "rule-failed", { op: "findings", code: e && e.code }, "warn"); }   // a rule that can't read its data finds nothing this time
   });
   return out;
 }
@@ -119,6 +120,7 @@ export async function runAutomation({ now = Date.now(), checkUpi = null, online 
   if(A.reorder === "auto" && ruleUsable(reorder)){
     for(const f of reorderFindings()){
       const r = poFromReorder(f.act.supplierId, f.act.items);
+      if(r.error) logger.event("automation", "rule-failed", { op: "reorder" }, "warn");
       logAutomation(r.error ? { rule: "reorder", action: "failed", key: f.key, text: `Draft purchase order for ${f.act.supplier}: ${r.error}` }
         : { rule: "reorder", action: "auto", key: f.key, text: `Drafted purchase order ${r.po.no} for ${f.act.supplier} (${plural(f.act.items.length, "product")}). Not sent.` });
       if(!r.error) done++;
@@ -126,7 +128,7 @@ export async function runAutomation({ now = Date.now(), checkUpi = null, online 
   }
   if(A.upi === "auto" && online && checkUpi && canAny(["create_sale"]) && D().sales.some(isUnverified)){
     try{ const n = await checkUpi(); if(n){ done += n; logAutomation({ rule: "upi", action: "auto", key: `upi:${dayKey(now)}`, text: `${plural(n, "UPI payment")} verified by the payment provider.` }); } }
-    catch{ /* tried again on the next run */ }
+    catch(e){ logger.event("automation", "rule-failed", { op: "upi", code: e && e.code }, "warn"); }   // tried again on the next run
   }
   return done;
 }

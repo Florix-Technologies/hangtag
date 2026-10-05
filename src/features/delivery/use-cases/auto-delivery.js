@@ -83,7 +83,7 @@ async function run(){
           store.deliveryQueue.push({id:uid(),saleId:j.saleId,channel:j.fallback,status:"queued",attempts:0,first:t,nextAt:t,t,after:j.channel});
         }
       }
-      logger.warn("Automatic receipt:",e);
+      logger.event((j.channel === "whatsapp" ? "whatsapp" : j.channel === "sms" ? "sms" : "email"), again ? "send-retrying" : "send-failed", { op: "auto-receipt", code: e && e.code }, again ? "warn" : "error");
     }
     saveDeliveryQueue(); changed(j.saleId);
   }

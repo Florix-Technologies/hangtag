@@ -28,7 +28,7 @@ export async function loadPayConfig(force){
   if((store.payConfig && !force) || !online()) return store.payConfig;
   try{ store.payConfig = normalizeProviderConfig(await paymentProvider().config()); }
   catch(e){
-    logger.warn("Payment provider:", e);
+    logger.event("payment", "start-failed", { op: "provider", code: e && e.code });
     // not set up (or the function isn't deployed): known for this session; anything else is asked again next time
     store.payConfig = e && e.code === ERROR_CODES.NOT_CONFIGURED ? { provider: null, upi: false, cardLink: false } : null;
   }
@@ -84,7 +84,7 @@ export async function checkIntent(method){
     if(store.payState === s && s.pi[method] && s.pi[method].id === N.id){ s.pi[method] = N; persistPending(); }
     return N;
   }catch(e){
-    logger.warn("Payment status:", e);
+    logger.event("payment", "status-failed", { op: "provider", code: e && e.code }, "warn");
     if(store.payState === s && s.pi[method]) s.pi[method].checkError = userMessage(e, "Couldn't check the payment. Retrying…");
     return I;
   }
@@ -99,7 +99,7 @@ export async function cancelIntent(method){
     if(store.payState === s){ if(N.status === "verified") s.pi[method] = N; else delete s.pi[method]; persistPending(); }
     return N;
   }catch(e){
-    logger.warn("Payment cancel:", e);
+    logger.event("payment", "cancel-failed", { op: "provider", code: e && e.code }, "warn");
     // couldn't reach the server: the provider closes it at its expiry anyway; money that still arrives shows as unmatched
     if(store.payState === s){ delete s.pi[method]; persistPending(); }
     return { status: "cancelled", error: userMessage(e, "Couldn't close the payment at the provider.") };
@@ -116,7 +116,7 @@ export async function abandonIntents(state, { keepVerified = false } = {}){
     store.payPending = { saleId: s.saleId, mode: s.mode, method: s.method, via: s.via, amt: s.amt, pi: Object.fromEntries(verified), t: Date.now() };
     savePayPending();
   }else if(open.length || store.payPending) clearPending();
-  await Promise.all(open.map(I => providerCall('cancelPayment', 'cancel', I.id).catch(e => logger.warn("Payment cancel:", e))));
+  await Promise.all(open.map(I => providerCall('cancelPayment', 'cancel', I.id).catch(e => logger.event("payment", "cancel-failed", { op: "provider", code: e && e.code }, "warn"))));
   return verified.map(([, I]) => I);
 }
 
@@ -143,7 +143,7 @@ export async function verifyManualUpi(sales){
       const r = await providerCall('verifyPayment', 'verify', { saleId: s.id, reference: p.ref });
       p.checkedAt = Date.now();
       if(r && r.status === "verified"){ p.verification = "verified"; p.intent = r.intentId || p.intent; p.providerRef = r.paymentId || p.providerRef; n++; }
-    }catch(e){ logger.warn("UPI verification:", e); if(e && e.code === ERROR_CODES.NOT_CONFIGURED) break; }
+    }catch(e){ logger.event("payment", "upi-check-failed", { op: "provider", code: e && e.code }, "warn"); if(e && e.code === ERROR_CODES.NOT_CONFIGURED) break; }
   }
   return n;
 }

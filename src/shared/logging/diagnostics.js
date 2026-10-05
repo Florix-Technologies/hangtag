@@ -1,6 +1,13 @@
 // Privacy-safe technical diagnostics kept on this device. Entries are deliberately small and contain no app records:
 // no customer/shop fields, document contents, contact details, URLs with parameters, auth tokens or provider keys.
 // The bounded history powers Settings -> Advanced -> Diagnostics & health; it is never uploaded automatically.
+//
+// THE RULE for code that logs: never put a customer's, staff member's, supplier's or shop's name (or phone, email, address,
+// GSTIN, document number, note, amount tied to a person) into a diagnostic as free text. The sanitiser below removes what
+// it can recognise (tokens, URLs, emails, phone numbers, tax ids, amounts, labelled fields) but a bare name can't be
+// recognised reliably — so it must never be written in the first place. Use recordEvent / logger.event with a category,
+// what happened, and technical fields only (an operation name such as a table, RPC, function, rule or tool name; a code;
+// an HTTP status; a duration; a count). tests/unit/logging-discipline.test.mjs enforces this on every logging call.
 import { APP_ENV } from '../config/app-config.js';
 import { use } from '../di/services.js';
 
@@ -17,7 +24,8 @@ const safeToken = (v, dflt) => {
 };
 const safeCode = v => {
   const s = text(v).trim().toUpperCase();
-  return /^[A-Z][A-Z0-9_.-]{1,39}$/.test(s) ? s : "";
+  // an app or provider code (starts with a letter), or a 5-character SQLSTATE (23505, 42P01); never a longer number
+  return /^[A-Z][A-Z0-9_.-]{1,39}$/.test(s) || /^[0-9A-Z]{5}$/.test(s) ? s : "";
 };
 
 /* Free text is useful only after values that can identify a person, document, account or credential are removed. */
@@ -80,6 +88,22 @@ function write(list){
   try{ use("storage").set(DIAGNOSTICS_KEY, next); }catch{}
 }
 
+/* The categories the health panel counts (structured events) */
+export const DIAG_CATEGORIES = Object.freeze({ api: "API (slow or failed calls)", sync: "Sync", payment: "Payments", email: "Email", whatsapp: "WhatsApp",
+  sms: "SMS", printer: "Printer", agent: "Agent tools", automation: "Automation", database: "Database" });
+const safeOp = v => { const s = text(v).toLowerCase().replace(/[^a-z0-9_:.-]/g, "-").slice(0, 60); return /^[a-z0-9]/.test(s) ? s : ""; };
+/* a duration as a band, never the exact time */
+export const durationBand = ms => { const n = +ms; return !Number.isFinite(n) || n < 0 ? "" : n < 1000 ? "under 1 s" : n < 3000 ? "1–3 s" : n < 10000 ? "3–10 s" : n < 30000 ? "10–30 s" : "30 s or more"; };
+/* A structured event: the category, what happened (kind: "upload-failed", "slow-call" …) and allowlisted technical fields —
+   op (an operation name), code, status, ms (kept only as a band), count. Nothing else is read from fields. */
+export function recordEvent(category, kind, fields = {}, level){
+  const cat = Object.prototype.hasOwnProperty.call(DIAG_CATEGORIES, category) ? category : "app", what = safeToken(kind, "event");
+  const f = fields && typeof fields === "object" ? fields : {}, op = safeOp(f.op), band = durationBand(f.ms);
+  const n = Number.isInteger(+f.count) && +f.count > 1 ? Math.min(9999, +f.count) : 0;
+  const message = `${what.replace(/-/g, " ")}${op ? " (" + op + ")" : ""}${band ? " · " + band : ""}${n ? " · " + n + " items" : ""}`;
+  return recordDiagnostic({ level: ["error", "warn", "info"].includes(level) ? level : "error", source: cat, kind: what, category: cat, op,
+    message, code: f.code, status: f.status });
+}
 /* input: technical fields only; unknown object fields are never retained. */
 export function recordDiagnostic(input = {}){
   const now = Number.isFinite(input.now) ? input.now : Date.now(), values = Array.isArray(input.values) ? input.values : [input.message, input.error];
@@ -91,6 +115,8 @@ export function recordDiagnostic(input = {}){
     message: messageOf(values),
     ...locationOf(error, input.filename, input.line, input.column),
   };
+  if(input.category) entry.category = safeToken(input.category, "app");
+  if(input.op){ const op = safeOp(input.op); if(op) entry.op = op; }
   const code = safeCode(input.code || (error && error.code)); if(code) entry.code = code;
   const status = +(input.status || (error && (error.status || error.statusCode))); if(Number.isInteger(status) && status >= 100 && status <= 599) entry.status = status;
   const list = read().slice(), previous = list[list.length - 1];
@@ -104,6 +130,12 @@ export function recordDiagnostic(input = {}){
 export const recordLog = (level, values) => recordDiagnostic({ level, source: "logger", values });
 export const getDiagnostics = () => read().map(x => ({ ...x }));
 export function clearDiagnostics(){ write([]); }
+/* How many events of each category the history holds for the last `hours` (counts only; the history is bounded) */
+export function categoryCounts(hours = 24, now = Date.now()){
+  const since = now - hours * 3600e3, out = Object.fromEntries(Object.keys(DIAG_CATEGORIES).map(k => [k, 0]));
+  read().forEach(e => { if(e.category && out[e.category] != null && Date.parse(e.at) >= since) out[e.category] += Math.max(1, +e.count || 1); });
+  return out;
+}
 export function diagnosticsSummary(){
   const entries = read(), errors = entries.filter(x => x.level === "error").length, warnings = entries.filter(x => x.level === "warn").length;
   return { count: entries.length, errors, warnings, latestAt: entries.length ? entries[entries.length - 1].at : null };
@@ -118,7 +150,7 @@ export function diagnosticsReport(health = {}){
     serviceWorker: safeToken(health.serviceWorker, "unknown"),
     build: sanitizeDiagnosticText(health.build || "unknown"),
   };
-  return { schema: 1, createdAt: new Date().toISOString(), health: cleanHealth, diagnostics: getDiagnostics() };
+  return { schema: 2, createdAt: new Date().toISOString(), health: cleanHealth, last24h: categoryCounts(24), diagnostics: getDiagnostics() };
 }
 
 /* Install once per window. Resource failures, synchronous errors and rejected promises all enter the same safe history. */

@@ -188,3 +188,11 @@ button.hatt-row:hover{background:var(--wash)}
 .diag-list .dg-what{overflow-wrap:anywhere}
 .diag-list .dg-what small{display:block;color:var(--ink-3)}
 .diag-list li.error b{color:var(--crit-ink,var(--crit))}.diag-list li.warn b{color:var(--warn-ink)}
+
+/* Diagnostics & health: the last 24 hours by category (counts only) */
+.diag-cats{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px;margin:0 0 12px}
+.diag-cat{display:flex;justify-content:space-between;align-items:center;gap:8px;min-width:0;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-sm);font-size:var(--fs-sm);color:var(--ink-3)}
+.diag-cat span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.diag-cat b{font-variant-numeric:tabular-nums;color:var(--ink-3)}
+.diag-cat.on{border-color:var(--warn-line);background:var(--warn-soft);color:var(--warn-ink)}
+.diag-cat.on b{color:var(--warn-ink)}

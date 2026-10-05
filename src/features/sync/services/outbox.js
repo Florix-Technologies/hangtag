@@ -157,7 +157,7 @@ export async function flushSbQueueOnce(){
       item.sending = true;
       try{ await sendItem(item); done.add(item); sentNow++; const k = recordKey(item); if(k) waiting.delete(k); }
       catch(err){
-        logger.warn("Queue sync item failed:", item.type, err);
+        logger.event("sync", "upload-failed", { op: item.type, code: err && err.code }, "warn");
         // the shop's plan has ended (HT402): nothing more can go up until renewal — keep it all queued, ask the server
         if(err && err.code === "SUBSCRIPTION"){ item.err = err.message; stopped = true; noteSubscriptionRefused(); break; }
         item.tries = (item.tries||0) + 1; item.err = err && (err.message || err.code) || String(err);

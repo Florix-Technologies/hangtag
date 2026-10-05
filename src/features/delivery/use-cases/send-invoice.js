@@ -48,6 +48,7 @@ export async function sendInvoice(sid,channel){
     return {ok:true,to:entry.to};
   }catch(e){
     const msg=userMessage(e,"The message wasn't sent. Try again.");
+    if(!(e&&e.code===ERROR_CODES.NOT_CONFIGURED)) logger.event((channel === "whatsapp" ? "whatsapp" : channel === "sms" ? "sms" : "email"),"send-failed",{op:"receipt",code:e&&e.code});
     Object.assign(entry,{status:e&&e.code===ERROR_CODES.NOT_CONFIGURED?"unavailable":"failed",error:msg,t:Date.now()});
     return {error:msg,code:e&&e.code};
   }

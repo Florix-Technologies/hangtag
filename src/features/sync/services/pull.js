@@ -49,7 +49,7 @@ export async function pullCatalogFromSupabase(remoteIsTruth = false, opts = {}){
       store.sbOfflineQueue.filter(q=>q.type==="img").forEach(q=>{ if(store.imgs[q.id]) imgMap[q.id]=store.imgs[q.id]; else delete imgMap[q.id]; });
       store.imgs = imgMap; saveImgs();
     }
-  }catch(e){ logger.error("Error pulling catalog:", e); }
+  }catch(e){ logger.event("sync", "download-failed", { op: "catalog", code: e && e.code }); }
 }
 export async function pullMoves(){
   const list = await use("cloud").fetchMoves();
@@ -101,7 +101,7 @@ export async function pullPurchases(){
   const cloud = use("cloud");
   let sups, purs, pays;
   try{ [sups, purs, pays] = await Promise.all([cloud.fetchSuppliers(), cloud.fetchPurchases(), cloud.fetchSupplierPayments()]); }
-  catch(e){ logger.warn("Suppliers and purchases not downloaded:", e); return false; }
+  catch(e){ logger.event("sync", "download-failed", { op: "purchases", code: e && e.code }, "warn"); return false; }
   const ps = pendingIds("supplier"), pp = new Set([...pendingIds("purchase"), ...pendingIds("pcancel")]), px = pendingIds("spay"), S = {}, P = {}, X = {};
   sups.forEach(s => { S[s.id] = s; }); Object.values(store.suppliers || {}).forEach(s => { if(ps.has(s.id)) S[s.id] = s; });
   purs.forEach(p => { P[p.id] = p; }); Object.values(store.purchases || {}).forEach(p => { if(pp.has(p.id)) P[p.id] = p; });
@@ -145,10 +145,10 @@ export async function pullFromSupabase(showToast = true){
     await pullEvents();
     await pullCash();
     // orders, held bills and payments collected (section 3m): a database without them yet doesn't stop the rest
-    await pullOrders().catch(e => logger.warn("Orders and credit not downloaded:", e));
+    await pullOrders().catch(e => logger.event("sync", "download-failed", { op: "orders", code: e && e.code }, "warn"));
     await pullPurchases();
     // price lists, purchase orders, GST readiness, repacks, vouchers (section 3r): a database without them keeps this device's copy
-    await pullBiz().catch(e => logger.warn("Price lists, purchase orders and vouchers not downloaded:", e));
+    await pullBiz().catch(e => logger.event("sync", "download-failed", { op: "commerce", code: e && e.code }, "warn"));
     await pullSettings();
     await pullSales();
     if(isMember()){ seen = marks; seenPurchases = pmarks; }

@@ -1,3 +1,4 @@
+import { logger } from '../../../shared/logging/logger.js';
 // The Hangtag Agent with an AI provider (the "agentProvider" port → Edge Function agent). The provider only decides which
 // tools to call and words the answer; the tools run here, through the tool host (services/agent-tools.js), on this shop's
 // records with this person's role — so the provider sees only what the tools return and can't change anything: what an
@@ -21,6 +22,7 @@ export async function runAgent({ question, provider, host, maxSteps = MAX_STEPS 
     const results = calls.map(c => {
       const res = host.callTool(c.name, c.input), sc = res.structuredContent || {};
       used.push(c.name);
+      if(res.isError) logger.event("agent", "tool-failed", { op: c.name }, "warn");
       if(!res.isError){ if(sc.action && !actions.some(a => sameAction(a, sc.action))) actions.push(sc.action); if(sc.proposal) proposals.push(sc.proposal); }
       return { id: c.id, content: resultText(res), isError: !!res.isError };
     });

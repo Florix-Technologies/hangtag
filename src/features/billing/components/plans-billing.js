@@ -118,7 +118,8 @@ function historyHTML(){
 /* Settings → Plans & Billing (the owner) */
 export function plansBillingHTML(){
   const s = subscriptionStatus(), now = subscriptionNow();
-  if(!ck.plans && !ck.loading) setTimeout(() => load(), 0);
+  // asked from the server only when the section is really on the screen (Settings also builds sections it doesn't show)
+  if(!ck.plans && !ck.loading) setTimeout(() => { if(document.getElementById("plansBlk")) load(); }, 0);
   if(!s || s.state === "unavailable") return `<div class="setblk" id="plansBlk"><h5>Your plan</h5><p class="note">${s ? "Plans & Billing isn't available on this shop's database yet." : "Your plan shows here once you're online."}</p></div>`;
   const chip = statusChip(s, now), n = daysLeft(s, now);
   return `<div id="plansBlk">

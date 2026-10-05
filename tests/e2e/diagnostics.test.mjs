@@ -58,10 +58,14 @@ await run('window.__saved=null;const f=use("files");override({files:{...f,saveFi
 await A.click('#diagBlk [data-diag="download"]'); await sleep(300);
 const saved = await run('return window.__saved');
 const rep = saved && JSON.parse(saved.d);
-check('Download report: a JSON file with the health and the cleaned history only', saved && /^hangtag-diagnostics-\d{4}-\d{2}-\d{2}\.json$/.test(saved.n) && rep.schema === 1 && rep.health.cloud === 'connected' && rep.diagnostics.length === 3
-  && !/Riya|98765|riya@|INV-000123|abc123secret|ownerdiag@example\.com|aaaaaaaa-0000/.test(saved.d), saved && saved.n);
+check('Download report: a JSON file with the health, the last 24 h counts and the cleaned history only', saved && /^hangtag-diagnostics-\d{4}-\d{2}-\d{2}\.json$/.test(saved.n) && rep.schema === 2 && rep.health.cloud === 'connected' && rep.diagnostics.length === 3
+  && Object.values(rep.last24h || {}).every((n) => Number.isInteger(n)) && !/Riya|98765|riya@|INV-000123|abc123secret|ownerdiag@example\.com|aaaaaaaa-0000/.test(saved.d), saved && saved.n);
+check('the panel counts the last 24 hours by category (API, sync, payments, email, WhatsApp, SMS, printer, Agent, automation, database) and says nothing is sent by itself',
+  (await A.$$eval('#diagBlk [data-diag-cat]', (l) => l.map((x) => x.dataset.diagCat))).join() === 'api,sync,payment,email,whatsapp,sms,printer,agent,automation,database' && /Never sent anywhere by itself/.test(await text('#diagBlk') || ''));
 await A.click('#diagBlk [data-diag="clear"]'); await sleep(300);
-check('Clear empties the history', await run('return getDiagnostics().length') === 0 && /No technical problems recorded/.test(await text('#diagBlk') || ''));
+check('Clear asks first, on the button itself (no browser pop-up): nothing is cleared by one tap', await run('return getDiagnostics().length') === 3 && /Tap again to clear/.test(await text('#diagBlk [data-diag="clear"]') || ''));
+await A.click('#diagBlk [data-diag="clear"]'); await sleep(300);
+check('…the second tap empties the history', await run('return getDiagnostics().length') === 0 && /No technical problems recorded/.test(await text('#diagBlk') || ''));
 
 console.log('--- phone ---');
 await A.setViewport({ width: 360, height: 780 }); await sleep(400);

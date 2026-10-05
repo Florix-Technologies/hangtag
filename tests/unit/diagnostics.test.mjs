@@ -30,8 +30,8 @@ check(`the history is bounded (${DIAGNOSTICS_LIMIT} entries, newest kept)`, getD
 const sum = diagnosticsSummary();
 check('the summary counts problems and warnings', sum.count === DIAGNOSTICS_LIMIT && typeof sum.errors === 'number' && sum.latestAt);
 const rep = diagnosticsReport({ online: true, cloud: 'connected', pending: 3, review: 1, serviceWorker: 'active', build: 'hangtag-06e6c89ef8 for riya@example.com' });
-check('the support report: health facts (cleaned) and the history, nothing else', rep.schema === 1 && rep.health.cloud === 'connected' && rep.health.pending === 3 && !/riya@/.test(rep.health.build)
-  && Array.isArray(rep.diagnostics) && Object.keys(rep).join() === 'schema,createdAt,health,diagnostics');
+check('the support report: health facts (cleaned), the last 24 h counts and the history, nothing else', rep.schema === 2 && rep.health.cloud === 'connected' && rep.health.pending === 3 && !/riya@/.test(rep.health.build)
+  && Array.isArray(rep.diagnostics) && Object.keys(rep).join() === 'schema,createdAt,health,last24h,diagnostics' && Object.values(rep.last24h).every((n) => Number.isInteger(n)));
 
 clearDiagnostics();
 const target = new EventTarget();

@@ -10,6 +10,7 @@ import { printSale } from '../../receipts/services/receipt-output.js';
 import { use } from '../../../shared/di/services.js';
 import { userMessage } from '../../../shared/errors/app-error.js';
 import { savePrinter } from '../../../shared/state/persistence.js';
+import { logger } from '../../../shared/logging/logger.js';
 
 /* → { ok: true, via: "epson", confirmed: true } when the printer confirmed; { ok: true, via: "browser" } when the dialog
    opened; { error, retry } when it didn't print. browser: true skips the thermal printer. */
@@ -21,7 +22,7 @@ export async function printReceipt(sid,{browser,paper}={}){
   try{
     await use("receiptPrinter").print(thermalReceipt(invoiceFor(s),{cols:cfg.cols}),cfg);
     return {ok:true,via:"epson",confirmed:true};
-  }catch(e){ return {error:userMessage(e,"The receipt didn't print."),retry:true}; }
+  }catch(e){ logger.event("printer","print-failed",{op:(e&&e.details&&e.details.reason)||"epson",code:e&&e.details&&e.details.code,status:e&&e.details&&e.details.status}); return {error:userMessage(e,"The receipt didn't print."),retry:true}; }
 }
 /* Save this device's printer: input { kind, host, https, devid, cols } → { ok } or { error, field } */
 export function savePrinterSettings(input){
@@ -33,5 +34,5 @@ export function savePrinterSettings(input){
 export async function testPrinter(input){
   const r=checkPrinterSettings(Object.assign({},input,{kind:"epson"})); if(r.error) return r;
   try{ await use("receiptPrinter").test(r.printer); return {ok:true}; }
-  catch(e){ return {error:userMessage(e,"The test print didn't work.")}; }
+  catch(e){ logger.event("printer","test-failed",{op:(e&&e.details&&e.details.reason)||"epson",code:e&&e.details&&e.details.code},"warn"); return {error:userMessage(e,"The test print didn't work.")}; }
 }

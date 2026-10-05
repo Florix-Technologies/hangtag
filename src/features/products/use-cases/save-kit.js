@@ -13,6 +13,7 @@ import { hasCap } from '../../shop/services/shop-caps.js';
 import { vRec } from '../../inventory/services/ledger.js';
 import { trackingOfP } from '../../inventory/services/tracking.js';
 import { productRepository } from '../repositories/product-repository.js';
+import { stripMoney } from '../../../shared/formatting/money.js';
 
 /* input: { id?, name, price, bc?, sku?, cat?, gst?, hsn?, bundle: [{ v, q }] } → { product, created } or { error, field, line? } */
 export function saveKit(input){
@@ -22,7 +23,7 @@ export function saveKit(input){
   if(old && !isKit(old)) return { error: "That product isn't a kit." };
   if(!old && !hasCap("uses_bundles")) return { error: "Kits are switched off for this shop. Switch them on in Settings → Business → Features first." };
   const id = old ? old.id : "p" + uid(), bundle = cleanBundle(input.bundle);
-  const name = String(input.name || "").trim().replace(/\s+/g, " "), price = +String(input.price == null ? "" : input.price).replace(/[₹,\s]/g, "");
+  const name = String(input.name || "").trim().replace(/\s+/g, " "), price = +stripMoney(String(input.price == null ? "" : input.price));
   const bad = checkBundle({ id, name, price, bundle }, v => vRec(v), trackingOfP); if(bad) return bad;
   if(name.length > 120) return { error: "Keep the name to 120 characters.", field: "name" };
   if(tooPrecise(price)) return { error: "Use at most 2 decimal places in the price.", field: "price" };

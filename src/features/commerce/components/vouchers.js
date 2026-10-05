@@ -4,7 +4,7 @@ import { VOUCHER_LABELS } from '../../../domain/sales/vouchers.js';
 import { store } from '../../../shared/state/store.js';
 import { use } from '../../../shared/di/services.js';
 import { esc } from '../../../shared/dom.js';
-import { inrx } from '../../../shared/formatting/money.js';
+import { currencySign, inrx } from '../../../shared/formatting/money.js';
 import { dtLong } from '../../../shared/formatting/dates.js';
 import { toast } from '../../../shared/components/toast.js';
 import { renderAll } from '../../../shared/ui/render.js';
@@ -31,7 +31,7 @@ function renderVoucherIssue(){
       foot: `${typeof navigator !== "undefined" && navigator.share ? `<button type="button" class="btn sm" data-gvshare>Share</button>` : ""}<button type="button" class="btn sm primary" data-biz="close">Done</button>` });
     return;
   }
-  bizSheet({ label: "Sell a gift voucher", body: `<label class="f full">Amount<input data-gvf="amount" type="number" inputmode="decimal" min="1" step="any" value="${esc(F.amount)}" placeholder="₹" style="font-size:22px"></label>
+  bizSheet({ label: "Sell a gift voucher", body: `<label class="f full">Amount<input data-gvf="amount" type="number" inputmode="decimal" min="1" step="any" value="${esc(F.amount)}" placeholder="${esc(currencySign())}" style="font-size:22px"></label>
       <div class="seg" role="group" aria-label="Paid by">${["cash", "upi", "card"].map(m => `<button type="button" data-gvmethod="${m}" aria-pressed="${F.method === m}">${m === "upi" ? "UPI" : m[0].toUpperCase() + m.slice(1)}</button>`).join("")}</div>
       ${F.custName ? `<p class="note">For <b>${esc(F.custName)}</b> (the customer on the bill)</p>` : `<p class="note">For anyone (add a customer to the bill first to name it for them).</p>`}
       <details><summary>Use by a date</summary><label class="f">Last day<input data-gvf="expires" type="date" value="${esc(F.expires)}"></label></details>`,

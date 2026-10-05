@@ -22,12 +22,12 @@ import { documentCSS, documentFrameHTML, documentHTML, fitDocFrames } from '../.
 import { docOptions, downloadDocumentPdf, printDocument, shareDocumentPdf } from '../../receipts/components/doc-actions.js';
 import { $, esc } from '../../../shared/dom.js';
 import { inr } from '../../../shared/formatting/money.js';
-import { hhmm } from '../../../shared/formatting/dates.js';
+import { hhmm, fmtDate } from '../../../shared/formatting/dates.js';
 import { ICON } from '../../../shared/constants/icons.js';
 import { toast } from '../../../shared/components/toast.js';
 import { logger } from '../../../shared/logging/logger.js';
 
-const dateText=v=>{ if(!v) return "—"; const d=/^\d{4}-\d{2}-\d{2}$/.test(String(v))?new Date(String(v)+"T12:00:00"):new Date(v); return Number.isNaN(+d)?"—":d.toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"}); };
+const dateText=v=>{ if(!v) return "—"; const d=/^\d{4}-\d{2}-\d{2}$/.test(String(v))?new Date(String(v)+"T12:00:00"):new Date(v); return Number.isNaN(+d)?"—":fmtDate(d,{day:"numeric",month:"short",year:"numeric"}); };
 const cleanFile=s=>String(s||"quotation").replace(/[^A-Za-z0-9._-]+/g,"-").replace(/^-+|-+$/g,"").slice(0,80)||"quotation";
 const quoteOf=id=>{ const o=orderById(id); return o&&o.kind==="quote"?o:null; };
 const allowed=()=>hasCap("uses_quotations")&&can("create_order");

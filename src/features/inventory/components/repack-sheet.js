@@ -14,6 +14,7 @@ import { vRec } from '../services/ledger.js';
 import { stockOf } from '../services/stock.js';
 import { trackingOfP } from '../services/tracking.js';
 import { previewRepack, repackStock, repacksOf, usesRepack } from '../use-cases/repack.js';
+import { inrx } from '../../../shared/formatting/money.js';
 
 const V = () => store.bizView || {};
 export const repackButtonHTML = () => usesRepack() && can("manage_inventory") ? `<button type="button" class="btn sm" data-rpknew>Repack</button>` : "";
@@ -33,7 +34,7 @@ export function renderRepack(){
       <label class="f full">Into<span>${sel("toV", options(false).filter(x => x.v.id !== F.fromV), F.toV)}</span></label>
       <div class="pgrid"><label class="f">One ${esc(f ? f.p.name : "unit")} makes<input data-rpkf="per" type="number" inputmode="decimal" min="0" step="any" value="${esc(F.per)}" placeholder="e.g. 25"></label>
       <label class="f">How many to open<input data-rpkf="q" type="number" inputmode="decimal" min="0" step="any" value="${esc(F.q)}"></label></div>
-      ${P && P.plan ? `<div class="rpkflow"><div><small>Out</small><b>${esc(qtyText(P.plan.out, f.p.unit))}</b><small>${esc(f.p.name)}</small></div><span>→</span><div><small>In</small><b>${esc(qtyText(P.plan.in, t.p.unit))}</b><small>${esc(t.p.name)}</small></div></div>${P.plan.unitCost != null ? `<p class="note">Cost carried over: ₹${esc(String(P.plan.unitCost))} per ${esc(t.p.unit || "unit")}.</p>` : ""}` : P && P.error ? `<p class="note bad">${esc(P.error)}</p>` : ""}`,
+      ${P && P.plan ? `<div class="rpkflow"><div><small>Out</small><b>${esc(qtyText(P.plan.out, f.p.unit))}</b><small>${esc(f.p.name)}</small></div><span>→</span><div><small>In</small><b>${esc(qtyText(P.plan.in, t.p.unit))}</b><small>${esc(t.p.name)}</small></div></div>${P.plan.unitCost != null ? `<p class="note">Cost carried over: ${esc(inrx(P.plan.unitCost))} per ${esc(t.p.unit || "unit")}.</p>` : ""}` : P && P.error ? `<p class="note bad">${esc(P.error)}</p>` : ""}`,
     foot: `<button type="button" class="btn sm" data-biz="close">Cancel</button><button type="button" class="btn sm primary" data-rpkgo>Convert</button>` });
 }
 export function repackClick(t){

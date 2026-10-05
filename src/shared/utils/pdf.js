@@ -1,9 +1,11 @@
 // A small PDF writer for reports: a title, then blocks of text and tables, over as many A4 landscape pages as needed,
-// with the standard Helvetica fonts (no embedding, no library). Text outside Latin-1 is written in plain letters
-// ("₹" → "Rs "). Pure: returns the file as bytes (Uint8Array).
+// with the standard Helvetica fonts (no embedding, no library). Text outside Latin-1 is written in plain letters: a
+// currency symbol the fonts lack becomes its region's plain form (money.js printText: ₹ → "Rs."), dashes and quotes their
+// ASCII look-alikes. Pure: returns the file as bytes (Uint8Array).
+import { printText } from '../formatting/money.js';
 const W=842, H=595, M=36, FOOT=24;
-const MAP={"₹":"Rs ","—":"-","–":"-","−":"-","…":"...","×":"x","✓":"v","✕":"x","•":"*","‘":"'","’":"'","“":'"',"”":'"'};
-const latin=s=>String(s==null?"":s).replace(/[^\x20-\x7e\xa0-\xff]/g,c=>MAP[c]!==undefined?MAP[c]:"?");
+const MAP={"—":"-","–":"-","−":"-","…":"...","×":"x","✓":"v","✕":"x","•":"*","‘":"'","’":"'","“":'"',"”":'"'};
+const latin=s=>printText(s,"pdf").replace(/[^\x20-\x7e\xa0-\xff]/g,c=>MAP[c]!==undefined?MAP[c]:"?");
 const pdfStr=s=>"("+latin(s).replace(/[\\()]/g,c=>"\\"+c)+")";
 /* Rough Helvetica widths (1/1000 em): enough to line up columns and right-align figures */
 const cw=c=>/[0-9]/.test(c)?556:/[ il.,:;'|!]/.test(c)?278:/[mwMW@]/.test(c)?833:/[A-Z]/.test(c)?667:500;

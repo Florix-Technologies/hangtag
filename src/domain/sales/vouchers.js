@@ -7,6 +7,7 @@
 //   active → fully_redeemed (balance 0) · expired (past its last day) · cancelled (with a reason; never after a part was spent)
 // Not loyalty points. Pure.
 import { toPaise, toRupees, tooPrecise } from './paise.js';
+import { inr } from '../../shared/formatting/money.js';
 
 export const VOUCHER = "voucher";
 export const VOUCHER_STATUSES = ["active", "fully_redeemed", "expired", "cancelled"];
@@ -34,7 +35,7 @@ export function checkIssue(x, today){
   const a = +(x && x.amount);
   if(!(Number.isFinite(a) && a > 0)) return { error: "Enter the voucher amount.", field: "amount" };
   if(tooPrecise(a)) return { error: "Use at most 2 decimal places.", field: "amount" };
-  if(a > MAX_VOUCHER) return { error: `A voucher can be up to ₹${MAX_VOUCHER.toLocaleString("en-IN")}.`, field: "amount" };
+  if(a > MAX_VOUCHER) return { error: `A voucher can be up to ${inr(MAX_VOUCHER)}.`, field: "amount" };
   if(x.expires && !/^\d{4}-\d{2}-\d{2}$/.test(x.expires)) return { error: "Enter the last day as a date.", field: "expires" };
   if(x.expires && today && x.expires < today) return { error: "The last day is already past.", field: "expires" };
   if(!["cash", "upi", "card"].includes(x.method)) return { error: "How did the customer pay for the voucher?", field: "method" };

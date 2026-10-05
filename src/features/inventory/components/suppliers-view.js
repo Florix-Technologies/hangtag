@@ -17,7 +17,7 @@ import { toast } from '../../../shared/components/toast.js';
 import { ICON } from '../../../shared/constants/icons.js';
 import { $, esc } from '../../../shared/dom.js';
 import { dayKey, dayLab } from '../../../shared/formatting/dates.js';
-import { inrx } from '../../../shared/formatting/money.js';
+import { inrx, moneyLabel } from '../../../shared/formatting/money.js';
 import { renderAll } from '../../../shared/ui/render.js';
 
 const V=()=>store.supplierView||(store.supplierView={id:null,form:null});
@@ -75,7 +75,7 @@ export function renderSupplierSheet(){
   } else if(f.kind==="pay"){
     const s=supplierById(f.supplierId), pays=payments(), open=purchasesList().filter(p=>p.supplierId===f.supplierId&&purchaseDue(p,pays)>0);
     sheet(`Pay ${s?s.name:"supplier"}`,`<form id="spayForm" class="pgrid" autocomplete="off"><label class="f full">For<select name="purchase"><option value="">On account (no one invoice)</option>${open.map(p=>`<option value="${esc(p.id)}"${p.id===f.purchaseId?" selected":""}>${esc((p.invoiceNo?"Invoice "+p.invoiceNo:"Purchase")+" · "+when(p)+" · "+inrx(purchaseDue(p,pays))+" due")}</option>`).join("")}</select></label>
-      <label class="f">Amount (₹)<input name="amount" inputmode="decimal" value="${esc(f.amount||"")}" required></label><label class="f">Paid by<select name="method">${PURCHASE_METHODS.map(m=>`<option value="${m}"${m===(f.method||"cash")?" selected":""}>${PURCHASE_METHOD_LABELS[m]}</option>`).join("")}</select></label>
+      <label class="f">${esc(moneyLabel("Amount"))}<input name="amount" inputmode="decimal" value="${esc(f.amount||"")}" required></label><label class="f">Paid by<select name="method">${PURCHASE_METHODS.map(m=>`<option value="${m}"${m===(f.method||"cash")?" selected":""}>${PURCHASE_METHOD_LABELS[m]}</option>`).join("")}</select></label>
       <label class="f">Reference <small>(UPI / cheque no.)</small><input name="ref" maxlength="60" value="${esc(f.ref||"")}"></label><label class="f">Note<input name="note" maxlength="200" value="${esc(f.note||"")}"></label><button type="submit" hidden></button></form>
       <p class="note">Cash comes out of the drawer: it shows in the cash book as “Cash out”.</p>`,`<button class="btn sm primary" data-sup="savepay">Record payment</button>`);
   } else if(f.kind==="rev"){

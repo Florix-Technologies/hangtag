@@ -10,7 +10,7 @@
 // (server-side only, never a key in this app) may answer what the local parser doesn't, through answerReadOnly().
 import { agentTool } from '../../../domain/agent/agent-tools.js';
 import { dayLab } from '../../../shared/formatting/dates.js';
-import { inr } from '../../../shared/formatting/money.js';
+import { currencyMarkSource, inr, numberText } from '../../../shared/formatting/money.js';
 
 const clean = value => String(value || '').trim().replace(/\s+/g, ' ');
 const lower = value => clean(value).toLowerCase().replace(/[’']/g, "'").replace(/[?!.,]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -81,7 +81,8 @@ function toolIntent(text){
     return t('draft_purchase_order', sup ? { supplier: sup } : {});
   }
   // "what should I buy with ₹20,000?", "reorder within 15k": a purchase plan within that budget
-  const money = /(?:₹|\brs\b|\binr\b|\bbudget\b|\bwith\b|\bwithin\b|\bspend\b|\bfor\b)\s*(?:of\s*)?(?:₹|rs\s*)?(\d{1,3}(?: \d{3})+|\d{3,}|\d+(?:\.\d+)?\s*k)\b/.exec(text);
+  const cur = currencyMarkSource();
+  const money = new RegExp("(?:" + cur + "|\\bbudget\\b|\\bwith\\b|\\bwithin\\b|\\bspend\\b|\\bfor\\b)\\s*(?:of\\s*)?(?:" + cur + "\\s*)?(\\d{1,3}(?: \\d{3})+|\\d{3,}|\\d+(?:\\.\\d+)?\\s*k)\\b", "i").exec(text);
   if(money && has(text, /\b(buy|reorder|re-order|purchase|order|restock|stock up|spend)\b/)){
     const m = money[1].replace(/\s+/g, ''), budget = /k$/.test(m) ? Math.round(parseFloat(m) * 1000) : +m;
     if(budget > 0) return t('draft_reorder', { budget });
@@ -209,7 +210,7 @@ function localAnswer(intent, query){
   }
   if(k === 'stock'){
     const x = query.stock();
-    return { supported: true, title: 'Stock on hand', text: `${x.pieces.toLocaleString('en-IN')} pieces across ${plural(x.products, 'product')}, worth ${inr(x.value)} at selling price${x.cost ? ` (${inr(x.cost)} at cost${x.costKnown ? '' : ', some costs missing'})` : ''}.`, rows: [{ label: 'Running low', value: plural(x.low, 'variant') }, { label: 'Sold out', value: plural(x.out, 'variant') }] };
+    return { supported: true, title: 'Stock on hand', text: `${numberText(x.pieces)} pieces across ${plural(x.products, 'product')}, worth ${inr(x.value)} at selling price${x.cost ? ` (${inr(x.cost)} at cost${x.costKnown ? '' : ', some costs missing'})` : ''}.`, rows: [{ label: 'Running low', value: plural(x.low, 'variant') }, { label: 'Sold out', value: plural(x.out, 'variant') }] };
   }
   if(k === 'purchaseOrders'){
     const x = query.purchaseOrders();

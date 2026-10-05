@@ -2,14 +2,18 @@
 // shop header, bill number and date, customer, items, discounts, GST, total, payments, footer. Printer-neutral: a printer
 // adapter (infrastructure/printing/) turns these lines into its own commands. Reads the invoice model only. Pure.
 import { gstLines } from '../invoices/invoice.js';
+import { formatMoney, printText } from '../../shared/formatting/money.js';
+import { fmtDateTime } from '../../shared/formatting/dates.js';
 
 export const THERMAL_COLUMNS=[48,42,32];
-/* Printers' built-in character sets have no ₹, curly quotes or dashes: plain ASCII, other characters become "?" */
+/* Printers' built-in character sets have no currency symbols beyond ASCII (₹ → its region's plain form, money.js printText),
+   curly quotes or dashes: plain ASCII, other characters become "?" */
 export function asciiText(s){
-  return String(s==null?"":s).replace(/₹/g,"Rs.").replace(/[‘’‚′]/g,"'").replace(/[“”„″]/g,'"').replace(/[–—−‐]/g,"-")
+  return printText(s,"thermal").replace(/[‘’‚′]/g,"'").replace(/[“”„″]/g,'"').replace(/[–—−‐]/g,"-")
     .replace(/×/g,"x").replace(/…/g,"...").replace(/ /g," ").normalize("NFKD").replace(/[̀-ͯ]/g,"").replace(/[^\x20-\x7E]/g,"?");
 }
-export const money=n=>{const p=Math.round((+n||0)*100),v=Math.abs(p)/100;return (p<0?"-":"")+v.toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2})};
+/* An amount in the columns: 2 decimals, the region's grouping, no symbol (the total carries it) */
+export const money=n=>formatMoney(n,{output:"thermal",decimals:2,symbol:false});
 /* Words wrapped to the width (a word longer than a line is cut) */
 export function wrap(text,cols){
   const out=[];let cur="";
@@ -49,7 +53,7 @@ export function thermalReceipt(inv,{cols=48}={}){
   center(inv.title.toUpperCase(),{bold:true});
   if(inv.status==="cancelled") center("*** CANCELLED ***",{bold:true});
   L.push(rule);
-  row("Bill: "+inv.number,new Date(inv.t).toLocaleString("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}));
+  row("Bill: "+inv.number,fmtDateTime(inv.t,{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}));
   if(inv.buyer){
     wrap("Customer: "+inv.buyer.name,w).forEach(t=>add(t));
     if(inv.buyer.phone) wrap("Ph: "+inv.buyer.phone,w).forEach(t=>add(t));
@@ -72,7 +76,7 @@ export function thermalReceipt(inv,{cols=48}={}){
   const G=gstLines(inv);
   if(G.length){ row("Taxable amount",money(T.taxable)); G.forEach(g=>row(g.label+(inv.inclusive?" (incl.)":""),money(g.amount))); }
   if(T.roundOff) row("Round off",(T.roundOff>0?"+":"")+money(T.roundOff));
-  row("TOTAL","Rs."+money(T.total),{bold:true,big:true});
+  row("TOTAL",formatMoney(T.total,{output:"thermal",decimals:2}),{bold:true,big:true});
   if(T.credit){ row("Exchange credit","-"+money(T.credit)); row("Amount due",money(T.due),{bold:true}); }
   L.push(rule);
   if(!inv.payments.length&&!(inv.balance>0)) add(T.credit?"Nothing to pay (covered by credit)":"Nothing to pay");

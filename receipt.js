@@ -1,5 +1,8 @@
 // The page behind a secure invoice link (https://…/receipt.html#<token>): asks the "receipt" Edge Function for that one
 // bill and shows it. The token stays after "#", so it isn't sent to this site's server. Everything shown is set as text.
+// Line amounts are written by the app's one money formatter (src/shared/formatting/money.js); the totals come written by
+// the receipt function.
+import { inrx } from './src/shared/formatting/money.js';
 (function(){
   "use strict";
   var box = document.getElementById("inv");
@@ -25,8 +28,8 @@
     (B.lines || []).forEach(function(l){
       var tr = el("tr"), a = el("td"); a.appendChild(el("div", "", l.name));
       if(l.detail) a.appendChild(el("div", "sub", l.detail));
-      if(l.discount) a.appendChild(el("div", "sub", "Discount −₹" + l.discount));
-      tr.appendChild(a); tr.appendChild(el("td", "r", l.qty + " × ₹" + l.rate)); tr.appendChild(el("td", "r", "₹" + l.gross)); t.appendChild(tr);
+      if(l.discount) a.appendChild(el("div", "sub", "Discount −" + inrx(l.discount)));
+      tr.appendChild(a); tr.appendChild(el("td", "r", l.qty + " × " + inrx(l.rate))); tr.appendChild(el("td", "r", inrx(l.gross))); t.appendChild(tr);
     });
     if(B.more){ var m = el("tr"), c = el("td", "sub", "… and " + B.more + " more items"); c.colSpan = 3; m.appendChild(c); t.appendChild(m); }
     box.appendChild(t);

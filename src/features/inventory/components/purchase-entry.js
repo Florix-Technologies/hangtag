@@ -26,7 +26,7 @@ import { toast } from '../../../shared/components/toast.js';
 import { ICON } from '../../../shared/constants/icons.js';
 import { $, esc } from '../../../shared/dom.js';
 import { dayKey } from '../../../shared/formatting/dates.js';
-import { inrx } from '../../../shared/formatting/money.js';
+import { inrx, moneyLabel } from '../../../shared/formatting/money.js';
 import { norm } from '../../../shared/utils/text.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { batchesOf, expiryKept, trackingOfP } from '../services/tracking.js';
@@ -72,8 +72,8 @@ export function renderPurchaseEntry(){
   const quick=q?`<div class="pu-quick" id="puQuick"><h4>New product for code <b>${esc(q.code)}</b></h4><p class="note">Nobody in the catalog has this code yet. Add the product with it — you can fill in the rest later in Products.</p>
     <div class="pgrid"><label class="f full">Name<input id="qpName" data-qp="name" value="${esc(q.name)}" maxlength="80" autocomplete="off"></label>
     <label class="f">Unit<select data-qp="unit">${units.map(([c,l])=>`<option value="${esc(c)}"${c===q.unit?" selected":""}>${esc(l)}</option>`).join("")}</select></label>
-    <label class="f">Selling price (₹)<input data-qp="price" inputmode="numeric" value="${esc(q.price)}"></label>
-    <label class="f">Cost price (₹)<input data-qp="cost" inputmode="numeric" value="${esc(q.cost)}"></label>
+    <label class="f">${esc(moneyLabel("Selling price"))}<input data-qp="price" inputmode="numeric" value="${esc(q.price)}"></label>
+    <label class="f">${esc(moneyLabel("Cost price"))}<input data-qp="cost" inputmode="numeric" value="${esc(q.cost)}"></label>
     <label class="f">GST %<input data-qp="gst" inputmode="decimal" value="${esc(q.gst)}"></label>
     <label class="f">HSN<input data-qp="hsn" inputmode="numeric" value="${esc(q.hsn)}" maxlength="8"></label></div>
     ${q.err?`<p class="autherr">${esc(q.err)}</p>`:""}
@@ -93,8 +93,8 @@ export function renderPurchaseEntry(){
     <div class="search pu-q"><input id="puQ" type="search" placeholder="…or search a product by name" value="${esc(f.q)}" autocomplete="off"></div>
     ${hits.length?`<div class="pu-hits">${hits.map(h=>`<button type="button" class="chip" data-pur="addv:${esc(h.v.id)}">${esc(label(h))}</button>`).join("")}</div>`:f.q?`<p class="note">No product matches.</p>`:""}
     ${quick}
-    ${f.lines.length?`<div class="tw"><table class="pu-lines"><thead><tr><th>Product</th><th>Qty</th><th>Cost / pc (₹)</th><th>GST %</th><th>Amount</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`:`<p class="muted pu-empty">Scan the first item, or search for it.</p>`}
-    <div class="pgrid" style="margin-top:12px"><label class="f">Paid now (₹)<input id="puPaid" inputmode="decimal" value="${esc(f.paid)}" placeholder="0"></label>
+    ${f.lines.length?`<div class="tw"><table class="pu-lines"><thead><tr><th>Product</th><th>Qty</th><th>${esc(moneyLabel("Cost / pc"))}</th><th>GST %</th><th>Amount</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`:`<p class="muted pu-empty">Scan the first item, or search for it.</p>`}
+    <div class="pgrid" style="margin-top:12px"><label class="f">${esc(moneyLabel("Paid now"))}<input id="puPaid" inputmode="decimal" value="${esc(f.paid)}" placeholder="0"></label>
       <label class="f">Paid by<select id="puMethod">${PURCHASE_METHODS.map(m=>`<option value="${m}"${m===f.method?" selected":""}>${PURCHASE_METHOD_LABELS[m]}</option>`).join("")}</select></label>
       <label class="f full">Note <small>(optional)</small><input id="puNote" value="${esc(f.note)}" maxlength="200"></label></div>
     ${can("manage_products")?`<label class="chk"><input type="checkbox" id="puCost"${f.updateCost?" checked":""}> Update cost prices to these costs</label>`:""}

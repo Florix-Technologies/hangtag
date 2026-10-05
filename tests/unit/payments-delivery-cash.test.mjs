@@ -243,7 +243,7 @@ const eq = (a, b) => JSON.stringify(sortKeys(a)) === JSON.stringify(sortKeys(b))
   check('xlsx: every part stored with the right CRC (the file opens)', ok && n === 7, n);
   const pdf = pdfBytes({ title: 'GST filing preparation · September 2026', subtitle: 'Riya · ₹', footer: 'Hangtag does not file returns.', blocks: [{ heading: 'B2B', head: ['Invoice', 'Value'], rows: Array.from({ length: 80 }, (_, i) => ['INV-' + i, 1000 + i]) }] });
   const ptxt = Buffer.from(pdf).toString('latin1');
-  check('pdf: a PDF with pages, the fonts and the text (₹ written as Rs)', ptxt.startsWith('%PDF-1.4') && ptxt.trim().endsWith('%%EOF') && /\/Count 2/.test(ptxt) && ptxt.includes('(GST filing preparation') && ptxt.includes('Rs ') && ptxt.includes('Page 2 of 2'));
+  check('pdf: a PDF with pages, the fonts and the text (₹ written as Rs., its plain form, by the shared formatter)', ptxt.startsWith('%PDF-1.4') && ptxt.trim().endsWith('%%EOF') && /\/Count 2/.test(ptxt) && ptxt.includes('(GST filing preparation') && ptxt.includes('Rs.') && !ptxt.includes('₹') && ptxt.includes('Page 2 of 2'));
   const xref = +/startxref\n(\d+)/.exec(ptxt)[1], offs = [...ptxt.slice(xref).matchAll(/(\d{10}) 00000 n/g)].map((m) => +m[1]);
   check('pdf: the cross-reference table points at each object', offs.length > 3 && offs.every((o, i) => ptxt.slice(o).startsWith(`${i + 1} 0 obj`)));
 }

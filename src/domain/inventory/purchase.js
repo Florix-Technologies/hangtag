@@ -12,13 +12,14 @@ import { validEmail } from '../../shared/validation/email.js';
 import { validGstin } from '../../shared/validation/gstin.js';
 import { validPhone } from '../../shared/validation/phone.js';
 import { checkBatchNo, checkExpiry, incomingSerialError, normSerial, validSerial } from './tracking.js';
+import { inr, inrx, stripMoney } from '../../shared/formatting/money.js';
 
 export const PURCHASE_METHODS=["cash","upi","card","bank","cheque"];
 export const PURCHASE_METHOD_LABELS={cash:"Cash",upi:"UPI",card:"Card",bank:"Bank transfer",cheque:"Cheque"};
 export const MAX_CASH_PAID=1000000;   // one cash book entry (hangtag_cash_moves.amount)
 export const MAX_PURCHASE_LINES=200;
 const clean=(s,max)=>String(s==null?"":s).replace(/[\u0000-\u001f\u007f]/g," ").trim().replace(/\s+/g," ").slice(0,max||500);
-const num=v=>{const t=String(v==null?"":v).trim().replace(/[₹,\s]/g,"");return t===""?null:Number(t)};
+const num=v=>{const t=stripMoney(String(v==null?"":v).trim());return t===""?null:Number(t)};
 
 /* ---------- suppliers ---------- */
 /* input: { id, name, phone, email, address, gstin, notes, active } · others: the shop's suppliers (duplicates by name / GSTIN)
@@ -56,7 +57,7 @@ export function lineError(l,n){
   if(Math.abs(q*10**dec-Math.round(q*10**dec))>1e-6) return dec?`${lab}: use at most ${dec} decimal places.`:`${lab}: the quantity is a whole number of pieces.`;
   if(q>1000000) return `${lab}: that quantity is too large.`;
   const c=num(l.cost);
-  if(c==null||!Number.isFinite(c)||c<0) return `${lab}: enter the cost per piece (₹0 or more).`;
+  if(c==null||!Number.isFinite(c)||c<0) return `${lab}: enter the cost per piece (${inr(0)} or more).`;
   if(tooPrecise(c)) return `${lab}: the cost can have at most 2 decimal places.`;
   const g=num(l.gst==null?"":String(l.gst).replace("%",""));
   if(g!=null&&(!Number.isFinite(g)||g<0||g>100||tooPrecise(g))) return `${lab}: GST % should be between 0 and 100.`;
@@ -117,7 +118,7 @@ export function buildPurchase(input,ctx={}){
   });
   const T=purchaseTotals(lines);
   const paidRaw=num(x.paid), paid=paidRaw==null?0:paidRaw;
-  if(!Number.isFinite(paid)||paid<0) return {error:"Enter the amount paid (₹0 or more).",field:"paid"};
+  if(!Number.isFinite(paid)||paid<0) return {error:`Enter the amount paid (${inr(0)} or more).`,field:"paid"};
   if(tooPrecise(paid)) return {error:"The amount paid can have at most 2 decimal places.",field:"paid"};
   if(toPaise(paid)>toPaise(T.total)) return {error:"More than the purchase total can't be paid on it.",field:"paid"};
   const method=paid>0?String(x.method||""):"";
@@ -162,7 +163,7 @@ export function checkSupplierPayment(input,ctx={}){
   const x=input||{};
   if(!x.supplierId) return {error:"Which supplier?",field:"supplier"};
   const a=num(x.amount);
-  if(a==null||!Number.isFinite(a)||a<=0) return {error:"Enter an amount more than ₹0.",field:"amount"};
+  if(a==null||!Number.isFinite(a)||a<=0) return {error:`Enter an amount more than ${inr(0)}.`,field:"amount"};
   if(tooPrecise(a)) return {error:"Use at most 2 decimal places.",field:"amount"};
   if(a>100000000) return {error:"That amount is too large.",field:"amount"};
   if(!PURCHASE_METHODS.includes(x.method)) return {error:"Choose how it was paid.",field:"method"};
@@ -172,7 +173,7 @@ export function checkSupplierPayment(input,ctx={}){
     if(!p||p.supplierId!==x.supplierId) return {error:"That purchase isn't from this supplier.",field:"purchase"};
     if(p.status==="cancelled") return {error:"That purchase is cancelled: nothing is owed on it.",field:"purchase"};
     const due=purchaseDue(p,ctx.payments);
-    if(toPaise(a)>toPaise(due)) return {error:`Only ₹${due.toLocaleString("en-IN")} is still owed on that invoice.`,field:"amount"};
+    if(toPaise(a)>toPaise(due)) return {error:`Only ${inrx(due)} is still owed on that invoice.`,field:"amount"};
   }
   const ref=clean(x.ref,80), note=clean(x.note,300);
   if(ref.length>60) return {error:"The reference can be at most 60 characters.",field:"ref"};

@@ -9,7 +9,7 @@ import { renderBillSheet } from './bill-panel.js';
 import { closeModal } from '../../../shared/components/modal.js';
 import { ICON } from '../../../shared/constants/icons.js';
 import { $, esc } from '../../../shared/dom.js';
-import { inr, inrx } from '../../../shared/formatting/money.js';
+import { currencyName, currencySign, inr, inrx } from '../../../shared/formatting/money.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { refuse } from '../../shop/services/access.js';
 
@@ -27,7 +27,7 @@ export function renderLineDiscount(){
   const gross=toRupees(linePaise(c.q,c.price)), lab=lineLabel(c), had=!!normalizeDiscount(c.disc);
   $("#modalHost").innerHTML=`<div class="scrim" data-modal-scrim><div class="sheet discsheet" id="ldSheet" role="dialog" aria-modal="true" aria-label="Discount on ${esc(c.name)}">
     <div class="sh-head"><div class="sh-t"><h3>Discount on this line</h3><p>${esc(c.name)}${lab?" · "+esc(lab):""} · ${esc(qtyText(c.q,c.u))} × ${inr(c.price)} = ${inrx(gross)}</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
-    <div class="seg ldseg" role="group" aria-label="Discount in percent or rupees"><button type="button" data-ldtype="percent" aria-pressed="${s.type==="percent"}">% off</button><button type="button" data-ldtype="fixed" aria-pressed="${s.type==="fixed"}">₹ off</button></div>
+    <div class="seg ldseg" role="group" aria-label="Discount in percent or ${esc(currencyName())}"><button type="button" data-ldtype="percent" aria-pressed="${s.type==="percent"}">% off</button><button type="button" data-ldtype="fixed" aria-pressed="${s.type==="fixed"}">${esc(currencySign())} off</button></div>
     <label class="f"><span class="lab">${s.type==="percent"?"Percent off":"Rupees off this line"}</span><input id="ldVal" type="number" inputmode="decimal" min="0" ${s.type==="percent"?'max="100" ':""}step="any" placeholder="0" value="${esc(s.value)}" autocomplete="off"></label>
     <p class="ldprev" id="ldPrev">${previewText()}</p>
     <p class="err" id="ldErr" role="alert"${s.err?"":" hidden"}>${esc(s.err)}</p>

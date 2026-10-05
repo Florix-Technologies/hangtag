@@ -8,7 +8,7 @@ import { toast } from '../../../shared/components/toast.js';
 import { ICON } from '../../../shared/constants/icons.js';
 import { $, esc } from '../../../shared/dom.js';
 import { dayKey, dayLab, hhmm } from '../../../shared/formatting/dates.js';
-import { inrx } from '../../../shared/formatting/money.js';
+import { inrx, moneyLabel } from '../../../shared/formatting/money.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { refuse } from '../../shop/services/access.js';
 
@@ -44,7 +44,7 @@ export function renderCashForm(focus){
     go="Reverse it";
   }else{
     title=CASH_MOVE_LABELS[F.type];
-    body=`<p class="note">${esc(HINT[F.type]||"")}</p><div class="pgrid">${f("Amount (₹)",`<input name="amount" type="number" inputmode="decimal" min="0" step="any" value="${esc(F.amount)}" required>`)}
+    body=`<p class="note">${esc(HINT[F.type]||"")}</p><div class="pgrid">${f(moneyLabel("Amount"),`<input name="amount" type="number" inputmode="decimal" min="0" step="any" value="${esc(F.amount)}" required>`)}
       ${F.type==="expense"?f("Category",`<select name="category"><option value="">Choose…</option>${expenseCats().map(c=>`<option${c===F.category?" selected":""}>${esc(c)}</option>`).join("")}</select>`):""}
       ${f(F.type==="opening"?"Note <small>(optional)</small>":"Reason",`<input name="reason" maxlength="200" value="${esc(F.reason)}"${F.type==="opening"?"":" required"}>`)}</div>`;
     go="Save";

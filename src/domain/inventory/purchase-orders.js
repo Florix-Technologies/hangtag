@@ -9,6 +9,7 @@
 // Comparing PO, goods received and the supplier's bill happens here too (discrepancies), never by hand. Pure.
 import { decimalsOf, roundQty } from '../catalog/units.js';
 import { toPaise, toRupees, tooPrecise } from '../sales/paise.js';
+import { inr, inrx } from '../../shared/formatting/money.js';
 
 export const PO_STATUSES = ["draft", "sent", "closed", "cancelled"];
 export const PO_LABELS = { draft: "Draft", sent: "Sent", partial: "Partly received", received: "Received", closed: "Closed", cancelled: "Cancelled" };
@@ -37,7 +38,7 @@ export function checkPO(po){
     if(!(Number.isFinite(q) && q > 0)) return { error: `${lab}: enter how many to order.`, field: "qty", line: i };
     if(Math.abs(q * 10 ** dp - Math.round(q * 10 ** dp)) > 1e-6) return { error: dp ? `${lab}: use at most ${dp} decimal places.` : `${lab}: order whole pieces.`, field: "qty", line: i };
     if(q > 1000000) return { error: `${lab}: that quantity is too large.`, field: "qty", line: i };
-    if(l.price != null && l.price !== "" && (!(Number.isFinite(+l.price) && +l.price >= 0) || tooPrecise(+l.price))) return { error: `${lab}: enter the agreed price (₹0 or more, at most 2 decimals).`, field: "price", line: i };
+    if(l.price != null && l.price !== "" && (!(Number.isFinite(+l.price) && +l.price >= 0) || tooPrecise(+l.price))) return { error: `${lab}: enter the agreed price (${inr(0)} or more, at most 2 decimals).`, field: "price", line: i };
     if(l.gst != null && l.gst !== "" && !(Number.isFinite(+l.gst) && +l.gst >= 0 && +l.gst <= 100)) return { error: `${lab}: GST % should be between 0 and 100.`, field: "gst", line: i };
   }
   if(po.expected && !DAY_RE.test(po.expected)) return { error: "Enter the expected date as a date.", field: "expected" };
@@ -137,7 +138,7 @@ export function discrepancies(po, purchases, bill){
     if(+b.q !== l.received && l.received > 0) out.push({ key: `qb:${l.v}`, kind: "qty_billed", v: l.v, name, expected: l.received, actual: +b.q, text: `Received ${l.received}, billed ${+b.q}` });
     if(!l.received && +b.q > 0) out.push({ key: `qb:${l.v}`, kind: "qty_billed", v: l.v, name, expected: 0, actual: +b.q, text: `Billed ${+b.q}, nothing received` });
     if(l.price != null && l.price !== "" && b.price != null && toPaise(b.price) !== toPaise(l.price))
-      out.push({ key: `pr:${l.v}`, kind: "price", v: l.v, name, expected: money(l.price), actual: money(b.price), text: `Expected ₹${money(l.price)}, bill ₹${money(b.price)}` });
+      out.push({ key: `pr:${l.v}`, kind: "price", v: l.v, name, expected: money(l.price), actual: money(b.price), text: `Expected ${inrx(l.price)}, bill ${inrx(b.price)}` });
     if(l.gst != null && l.gst !== "" && b.gst != null && b.gst !== "" && +b.gst !== +l.gst)
       out.push({ key: `tx:${l.v}`, kind: "tax", v: l.v, name, expected: +l.gst, actual: +b.gst, text: `GST ${+l.gst}% on the order, ${+b.gst}% on the bill` });
   });
@@ -155,7 +156,7 @@ export function checkPOBill(bill){
     if(!l || !l.v) continue;
     const q = +l.q, price = +l.price;
     if(!(Number.isFinite(q) && q >= 0)) return { error: `Bill line ${i + 1}: enter the quantity billed.` };
-    if(!(Number.isFinite(price) && price >= 0) || tooPrecise(price)) return { error: `Bill line ${i + 1}: enter the price on the bill (₹0 or more).` };
+    if(!(Number.isFinite(price) && price >= 0) || tooPrecise(price)) return { error: `Bill line ${i + 1}: enter the price on the bill (${inr(0)} or more).` };
     lines.push({ v: l.v, name: clean(l.name, 120), q, price, ...(l.gst != null && l.gst !== "" ? { gst: +l.gst } : {}) });
   }
   if(!lines.length) return { error: "Enter at least one line of the supplier's bill." };

@@ -1,7 +1,9 @@
 // The page behind a table's QR code (https://…/order.html#t=<token>): the shop's menu, a cart, and "Place order" — the
 // order reaches the shop's tables and kitchen for that table. The token identifies the shop's table and nothing else; the
 // page talks to two public database functions (hangtag_table_menu, hangtag_place_table_order) with the project's
-// publishable key, never with a password, a service key or a sign-in. Everything shown is set as text.
+// publishable key, never with a password, a service key or a sign-in. Everything shown is set as text. Money is written by
+// the app's one formatter (src/shared/formatting/money.js).
+import { inrx } from './src/shared/formatting/money.js';
 (function(){
   "use strict";
   var app = document.getElementById("app");
@@ -11,7 +13,7 @@
   var menu = null, cart = {}, notes = {}, cat = "", q = "", guestName = "", guestNote = "", view = "menu", placing = false, placed = null, error = "";
   function el(tag, cls, text){ var e = document.createElement(tag); if(cls) e.className = cls; if(text != null) e.textContent = text; return e; }
   function btn(text, cls, on){ var b = el("button", cls || "", text); b.type = "button"; b.onclick = on; return b; }
-  function rupees(n){ return "₹" + (Math.round(n * 100) / 100).toLocaleString("en-IN"); }
+  function rupees(n){ return inrx(Math.round(n * 100) / 100); }
   function fail(msg){ app.textContent = ""; var c = el("div", "card"); c.appendChild(el("h1", "", "Order")); c.appendChild(el("p", "muted", msg)); app.appendChild(c); }
   if(!token){ fail("This QR link is incomplete. Scan the QR code on your table again."); return; }
   if(!cfg.SUPABASE_URL || !cfg.SUPABASE_ANON_KEY){ fail("This page isn't set up yet."); return; }

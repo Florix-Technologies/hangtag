@@ -19,7 +19,7 @@ import { closeModal } from '../../../shared/components/modal.js';
 import { toast } from '../../../shared/components/toast.js';
 import { ICON } from '../../../shared/constants/icons.js';
 import { $, esc } from '../../../shared/dom.js';
-import { inr, inrx } from '../../../shared/formatting/money.js';
+import { currencyName, currencySign, inr, inrx } from '../../../shared/formatting/money.js';
 import { norm } from '../../../shared/utils/text.js';
 import { renderAll, setTab } from '../../../shared/ui/render.js';
 
@@ -46,7 +46,7 @@ function linesHTML(F, T, ed){
     return `<div class="oline${bad}" data-ofline="${i}"><div class="ol-n"><b>${esc(l.name)}</b><small>${esc(l.vl || "")}${l.gst != null && T.mode !== "none" ? ` · GST ${esc(String(l.gst))}%` : ""}${+l.fq > 0 ? ` · ${l.fq} delivered` : ""}</small></div>
       <label class="f ol-q"><span class="lab">Qty${l.u&&l.u!=="pcs"?` (${esc(unitOf(l.u).sym)})`:""}</span><input data-ofl="q:${i}" value="${esc(l.q)}" type="number" inputmode="decimal" min="0" step="any"${dis}></label>
       <label class="f ol-p"><span class="lab">Price</span><input data-ofl="price:${i}" value="${esc(l.price)}" type="number" inputmode="decimal" min="0" step="any"${dis}></label>
-      <label class="f ol-d"><span class="lab">Discount</span><span class="ol-dw"><select data-ofl="dt:${i}" aria-label="Discount in percent or rupees"${dis}><option value="percent"${!d || d.type === "percent" ? " selected" : ""}>%</option><option value="fixed"${d && d.type === "fixed" ? " selected" : ""}>₹</option></select><input data-ofl="dv:${i}" value="${esc(d ? d.value : "")}" type="number" inputmode="decimal" min="0" step="any" placeholder="0"${dis}></span></label>
+      <label class="f ol-d"><span class="lab">Discount</span><span class="ol-dw"><select data-ofl="dt:${i}" aria-label="Discount in percent or ${esc(currencyName())}"${dis}><option value="percent"${!d || d.type === "percent" ? " selected" : ""}>%</option><option value="fixed"${d && d.type === "fixed" ? " selected" : ""}>${esc(currencySign())}</option></select><input data-ofl="dv:${i}" value="${esc(d ? d.value : "")}" type="number" inputmode="decimal" min="0" step="any" placeholder="0"${dis}></span></label>
       <span class="ol-t tnum" data-oflt="${i}">${inrx(L.total || 0)}</span>${ed && !(+l.fq > 0) ? `<button type="button" class="iconbtn sm" data-oflrm="${i}" aria-label="Remove ${esc(l.name)}">${ICON.x}</button>` : ""}</div>`; }).join("");
 }
 const totalsHTML = T => sumRow("Subtotal", inrx(T.sub)) + discountRowsHTML(T, null) + gstRowsHTML(T) + roundRowHTML(T) + `<div class="row tot"><span>Total</span><span class="grand">${inr(T.total)}</span></div>`;
@@ -64,7 +64,7 @@ export function renderOrderEditor(focus){
     <div class="olines">${linesHTML(F, T, ed)}</div>
     ${ed ? `<div class="search osearch"><input id="ofQ" type="search" placeholder="Add an item: search name, SKU or barcode" autocomplete="off" value="${esc(F.q)}" aria-label="Search products to add"></div><div class="ohits" id="ofHits">${hitsHTML(F)}</div>` : ""}
     <div class="pgrid2">
-      <label class="f"><span class="lab">Bill discount</span><span class="ol-dw"><select data-off="bdt"${dis}><option value="percent"${!bd || bd.type === "percent" ? " selected" : ""}>%</option><option value="fixed"${bd && bd.type === "fixed" ? " selected" : ""}>₹</option></select><input data-off="bdv" value="${esc(bd ? bd.value : "")}" type="number" inputmode="decimal" min="0" step="any" placeholder="0"${dis}></span></label>
+      <label class="f"><span class="lab">Bill discount</span><span class="ol-dw"><select data-off="bdt"${dis}><option value="percent"${!bd || bd.type === "percent" ? " selected" : ""}>%</option><option value="fixed"${bd && bd.type === "fixed" ? " selected" : ""}>${esc(currencySign())}</option></select><input data-off="bdv" value="${esc(bd ? bd.value : "")}" type="number" inputmode="decimal" min="0" step="any" placeholder="0"${dis}></span></label>
       ${o.kind === "quote" ? `<label class="f"><span class="lab">Valid until</span><input type="date" data-off="validUntil" value="${esc(o.validUntil || "")}"${dis}></label>` : ""}
       ${saved && ed && statuses.length > 1 ? `<label class="f"><span class="lab">Status</span><select data-off="status">${statuses.map(s => `<option value="${s}"${s === o.status ? " selected" : ""}>${esc(statusLabel(o.kind,s))}</option>`).join("")}</select></label>` : ""}
     </div>

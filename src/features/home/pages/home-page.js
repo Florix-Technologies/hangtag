@@ -20,7 +20,7 @@ import { billChips } from '../../bills/services/bill-status.js';
 import { NAV_ICONS } from '../../../shared/constants/nav-icons.js';
 import { UI_ICON, statusChip } from '../../../shared/ui/kit.js';
 import { $, esc } from '../../../shared/dom.js';
-import { agoText, dayKey, dayLab, dayLong, hhmm } from '../../../shared/formatting/dates.js';
+import { agoText, dayKey, dayLab, dayLong, fmtDate, hhmm } from '../../../shared/formatting/dates.js';
 import { inr, inrShort } from '../../../shared/formatting/money.js';
 
 /* Quick actions by role (domain/shop/mobile-workflow.js orders them): the few that start the day's work */
@@ -74,7 +74,7 @@ function insightsHTML(){
 /* The last 7 days of sales as bars (today last) */
 function trendHTML(){
   const T = salesTrend(), max = Math.max(1, ...T.days.map(d => d.sales)), today = dayKey(Date.now());
-  const label = k => new Date(k + "T12:00:00").toLocaleDateString("en-IN", { weekday: "short" });
+  const label = k => fmtDate(k + "T12:00:00", { weekday: "short" });
   const ch = T.prevTotal ? Math.round((T.total - T.prevTotal) / T.prevTotal * 100) : null;
   const delta = ch == null ? "" : `<span class="delta ${ch >= 0 ? "up" : "down"}">${ch >= 0 ? "▲" : "▼"} ${Math.abs(ch)}% <span>vs the 7 days before</span></span>`;
   const bars = T.days.map(d => `<div class="hbar${d.k === today ? " on" : ""}" title="${esc(dayLong(d.k))}: ${esc(inr(d.sales))} · ${d.bills} bill${d.bills === 1 ? "" : "s"}"><span class="hbar-v">${d.sales ? esc(inrShort(d.sales)) : ""}</span><span class="hbar-c"><i style="height:${d.sales > 0 ? Math.max(4, Math.round(d.sales / max * 100)) : 0}%"></i></span><span class="hbar-d">${esc(d.k === today ? "Today" : label(d.k))}</span></div>`).join("");
@@ -96,7 +96,7 @@ function customersHTML(){
 export function homeHTML(){
   const p = (store.access && store.access.shopName) ? { shop_name: store.access.shopName } : (store.profile || {}), now = Date.now(), role = currentRole();
   const acts = homeActions();
-  let h = `<div class="viewhead hhead"><div><div class="eyebrow">${esc(new Date(now).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" }))}</div>
+  let h = `<div class="viewhead hhead"><div><div class="eyebrow">${esc(fmtDate(now, { weekday: "long", day: "numeric", month: "long" }))}</div>
     <h2 class="vt">${esc(p.shop_name || "Your shop")}</h2><p>${esc(shopTypeLabel())}</p></div>${acts.length ? `<div class="qa" role="group" aria-label="Quick actions">${acts.map((a, i) => `<button type="button" class="btn ${i === 0 ? "primary" : ""} qa-b" ${a.attr}>${NAV_ICONS[a.icon] || ""}<span>${esc(a.label)}</span></button>`).join("")}</div>` : ""}</div>`;
   h += subscriptionBannerHTML();   // the free trial's days left, or a paid plan ending within a week (owner and managers)
   const sells = canAny(["create_sale", "view_reports"]), reports = can("view_reports");

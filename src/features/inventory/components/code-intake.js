@@ -13,6 +13,7 @@ import { closeModal } from '../../../shared/components/modal.js';
 import { toast } from '../../../shared/components/toast.js';
 import { ICON } from '../../../shared/constants/icons.js';
 import { $, esc } from '../../../shared/dom.js';
+import { moneyLabel } from '../../../shared/formatting/money.js';
 
 /* The card on the stock levels view */
 export const intakeCardHTML=()=>can("manage_inventory")?`<form id="intakeForm" class="card pu-code intake" autocomplete="off"><b>Stock in by barcode</b><input id="intakeCode" placeholder="Scan or type a barcode or SKU" enterkeyhint="go" aria-label="Barcode or SKU for stock in"><button class="btn sm" type="submit">Find</button><button type="button" class="btn sm" data-intake="scan">Scan</button></form>`:"";
@@ -51,8 +52,8 @@ export function renderQuickProduct(){
     <div class="sh-head"><div class="sh-t"><h3>New product</h3><p>Nobody in the catalog has code <b>${esc(q.code)}</b>. Add the product with it, then its stock.</p></div><button class="iconbtn" data-qp-act="cancel" aria-label="Close">${ICON.x}</button></div>
     <form id="qpForm" class="pgrid" autocomplete="off"><label class="f full">Name<input id="qpName" data-qp="name" value="${esc(q.name)}" maxlength="80"></label>
     <label class="f">Unit<select data-qp="unit">${intakeUnits().map(([c,l])=>`<option value="${esc(c)}"${c===q.unit?" selected":""}>${esc(l)}</option>`).join("")}</select></label>
-    <label class="f">Selling price (₹)<input data-qp="price" inputmode="numeric" value="${esc(q.price)}"></label>
-    <label class="f">Cost price (₹)<input data-qp="cost" inputmode="numeric" value="${esc(q.cost)}"></label>
+    <label class="f">${esc(moneyLabel("Selling price"))}<input data-qp="price" inputmode="numeric" value="${esc(q.price)}"></label>
+    <label class="f">${esc(moneyLabel("Cost price"))}<input data-qp="cost" inputmode="numeric" value="${esc(q.cost)}"></label>
     <label class="f">GST %<input data-qp="gst" inputmode="decimal" value="${esc(q.gst)}"></label>
     <label class="f">HSN<input data-qp="hsn" inputmode="numeric" value="${esc(q.hsn)}" maxlength="8"></label><button type="submit" hidden></button></form>
     <p class="autherr"${q.err?"":" hidden"}>${esc(q.err)}</p>

@@ -9,6 +9,7 @@
 // above 0. A bill keeps the price it was sold at: changing a list later never changes a saved bill.
 // Pure; rupees in and out.
 import { tooPrecise } from './paise.js';
+import { inr, numberText } from '../../shared/formatting/money.js';
 
 export const PRICE_LIST_SUGGESTIONS = ["Retail", "Wholesale", "Distributor", "Special"];
 export const MAX_LISTS = 20;
@@ -41,11 +42,11 @@ export function checkPriceList(l, others){
   if(l.from && l.to && l.to < l.from) return { error: "The last day is before the first day.", field: "to" };
   if(l.isDefault && l.active === false) return { error: "The default price list must be in use. Choose another default first.", field: "active" };
   const entries = Object.entries(l.prices || {});
-  if(entries.length > MAX_PRICES) return { error: `A price list can have up to ${MAX_PRICES.toLocaleString("en-IN")} prices.`, field: "prices" };
+  if(entries.length > MAX_PRICES) return { error: `A price list can have up to ${numberText(MAX_PRICES)} prices.`, field: "prices" };
   for(const [k, v] of entries){
     const n = +v;
     if(!/^[pv]:/.test(k)) return { error: "A price is for a product or a variant.", field: "prices", key: k };
-    if(!(Number.isFinite(n) && n > 0)) return { error: "Every price on a list must be more than ₹0. Remove the item to use its normal price.", field: "prices", key: k };
+    if(!(Number.isFinite(n) && n > 0)) return { error: `Every price on a list must be more than ${inr(0)}. Remove the item to use its normal price.`, field: "prices", key: k };
     if(tooPrecise(n)) return { error: "Use at most 2 decimal places in a price.", field: "prices", key: k };
     if(n > 10000000) return { error: "That price is too large.", field: "prices", key: k };
   }

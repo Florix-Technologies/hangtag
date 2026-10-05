@@ -4,7 +4,7 @@
 // uses (orders/use-cases/orders.js orderTotals). The shop's template settings add terms, bank details and the signature.
 import { store } from '../../../shared/state/store.js';
 import { inr, inrx } from '../../../shared/formatting/money.js';
-import { dtLong } from '../../../shared/formatting/dates.js';
+import { dtLong, fmtDate } from '../../../shared/formatting/dates.js';
 import { sellerOf } from '../../../domain/invoices/invoice.js';
 import { amountInWords } from '../../../domain/invoices/amount-words.js';
 import { docSettingsOf } from '../../../domain/documents/doc-settings.js';
@@ -21,7 +21,7 @@ import { D } from '../../inventory/services/ledger.js';
 import { challanNoOf } from '../../../domain/documents/numbering.js';
 import { numberingFor } from '../../sales/services/doc-numbers.js';
 
-const day = v => { if(!v) return ""; const d = /^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? new Date(String(v) + "T12:00:00") : new Date(v); return Number.isNaN(+d) ? "" : d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }); };
+const day = v => { if(!v) return ""; const d = /^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? new Date(String(v) + "T12:00:00") : new Date(v); return Number.isNaN(+d) ? "" : fmtDate(d, { day: "numeric", month: "short", year: "numeric" }); };
 const pct = r => r == null ? "—" : Math.round(r * 100) / 100 + "%";
 const settings = () => docSettingsOf(store.settings);
 function seller(){ const S = sellerOf(store.profile || {}); return { name: S.name, lines: [S.address, S.phone && "Phone " + S.phone, S.gstin && "GSTIN " + S.gstin] }; }

@@ -20,6 +20,7 @@ import { $, esc } from '../../../shared/dom.js';
 import { storage, savePrefs } from '../../../shared/state/persistence.js';
 import { renderAll, setTab } from '../../../shared/ui/render.js';
 import { UI_ICON, formActionsHTML, kvHTML } from '../../../shared/ui/kit.js';
+import { fmtDate } from '../../../shared/formatting/dates.js';
 
 /* ---------- what each section holds ---------- */
 /* The features that belong to a section, and where they are switched (Business → Features) */
@@ -49,7 +50,7 @@ function youHTML(){
   }
   const p = store.profile || {}, u = store.authUser, since = (u && u.created_at) || p.created_at;
   return block("Your account", kvHTML([["Email", esc((u && u.email) || storage.get("hangtag_auth_email", "") || "—"), "kvEmail"], ["Signs in with", esc(methodNames()), "kvMethod"],
-    ["Member since", esc(since ? new Date(since).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) : "—"), "kvSince"], ["Account ID", esc(u ? u.id.slice(0, 8) : "—"), "kvId"]])
+    ["Member since", esc(since ? fmtDate(since, { day: "numeric", month: "long", year: "numeric" }) : "—"), "kvSince"], ["Account ID", esc(u ? u.id.slice(0, 8) : "—"), "kvId"]])
     + '<div class="btnrow" style="margin-top:12px"><button class="btn danger" type="button" data-settings-act="signout">Sign out</button></div>');
 }
 function sectionBody(key){

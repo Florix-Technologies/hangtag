@@ -2,6 +2,7 @@
 import { checkOptions, vLabel } from './options.js';
 import { codeError } from './barcode.js';
 import { decimalsOf, roundQty } from './units.js';
+import { inr } from '../../shared/formatting/money.js';
 
 /* Product names: trimmed, single spaces */
 export const cleanProductName=s=>String(s||"").trim().replace(/\s+/g," ");
@@ -20,7 +21,7 @@ export function validateProductDraft(draft,combos,kept,taken){
   const e=draft;
   const name=cleanProductName(e.name);
   if(!name)return {error:"Enter a product name."};
-  const price=Math.round(+e.price);if(e.price===""||isNaN(price)||price<0)return {error:"Enter a selling price (₹0 or more)."};
+  const price=Math.round(+e.price);if(e.price===""||isNaN(price)||price<0)return {error:`Enter a selling price (${inr(0)} or more).`};
   const cost=e.cost===""||e.cost==null?null:Math.round(+e.cost);if(cost!=null&&(isNaN(cost)||cost<0))return {error:"Cost price can't be negative."};
   const hsn=String(e.hsn||"").replace(/\s/g,"");if(!validHsn(hsn))return {error:"HSN code should be 4, 6 or 8 digits."};
   const g=String(e.gst==null?"":e.gst).trim(),gst=g===""?null:+g;if(gst!=null&&(isNaN(gst)||gst<0||gst>100))return {error:"GST % should be between 0 and 100."};

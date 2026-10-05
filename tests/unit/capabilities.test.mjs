@@ -191,8 +191,8 @@ const ids = () => shownModules().map((d) => d.id);
 
 // ---------- 10: the settings sections: Team & Devices for every business, the rest by role, features and type ----------
 {
-  check('10 the settings sections: Business, Payments & Banks, Billing & Documents, Products & Inventory, Sales & Customers, Purchasing, Storefront, Restaurant, Automation, Team & Devices, Integrations, Advanced',
-    eq(SETTINGS_SECTIONS.map((s) => s.label), ['Business', 'Payments & Banks', 'Billing & Documents', 'Products & Inventory', 'Sales & Customers', 'Purchasing', 'Storefront', 'Restaurant', 'Automation', 'Team & Devices', 'Integrations', 'Advanced']));
+  check('10 the settings sections: Business, Plans & Billing, Payments & Banks, Billing & Documents, Products & Inventory, Sales & Customers, Purchasing, Storefront, Restaurant, Automation, Team & Devices, Integrations, Advanced',
+    eq(SETTINGS_SECTIONS.map((s) => s.label), ['Business', 'Plans & Billing', 'Payments & Banks', 'Billing & Documents', 'Products & Inventory', 'Sales & Customers', 'Purchasing', 'Storefront', 'Restaurant', 'Automation', 'Team & Devices', 'Integrations', 'Advanced']));
   check('10 the owner of every type of business has Team & Devices, Integrations and Advanced', BUSINESS_TYPE_KEYS.concat(['Clothing boutique', null]).every((t) => {
     store.profile = { shop_name: 'S', business_type: t }; const k = settingsSections().map((s) => s.key); return ['business', 'payments', 'billing', 'devices', 'integrations', 'advanced'].every((x) => k.includes(x)); }));
   store.profile = { shop_name: 'S', business_type: 'restaurant' };

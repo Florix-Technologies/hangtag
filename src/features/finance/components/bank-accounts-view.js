@@ -2,7 +2,7 @@
 // money in / out, transfer, adjustment, its ledger with reversals), and the forms to add or change an account and to record
 // an entry. Rules: domain/finance/bank-accounts.js; use cases: use-cases/bank-accounts.js.
 import { $, esc } from '../../../shared/dom.js';
-import { inrx } from '../../../shared/formatting/money.js';
+import { inrx, moneyLabel } from '../../../shared/formatting/money.js';
 import { dayKey, dtLong } from '../../../shared/formatting/dates.js';
 import { toast } from '../../../shared/components/toast.js';
 import { closeModal } from '../../../shared/components/modal.js';
@@ -73,7 +73,7 @@ function editHTML(){
       <label class="f"><span class="lab">Display name<span class="req">*</span></span><input name="name" maxlength="60" value="${esc(a.name)}" placeholder="HDFC Current" autocomplete="off"></label>
       <label class="f"><span class="lab">Bank</span><input name="bank" maxlength="60" value="${esc(a.bank || "")}" placeholder="HDFC Bank" autocomplete="off"></label>
       <label class="f"><span class="lab">Last 4 digits <small>(optional)</small></span><input name="last4" inputmode="numeric" maxlength="4" value="${esc(a.last4 || "")}" autocomplete="off"></label>
-      <label class="f"><span class="lab">Opening balance (₹)</span><input name="opening" type="number" inputmode="decimal" step="0.01" value="${esc(a.opening === 0 && !V.id ? "" : a.opening)}" placeholder="0"></label>
+      <label class="f"><span class="lab">${esc(moneyLabel("Opening balance"))}</span><input name="opening" type="number" inputmode="decimal" step="0.01" value="${esc(a.opening === 0 && !V.id ? "" : a.opening)}" placeholder="0"></label>
       <label class="f"><span class="lab">Balance on date</span><input name="openingDate" type="date" value="${esc(a.openingDate || dayKey(Date.now()))}" max="${dayKey(Date.now())}"></label>
     </div>
     <p class="lab" style="margin:14px 0 4px">Money that lands in this account</p>
@@ -89,7 +89,7 @@ function moveHTML(){
     transfer: "Money moved from this account to another of the shop's accounts.", adjust: "Correct the balance to match the bank statement. Say why." }[t];
   return sheetHTML({ id: "bankMove", title: BANK_MOVE_LABELS[t] + " · " + nameOf(a), sub: esc(help), keep: true,
     body: `<form id="bankMoveForm" class="authform" novalidate><input type="hidden" name="type" value="${esc(t)}"><div class="pgrid">
-      <label class="f"><span class="lab">Amount (₹)<span class="req">*</span></span><input name="amount" type="number" inputmode="decimal" step="0.01" min="0.01" value="${esc(v.amount || "")}"></label>
+      <label class="f"><span class="lab">${esc(moneyLabel("Amount"))}<span class="req">*</span></span><input name="amount" type="number" inputmode="decimal" step="0.01" min="0.01" value="${esc(v.amount || "")}"></label>
       ${t === "transfer" ? `<label class="f"><span class="lab">To account<span class="req">*</span></span><select name="to">${others.map(o => `<option value="${esc(o.id)}"${v.to === o.id ? " selected" : ""}>${esc(nameOf(o))}</option>`).join("")}</select></label>` : ""}
       ${t === "adjust" ? `<label class="f"><span class="lab">The balance goes</span><select name="direction"><option value="up"${v.direction !== "down" ? " selected" : ""}>Up (add)</option><option value="down"${v.direction === "down" ? " selected" : ""}>Down (take off)</option></select></label>` : ""}
       <label class="f full"><span class="lab">${t === "adjust" ? 'Reason<span class="req">*</span>' : "Note <small>(optional)</small>"}</span><input name="reason" maxlength="200" value="${esc(v.reason || "")}" placeholder="${t === "adjust" ? "e.g. bank charges on the statement" : t === "out" ? "e.g. shop rent for October" : ""}" autocomplete="off"></label>

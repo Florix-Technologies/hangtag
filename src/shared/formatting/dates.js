@@ -17,3 +17,6 @@ export function agoText(t){ const s = Math.round((Date.now()-t)/1000); if(s < 45
 export const dtLong=t=>new Date(t).toLocaleString(LOC,{day:"numeric",month:"short",year:"numeric",hour:"numeric",minute:"2-digit"});
 /* A calendar date with the year, the region's way ("12 Oct 2026") */
 export const dateText=t=>new Date(t).toLocaleDateString(LOC,{day:"numeric",month:"short",year:"numeric"});
+/* Any date or date and time, the region's way (the options of toLocaleDateString / toLocaleString) */
+export const fmtDate=(t,opts)=>new Date(t).toLocaleDateString(LOC,opts);
+export const fmtDateTime=(t,opts)=>new Date(t).toLocaleString(LOC,opts);

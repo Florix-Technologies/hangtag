@@ -11,7 +11,7 @@ import { isUnverified, unverifiedPayments } from '../../../domain/sales/payments
 import { vLabel } from '../../../domain/catalog/variants.js';
 import { store } from '../../../shared/state/store.js';
 import { addDays, dayKey, dayLong, hhmm } from '../../../shared/formatting/dates.js';
-import { inr } from '../../../shared/formatting/money.js';
+import { inr, moneyRegion } from '../../../shared/formatting/money.js';
 import { D } from '../../inventory/services/ledger.js';
 import { stockOf } from '../../inventory/services/stock.js';
 import { inventoryIntelligence } from '../../inventory/services/inventory-intelligence.js';
@@ -195,7 +195,7 @@ export function appAgentData(now = () => Date.now()){
     gst: period => q.gst(period),
     profile(){
       const p = store.profile || {};
-      return { name: (store.access && store.access.shopName) || p.shop_name || "", type: shopTypeLabel(), city: p.city || "", state: p.state || "", gstin: p.gstin || "", currency: "INR",
+      return { name: (store.access && store.access.shopName) || p.shop_name || "", type: shopTypeLabel(), city: p.city || "", state: p.state || "", gstin: p.gstin || "", currency: moneyRegion().currency,
         features: CAPABILITIES.filter(c => hasCap(c.key)).map(c => c.label) };
     },
     findBills(no){

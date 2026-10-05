@@ -2,6 +2,7 @@
 // never writes a product. A future server-side AI provider can return the same validated shape.
 import { cleanProductName } from './product-validation.js';
 import { cleanOptionName, cleanOptionValue } from './options.js';
+import { currencyMarkSource, inr } from '../../shared/formatting/money.js';
 
 const money = value => Number(String(value || '').replace(/,/g, ''));
 const tidy = value => String(value || '').replace(/^[,;\s]+|[,;\s]+$/g, '').replace(/\s+/g, ' ').trim();
@@ -32,7 +33,7 @@ export function validateAssistedProductDraft(input){
   const gst = d.gst == null || d.gst === '' ? null : +d.gst;
   if(gst != null && (!Number.isFinite(gst) || gst < 0 || gst > 100)) return { error: 'GST must be between 0% and 100%.' };
   const rows = Array.isArray(d.variants) ? d.variants : [];
-  if(!rows.length) return { error: 'Include at least one selling price, such as ₹499.' };
+  if(!rows.length) return { error: `Include at least one selling price, such as ${inr(499)}.` };
   const variants = [], seen = new Set();
   for(const row of rows){
     const label = cleanOptionValue(row && row.label), price = +(row && row.price);
@@ -53,10 +54,10 @@ export function parseProductDescription(text){
   const gstMatch = /\bgst\s*(?:rate\s*)?(?:@|:)?\s*(\d+(?:\.\d+)?)\s*%?/i.exec(raw);
   const gst = gstMatch ? +gstMatch[1] : null;
   const withoutGst = tidy(raw.replace(/[,;]?\s*\bgst\s*(?:rate\s*)?(?:@|:)?\s*\d+(?:\.\d+)?\s*%?/ig, ''));
-  const re = /(?:₹|\brs\.?|\binr\b)\s*([\d,]+(?:\.\d{1,2})?)/ig, matches = [];
+  const re = new RegExp(currencyMarkSource() + "\\s*([\\d,]+(?:\\.\\d{1,2})?)", "ig"), matches = [];
   let match;
   while((match = re.exec(withoutGst))) matches.push({ index: match.index, end: re.lastIndex, price: money(match[1]) });
-  if(!matches.length) return { error: 'Include a selling price, such as ₹499.' };
+  if(!matches.length) return { error: `Include a selling price, such as ${inr(499)}.` };
   const first = nameAndFirstVariant(withoutGst.slice(0, matches[0].index), matches.length > 1);
   const variants = [{ label: first.variant, price: matches[0].price }];
   for(let i = 1; i < matches.length; i++){

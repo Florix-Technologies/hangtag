@@ -6,6 +6,7 @@ import { checkOptions, cleanOptionName, cleanOptionValue, OPTION_LIMITS, OPTION_
 import { codeError, cleanCode } from './barcode.js';
 import { cleanProductName, validHsn } from './product-validation.js';
 import { UNITS } from './units.js';
+import { currencyMarkSource, stripMoney } from '../../shared/formatting/money.js';
 
 /* Units a row may name (code, label, decimals a quantity may have): the app's units (domain/catalog/units.js) */
 export const IMPORT_UNITS=UNITS.map(u=>[u.id,u.label,u.dp]);
@@ -20,8 +21,8 @@ export const IMPORT_COLUMNS=[
   ["opt3n","Option 3 name"],["opt3v","Option 3 value"],
   ["sku","SKU"],
   ["bc","Barcode","EAN","UPC","Barcode / QR"],
-  ["price","Price","Selling price","Sale price","Price (₹)","Selling price (₹)","MRP"],
-  ["cost","Cost","Cost price","Purchase price","Cost (₹)","Cost price (₹)"],
+  ["price","Price","Selling price","Sale price","MRP"],
+  ["cost","Cost","Cost price","Purchase price"],
   ["gst","GST %","GST","GST rate","Tax %"],
   ["hsn","HSN","HSN code","HSN/SAC"],
   ["qty","Opening stock","Qty","Quantity","Stock","Opening qty"],
@@ -29,7 +30,8 @@ export const IMPORT_COLUMNS=[
   ["low","Low stock alert","Low stock","Reorder level","Min stock"],
   ["desc","Description"],
 ];
-const hkey=h=>String(h==null?"":h).toLowerCase().replace(/[\s_]+/g," ").trim();
+/* a column's name, compared loosely: "Selling price (₹)" / "Selling price (Rs.)" (the shop's currency) is "selling price" */
+const hkey=h=>String(h==null?"":h).replace(new RegExp("\\s*\\(\\s*"+currencyMarkSource()+"\\s*\\)\\s*$","i"),"").toLowerCase().replace(/[\s_]+/g," ").trim();
 const ALIASES=(()=>{const m={};IMPORT_COLUMNS.forEach(([k,...hs])=>hs.forEach(h=>{m[hkey(h)]=k}));return m})();
 /* Option names that may be their own column (e.g. "Colour", "Size") */
 const OPTION_COLUMNS=new Set([...OPTION_SUGGESTIONS,"Color","Colors","Colours","Sizes"].map(hkey));
@@ -57,7 +59,7 @@ export function mapImportHeader(header){
   return {map,optionCols,unknown};
 }
 const txt=v=>String(v==null?"":v).replace(/[\u0000-\u001f\u007f]/g," ").trim().replace(/\s+/g," ");
-const numTxt=v=>txt(v).replace(/[₹,%]/g,"").replace(/\s/g,"");
+const numTxt=v=>stripMoney(txt(v).replace(/%/g,""));
 const same=(a,b)=>String(a).toLowerCase()===String(b).toLowerCase();
 
 /* rows: [[cell text…]…] with the header first. ctx: { products (the catalog: codes and names already used), variantsOf, units

@@ -34,6 +34,7 @@ import { businessExamples } from '../../../domain/shop/capabilities.js';
 import { UNITS, decimalsOf, unitId, unitOf, isWeighed } from '../../../domain/catalog/units.js';
 import { isKit } from '../../../domain/catalog/bundles.js';
 import { openKitEditor } from './kit-editor.js';
+import { currencySign } from '../../../shared/formatting/money.js';
 
 /* ---------- product editor ----------
    store.editor = { isNew, id, name, cat, brand, desc, price, cost, color, img, archived, hsn, gst, unit (what it is sold by: pcs, kg…), tracking (none|serial|batch|expiry: batch with expiry dates),
@@ -112,7 +113,7 @@ export function renderEditor(){
       ${e.codesOn?`<label class="f full"><span class="lab">${codeName}</span><span class="coderow"><input data-edf="bc" data-k="${esc(one.key)}" value="${esc(one.cell.bc)}" maxlength="64" placeholder="Scan or type an existing code, or generate one" autocomplete="off"><button type="button" class="btn xs" data-edgen="${esc(one.key)}">Generate</button></span><span class="codeprev" data-prev="${esc(one.key)}">${codePreview(one.cell.bc,e.code)}</span></label>`:""}
     </div>`:"";
   const tableHTML=!simple?(e.opts.some(op=>op.v.length)?`<div class="tw vtab"><table class="vdet"><thead><tr>
-      <th class="ck"><input type="checkbox" data-edselall${nSel&&nSel===combos.length?" checked":""} aria-label="Select all for stickers"></th><th>Variant</th><th>On sale</th><th>Stock</th><th>SKU</th>${e.codesOn?`<th>${codeName}</th>`:""}<th>Price ₹</th><th>Cost ₹</th></tr></thead>
+      <th class="ck"><input type="checkbox" data-edselall${nSel&&nSel===combos.length?" checked":""} aria-label="Select all for stickers"></th><th>Variant</th><th>On sale</th><th>Stock</th><th>SKU</th>${e.codesOn?`<th>${codeName}</th>`:""}<th>Price ${esc(currencySign())}</th><th>Cost ${esc(currencySign())}</th></tr></thead>
       <tbody>${combos.map(x=>rowHTML(x,e)).join("")}</tbody></table></div>
     <div class="edsum"><span><b>${combos.length}</b> variant${combos.length===1?"":"s"} · <b>${pieces()}</b> piece${pieces()===1?"":"s"}</span>
       <button type="button" class="link xs" data-edact="fillstock">Set stock for all…</button><button type="button" class="link xs" data-edact="fillprice">Set price for all…</button><button type="button" class="link xs" data-edact="fillcost">Set cost for all…</button><button type="button" class="link xs" data-edact="edsku">Fill empty SKUs</button>${e.codesOn?`<button type="button" class="link xs" data-edact="gencodes">Generate missing codes</button>`:""}</div>
@@ -135,8 +136,8 @@ export function renderEditor(){
       </div></div>
     </div>
     <div class="edsec" id="ed-price"><h4>Price &amp; Tax</h4><div class="pgrid">
-        <label class="f"><span class="lab">Selling price ₹<span class="req">*</span></span><input data-ed="price" type="number" inputmode="numeric" min="0" value="${esc(e.price)}"></label>
-        <label class="f"><span class="lab">Cost price ₹</span><input data-ed="cost" type="number" inputmode="numeric" min="0" value="${esc(e.cost)}" placeholder="For gross profit"></label>
+        <label class="f"><span class="lab">Selling price ${esc(currencySign())}<span class="req">*</span></span><input data-ed="price" type="number" inputmode="numeric" min="0" value="${esc(e.price)}"></label>
+        <label class="f"><span class="lab">Cost price ${esc(currencySign())}</span><input data-ed="cost" type="number" inputmode="numeric" min="0" value="${esc(e.cost)}" placeholder="For gross profit"></label>
         <label class="f"><span class="lab">GST %</span><input data-ed="gst" type="number" inputmode="decimal" min="0" max="100" step="0.01" value="${esc(e.gst)}" placeholder="e.g. 5"></label>
         <label class="f"><span class="lab">HSN code</span><input data-ed="hsn" value="${esc(e.hsn)}" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="4, 6 or 8 digits"></label>
     </div></div>
@@ -251,7 +252,7 @@ export function edGenCodes(){
   toast(n?`${n} code${n===1?"":"s"} generated. Save to keep them.`:"Every variant already has a code.");
 }
 export function edSetAll(field){
-  const label={stock:"Pieces for every variant:",price:"Selling price ₹ for every variant (empty = the product price):",cost:"Cost ₹ for every variant (empty = the product cost):"}[field];
+  const label={stock:"Pieces for every variant:",price:`Selling price ${currencySign()} for every variant (empty = the product price):`,cost:`Cost ${currencySign()} for every variant (empty = the product cost):`}[field];
   const v=prompt(label,field==="stock"?"0":"");if(v==null)return;
   const t=v.trim();if(t!==""&&(isNaN(+t)||+t<0))return toast("Enter 0 or more.");
   if(field==="stock"&&t==="")return;

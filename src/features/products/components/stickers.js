@@ -10,6 +10,7 @@ import { ICON } from '../../../shared/constants/icons.js';
 import { $, esc } from '../../../shared/dom.js';
 import { use } from '../../../shared/di/services.js';
 import { logger } from '../../../shared/logging/logger.js';
+import { inr } from '../../../shared/formatting/money.js';
 
 /* Label sizes in mm; "a4" prints 3 × 8 labels of 70 × 37 mm on an A4 sheet */
 export const STICKER_SIZES=[
@@ -45,7 +46,7 @@ export function stickerSVG({p,v},size,show){
   }
   const lines=[],fsN=3*k,fsV=2.5*k,fsP=3.3*k,fsS=2.1*k;
   if(show.name)lines.push({t:fit(p.name,textW,fsN),fs:fsN,w:700});
-  const vl=show.variant?vLabel(v):"",price=show.price?"₹"+vPrice(p,v).toLocaleString("en-IN"):"";
+  const vl=show.variant?vLabel(v):"",price=show.price?inr(vPrice(p,v)):"";
   if(vl&&price&&(vl.length+price.length+3)*fsV*0.56<=textW){lines.push({t:vl,fs:fsV,w:500,right:price,rfs:fsP})}
   else{if(vl)lines.push({t:fit(vl,textW,fsV),fs:fsV,w:500});if(price)lines.push({t:price,fs:fsP,w:800})}
   if(show.sku&&v.sku)lines.push({t:fit("SKU "+v.sku,textW,fsS),fs:fsS,w:500});

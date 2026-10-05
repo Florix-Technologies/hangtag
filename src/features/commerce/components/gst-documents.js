@@ -4,7 +4,7 @@ import { EINV_LABELS } from '../../../domain/gst/einvoice.js';
 import { EWAY_LABELS, TRANSPORT_MODES, transportFieldsNeeded } from '../../../domain/gst/eway.js';
 import { store } from '../../../shared/state/store.js';
 import { D } from '../../inventory/services/ledger.js';
-import { inr } from '../../../shared/formatting/money.js';
+import { currencySign, inr } from '../../../shared/formatting/money.js';
 import { esc } from '../../../shared/dom.js';
 import { toast } from '../../../shared/components/toast.js';
 import { renderAll } from '../../../shared/ui/render.js';
@@ -81,7 +81,7 @@ export function gstSettingsHTML(){
   const e = store.settings.einv || {}, w = store.settings.eway || {};
   return `<form id="gstDocsForm" class="setpart"><h5 class="subh">GST documents</h5><p class="note" style="margin:0">Hangtag prepares and checks them; the rules depend on your turnover, so you decide when they're needed.</p>
     ${usesEinvoice() ? `<label class="chk"><input type="checkbox" name="einvOn"${e.on ? " checked" : ""}> Prepare e-invoices for business bills</label>` : ""}
-    ${usesEway() ? `<label class="chk"><input type="checkbox" name="ewayOn"${w.on ? " checked" : ""}> Prepare e-way bills for bills of ₹<input name="threshold" type="number" min="0" step="1" value="${esc(String(w.threshold == null ? 50000 : w.threshold))}" style="width:90px"> or more</label>` : ""}
+    ${usesEway() ? `<label class="chk"><input type="checkbox" name="ewayOn"${w.on ? " checked" : ""}> Prepare e-way bills for bills of ${esc(currencySign())}<input name="threshold" type="number" min="0" step="1" value="${esc(String(w.threshold == null ? 50000 : w.threshold))}" style="width:90px"> or more</label>` : ""}
     <details><summary>Legal name, PIN code</summary><div class="pgrid"><label class="f">Legal name (if not the shop name)<input name="legalName" maxlength="100" value="${esc(e.legalName || "")}"></label><label class="f">Shop's PIN code<input name="pin" inputmode="numeric" maxlength="6" value="${esc(e.pin || "")}"></label></div></details>
     <div class="setactions"><button type="submit" class="btn sm">Save</button></div></form>`;
 }

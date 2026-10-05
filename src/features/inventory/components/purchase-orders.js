@@ -10,7 +10,7 @@ import { qtyText } from '../../../domain/catalog/units.js';
 import { vLabel, variantsOf } from '../../../domain/catalog/variants.js';
 import { store } from '../../../shared/state/store.js';
 import { esc } from '../../../shared/dom.js';
-import { inr } from '../../../shared/formatting/money.js';
+import { inr, moneyLabel } from '../../../shared/formatting/money.js';
 import { toast } from '../../../shared/components/toast.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { can } from '../../shop/services/access.js';
@@ -54,7 +54,7 @@ function planHTML(plan){
 }
 function planFormHTML(){
   return `<section class="intel-section intel-plan"><div class="intel-section-head"><div><h3>Plan within a budget</h3><p>What runs out first comes first (stock left at the forecast rate), then the better margin. Nothing is ordered until you save drafts.</p></div></div>
-    <form id="planForm" class="planform" novalidate><label class="f"><span class="lab">Budget (₹)</span><input name="budget" type="number" inputmode="numeric" min="1" step="1" value="${esc(planState.budget)}" placeholder="e.g. 20000"></label><button class="btn sm" type="submit">Plan</button></form>
+    <form id="planForm" class="planform" novalidate><label class="f"><span class="lab">${esc(moneyLabel("Budget"))}</span><input name="budget" type="number" inputmode="numeric" min="1" step="1" value="${esc(planState.budget)}" placeholder="e.g. 20000"></label><button class="btn sm" type="submit">Plan</button></form>
     ${planState.plan ? planHTML(planState.plan) : ""}</section>`;
 }
 export function reorderPOsHTML(){

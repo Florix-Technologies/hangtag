@@ -15,7 +15,7 @@ import { billNo, isVoid, todayStats } from '../services/sales-log.js';
 import { ICON } from '../../../shared/constants/icons.js';
 import { $, $$, esc } from '../../../shared/dom.js';
 import { hhmm } from '../../../shared/formatting/dates.js';
-import { inr, inrx } from '../../../shared/formatting/money.js';
+import { currencySign, inr, inrx } from '../../../shared/formatting/money.js';
 import { initials } from '../../../shared/utils/text.js';
 import { billHoldHTML, billOrderHTML, billQuoteHTML } from '../../orders/components/bill-extras.js';
 import { batchesOf, blockExpired, expiryOf, isBatchV, isSerialV } from '../../inventory/services/tracking.js';
@@ -73,7 +73,7 @@ const billSumHTML=T=>discountRowsHTML({itemDisc:0,billDisc:T.billDisc},store.dis
 function discBoxHTML(where,empty){
   const d=store.disc||{type:"fixed",value:""}, ty=d.type==="percent"?"percent":"fixed", dis=empty?" disabled":"";
   return `<div class="row discrow"><label for="disc_${where}">Bill discount</label><span class="discwrap"><span class="dtype" role="group" aria-label="Discount in rupees or percent">`+
-    `<button type="button" data-disctype="fixed" aria-pressed="${ty==="fixed"}"${dis}>₹</button><button type="button" data-disctype="percent" aria-pressed="${ty==="percent"}"${dis}>%</button></span>`+
+    `<button type="button" data-disctype="fixed" aria-pressed="${ty==="fixed"}"${dis}>${esc(currencySign())}</button><button type="button" data-disctype="percent" aria-pressed="${ty==="percent"}"${dis}>%</button></span>`+
     `<input id="disc_${where}" data-disc type="number" inputmode="decimal" min="0" ${ty==="percent"?'max="100" ':""}step="any" placeholder="0" value="${esc(d.value===""||d.value==null?"":String(d.value))}" aria-describedby="discerr_${where}"${dis}></span></div>`;
 }
 export function billPanelHTML(where){

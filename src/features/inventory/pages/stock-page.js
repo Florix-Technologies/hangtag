@@ -15,7 +15,7 @@ import { ICON } from '../../../shared/constants/icons.js';
 import { $, esc } from '../../../shared/dom.js';
 import { dayKey, dayLab, hhmm } from '../../../shared/formatting/dates.js';
 import { intakeCardHTML } from '../components/code-intake.js';
-import { inr } from '../../../shared/formatting/money.js';
+import { inr, numberText } from '../../../shared/formatting/money.js';
 import { qtyText, roundQty } from '../../../domain/catalog/units.js';
 import { allBatches, batchesOf, expiryDays, expiryOf, serialsOf, trackingOfP } from '../services/tracking.js';
 import { EXPIRY_LABELS } from '../../../domain/inventory/tracking.js';
@@ -68,7 +68,7 @@ export function renderStock(){
   ps.forEach(p=>variantsOf(p).forEach(v=>{const l=stockOf(v.id),n=Math.max(0,l);pcs=roundQty(pcs+n);val+=n*vPrice(p,v);const c=vCost(p,v);if(c==null){if(n)costKnown=false}else costVal+=n*c;const lv=levelOf(l,p);if(lv!=="ok")alerts.push({p,v,l,k:lv})}));
   alerts.sort((a,b)=>a.l-b.l);
   const outN=alerts.filter(a=>a.k==="out").length,lowN=alerts.length-outN,t=lowAt(),negN=alerts.filter(a=>a.l<0).length;
-  let h=`<div class="kpis four">${kpi("Pieces in hand",pcs.toLocaleString("en-IN"),`across ${ps.length} product${ps.length===1?"":"s"}`)}${kpi("Stock value",inr(val),"at selling price"+(costVal?` · ${inr(costVal)} at cost${costKnown?"":" (some costs missing)"}`:""))}${kpi("Running low",String(lowN),`variants with 1–${t} pieces`,lowN?"warn":"")}${kpi("Sold out",String(outN),negN?`variants at zero · ${negN} below zero (check the count)`:"variants at zero",outN?"crit":"")}</div>`;
+  let h=`<div class="kpis four">${kpi("Pieces in hand",numberText(pcs),`across ${ps.length} product${ps.length===1?"":"s"}`)}${kpi("Stock value",inr(val),"at selling price"+(costVal?` · ${inr(costVal)} at cost${costKnown?"":" (some costs missing)"}`:""))}${kpi("Running low",String(lowN),`variants with 1–${t} pieces`,lowN?"warn":"")}${kpi("Sold out",String(outN),negN?`variants at zero · ${negN} below zero (check the count)`:"variants at zero",outN?"crit":"")}</div>`;
   h+=`<div class="card"><div class="card-h"><h3>Restock soon</h3><span class="note">Variants with ${t} piece${t===1?"":"s"} or fewer · change this in Settings → Business</span></div>${alerts.length?`<div class="alerts">${alerts.slice(0,60).map(a=>`<button class="al ${a.k}" data-stockin="${esc(a.p.id)}">${a.k==="out"?ICON.out:ICON.warn}<b>${esc(a.p.name)}</b>${vLabel(a.v)?`<span class="szl">${esc(vLabel(a.v))}</span>`:""}<span class="st">${a.l<0?a.l+" (below zero)":a.k==="out"?"sold out":a.l+" left"}</span></button>`).join("")}${alerts.length>60?`<span class="note">+${alerts.length-60} more</span>`:""}</div>`:`<p class="okline">${ICON.ok}Every variant has more than ${t} piece${t===1?"":"s"}.</p>`}</div>`;
   h+=expiryCardHTML();
   const RES=reservedAll(), resOf=p=>variantsOf(p).reduce((a,v)=>a+(RES.get(v.id)||0),0);

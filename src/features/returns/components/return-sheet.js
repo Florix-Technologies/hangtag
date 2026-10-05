@@ -54,7 +54,7 @@ export function renderReturnSheet(){
       ${dsc?`<label class="chk" style="margin-top:8px"><input type="checkbox" data-rtkeep${R.keepDisc!==false?" checked":""}> Give the original bill's ${esc(String(dsc.value))}% discount on the new items</label>`:""}
       <div class="setactions" style="margin-top:8px"><button class="btn sm" data-act="exadd">+ Add items</button></div></div>
       <div class="rt-sum">${back}${row("New items",inrx(nT.total))}
-      <div class="row tot"><span>${diff>0?"Customer pays":diff<0?"Refund to customer":"Even exchange"}</span><span class="grand">${diff?inrx(Math.abs(diff)):"₹0"}</span></div></div>`;
+      <div class="row tot"><span>${diff>0?"Customer pays":diff<0?"Refund to customer":"Even exchange"}</span><span class="grand">${diff?inrx(Math.abs(diff)):inr(0)}</span></div></div>`;
   }
   // a bill left partly on the customer's account can be refunded to it ("On account": takes off what they owe)
   const room=billDueRoom(s.id), acct=key=>key==="pay"&&room>0&&can("collect_credit")?["due"]:[];

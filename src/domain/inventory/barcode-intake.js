@@ -6,6 +6,7 @@ import { codeError, cleanCode } from '../catalog/barcode.js';
 import { gtinKey, parseGs1 } from '../catalog/gs1.js';
 import { cleanProductName, validHsn } from '../catalog/product-validation.js';
 import { vLabel } from '../catalog/options.js';
+import { inr, stripMoney } from '../../shared/formatting/money.js';
 
 /* products: the whole catalog (archived too) · variantsOf(p, all) → { hit: { p, v } } (live, on sale) | { off: { p, v } }
    (archived product or variant off sale) | { unknown: code } | { error } */
@@ -33,10 +34,10 @@ export function lookupCode(raw,products,variantsOf){
 export const offSaleText=({p,v})=>`${cleanCode(v.bc||v.sku)} is on ${[p.name,vLabel(v)].filter(Boolean).join(" · ")}, which is ${p.archived?"archived":"off sale"}. ${p.archived?"Unarchive it":"Switch that variant on"} in Products first.`;
 
 const money=(v,label,required)=>{
-  const s=String(v==null?"":v).trim().replace(/[₹,\s]/g,"");
-  if(s==="") return required?{error:`Enter the ${label} (₹0 or more).`}:{value:null};
+  const s=stripMoney(String(v==null?"":v).trim());
+  if(s==="") return required?{error:`Enter the ${label} (${inr(0)} or more).`}:{value:null};
   const n=Number(s);
-  if(!Number.isFinite(n)||n<0) return {error:`The ${label} should be ₹0 or more.`};
+  if(!Number.isFinite(n)||n<0) return {error:`The ${label} should be ${inr(0)} or more.`};
   if(!Number.isInteger(n)) return {error:`The ${label} is in whole rupees.`};
   if(n>10000000) return {error:`That ${label} is too large.`};
   return {value:n};

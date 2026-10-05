@@ -16,12 +16,13 @@ import { logger } from '../../../shared/logging/logger.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { uid } from '../../../shared/utils/ids.js';
 import { refuse } from '../../shop/services/access.js';
+import { currencySign, stripMoney } from '../../../shared/formatting/money.js';
 
 /* store.billImport = { step: "pick"|"busy"|"dup"|"failed"|"review"|"summary"|"done", file, fileHash, dups, ext, importId,
      doc ({ local, cloud, path }: where the original is kept), supplier, gstin, supplierId (recorded as a purchase from them),
      invoiceNo, invoiceDate, lines, filter, plan, invDups, conflict, err, busy, result } */
 const B = () => store.billImport;
-const numOr = v => { const t = String(v == null ? "" : v).trim().replace(/[₹,%\s]/g, ""); return t === "" || !Number.isFinite(+t) ? null : +t; };
+const numOr = v => { const t = stripMoney(String(v == null ? "" : v).trim().replace(/%/g, "")); return t === "" || !Number.isFinite(+t) ? null : +t; };
 const fmtDate = t => { try{ return dtLong(t); }catch{ return ""; } };
 
 export function openBillImport(){
@@ -119,8 +120,8 @@ function lineHTML(l){
       ${f("name", "Product", l.name, ' maxlength="120" autocomplete="off"')}
       ${f("qty", l.dp ? "Quantity (" + esc((IMPORT_UNITS.find(u => u[0] === (prod(l.targetProductId) || l).unit) || ["", "kg"])[1]) + ")" : "Quantity", l.qty, ` type="number" inputmode="${l.dp ? "decimal" : "numeric"}" min="0" step="${l.dp ? "any" : "1"}"`)}
       ${l.action === "new-product" ? `<label>Unit<select data-bif="unit" data-line="${id}">${IMPORT_UNITS.map(([c, lab]) => `<option value="${esc(c)}"${(l.unit || "pcs") === c ? " selected" : ""}>${esc(lab)}</option>`).join("")}</select></label>` : ""}
-      ${f("unitCost", "Cost ₹ / piece", l.unitCost, ' type="number" inputmode="decimal" min="0"')}
-      ${f("sellPrice", "Selling price ₹", l.sellPrice, ' type="number" inputmode="numeric" min="0" placeholder="for new items"')}
+      ${f("unitCost", `Cost ${currencySign()} / piece`, l.unitCost, ' type="number" inputmode="decimal" min="0"')}
+      ${f("sellPrice", `Selling price ${currencySign()}`, l.sellPrice, ' type="number" inputmode="numeric" min="0" placeholder="for new items"')}
       ${f("gst", "GST %", l.gst, ' type="number" inputmode="decimal" min="0" max="100"')}
       ${f("hsn", "HSN", l.hsn, ' inputmode="numeric" maxlength="8"')}
       ${f("sku", "SKU", l.sku, ' maxlength="40" autocomplete="off"')}

@@ -14,6 +14,10 @@ import { DOC_ACCENTS, DOC_IMAGE_KINDS, DOC_TEMPLATES, checkDocSettings, docSetti
 import { saveDocSettings } from '../../shop/use-cases/save-billing-settings.js';
 import { removeDocImage, setDocImage } from '../../shop/use-cases/doc-images.js';
 import { D } from '../../inventory/services/ledger.js';
+import { formatMoney, inr } from '../../../shared/formatting/money.js';
+import { fmtDate } from '../../../shared/formatting/dates.js';
+import { amountInWords } from '../../../domain/invoices/amount-words.js';
+const money2 = n => formatMoney(n, { decimals: 2 });   // the preview's columns, as on a real invoice
 import { invoiceModel } from '../services/doc-models.js';
 import { documentFrameHTML, fitDocFrames } from './doc-render.js';
 import { accountBalances } from '../../finance/use-cases/bank-accounts.js';
@@ -59,10 +63,10 @@ function sampleModel(){
   if(last) return invoiceModel(last);
   const p = store.profile || {};
   return { kind: "invoice", title: "Tax Invoice", number: "INV-SAMPLE", seller: { name: p.shop_name || "Your shop", lines: [[p.address, p.city, p.state].filter(Boolean).join(", "), p.phone && "Phone " + p.phone, p.gstin && "GSTIN " + p.gstin] },
-    logo: store.logo || "", meta: [["Invoice no.", "INV-SAMPLE"], ["Date", new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })]],
+    logo: store.logo || "", meta: [["Invoice no.", "INV-SAMPLE"], ["Date", fmtDate(Date.now(), { day: "numeric", month: "short", year: "numeric" })]],
     parties: [{ label: "Bill to", name: "Customer name", lines: ["Phone number"] }], columns: ["#", "Item", "Qty", "Rate", "Amount"], left: 2,
-    rows: [["1", { t: "First item", sub: "Variant · SKU" }, "2", "₹500.00", "₹1,000.00"], ["2", { t: "Second item" }, "1", "₹750.00", "₹750.00"]],
-    totals: [["Subtotal", "₹1,750.00"], ["Total", "₹1,750", true]], words: "Rupees one thousand seven hundred and fifty only", notice: "This is a preview with sample lines.", footer: (store.settings && store.settings.footer) || "" };
+    rows: [["1", { t: "First item", sub: "Variant · SKU" }, "2", money2(500), money2(1000)], ["2", { t: "Second item" }, "1", money2(750), money2(750)]],
+    totals: [["Subtotal", money2(1750)], ["Total", inr(1750), true]], words: amountInWords(1750), notice: "This is a preview with sample lines.", footer: (store.settings && store.settings.footer) || "" };
 }
 /* The document as the form stands (not saved yet): { m (the model), o (template and accent) } */
 function formModelOpts(form){

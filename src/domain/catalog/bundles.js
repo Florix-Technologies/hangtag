@@ -9,6 +9,7 @@
 import { allocate, discountPaise, normalizeDiscount } from '../sales/discounts.js';
 import { linePaise, sumP, toPaise, toRupees, tooPrecise } from '../sales/paise.js';
 import { decimalsOf, roundQty } from './units.js';
+import { inr, inrx } from '../../shared/formatting/money.js';
 
 export const MAX_COMPONENTS = 20;
 export const isKit = p => !!p && Array.isArray(p.bundle) && p.bundle.length > 0;
@@ -28,7 +29,7 @@ export function checkBundle(kit, lookup, trackingOf){
   const comps = kit && kit.bundle || [];
   if(!String(kit && kit.name || "").trim()) return { error: "Give the kit a name.", field: "name" };
   const price = +(kit && kit.price);
-  if(!(Number.isFinite(price) && price > 0) || tooPrecise(price)) return { error: "Enter the kit's price (more than ₹0).", field: "price" };
+  if(!(Number.isFinite(price) && price > 0) || tooPrecise(price)) return { error: `Enter the kit's price (more than ${inr(0)}).`, field: "price" };
   if(!comps.length) return { error: "Add the items in the kit: scan them or search for them.", field: "bundle" };
   if(comps.length > MAX_COMPONENTS) return { error: `A kit can have up to ${MAX_COMPONENTS} items.`, field: "bundle" };
   const seen = new Set();
@@ -80,7 +81,7 @@ export function kitSnapshot(bundle, lookup){
 /* Is a kit's price at most its items bought separately? (the kit's price is shared over them as a discount) */
 export function kitPriceError(kitPrice, kit){
   const base = sumP((kit || []).map(c => linePaise(c.q, c.price)));
-  return toPaise(kitPrice) > base ? `The kit costs more than its items bought separately (${toRupees(base).toLocaleString("en-IN")}). Lower the kit price or the items' prices.` : null;
+  return toPaise(kitPrice) > base ? `The kit costs more than its items bought separately (${inrx(toRupees(base))}). Lower the kit price or the items' prices.` : null;
 }
 /* Bill lines with every kit line turned into its component lines. A component line: the component's own price, the
    quantity for all kits on the line, and a fixed discount that is its share (by value) of what the kit saves — so the

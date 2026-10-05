@@ -11,6 +11,7 @@ import { repriceCart } from '../../sales/services/cart.js';
 import { bizRepository } from '../repositories/biz-repository.js';
 import { renderSync } from '../../sync/components/sync-status.js';
 import { flushSbQueue } from '../../sync/services/outbox.js';
+import { stripMoney } from '../../../shared/formatting/money.js';
 
 const upload = () => { renderSync(); flushSbQueue(); };
 const off = () => hasCap("uses_price_lists") ? null : { error: "Price lists are switched off for this shop. Switch them on in Settings → Business → Features." };
@@ -34,7 +35,7 @@ export function savePriceList(input){
 export function setItemPrice(listId, key, price){
   const no = denied("manage_products", "change price lists") || off(); if(no) return no;
   const l = listById(listId); if(!l) return { error: "That price list isn't on this device." };
-  const raw = price == null ? "" : String(price).trim().replace(/[₹,\s]/g, "");
+  const raw = price == null ? "" : stripMoney(String(price).trim());
   const next = setListPrice(l, key, raw === "" ? null : +raw);
   const bad = checkPriceList(next, allLists()); if(bad) return bad;
   const list = bizRepository().save("pl", { ...next, t: Date.now() });

@@ -20,6 +20,7 @@ import { quotePrefix } from '../../../domain/orders/orders.js';
 import { deviceTill } from '../../sales/services/doc-numbers.js';
 import { D } from '../../inventory/services/ledger.js';
 import { hasCap } from '../services/shop-caps.js';
+import { moneyLabel } from '../../../shared/formatting/money.js';
 
 const errHTML=id=>`<p id="${id}" class="autherr" role="alert" hidden></p>`;
 /* Products & Inventory: the low-stock alert */
@@ -73,7 +74,7 @@ export function taxFormsHTML(){
   </div><p class="note" style="margin:0">GST is worked out from these settings for your bills. Check the rules that apply to your business with your accountant.</p>
   ${errHTML("taxErr")}${formActionsHTML({save:"Save GST settings"})}</form>
   <form id="gstSetForm" class="authform setblk" novalidate><h5>GST filing preparation</h5><div class="pgrid">
-    <label class="f"><span class="lab">B2C large above (₹)</span><input name="b2clLimit" type="number" inputmode="numeric" min="0" value="${esc(s.b2clLimit==null?100000:s.b2clLimit)}"><span class="fhint">Invoices to another state, without GSTIN, above this value are listed one by one</span></label>
+    <label class="f"><span class="lab">${esc(moneyLabel("B2C large above"))}</span><input name="b2clLimit" type="number" inputmode="numeric" min="0" value="${esc(s.b2clLimit==null?100000:s.b2clLimit)}"><span class="fhint">Invoices to another state, without GSTIN, above this value are listed one by one</span></label>
   </div>${errHTML("gstErr")}${formActionsHTML({save:"Save GST setting"})}</form>`;
 }
 /* The server's word on verified payments (null: not known yet) */

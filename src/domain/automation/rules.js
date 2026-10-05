@@ -7,6 +7,7 @@
 //          record marks one verified)
 // Nothing is ever sent to a customer or supplier by itself: a reminder opens WhatsApp with the message typed in, and the
 // person presses Send. Every automatic action, approval, dismissal and policy change is written to the automation log.
+import { inr } from '../../shared/formatting/money.js';
 
 export const POLICY_LABELS = Object.freeze({ off: "Off", ask: "Ask me first", auto: "Automatically" });
 /* key, label, help, policies (the ones the rule may have), dflt, perms (who may act on it: any one), cap (a feature the shop
@@ -54,7 +55,7 @@ export function policyChanges(before, after){
 
 /* A payment reminder, in the shop's words (rupees in the Indian way) */
 export function dueReminderText({ shop, customer, amount, bills, days }){
-  const rs = "₹" + Math.round(+amount || 0).toLocaleString("en-IN");
+  const rs = inr(amount);
   const which = bills && bills.length ? ` (bill${bills.length > 1 ? "s" : ""} ${bills.slice(0, 3).join(", ")}${bills.length > 3 ? " and more" : ""})` : "";
   return `Hello ${customer || ""}, this is a friendly reminder from ${shop || "our shop"}: ${rs} is due on your account${which}${days ? `, unpaid for ${days} day${days === 1 ? "" : "s"}` : ""}. Please pay at your convenience. Thank you!`.replace(/\s+/g, " ").trim();
 }

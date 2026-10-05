@@ -24,7 +24,7 @@ import { isUnverified, unverifiedPayments } from '../../../domain/sales/payments
 import { variantsOf } from '../../../domain/catalog/variants.js';
 import { can, canAny } from '../../shop/services/access.js';
 import { moduleShown } from '../../shop/services/modules.js';
-import { addDays, dayKey } from '../../../shared/formatting/dates.js';
+import { addDays, dayKey, fmtDate } from '../../../shared/formatting/dates.js';
 import { inr } from '../../../shared/formatting/money.js';
 import { esc } from '../../../shared/dom.js';
 
@@ -127,7 +127,7 @@ export function agentInsights(now = Date.now(), limit = 3){
   }
   // the pace: today against the same weekday last week, up to this time
   const k = dayKey(now), T = dayFigures(k, now), W = dayFigures(addDays(k, -7), now - 7 * DAY), d = W.bills && T.bills ? pct(T.rev, W.rev) : null;
-  if(d != null && Math.abs(d) >= 10){ const wd = new Date(now - 7 * DAY).toLocaleDateString("en-IN", { weekday: "long" });
+  if(d != null && Math.abs(d) >= 10){ const wd = fmtDate(now - 7 * DAY, { weekday: "long" });
     add("pace", `Sales are ${Math.abs(d)}% ${d > 0 ? "ahead of" : "behind"} last ${wd} at this time (${inr(T.rev)} against ${inr(W.rev)}).`, moduleShown("report") ? 'data-tab="report"' : "", "Reports"); }
   const best = createReadOnlyBusinessQuery({ now: () => now }).products("7d", "quantity", 1)[0];
   if(best && best.quantity >= 3){ const p = liveProducts().find(x => x.id === best.id);

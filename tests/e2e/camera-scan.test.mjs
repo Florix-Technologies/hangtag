@@ -47,8 +47,8 @@ const status = (p) => p.$eval('#scanStatus', (e) => e.textContent).catch(() => '
 const cam = await puppeteer.launch({ executablePath: H.CHROME, headless: true, protocolTimeout: 20000,
   args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-video-capture=${VIDEO}`] });
 const A = await openApp(cam);
-check('Sell has a clear Scan button', /Scan/.test(await A.p.$eval('.sellbar [data-act="scan"]', (e) => e.textContent)));
-await A.p.click('.sellbar [data-act="scan"]');
+check('Sell has a clear Scan button', /Scan/.test(await A.p.$eval('.sell-header [data-act="scan"]', (e) => e.textContent)));
+await A.p.click('.sell-header [data-act="scan"]');
 check('the scanner opens with the camera picture', await until(A.run, 'scan&&scan.status==="live"') && await A.p.$eval('#scanVideo', (v) => v.videoWidth > 0 && !!v.srcObject));
 check('a barcode seen by the camera puts that exact variant on the bill', await until(A.run, 'cart.length===1'), await lines(A.run));
 check('…Dress · Black / M, not just the product', JSON.stringify(await lines(A.run)) === '["Dress Black / M x1"]' && /Added Dress · Black \/ M/.test(await status(A.p)), [await lines(A.run), await status(A.p)]);
@@ -61,7 +61,7 @@ check('× closes the scanner, releases the camera, back to Sell', !(await A.p.$(
 // ---------- 2. stand-in scanner: product rules ----------
 await A.run('window.__undo=override({barcodeScanner:{available:()=>true,async start(v,h){window.__emit=h.onCode;return {native:true}},stop(){}}})');
 const emit = async (code) => { await A.run(`__emit(${JSON.stringify(code)})`); await sleep(120); };
-await A.p.click('.sellbar [data-act="scan"]'); await until(A.run, 'scan&&scan.status==="live"');
+await A.p.click('.sell-header [data-act="scan"]'); await until(A.run, 'scan&&scan.status==="live"');
 await emit(WB);
 check('a simple product barcode adds it (Water Bottle x1)', (await lines(A.run)).includes('Water Bottle x1') && /Added Water Bottle/.test(await status(A.p)));
 await emit('9999999999994');
@@ -77,7 +77,7 @@ await emit('bad\u0001code');
 check('an invalid code is refused plainly', /can't belong to a product/.test(await status(A.p)));
 check('the scanner footer shows the bill so far', /pieces/.test(await A.p.$eval('#scanBill', (e) => e.textContent)));
 await A.p.click('#scanHost [data-scan="close"]'); await sleep(150);
-await A.run('SCAN_CONFIG.hintMs=300'); await A.p.click('.sellbar [data-act="scan"]'); await sleep(900);
+await A.run('SCAN_CONFIG.hintMs=300'); await A.p.click('.sell-header [data-act="scan"]'); await sleep(900);
 check('no barcode for a while → tips for a better read', /No barcode found yet/.test(await status(A.p)));
 // shop isolation: another account on this phone has none of these products
 const iso = await A.run(`storage.set(DATA_OWNER,"user-a");saveCatalog();saveCart();switchLocalDataTo("user-b");loadUserState();__emit("${WL}");const b=scan.last.status;
@@ -89,20 +89,20 @@ await cam.close();
 // ---------- 3. camera refused / missing ----------
 const plain = await puppeteer.launch({ executablePath: H.CHROME, headless: true, protocolTimeout: 20000 });
 const B = await openApp(plain, { before: () => { navigator.mediaDevices.getUserMedia = () => Promise.reject(new DOMException('Permission denied', 'NotAllowedError')); } });
-await B.p.click('.sellbar [data-act="scan"]'); await sleep(500);
+await B.p.click('.sell-header [data-act="scan"]'); await sleep(500);
 check('permission denied → a plain message, no retry loop, "Type the code instead"', /Camera permission was denied/.test(await status(B.p)) && !(await B.p.$('[data-scan="retry"]')) && !!(await B.p.$('#scanStatus [data-scan="type"]')));
 await B.p.click('#scanStatus [data-scan="type"]'); await sleep(200);
 check('"Type the code instead" closes the scanner and puts the cursor in the search box', !(await B.p.$('#scanHost')) && await B.p.evaluate(() => document.activeElement && document.activeElement.id === 'sellSearch'));
 const Cc = await openApp(plain, { before: () => { Object.defineProperty(navigator, 'mediaDevices', { value: undefined }); } });
-await Cc.p.click('.sellbar [data-act="scan"]'); await sleep(400);
+await Cc.p.click('.sell-header [data-act="scan"]'); await sleep(400);
 check('no camera on the device → says so', /can't use a camera|No camera/.test(await status(Cc.p)), await status(Cc.p));
 
 // ---------- 4. phone layout ----------
 await Cc.p.close(); await B.p.bringToFront();
 await B.p.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true }); await sleep(1000);   // (reloads the page)
 await B.run('hideGate();hideSetup();authUser=null;sbStatus="disconnected";setTab("sell");renderAll();override({barcodeScanner:{available:()=>true,async start(){return {native:true}},stop(){}}})');
-const scanBtn = await B.p.$eval('.sellbar [data-act="scan"]', (e) => Math.round(e.getBoundingClientRect().height));
-await B.p.tap('.sellbar [data-act="scan"]'); await sleep(300);
+const scanBtn = await B.p.$eval('.sell-header [data-act="scan"]', (e) => Math.round(e.getBoundingClientRect().height));
+await B.p.tap('.sell-header [data-act="scan"]'); await sleep(300);
 const box = await B.p.$eval('#scanHost', (e) => { const r = e.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height), x: Math.round(document.querySelector('.scan-x').getBoundingClientRect().height) }; });
 check('phone: Scan button and close button are big touch targets', scanBtn >= 44 && box.x >= 44, { scanBtn, box });
 check('phone: the scanner fills the screen', box.w === 390 && box.h === 844, box);

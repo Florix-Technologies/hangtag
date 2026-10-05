@@ -125,9 +125,12 @@ export function orderToCart(id){
   const cap=capDenied(o&&o.kind); if(cap) return cap;
   if(why) return { error: why };
   if(store.cart.length) return { error: "Finish, hold or clear the bill on the screen first." };
-  // what can go out now (a kit: as many as its items allow); the rest stays on the order for later
+  // what can go out now (a kit: as many as its items allow); the rest stays on the order for later. The bill is this
+  // order's from here, so what is reserved for it (an online-store order) is its own to take.
+  const before = store.cartOrder;
+  store.cartOrder = { id: o.id, no: o.no, kind: o.kind };
   const { lines, skipped } = orderCartLines(o, vid => vRec(vid) ? availOf(vid) : null);
-  if(!lines.length) return { error: "Nothing on this order can go on a bill now: " + skipped.map(s => `${s.name} (${s.why})`).join(", ") + "." };
+  if(!lines.length){ store.cartOrder = before; return { error: "Nothing on this order can go on a bill now: " + skipped.map(s => `${s.name} (${s.why})`).join(", ") + "." }; }
   store.cart = lines.map(l => { const r = vRec(l.v);
     return { v: l.v, p: r.p.id, name: l.name || r.p.name, ...legacyCS(r.p.opts, r.v.o), vl: l.vl || vLabel(r.v), ov: optionSnapshot(r.p, r.v), sku: r.v.sku || "", q: l.q, price: l.price,
       cost: vCost(r.p, r.v), color: okColor(r.p.color), ...(l.u&&l.u!=="pcs"?{u:l.u}:{}), ...(l.gst!=null?{gst:l.gst}:{}), ...(l.disc ? { disc: l.disc } : {}), ord: o.id, oln: l.oln,

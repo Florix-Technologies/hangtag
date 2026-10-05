@@ -38,6 +38,7 @@ import { invoicePageHTML, quotationSettingsHTML } from '../features/orders/compo
 import { installAssistantEvents, renderAssistantPage } from '../features/assistant/pages/assistant-page.js';
 import { installProductDraftEvents } from '../features/products/components/product-draft-assistant.js';
 import { installVoiceSearch } from '../features/search/components/voice-search.js';
+import { installOpenAnything } from '../features/search/components/open-anything.js';
 import { priceListsSettingsHTML } from '../features/commerce/components/settings-parts.js';
 import { gstSettingsHTML } from '../features/commerce/components/gst-documents.js';
 import { vouchersSettingsHTML } from '../features/commerce/components/vouchers.js';
@@ -45,6 +46,8 @@ import { integrationsSettingsHTML } from '../features/commerce/components/webhoo
 import { bankAccountsSettingsHTML, installBankEvents } from '../features/finance/components/bank-accounts-view.js';
 import { installStoreEvents, renderStorePage, storeOpen } from '../features/commerce/pages/store-page.js';
 import { docTemplatesHTML, installDocTemplateEvents } from '../features/receipts/components/doc-templates.js';
+import { automationSettingsHTML, installAutomationEvents } from '../features/automation/components/automation-view.js';
+import { diagnosticsHTML, installDiagnosticsEvents } from '../features/shop/components/diagnostics-view.js';
 
 let installed = false;
 export function installModules(){
@@ -87,6 +90,10 @@ export function installModules(){
   registerSettingsPart("billing", { id: "templates", order: 5, perms: ["manage_settings"], html: docTemplatesHTML });
   // Settings → Advanced: integrations (outbound webhooks), the owner's only
   registerSettingsPart("integrations", { id: "webhooks", order: 10, html: integrationsSettingsHTML });
+  // Settings → Automation: the rules (off / ask me first / automatically) and the log of what was done
+  registerSettingsPart("automation", { id: "rules", order: 10, perms: ["manage_settings"], html: automationSettingsHTML });
+  // Settings → Advanced: how this device is doing and its recent technical problems (privacy-safe, on this device)
+  registerSettingsPart("advanced", { id: "diagnostics", order: 50, html: diagnosticsHTML });
   // Settings → Payments & Banks: the shop's bank accounts (section 3s)
   registerSettingsPart("payments", { id: "banks", order: 10, perms: ["manage_settings", "view_reports"], html: bankAccountsSettingsHTML });
   // Restaurant (W2-B): the tables (a till, or servers ordering on their phones) and the kitchen screen — only with the shop's
@@ -100,10 +107,13 @@ export function installModules(){
   installAssistantEvents();
   installProductDraftEvents();
   installVoiceSearch();
+  installOpenAnything();
   installBillsPageEvents();
   installBankEvents();
   installStoreEvents();
   installDocTemplateEvents();
+  installAutomationEvents();
+  installDiagnosticsEvents();
   document.addEventListener("click", e => {
     // a destination that is a part of a module (Purchases is Stock → Purchases): open the module on that part
     const ns = e.target && e.target.closest && e.target.closest("[data-navsub]");

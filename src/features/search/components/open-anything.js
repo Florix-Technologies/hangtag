@@ -1,5 +1,6 @@
-// Global command surface for fast navigation and lookup. It only opens existing pages/records/actions; business rules
-// remain in their current components and delegated event handlers.
+// Open anything (the app bar's Search, Ctrl+K) and Quick actions: one search over workspaces, bills, customers, products,
+// orders, suppliers and settings, each result opening the record's own screen. It only opens existing pages, records and
+// actions; business rules stay in their components and delegated event handlers. What a person can't open isn't listed.
 import { store } from '../../../shared/state/store.js';
 import { $, esc } from '../../../shared/dom.js';
 import { inr } from '../../../shared/formatting/money.js';
@@ -8,8 +9,13 @@ import { D } from '../../inventory/services/ledger.js';
 import { liveProducts } from '../../products/services/catalog.js';
 import { openProductView } from '../../products/components/product-view.js';
 import { can } from '../../shop/services/access.js';
-import { moduleShown } from '../../shop/services/modules.js';
+import { chooseSubview, moduleShown } from '../../shop/services/modules.js';
 import { navAreas } from '../../shop/services/nav-model.js';
+import { orderRepository } from '../../orders/repositories/order-repository.js';
+import { KIND_LABELS } from '../../../domain/orders/orders.js';
+import { suppliersList } from '../../inventory/services/purchase-state.js';
+import { openSettings, settingsSearch } from '../../shop/components/settings-page.js';
+import { renderAll, setTab } from '../../../shared/ui/render.js';
 
 const clean = value => String(value || '').trim().toLowerCase();
 const includes = (query, ...values) => values.some(value => clean(value).includes(query));
@@ -28,21 +34,29 @@ const productResults = query => !query ? [] : liveProducts().filter(p => include
 const customerResults = query => !query ? [] : Object.values(store.customers || {}).filter(c => includes(query, c.name, c.phone, c.email, c.gstin)).slice(0, 6);
 const billResults = query => !query ? [] : D().sales.slice().reverse().filter(s => includes(query, s.no, s.cust && s.cust.name, s.cust && s.cust.phone,
   ...(s.items || []).flatMap(i => [i.n, i.sku, i.vl, i.s]))).slice(0, 6);
+const orderResults = query => !query || !moduleShown('orders') ? [] : (() => { try { return orderRepository().list(); } catch { return []; } })()
+  .filter(o => includes(query, o.no, o.cust && o.cust.name, o.cust && o.cust.phone)).sort((a, b) => b.t - a.t).slice(0, 5);
+const supplierResults = query => !query || !(can('create_purchase') || can('manage_inventory')) ? [] : suppliersList(true).filter(x => includes(query, x.name, x.phone, x.gstin)).slice(0, 5);
+const settingResults = query => !query || !moduleShown('settings') ? [] : settingsSearch(query).sort((a, b) => (a.block ? 0 : 1) - (b.block ? 0 : 1)).slice(0, 5);   // a named setting before a whole section
 const group = (title, rows) => rows.length ? `<section class="command-group"><h4>${esc(title)}</h4><div>${rows.join('')}</div></section>` : '';
 
 function commandResults(query){
-  const q = clean(query), workspaces = workspaceResults(q), products = productResults(q), customers = customerResults(q), bills = billResults(q);
+  const q = clean(query), workspaces = workspaceResults(q), products = productResults(q), customers = customerResults(q), bills = billResults(q),
+    orders = orderResults(q), suppliers = supplierResults(q), settings = settingResults(q);
   const html = [
     group('Go to', workspaces.map(item => `<button type="button" class="command-row" ${attrs(item)}>${UI_ICON.open}<span><b>${esc(item.label)}</b><small>${esc(item.area)}</small></span></button>`)),
     group('Products', products.map(p => `<button type="button" class="command-row" data-commandproduct="${esc(p.id)}">${UI_ICON.box}<span><b>${esc(p.name)}</b><small>${esc([p.sku, p.cat].filter(Boolean).join(' · ') || 'Product')}</small></span></button>`)),
     group('Customers', customers.map(c => `<button type="button" class="command-row" data-custhist="${esc(c.id)}">${UI_ICON.user}<span><b>${esc(c.name)}</b><small>${esc(c.phone || c.email || 'Customer')}</small></span></button>`)),
     group('Bills', bills.map(s => `<button type="button" class="command-row" data-billview="${esc(s.id)}">${UI_ICON.receipt}<span><b>${esc(s.no || 'Bill')}</b><small>${esc(s.cust && s.cust.name || 'Walk-in')} · ${inr(s.total)}</small></span></button>`)),
+    group('Orders', orders.map(o => `<button type="button" class="command-row" data-ordopen="${esc(o.id)}">${UI_ICON.doc}<span><b>${esc(o.no || KIND_LABELS[o.kind] || 'Order')}</b><small>${esc([KIND_LABELS[o.kind], o.cust && o.cust.name].filter(Boolean).join(' · '))}</small></span></button>`)),
+    group('Suppliers', suppliers.map(x => `<button type="button" class="command-row" data-commandsupplier="${esc(x.id)}">${UI_ICON.user}<span><b>${esc(x.name)}</b><small>${esc(x.phone || x.gstin || 'Supplier')}</small></span></button>`)),
+    group('Settings', settings.map(x => `<button type="button" class="command-row" data-commandsetting="${esc(x.key + '|' + (x.blockId || ''))}">${UI_ICON.open}<span><b>${esc(x.block || x.label)}</b><small>Settings · ${esc(x.label)}</small></span></button>`)),
   ].join('');
-  return html || `<div class="command-empty">${UI_ICON.search}<b>No match for “${esc(query)}”</b><p>Try a bill number, customer, phone, product or workspace.</p></div>`;
+  return html || `<div class="command-empty">${UI_ICON.search}<b>No match for “${esc(query)}”</b><p>Try a bill number, customer, phone, product, supplier or setting.</p></div>`;
 }
 
 export function openAnything(query = ''){
-  $('#modalHost').innerHTML = sheetHTML({ id: 'openAnything', cls: 'command-sheet', title: 'Open anything', sub: 'Find a workspace, bill, customer or product.',
+  $('#modalHost').innerHTML = sheetHTML({ id: 'openAnything', cls: 'command-sheet', title: 'Open anything', sub: 'Find a bill, customer, product, order, supplier, setting or workspace.',
     body: `<label class="search command-search">${UI_ICON.search}<input id="commandSearch" type="search" value="${esc(query)}" placeholder="Type to search…" autocomplete="off" enterkeyhint="search" aria-label="Search Hangtag"></label><div id="commandResults">${commandResults(query)}</div>` });
   const input = $('#commandSearch'); if(input) input.focus({ preventScroll: true });
 }
@@ -66,7 +80,12 @@ export function installOpenAnything(){
     const global = target.closest('[data-global]');
     if(global){ if(global.dataset.global === 'search') openAnything(); else openQuickActions(); return; }
     const product = target.closest('[data-commandproduct]');
-    if(product){ openProductView(product.dataset.commandproduct); }
+    if(product){ openProductView(product.dataset.commandproduct); return; }
+    // a supplier opens in Stock → Suppliers; a setting in its section of Settings
+    const sup = target.closest('[data-commandsupplier]');
+    if(sup){ chooseSubview('stock', 'suppliers'); store.supplierView = { ...(store.supplierView || {}), id: sup.dataset.commandsupplier }; $('#modalHost').innerHTML = ''; setTab('stock'); renderAll(); window.scrollTo(0, 0); return; }
+    const set = target.closest('[data-commandsetting]');
+    if(set){ const [key, block] = set.dataset.commandsetting.split('|'); $('#modalHost').innerHTML = ''; openSettings(key, block || undefined); }
   });
   document.addEventListener('input', event => {
     if(!event.target || event.target.id !== 'commandSearch') return;

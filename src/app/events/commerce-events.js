@@ -4,7 +4,7 @@
 import { store } from '../../shared/state/store.js';
 import { closeBiz } from '../../features/commerce/components/biz-sheet.js';
 import { priceListsChange, priceListsClick, priceListsInput, priceListsSubmit } from '../../features/commerce/components/price-lists.js';
-import { purchaseOrdersChange, purchaseOrdersClick, purchaseOrdersInput } from '../../features/inventory/components/purchase-orders.js';
+import { purchaseOrdersChange, purchaseOrdersClick, purchaseOrdersInput, purchaseOrdersSubmit } from '../../features/inventory/components/purchase-orders.js';
 import { kitClick, kitInput } from '../../features/products/components/kit-editor.js';
 import { gstChange, gstClick, gstInput, gstSubmit } from '../../features/commerce/components/gst-documents.js';
 import { vouchersClick, vouchersInput } from '../../features/commerce/components/vouchers.js';
@@ -14,7 +14,7 @@ import { webhooksClick, webhooksInput } from '../../features/commerce/components
 const CLICKS = [priceListsClick, purchaseOrdersClick, kitClick, gstClick, vouchersClick, repackClick, webhooksClick];
 const INPUTS = [priceListsInput, purchaseOrdersInput, kitInput, gstInput, vouchersInput, repackInput, webhooksInput];
 const CHANGES = [priceListsChange, purchaseOrdersChange, gstChange, repackChange];
-const SUBMITS = [priceListsSubmit, gstSubmit];
+const SUBMITS = [priceListsSubmit, gstSubmit, purchaseOrdersSubmit];
 /* Later parts of the batch add their handlers here (each returns true when it dealt with the event) */
 export function addCommerceHandlers({ click, input, change, submit } = {}){
   if(click) CLICKS.push(click); if(input) INPUTS.push(input); if(change) CHANGES.push(change); if(submit) SUBMITS.push(submit);

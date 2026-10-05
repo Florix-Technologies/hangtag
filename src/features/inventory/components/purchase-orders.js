@@ -20,8 +20,9 @@ import { bizError, bizSheet, chip } from '../../commerce/components/biz-sheet.js
 import { suppliersList, supplierById } from '../services/purchase-state.js';
 import { trackingOfP } from '../services/tracking.js';
 import { vRec } from '../services/ledger.js';
-import { billStart, newPODraft, poById, poDifferences, poFromReorder, poLine, poList, poProgressOf, receivePO, receiveStart, reorderGroups, reviewDifference, savePO, savePOBill,
+import { billStart, newPODraft, poById, poDifferences, poFromReorder, poLine, poList, poProgressOf, posFromPlan, receivePO, receiveStart, reorderGroups, reorderPlan, reviewDifference, savePO, savePOBill,
   setPOStatus } from '../use-cases/purchase-orders.js';
+import { planBySupplier } from '../../../domain/inventory/purchase-plan.js';
 
 const V = () => store.bizView || {};
 const TONE = { draft: "muted", sent: "info", partial: "warn", received: "ok", closed: "muted", cancelled: "bad" };
@@ -39,12 +40,29 @@ export function renderPurchaseOrdersView(host){
     ${list.length > open.length ? `<details class="pu-more"><summary>Received, closed and cancelled (${list.length - open.length})</summary><div class="bizlist">${list.filter(p => !open.includes(p)).slice(0, 50).map(row).join("")}</div></details>` : ""}`;
 }
 /* ---------- Smart reorder → "Create PO" (features/inventory/pages/smart-reorder-page.js) ---------- */
+/* Plan within a budget: the budget typed and the plan worked out from it (shown until saved or planned again) */
+let planState = { budget: "", plan: null };
+function planHTML(plan){
+  const groups = planBySupplier(plan), word = l => `${esc(l.name)}${l.vl ? ` · ${esc(l.vl)}` : ""}`;
+  const lines = groups.map(g => `<div class="reorder-group"><h4>${esc(g.supplier || "Supplier not known yet")}</h4>${g.items.map(l => `<div class="reorder-line"><span>${word(l)}${l.days != null ? `<small class="muted"> · ${l.days <= 0 ? "sold out" : `about ${l.days} days left`}</small>` : ""}</span><b>+${esc(qtyText(l.q, l.u))}${l.partial ? ` <small class="muted">of ${esc(qtyText(l.wanted, l.u))}</small>` : ""}</b><span>${inr(l.cost)}</span></div>`).join("")}</div>`).join("");
+  const saveable = groups.some(g => g.supplierId);
+  return `<div class="planres" aria-live="polite"><p class="plantotal"><b>${inr(plan.total)}</b>${plan.budget != null ? ` of ${inr(plan.budget)} · ${inr(plan.left)} left` : ""}</p>
+    ${plan.lines.length ? lines : `<p class="muted">Nothing fits this budget${plan.skipped.length ? `: even one ${esc(plan.skipped[0].name)} costs ${inr(plan.skipped[0].price)}` : ""}.</p>`}
+    ${plan.skipped.length ? `<p class="note">Waiting for more budget: ${plan.skipped.map(l => `${esc(l.name)}${l.vl ? " " + esc(l.vl) : ""} × ${esc(qtyText(l.q, l.u))}`).join(", ")}.</p>` : ""}
+    ${plan.unknownCost.length ? `<p class="note">No cost price, so not planned (add the cost to plan them): ${plan.unknownCost.map(l => esc(l.name)).join(", ")}.</p>` : ""}
+    ${saveable ? `<div class="setactions"><button type="button" class="btn sm primary" data-plansave>Save as draft purchase orders</button></div><p class="note">Drafts are for you to check and send — nothing is sent to a supplier.</p>` : ""}</div>`;
+}
+function planFormHTML(){
+  return `<section class="intel-section intel-plan"><div class="intel-section-head"><div><h3>Plan within a budget</h3><p>What runs out first comes first (stock left at the forecast rate), then the better margin. Nothing is ordered until you save drafts.</p></div></div>
+    <form id="planForm" class="planform" novalidate><label class="f"><span class="lab">Budget (₹)</span><input name="budget" type="number" inputmode="numeric" min="1" step="1" value="${esc(planState.budget)}" placeholder="e.g. 20000"></label><button class="btn sm" type="submit">Plan</button></form>
+    ${planState.plan ? planHTML(planState.plan) : ""}</section>`;
+}
 export function reorderPOsHTML(){
   if(!usesPOs() || !can("create_purchase")) return "";
   const groups = reorderGroups(); if(!groups.length) return "";
   return `<section class="intel-section"><div class="intel-section-head"><div><h3>Recommended purchase</h3><p>Grouped by the supplier each product last came from. Review, then create the order.</p></div></div>
     ${groups.map((g, i) => `<div class="reorder-group"><h4>${esc(g.supplier || "Choose a supplier")}</h4>${g.items.slice(0, 8).map(l => `<div class="reorder-line"><span>${esc(l.name)}${l.vl ? ` · ${esc(l.vl)}` : ""}</span><b>+${esc(qtyText(l.q, l.u))}</b></div>`).join("")}
-      ${g.items.length > 8 ? `<small class="muted">and ${g.items.length - 8} more</small>` : ""}<div class="setactions"><button type="button" class="btn sm primary" data-poreorder="${i}">Create PO</button></div></div>`).join("")}</section>`;
+      ${g.items.length > 8 ? `<small class="muted">and ${g.items.length - 8} more</small>` : ""}<div class="setactions"><button type="button" class="btn sm primary" data-poreorder="${i}">Create PO</button></div></div>`).join("")}</section>${planFormHTML()}`;
 }
 /* ---------- the PO editor (new or a draft) ---------- */
 export function openPOEditor(id, seed){
@@ -127,7 +145,22 @@ export function openPOBill(id){
 }
 /* ---------- events ---------- */
 let reorderCache = [];
+/* Plan within a budget (the form on Smart reorder) */
+export function purchaseOrdersSubmit(e){
+  if(!e.target || e.target.id !== "planForm") return false;
+  e.preventDefault();
+  const v = String(new FormData(e.target).get("budget") || "").trim(), b = Math.round(+v);
+  if(v && !(b > 0)){ toast("Enter the budget in rupees."); return true; }
+  planState = { budget: v ? String(b) : "", plan: reorderPlan(v ? b : null) }; renderAll();
+  return true;
+}
 export function purchaseOrdersClick(t){
+  if(t.closest("[data-plansave]") && planState.plan){
+    const r = posFromPlan(planState.plan);
+    toast(r.pos.length ? `${r.pos.length} draft purchase order${r.pos.length > 1 ? "s" : ""} saved (${r.pos.map(p => p.no).join(", ")}). Check and send them from Purchase orders.${r.noSupplier ? ` ${r.noSupplier} line${r.noSupplier > 1 ? "s" : ""} need a supplier first.` : ""}` : r.errors[0] || "Nothing to save.");
+    if(r.pos.length) planState = { budget: planState.budget, plan: null };
+    renderAll(); return true;
+  }
   if(t.closest("[data-ponew]")){ openPOEditor(null); return true; }
   const ro = t.closest("[data-poreorder]");
   if(ro){ reorderCache = reorderGroups(); const g = reorderCache[+ro.dataset.poreorder]; if(!g) return true;

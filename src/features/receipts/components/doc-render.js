@@ -1,10 +1,11 @@
 // One look for every A4 document (tax invoice, bill, quotation, sales order, delivery challan, credit note, purchase
-// order): the shop's template (Modern, Classic, Minimal) and accent colour from Settings → Billing & Documents → Templates
+// order): the shop's template (Standard, Classic, Modern, Compact) and accent colour from Settings → Billing & Documents → Templates
 // (domain/documents/doc-settings.js). The same model also makes the PDF (shared/utils/pdf.js docPdfBytes) and the preview.
 // The 80 mm receipt keeps its own compact layout (components/receipt-view.js).
 //   model: { kind, title, number, meta: [[label, value]], seller: { name, lines }, logo, parties: [{ label, name, lines }],
 //            columns: [labels], left (how many columns from the start are text), rows: [[cell | { t, sub }]],
 //            tax: { head, rows } | null, totals: [[label, value, grand?]], words, notes, terms, bank, signature, notice,
+//            signImg, stampImg (the authorised signature and company stamp pictures, when printed),
 //            footer, cancelled (the reason shown), status }
 import { esc } from '../../../shared/dom.js';
 
@@ -22,7 +23,7 @@ ${(m.parties || []).length ? `<section class="d-parties">${m.parties.map(p => `<
 <div class="d-lower"><div class="d-left">${m.tax && m.tax.rows.length ? `<table class="d-tax"><thead><tr>${m.tax.head.map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${m.tax.rows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>` : ""}
 ${m.words ? `<p class="d-words"><b class="d-lab">Amount in words</b>${esc(m.words)}</p>` : ""}${m.notes ? `<section><b class="d-lab">Notes</b><p>${br(m.notes)}</p></section>` : ""}${m.terms ? `<section><b class="d-lab">Terms &amp; conditions</b><p>${br(m.terms)}</p></section>` : ""}${m.bank ? `<section><b class="d-lab">Bank &amp; payment details</b><p>${br(m.bank)}</p></section>` : ""}</div>
 ${(m.totals || []).length ? `<div class="d-totals">${m.totals.map(([k, v, g]) => `<div${g ? ' class="d-grand q-grand"' : ""}><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("")}</div>` : ""}</div>
-<div class="d-end">${m.notice ? `<p class="d-note">${esc(m.notice)}</p>` : "<span></span>"}<div class="d-sign">${m.signature ? `<p>${br(m.signature)}</p>` : `<p>For ${esc(m.seller.name)}</p>`}<span>Authorised signatory</span></div></div>
+<div class="d-end">${m.notice ? `<p class="d-note">${esc(m.notice)}</p>` : "<span></span>"}<div class="d-sign${m.signImg ? " has-img" : ""}">${m.stampImg ? `<img class="d-stamp" src="${esc(m.stampImg)}" alt="Company stamp">` : ""}${m.signature ? `<p>${br(m.signature)}</p>` : `<p>For ${esc(m.seller.name)}</p>`}${m.signImg ? `<img class="d-signimg" src="${esc(m.signImg)}" alt="Authorised signature">` : ""}<span>Authorised signatory</span></div></div>
 ${m.footer ? `<footer>${br(m.footer)}</footer>` : ""}</article>`;
 }
 /* The page's CSS for a template: A4 with sensible margins, printed colours kept */
@@ -52,6 +53,8 @@ html,body{background:#fff}body{margin:0;color:#1b1f2a;font:11.5px/1.45 "Instrume
 .d-end{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-top:24px;break-inside:avoid}
 .d-note{margin:0;color:#6b7185;font-size:10px;max-width:60%}.d-sign{margin-left:auto;text-align:center;min-width:56mm}.d-sign p{margin:0 0 28px;font-weight:600}
 .d-sign span{display:block;border-top:1px solid #9aa0ae;padding-top:4px;color:#6b7185;font-size:10px}
+.d-sign{position:relative}.d-sign.has-img p{margin-bottom:4px}.d-signimg{display:block;margin:0 auto 4px;max-width:46mm;max-height:16mm;object-fit:contain}
+.d-stamp{position:absolute;right:calc(100% + 4mm);bottom:0;width:26mm;height:26mm;object-fit:contain;opacity:.95}
 footer{margin-top:16px;padding-top:8px;border-top:1px solid #e4e6ec;text-align:center;color:#4a5060;font-size:10.5px}
 .cancelled .d-table,.cancelled .d-lower{opacity:.55}
 .t-modern .d-head{background:var(--acc);border:0;border-radius:6px;padding:14px 16px}.t-modern .d-head *{color:#fff}.t-modern .d-meta dt{opacity:.8}
@@ -60,9 +63,14 @@ footer{margin-top:16px;padding-top:8px;border-top:1px solid #e4e6ec;text-align:c
 .t-classic .d-head{border-bottom:3px double var(--acc)}.t-classic .d-party{border:1px solid #c9ccd5;padding:8px 10px}
 .t-classic .d-table th,.t-classic .d-table td{border:1px solid #c9ccd5}.t-classic .d-table thead th{background:#f2f3f6;color:#1b1f2a}
 .t-classic .d-grand{border-radius:0}
-.t-minimal .d-head{border-bottom:1px solid #d7dae2}.t-minimal .d-title h1{font-weight:500;letter-spacing:.16em;color:#1b1f2a}
-.t-minimal .d-table th{border-bottom:1px solid #1b1f2a;color:#1b1f2a}.t-minimal .d-table td{border-bottom-color:#eef0f3}
-.t-minimal .d-grand{background:none;color:var(--acc);border-top:2px solid var(--acc);border-radius:0;padding:8px 0}`;
+:is(.t-standard,.t-minimal) .d-head{border-bottom:1px solid #d7dae2}:is(.t-standard,.t-minimal) .d-title h1{font-weight:500;letter-spacing:.16em;color:#1b1f2a}
+:is(.t-standard,.t-minimal) .d-table th{border-bottom:1px solid #1b1f2a;color:#1b1f2a}:is(.t-standard,.t-minimal) .d-table td{border-bottom-color:#eef0f3}
+:is(.t-standard,.t-minimal) .d-grand{background:none;color:var(--acc);border-top:2px solid var(--acc);border-radius:0;padding:8px 0}
+/* Compact: the same details, denser — smaller type and tighter rows, so long bills take fewer pages */
+.t-compact{font-size:10px;line-height:1.35}.t-compact .d-head{padding-bottom:8px;margin-bottom:9px;border-bottom:1.5px solid var(--acc)}
+.t-compact .d-brand h2{font-size:14px}.t-compact .d-title h1{font-size:15px;margin-bottom:3px}.t-compact .d-parties{gap:10px;margin-bottom:9px}
+.t-compact .d-table th{padding:4px 5px;font-size:8.5px;background:#f4f5f8;border-bottom:1px solid #c9ccd5}.t-compact .d-table td{padding:3.5px 5px}
+.t-compact .d-totals{min-width:58mm}.t-compact .d-grand{padding:5px 8px;font-size:12px;border-radius:3px}.t-compact .d-end{margin-top:14px}.t-compact .d-sign p{margin-bottom:20px}`;
 }
 /* A preview in the app: the document in its own frame, scaled to the width it has */
 export function documentFrameHTML(m, o){

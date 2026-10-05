@@ -43,7 +43,7 @@ import { applyLineDiscount, lineDiscountInput, lineDiscountType, openLineDiscoun
 import { cashFormChange, openCashForm, submitCashForm } from '../../features/finance/components/cash-form.js';
 import { checkUnverified, loadUnmatched, resolveUnmatched } from '../../features/finance/components/reconcile-view.js';
 import { completePayment, openPayment, payCardReceived, payClosed, payInput, payIntent, payManualUpiReceived, payMode, payQuick, payRest, paySend, payVia, payVoucher, payVoucherRemove } from '../../features/sales/components/payment-sheet.js';
-import { checkoutPayment, checkoutStep, checkoutWalkIn, openCheckout } from '../../features/sales/components/checkout-flow.js';
+import { checkoutBack, checkoutPayment, checkoutStep, checkoutWalkIn, openCheckout } from '../../features/sales/components/checkout-flow.js';
 import { openBook } from '../../features/finance/components/books-view.js';
 import { enqueue, flushSbQueue } from '../../features/sync/services/outbox.js';
 import { can } from '../../features/shop/services/access.js';
@@ -76,6 +76,8 @@ export function installDomEvents(){
     const t=e.target;if(!t.closest)return;
     const sc=t.closest("[data-scan]");if(sc&&store.scan){scanAction(sc.dataset.scan);return}
     const re=t.closest("[data-repevent]");if(re){store.prefs.repEvent=re.dataset.repevent;store.showAllBills=false;savePrefs();closeModal();if(re.dataset.tab)setTab(re.dataset.tab);else renderReport();return}
+    // Reports for a period, at one of its cards ("30d|reconcileCard"): Home's "UPI to verify" and the like
+    const rg=t.closest("[data-reportgo]");if(rg){const [per,card]=rg.dataset.reportgo.split("|");store.prefs.period=per;store.showAllBills=false;savePrefs();closeModal();setTab("report");const c=card&&document.getElementById(card);if(c)c.scrollIntoView({block:"start"});return}
     const tab=t.closest("[data-tab]");if(tab){closeModal();setTab(tab.dataset.tab);return}
     const tile=t.closest(".tile");if(tile){openPicker(tile.dataset.pid);return}
     if(sellCatClick(t))return;
@@ -107,6 +109,7 @@ export function installDomEvents(){
     const cs=t.closest("[data-checkoutstep]");if(cs&&store.checkoutFlow){checkoutStep(cs.dataset.checkoutstep);return}
     if(t.closest("[data-checkoutpay]")&&store.checkoutFlow){checkoutPayment();return}
     if(t.closest("[data-checkoutwalkin]")&&store.checkoutFlow){checkoutWalkIn();return}
+    if(t.closest("[data-checkoutback]")&&store.payState){checkoutBack();return}
     const pm=t.closest("[data-paymode]");if(pm&&store.payState){payMode(pm.dataset.paymode);return}
     const prs=t.closest("[data-payrest]");if(prs&&store.payState){payRest(prs.dataset.payrest);return}
     const pq=t.closest("[data-payquick]");if(pq&&store.payState){payQuick(pq.dataset.payquick);return}
@@ -147,6 +150,7 @@ export function installDomEvents(){
     const v=t.closest("[data-void]");if(v){openVoidForm(v.dataset.void);return}
     const uv=t.closest("[data-unvoid]");if(uv){closeModal();unvoid(uv.dataset.unvoid);return}
     const rt=t.closest("[data-return]");if(rt){openReturn(rt.dataset.return);return}
+    const xc=t.closest("[data-exchange]");if(xc){openReturn(xc.dataset.exchange,"exchange");return}
     // returns / exchanges
     const rtm=t.closest("[data-rtm]");if(rtm&&store.retState){const ln=+rtm.dataset.rtm;store.retState.q[ln]=Math.max(0,(store.retState.q[ln]||0)-1);renderReturnSheet();return}
     const rtp=t.closest("[data-rtp]");if(rtp&&store.retState){const ln=+rtp.dataset.rtp;store.retState.q[ln]=(store.retState.q[ln]||0)+1;renderReturnSheet();return}
@@ -178,7 +182,7 @@ export function installDomEvents(){
     const ua=t.closest("[data-unarchive]");if(ua){setArchived(ua.dataset.unarchive,false);return}
     const dp=t.closest("[data-delp]");if(dp){deleteProduct(dp.dataset.delp);return}
     // a product in the list: its details (buttons and menus in the row do their own thing)
-    const po=t.closest("[data-prodopen]");if(po&&!t.closest("button,a,.menu,.menuwrap")){openProductView(po.dataset.prodopen);return}
+    const po=t.closest("[data-prodopen]"),pin=t.closest("button,a,.menu,.menuwrap");if(po&&(!pin||pin===po)){openProductView(po.dataset.prodopen);return}
     const pv=t.closest("[data-prodview]");if(pv){store.prodView=pv.dataset.prodview;renderProducts();return}
     const gr=t.closest("[data-grouprev]");if(gr){openGroupPreview(gr.dataset.grouprev);return}
     const gg=t.closest("[data-groupgo]");if(gg){applyGroup(gg.dataset.groupgo);return}

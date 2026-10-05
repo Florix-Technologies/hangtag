@@ -2,6 +2,12 @@
 
 export const COLORS=["#1B1E24","#ECEAE3","#1F4E8C","#7A1F2B","#2F5D46","#C9A227","#8E8A83","#D96C8A","#5B3A8C","#C2622D","#6FA8C9","#A3B18A"];
 export const okColor=c=>/^#[0-9a-f]{6}$/i.test(String(c||""))?c:"#8E8A83";
+const rgbOf=hex=>{const h=okColor(hex).slice(1);return [0,2,4].map(i=>parseInt(h.slice(i,i+2),16))};
+const hexOf=a=>"#"+a.map(v=>Math.round(Math.max(0,Math.min(255,v))).toString(16).padStart(2,"0")).join("");
+/* The colour mixed with white (amount 0..1 of white): a soft background. tint("#1D5BBF", .88) → a pale blue */
+export const tint=(hex,amount)=>hexOf(rgbOf(hex).map(v=>v+(255-v)*amount));
+/* The colour mixed with black (amount 0..1 of black): an ink that reads on its tint */
+export const shade=(hex,amount)=>hexOf(rgbOf(hex).map(v=>v*(1-amount)));
 export function isLight(hex){const h=okColor(hex).slice(1);const r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b=parseInt(h.slice(4,6),16);return (r*299+g*587+b*114)/1000>150}
 /* colour names shown as small swatches */
 

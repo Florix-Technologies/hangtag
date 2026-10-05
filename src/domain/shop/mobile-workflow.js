@@ -11,8 +11,8 @@ export const MOBILE_MODULE_ORDER = Object.freeze({
 });
 
 export const MOBILE_ACTION_ORDER = Object.freeze({
-  owner: ['sale', 'reports', 'reorder', 'stock', 'customers', 'suppliers', 'settings'],
-  manager: ['reports', 'reorder', 'stock', 'orders', 'products', 'customers'],
+  owner: ['sale', 'scan', 'tables', 'reports', 'reorder', 'stock', 'customers', 'suppliers', 'settings'],
+  manager: ['reports', 'reorder', 'stock', 'tables', 'orders', 'products', 'customers'],
   cashier: ['sale', 'scan', 'orders', 'customers'],
   server: ['tables', 'orders'],
   kitchen: ['kitchen'],

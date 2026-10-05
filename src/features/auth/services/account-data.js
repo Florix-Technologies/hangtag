@@ -1,4 +1,6 @@
 // Keeps each account's local data separate on a shared device.
+import { mergeLogs } from '../../../domain/automation/rules.js';
+import { docImagesOf } from '../../../domain/documents/doc-settings.js';
 import { store } from '../../../shared/state/store.js';
 import { DEFAULT_SETTINGS } from '../../../domain/shop/settings.js';
 import { discountInput } from '../../../domain/sales/discounts.js';
@@ -15,7 +17,7 @@ import { resetProductDraftAssistant } from '../../products/components/product-dr
    The app works on the plain keys below. When a different account signs in, the current data is put away
    under its owner and that account's own data (or a fresh start) is brought back. */
 
-export const USER_KEYS = ["hangtag_sb_queue", "hangtag_sync_review", "rc_local", "rc_dirty", "rc_moves", "rc_returns", "rc_customers", "rc_events", "rc_settings", "rc_pend", "rc_cart", "rc_disc", "rc_cartcust", "rc_catalog", "rc_imgs", "hangtag_profile", "rc_logo", "hangtag_pay_pending", "hangtag_delivery_queue", "rc_cash_moves", "rc_day_closes", "hangtag_access", "rc_collections", "rc_held", "rc_orders", "rc_cartorder", "rc_suppliers", "rc_purchases", "rc_supplier_pays",
+export const USER_KEYS = ["hangtag_sb_queue", "hangtag_sync_review", "rc_local", "rc_dirty", "rc_moves", "rc_returns", "rc_customers", "rc_events", "rc_settings", "rc_pend", "rc_cart", "rc_disc", "rc_cartcust", "rc_catalog", "rc_imgs", "rc_docimg", "rc_autolog", "hangtag_profile", "rc_logo", "hangtag_pay_pending", "hangtag_delivery_queue", "rc_cash_moves", "rc_day_closes", "hangtag_access", "rc_collections", "rc_held", "rc_orders", "rc_cartorder", "rc_suppliers", "rc_purchases", "rc_supplier_pays",
   "rc_tables", "rc_table_sessions", "rc_carttable", "rc_pending_docs", "rc_quote_sends", "rc_biz", "rc_cartpl"];
 export const MUST_KEEP = ["hangtag_sb_queue", "hangtag_sync_review", "rc_local", "rc_dirty", "rc_moves", "rc_returns", "rc_customers", "rc_events", "rc_cash_moves", "rc_day_closes", "rc_collections", "rc_held", "rc_orders", "rc_suppliers", "rc_purchases", "rc_supplier_pays", "rc_tables", "rc_table_sessions", "rc_pending_docs", "rc_quote_sends", "rc_biz"];   // unsent work: never drop these
 export const DATA_OWNER = "hangtag_data_owner";
@@ -36,7 +38,7 @@ export function switchLocalDataTo(userId){
       // Settings, the logo or photos couldn't be put away: their queued uploads send whatever the app holds when they run,
       // which would then be empty and wipe the shop's copy in the cloud. Drop those uploads; the cloud copy comes back
       // down when the account returns.
-      const type = { rc_settings: "settings", rc_logo: "logo", rc_imgs: "img" }[k];
+      const type = { rc_settings: "settings", rc_logo: "logo", rc_docimg: "docimg", rc_autolog: "autolog", rc_imgs: "img" }[k];
       if(type) try{
         const qk = stashKey(owner, "hangtag_sb_queue"), q = JSON.parse(storage.getRaw(qk) || "[]");
         if(Array.isArray(q)) storage.setRaw(qk, JSON.stringify(q.filter(x => !x || x.type !== type)));
@@ -86,7 +88,7 @@ export function loadUserState(){
   store.sbOfflineQueue = storage.get("hangtag_sb_queue", []); if(!Array.isArray(store.sbOfflineQueue)) store.sbOfflineQueue = [];
   store.profile = storage.get("hangtag_profile", null);
   store.access = objOr(storage.get("hangtag_access", null), null); store.team = null;
-  store.logo = storage.get("rc_logo", "") || ""; store.deliveries = {}; store.channels = null; store.printState = null;
+  store.logo = storage.get("rc_logo", "") || ""; store.docImages = docImagesOf(storage.get("rc_docimg", null)); store.autoLog = mergeLogs(storage.get("rc_autolog", []) || []); store.deliveries = {}; store.channels = null; store.printState = null;
   applyCatalogMigration();
   store.editor = null; store.lastSale = null; store.retState = null; store.stockOp = null; store.showAllBills = false;
   store.purchaseForm = null; store.supplierView = null; store.stockCount = null; store.prodImport = null; store.quickProduct = null; store.invSub = "levels";

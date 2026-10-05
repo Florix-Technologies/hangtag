@@ -25,6 +25,22 @@ export function createBrowserSpeech({ scope = globalThis } = {}){
         return q && q.state ? q.state : 'unknown';
       }catch{ return 'unknown'; }
     },
+    /* Ask for the microphone now (from the person's tap on Voice): the browser shows its own prompt when it hasn't been
+       answered yet. → "granted" | "denied" | "no-mic" | "unsupported" (no getUserMedia) | "failed". The microphone is
+       released straight away: speech recognition opens it again while it listens. */
+    async requestMic(){
+      const md = scope && scope.navigator && scope.navigator.mediaDevices;
+      if(!md || typeof md.getUserMedia !== 'function') return 'unsupported';
+      try{
+        const stream = await md.getUserMedia({ audio: true });
+        try{ stream.getTracks().forEach(t => t.stop()); }catch{ /* nothing to release */ }
+        return 'granted';
+      }catch(e){
+        const n = e && e.name;
+        return n === 'NotAllowedError' || n === 'SecurityError' || n === 'PermissionDeniedError' ? 'denied'
+          : n === 'NotFoundError' || n === 'DevicesNotFoundError' || n === 'OverconstrainedError' ? 'no-mic' : 'failed';
+      }
+    },
     /* The words spoken, once the speaker pauses. onInterim(text) gets what is heard so far while they speak. */
     listen({ lang = 'en-IN', onInterim } = {}){
       const Ctor = Recognition();

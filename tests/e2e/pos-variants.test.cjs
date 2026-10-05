@@ -28,7 +28,8 @@ const vid=(c,s)=>`const p=products().find(x=>x.name==="Street Tee");return p.var
   try{
     const ctx=await browser.createBrowserContext();const A=await page(ctx);
     // ---------------- TEST 1: 4 colours x 5 sizes = 20 variants, created in the editor UI ----------------
-    await A.click('[data-tab="products"]');await sleep(200);
+    await A.click('[data-tab="stock"]');await sleep(150);
+    await A.click('#v-stock [data-tab="products"]');await sleep(200);
     await A.click('.ptools [data-act="addp"]');await sleep(200);
     await type(A,'#edName','Street Tee');
     await type(A,'[data-ed="price"]','599');await type(A,'[data-ed="cost"]','320');await type(A,'[data-ed="cat"]','T-shirts');
@@ -179,7 +180,7 @@ const vid=(c,s)=>`const p=products().find(x=>x.name==="Street Tee");return p.var
     check('Reports: gross profit card shows sales, cost, profit and margin',/Gross profit/.test(profitTxt||'')&&/%/.test(profitTxt||''),profitTxt);
     // ---------------- receipts ----------------
     await run(A,`openBillView(${JSON.stringify(sid)})`);await sleep(150);
-    const prev=await txt(A,'.rcpt-prev');
+    const prev=await txt(A,'.billview .rcpt-prev');
     check('receipt shows shop, bill number, colour / size and payment',/Bill/.test(prev)&&/Black \/ L/.test(prev)&&/Paid/.test(prev),prev.slice(0,120));
     await A.click(`.billview [data-print="${sid}"]`);await sleep(400);
     check('Print makes a print-only page (no app UI in it)',await A.evaluate(()=>{const f=[...document.querySelectorAll('iframe')].pop();return !!(f&&f.contentDocument.querySelector('.rcpt')&&!f.contentDocument.querySelector('.appbar'))}));

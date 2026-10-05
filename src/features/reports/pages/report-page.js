@@ -9,6 +9,7 @@ import { eventsCardHTML } from '../../events/components/events-view.js';
 import { paymentSummary, profitSummary } from '../../../domain/reports/sales-report.js';
 import { bankCardHTML, cashCardHTML } from '../../finance/components/books-view.js';
 import { reconcileCardHTML } from '../../finance/components/reconcile-view.js';
+import { salesByChannel } from '../../commerce/services/channels.js';
 import { D } from '../../inventory/services/ledger.js';
 import { productLeft, stockOf } from '../../inventory/services/stock.js';
 import { thumb } from '../../products/components/thumb.js';
@@ -106,6 +107,14 @@ export function billsHTML(all,R){
   if(all.length>cap)h+=store.showAllBills?`<p class="muted">Showing the latest ${cap} of ${all.length} bills — download the CSV for all of them.</p>`:`<div class="row c" style="padding-top:12px"><button class="btn sm" data-act="allbills">Show all ${all.length} bills</button></div>`;
   return h+`</div>`;
 }
+/* Sales by channel (commerce/services/channels.js): the counter, the online store, sales orders, dine-in, events — shown
+   when the period's bills came through more than one */
+function channelCardHTML(R){
+  const C=salesByChannel(R.from,R.to); if(C.length<2) return "";
+  const total=C.reduce((a,c)=>a+Math.max(0,c.sales),0)||1;
+  return `<div class="card span-12" id="channelCard"><div class="card-h"><h3>Sales by channel</h3><span class="note">One stock and one set of books across every way you sell</span></div>
+    <div class="chanlist">${C.map(c=>`<div class="chanrow" data-channel="${esc(c.key)}"><span class="chan-n">${esc(c.label)}</span><span class="chan-bar" aria-hidden="true"><i style="width:${Math.max(2,Math.round(Math.max(0,c.sales)/total*100))}%"></i></span><b>${inr(c.sales)}</b><small>${c.bills} bill${c.bills===1?"":"s"} · ${Math.round(Math.max(0,c.sales)/total*100)}%</small></div>`).join("")}</div></div>`;
+}
 export function renderReport(){
   const R=periodRange();
   $$("[data-period]").forEach(b=>b.setAttribute("aria-pressed",String(store.prefs.period===b.dataset.period)));
@@ -122,6 +131,7 @@ export function renderReport(){
   h+=`<div class="dash">
     <div class="card span-8"><div class="card-h"><h3>${TS.title}</h3><button class="btn xs" data-table="time" aria-pressed="${showTable.time}">${showTable.time?"Show chart":"Show table"}</button></div><div id="chTime" class="chart"></div></div>
     <div class="card span-4"><div class="card-h"><h3>How customers paid</h3></div>${payHTML(live,rets,R)}</div>
+    ${channelCardHTML(R)}
     <div class="card span-6"><div class="card-h"><h3>Cash book</h3><span class="note">Cash in and out, with the balance</span></div>${cashCardHTML(R)}</div>
     <div class="card span-6"><div class="card-h"><h3>Bank book</h3><span class="note">UPI and card payments</span></div>${bankCardHTML(R)}</div>
     <div class="card span-12" id="reconcileCard"><div class="card-h"><h3>Reconciliation</h3><span class="note">UPI to verify and money received that isn't on a bill</span></div>${reconcileCardHTML(R)}</div>

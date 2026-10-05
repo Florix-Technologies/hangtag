@@ -1,7 +1,7 @@
 // Business type, capabilities and the adaptive navigation end to end in Chrome (F2): a new owner sets up the shop (shop
 // name, then the type of business — Grocery — and nothing about capabilities), enters the app with Grocery's defaults;
-// the tab bar comes from the module registry (Home, Sell, Inventory, Products, Customers, Reports, Settings; Orders only
-// when one of its parts exists; never Tables or Kitchen for a grocery); the product form shows batch tracking, the expiry
+// the workspace bar comes from the module registry (Home, Sell, Bills, Stock, Customers, Reports; contextual tasks within
+// Sell/Stock and secondary areas in More); the product form shows batch tracking, the expiry
 // note and weight guidance, and the product's tracking reaches the database; Settings is in sections (Business,
 // Capabilities, Receipt, Taxes, Team & devices, Roles & permissions, Hardware, Account); switching on serial numbers is
 // saved in the shop's synced settings and changes the form; an older copy of the settings uploaded later doesn't wipe the
@@ -69,19 +69,25 @@ try {
   // ================= the navigation =================
   await A.run('setTab("home");renderAll()'); await sleep(200);
   const tabs = await A.tabs();
-  check('sidebar: Home, Sell, then Sales (Orders, Store), Stock (Stock, Products), Customers, Reports (Reports, Ask Hangtag), Team, Settings',
-    JSON.stringify(tabs) === JSON.stringify(['home', 'sell', 'orders', 'store', 'stock', 'products', 'customers', 'report', 'assistant', 'team', 'settings']), tabs);
-  check('purchases and suppliers are destinations of their own in the Purchases group (parts of Stock)', !!(await A.$('.nav [data-navsub="stock:purchases"]')) && !!(await A.$('.nav [data-navsub="stock:suppliers"]')));
+  check('desktop workspace bar: Home, Sell, Bills, Stock, Customers, Reports',
+    JSON.stringify(tabs) === JSON.stringify(['home', 'sell', 'bills', 'stock', 'customers', 'report']), tabs);
   check('Stock is the stock tab (same id), labelled Stock', (await A.text('.nav [data-tab="stock"]')) === 'Stock');
   check('no Tables or Kitchen for a grocery', !tabs.includes('tables') && !tabs.includes('kitchen') && !(await A.run('return moduleShown("tables")||moduleShown("kitchen")')));
   check('Home: today, stock, sync and quick actions', await A.vis('#v-home') && await A.vis('#homeBody .qa') && /Today/.test(await A.text('#homeBody') || '') && /Sync/.test(await A.text('#homeBody') || '')
     && /Grocery/.test(await A.text('#homeBody .viewhead') || ''));
   await A.click('#homeBody .qa [data-tab="sell"]'); await sleep(200);
   check('a quick action opens its module', await A.run('return prefs.tab==="sell"') && await A.vis('#v-sell'));
-  await A.click('.nav [data-tab="settings"]'); await sleep(250);
-  check('the Settings tab opens the Settings page', await A.vis('#v-settings .setpage') && await A.vis('#setQ'));
+  await A.click('.nav [data-tab="stock"]'); await sleep(180);
+  check('Stock exposes Products, Purchases and Suppliers as contextual destinations', !!(await A.$('#v-stock [data-tab="products"]'))
+    && !!(await A.$('#v-stock [data-navsub="stock:purchases"]')) && !!(await A.$('#v-stock [data-navsub="stock:suppliers"]')));
+  await A.click('.nav [data-navmore]'); await sleep(150);
+  // the app bar's Agent button is the Hangtag Agent's one place on a desktop: More doesn't repeat it
+  check('secondary destinations stay in grouped More (Settings, Team); the Agent is the app bar\'s button, not repeated', !!(await A.$('.navsheet [data-tab="settings"]')) && !!(await A.$('.navsheet [data-tab="team"]'))
+    && !(await A.$('.navsheet [data-tab="assistant"]')) && await A.vis('#globalActions [data-tab="assistant"]'));
+  await A.click('.navsheet [data-tab="settings"]'); await sleep(250);
+  check('Settings opens from More as a dedicated page', await A.vis('#v-settings .setpage') && await A.vis('#setQ'));
   const secs = await A.$$eval('.setlist [data-setgo] b', (b) => b.map((x) => x.textContent));
-  check('settings in sections (a grocery: no Restaurant)', JSON.stringify(secs) === JSON.stringify(['Business', 'Payments & Banks', 'Billing & Documents', 'Products & Inventory', 'Sales & Customers', 'Purchasing', 'Storefront', 'Team & Devices', 'Integrations', 'Advanced']), secs);
+  check('settings in sections (a grocery: no Restaurant)', JSON.stringify(secs) === JSON.stringify(['Business', 'Payments & Banks', 'Billing & Documents', 'Products & Inventory', 'Sales & Customers', 'Purchasing', 'Storefront', 'Automation', 'Team & Devices', 'Integrations', 'Advanced']), secs);
   await A.run('const q=document.getElementById("setQ");q.value="printer";q.dispatchEvent(new Event("input",{bubbles:true}))'); await sleep(150);
   check('settings search finds the printer in Team & Devices', /Receipt printer on this device/.test(await A.text('#setResults') || '') && /Team & Devices/.test(await A.text('#setResults') || ''), await A.text('#setResults'));
   await A.run('const q=document.getElementById("setQ");q.value="";q.dispatchEvent(new Event("input",{bubbles:true}))');
@@ -121,7 +127,7 @@ try {
   await A.click('#modalHost .addedsheet [data-modal-close]'); await sleep(100);
 
   // ================= a capability switched on: saved in the synced settings =================
-  await A.click('.nav [data-tab="settings"]'); await sleep(200);
+  await A.run('openSettings("business")'); await sleep(200);
   check('serial-number feature can be changed in Business → Features', await A.vis('#capsForm [data-cap="uses_serials"]')
     && !(await A.$eval('#capsForm [data-cap="uses_serials"]', (e) => e.disabled)));
   await A.click('#capsForm [data-cap="uses_serials"]');
@@ -147,7 +153,9 @@ try {
   await A.click('#profileSave');
   check('the type changed to Hotel / Restaurant', await A.until('profile.business_type==="restaurant"'));
   check('restaurant defaults (serial numbers kept as the shop chose)', await A.run(`const c=shopCaps();return c.uses_tables&&c.uses_kitchen&&c.uses_table_qr&&!c.uses_batches&&c.uses_serials`));
-  check('restaurant modules appear when their capabilities are on', (await A.tabs()).includes('tables') && (await A.tabs()).includes('kitchen'));
+  await A.run('closeSettings();setTab("sell");renderAll()'); await sleep(180);
+  check('restaurant capabilities expose Tables and Kitchen contextually inside Sell', await A.run('return moduleShown("tables")&&moduleShown("kitchen")')
+    && !!(await A.$('#v-sell [data-tab="tables"]')) && !!(await A.$('#v-sell [data-tab="kitchen"]')));
   await A.run('openSettings("business")'); await sleep(200);
   const recRest = /Recommended for Hotel \/ Restaurant/.test(await A.text('#capsForm .capgrp') || '');
   await A.run('openSettings("devices")'); await sleep(150);
@@ -163,12 +171,15 @@ try {
   await P.until('sbStatus==="connected"');
   await P.run('setTab("home");renderAll()'); await sleep(250);
   const ptabs = await P.tabs();
-  check('phone (a restaurant now): Home · Tables · Kitchen and More', JSON.stringify(ptabs) === JSON.stringify(['home', 'tables', 'kitchen']) && await P.vis('.nav [data-navmore]'), ptabs);
+  check('phone (including restaurant mode): Home · Sell · Bills · Stock and More', JSON.stringify(ptabs) === JSON.stringify(['home', 'sell', 'bills', 'stock']) && await P.vis('.nav [data-navmore]'), ptabs);
   check('phone: no horizontal scroll', await P.evaluate(() => document.documentElement.scrollWidth - window.innerWidth) <= 1);
   await P.click('.nav [data-navmore]'); await sleep(200);
   const more = await P.$$eval('.navsheet [data-tab]', (b) => b.map((x) => x.dataset.tab));
-  check('More lists the rest in groups (Sell among Sales, Settings among them, nothing from the bar)', more.length >= 1 && more.includes('settings') && more.includes('sell') && !more.some((t) => ptabs.includes(t))
-    && (await P.$$eval('.navsheet .navgrp h4', (h) => h.map((x) => x.textContent))).includes('Sales'), more);
+  const moreGroups = await P.$$eval('.navsheet .navgrp h4', (h) => h.map((x) => x.textContent));
+  check('More lists secondary workspaces in groups; restaurant tasks stay contextual inside Sell',
+    more.includes('customers') && more.includes('report') && more.includes('settings')
+      && !more.includes('tables') && !more.includes('kitchen') && !more.some((t) => ptabs.includes(t))
+      && moreGroups.includes('Customers') && moreGroups.includes('Business & Settings'), { more, groups: moreGroups });
   await P.click('.navsheet [data-tab="settings"]'); await sleep(250);
   check('phone: Settings opens from More (its sections first)', await P.vis('#v-settings .setlist'));
   check('phone: the settings fit the width', await P.evaluate(() => document.documentElement.scrollWidth - window.innerWidth) <= 1);

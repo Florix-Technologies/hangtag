@@ -1,8 +1,10 @@
 // Voice search for the product search boxes (Sell, Products): the browser's own speech recognition ("voiceInput" port,
-// infrastructure/browser/browser-speech.js), no paid service. Tap the mic: it asks for the microphone the first time,
-// shows that it is listening and what it hears, and puts the words in the search box, which searches by itself. Tap again
-// (or Stop, or Esc) to stop. When the browser can't do it, or the microphone is blocked, it says why and what to do;
-// typing and barcode scanning always keep working.
+// infrastructure/browser/browser-speech.js), no paid service. The microphone is asked for only when the person taps Voice:
+// the app asks the browser for it directly, so the browser's own prompt always appears when it hasn't been answered. The
+// button and the line under the search say where it is — not asked yet · asking (the browser's prompt is up) · listening ·
+// blocked — and what it hears; the words go in the search box, which searches by itself. Tap again (or Stop, or Esc) to
+// stop. A message (blocked, nothing heard…) can be closed and goes by itself: nothing stays red. Typing and barcode
+// scanning always keep working.
 import { use } from '../../../shared/di/services.js';
 import { $$, esc } from '../../../shared/dom.js';
 import { UI_ICON } from '../../../shared/ui/kit.js';
@@ -45,9 +47,15 @@ const WHY = {
   failed: () => "Voice search couldn't hear that. Try again, or type your search.",
 };
 let listening = "";
-function setButtons(target, on){
-  $$(`[data-voice-search="${target}"]`).forEach(b => { b.classList.toggle("listening", on); b.setAttribute("aria-pressed", String(on)); b.setAttribute("aria-label", on ? "Stop listening" : "Search by voice"); });
+/* The Voice button's state: "idle" (not asked yet, or ready) · "asking" (the browser's prompt is up) · "listening" ·
+   "blocked" (the microphone was refused: the button stays usable — a tap says how to allow it) */
+const STATE_LABELS = { idle: "Search by voice", asking: "Waiting for the microphone permission", listening: "Stop listening", blocked: "Microphone blocked — search by voice" };
+function setState(target, state){
+  $$(`[data-voice-search="${target}"]`).forEach(b => { b.dataset.voiceState = state; b.classList.toggle("listening", state === "listening");
+    b.setAttribute("aria-pressed", String(state === "listening")); b.setAttribute("aria-label", STATE_LABELS[state] || STATE_LABELS.idle); });
 }
+const setButtons = (target, on) => setState(target, on ? "listening" : "idle");
+const closeBtn = target => `<button type="button" class="iconbtn vs-x" data-voice-dismiss="${esc(target)}" aria-label="Close">×</button>`;
 /* Tap the mic: start listening, or stop when it is listening already. → { transcript } or { error, code } */
 export async function startVoiceSearch(target){
   const input = document.getElementById(target);
@@ -55,11 +63,20 @@ export async function startVoiceSearch(target){
   if(listening === target){ tryVoice(v => v.stop(true)); return { stopped: true }; }
   if(!voiceSearchAvailable()){ show(target, "bad", `<span class="vs-t">${WHY.unsupported()}</span>`); return { error: WHY.unsupported(), code: "unsupported" }; }
   if(!voiceSecure()){ show(target, "bad", `<span class="vs-t">${WHY.insecure()}</span>`); return { error: WHY.insecure(), code: "insecure" }; }
-  const perm = await (tryVoice(v => typeof v.permission === 'function' ? v.permission() : 'unknown') || 'unknown');
-  if(perm === 'denied'){ show(target, "bad", `<span class="vs-t">${WHY.denied()}</span>${again(target)}`); return { error: WHY.denied(), code: "denied" }; }
+  // the microphone, asked for from this tap: the browser's prompt when it hasn't been answered (Safari and Firefox can't
+  // say beforehand, Chrome may say "prompt"); nothing is asked before the person taps Voice
+  let perm = await (tryVoice(v => typeof v.permission === 'function' ? v.permission() : 'unknown') || 'unknown'), justAllowed = false;
+  if(perm !== 'granted' && tryVoice(v => typeof v.requestMic === 'function')){
+    setState(target, "asking");
+    show(target, "asking", `<span class="vs-dot" aria-hidden="true"></span><span class="vs-t">Allow the microphone in the browser's prompt to search by voice.</span>`);
+    const got = await tryVoice(v => v.requestMic());
+    if(got === 'denied'){ setState(target, "blocked"); show(target, "bad", `<span class="vs-t">${WHY.denied()}</span>${closeBtn(target)}`, 9000); return { error: WHY.denied(), code: "denied" }; }
+    if(got === 'no-mic'){ setState(target, "idle"); show(target, "bad", `<span class="vs-t">${WHY["no-mic"]()}</span>${closeBtn(target)}`, 9000); return { error: WHY["no-mic"](), code: "no-mic" }; }
+    justAllowed = got === 'granted' && perm !== 'granted'; perm = got === 'granted' ? 'granted' : perm;
+  }
   listening = target; setButtons(target, true);
   const before = input.value;
-  show(target, "listening", `<span class="vs-dot" aria-hidden="true"></span><span class="vs-t">${perm === 'prompt' ? "Allow the microphone when the browser asks, then say a product name." : "Listening… say a product name, size or colour."}</span><button type="button" class="btn sm" data-voice-stop="${esc(target)}">Stop</button>`);
+  show(target, "listening", `<span class="vs-dot" aria-hidden="true"></span><span class="vs-t">Listening… say a product name, size or colour.</span><button type="button" class="btn sm" data-voice-stop="${esc(target)}">Stop</button>`);
   try{
     const transcript = String(await voice().listen({ lang: 'en-IN', onInterim: text => {
       input.value = text;
@@ -73,10 +90,14 @@ export async function startVoiceSearch(target){
     const code = error && error.code || "failed";
     if(input.value !== before && code !== "aborted"){ input.value = before; input.dispatchEvent(new Event('input', { bubbles: true })); }
     if(code === "aborted"){ show(target, "", ""); return { error: error.message, code }; }
+    // the microphone was allowed a moment ago in the browser's prompt, but speech couldn't start from that same tap
+    // (some browsers want a fresh tap): one more tap starts it — not a "blocked" message
+    if(code === "denied" && justAllowed){ show(target, "", `<span class="vs-t">Microphone allowed. Tap the mic again and speak.</span>`, 6000); return { error: "Tap again", code: "tap-again" }; }
     const why = (WHY[code] || WHY.failed)();
-    show(target, "bad", `<span class="vs-t">${esc(why)}</span>${code === "unsupported" || code === "insecure" ? "" : again(target)}`);
+    if(code === "denied"){ listening = ""; setState(target, "blocked"); }
+    show(target, "bad", `<span class="vs-t">${esc(why)}</span>${code === "unsupported" || code === "insecure" || code === "denied" ? "" : again(target)}${closeBtn(target)}`, 9000);
     return { error: why, code };
-  }finally{ listening = ""; setButtons(target, false); }
+  }finally{ const blocked = $$(`[data-voice-search="${target}"]`).some(b => b.dataset.voiceState === "blocked"); listening = ""; if(!blocked) setButtons(target, false); }
 }
 
 let installed = false;
@@ -88,6 +109,8 @@ export function installVoiceSearch(){
     const t = event.target && event.target.closest ? event.target : null; if(!t) return;
     const stop = t.closest('[data-voice-stop]');
     if(stop){ event.preventDefault(); tryVoice(v => v.stop(true)); return; }
+    const dismiss = t.closest('[data-voice-dismiss]');
+    if(dismiss){ event.preventDefault(); show(dismiss.dataset.voiceDismiss, "", ""); return; }
     const b = t.closest('[data-voice-search]');
     if(!b) return; event.preventDefault(); startVoiceSearch(b.dataset.voiceSearch);
   });

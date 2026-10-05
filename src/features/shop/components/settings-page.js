@@ -2,6 +2,7 @@
 // screen. A desktop shows both side by side; a phone shows the list, then the section with a way back. Each section is a
 // few blocks, every form with Save and Cancel (Cancel puts back what is saved). The sections a person sees follow the
 // shop's type and features and the person's role; a section with nothing in it for them is not shown.
+import { fitDocFrames } from '../../receipts/components/doc-render.js';
 import { store } from '../../../shared/state/store.js';
 import { methodNames, renderAccount } from './account-menu.js';
 import { autoSendFormHTML, expenseCatsHTML, paymentsFormHTML, printerSetupHTML, receiptFormHTML, receiptSetupHTML, refreshPaymentsForm, reorderFormHTML, stockAlertHTML, taxFormsHTML } from './billing-settings.js';
@@ -63,6 +64,7 @@ function sectionBody(key){
     case "inventory": return (can("manage_settings") ? stockAlertHTML() : "") + settingsPartsHTML("inventory") + featuresLine("inventory");
     case "sales": { const parts = settingsPartsHTML("sales"); return parts ? parts + featuresLine("sales") : featuresLine("sales"); }
     case "purchasing": return reorderFormHTML() + settingsPartsHTML("purchasing") + featuresLine("purchasing");
+    case "automation": return settingsPartsHTML("automation");
     case "storefront": { const parts = settingsPartsHTML("storefront"); return parts ? parts + featuresLine("storefront") : ""; }
     case "restaurant": return settingsPartsHTML("restaurant") + featuresLine("restaurant");
     case "devices": return (member ? "" : teamHTML()) + printerSetupHTML() + settingsPartsHTML("devices") + youHTML();
@@ -122,6 +124,7 @@ export function renderSettingsPage(force){
       <div class="sethead"><button type="button" class="btn text sm setback" data-setback>${UI_ICON.back} Settings</button><h3 id="setT">${esc(cur.s.label)}</h3><p>${esc(cur.s.sub)}</p></div>
       ${cur.body}</section>` : `<section class="setmain"><p class="note">Nothing to set here for your role.</p></section>`}</div>`;
   if(cur && (key === "payments" || key === "billing") && can("manage_settings")) refreshPaymentsForm();
+  fitDocFrames(host);   // a document preview in a section (Billing & Documents → Templates) scaled to its width
 }
 /* Open Settings (on a section: "business", "payments", "billing", "inventory", "sales", "purchasing", "storefront",
    "restaurant", "devices", "integrations", "advanced"; a block to scroll to) */

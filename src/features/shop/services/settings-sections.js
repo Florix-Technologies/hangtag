@@ -25,6 +25,8 @@ export const SETTINGS_SECTIONS = [
     keywords: "mobile store online shop qr link share orders customers" },
   { key: "restaurant", label: "Restaurant", icon: "doc", perms: ["manage_settings"], caps: ["uses_tables", "uses_kitchen"], types: ["restaurant"], sub: "Tables, table QR codes and the kitchen.",
     keywords: "tables table qr kitchen server ordering guests" },
+  { key: "automation", label: "Automation", icon: "settings", perms: ["manage_settings"], sub: "What Hangtag does by itself, what waits for your OK, and a record of each.",
+    keywords: "automation automatic rules approvals approve ask me first dismiss reminder payment reminder dues whatsapp reorder draft purchase order upi verify provider audit activity log policy" },
   { key: "devices", label: "Team & Devices", icon: "user", sub: "The people in your shop, their roles and phones, and this device's printer and scale.",
     keywords: "team staff members roles permissions devices phones shop code printer epson thermal scale weighing account sign out you" },
   { key: "integrations", label: "Integrations", icon: "link", owner: true, sub: "Connections to other software. Most shops never need these.",

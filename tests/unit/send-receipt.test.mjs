@@ -68,6 +68,12 @@ const bill = { sale: saleRow, items: itemRows, payments: payRows, shop, customer
 check('it reads only the columns it needs', /bill_no/.test(SALE_COLUMNS) && /is_void/.test(SALE_COLUMNS) && /product_name/.test(ITEM_COLUMNS) && /change_given/.test(PAYMENT_COLUMNS) && /shop_name/.test(PROFILE_COLUMNS) && !/cost/.test(ITEM_COLUMNS));
 check('rupees in Indian format', rupees(2518) === '₹2,518' && rupees(123456.5) === '₹1,23,456.50' && rupees(null) === '₹0');
 const V = billView(bill);
+const VA = billView({ ...bill, sale: { ...saleRow, due_amount: 1018 }, payments: [payRows[1].method === 'upi' ? { ...payRows[0], change_given: 0, amount: 1500 } : payRows[0]] });
+check('the server\'s receipt of a bill left partly on account: what was paid, then the balance due on the account (never "paid" for the whole bill)',
+  VA.rows.some(([l, v]) => l === 'Paid by Cash' && v === '₹1,500') && VA.rows.some(([l, v, b]) => l === 'Balance due (on account)' && v === '₹1,018' && b === true)
+  && /paid by Cash ₹1,500, ₹1,018 on your account/.test(VA.paid), VA.rows.slice(-3).concat([VA.paid]));
+const VD = billView({ ...bill, sale: { ...saleRow, due_amount: 2518, payment_method: 'due' }, payments: [] });
+check('...and of a bill all on account: no payment invented from the bill\'s method, only the balance due', !VD.rows.some(([l]) => /^Paid by/.test(l)) && VD.rows.some(([l]) => /Balance due/.test(l)) && VD.paid === '₹2,518 on your account', [VD.rows, VD.paid]);
 check('the bill as saved: lines in order, discounts, IGST, total, each payment and the change (nothing recalculated)', eq(V.lines.map((l) => [l.name, l.detail, l.qty, l.gross, l.discount]), [['Kurta – Blue', 'M', 2, 1998, 199.8], ['Cap', '', 1, 500, 0]])
   && eq(V.rows.map(([l, v]) => l + ' ' + v), ['Subtotal ₹2,498', 'Discount −₹249.80', 'IGST ₹269.80', 'Total ₹2,518', 'Paid by Cash ₹1,000', 'Paid by UPI (ref UTR998877) ₹1,518', 'Change given ₹500'])
   && V.title === 'Tax invoice' && V.number === 'INV-260928-004' && V.shop === 'Aura Threads' && V.contact.includes('GSTIN 27ABCDE1234F1Z5') && /28 Sept? 2026/.test(V.date));

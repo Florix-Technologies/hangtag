@@ -24,10 +24,10 @@ import { can, refuse } from '../../shop/services/access.js';
 import { billDueRoom } from '../../customers/services/customer-account.js';
 
 export const RETURN_REASONS=["Didn't fit","Wrong size","Didn't like it","Damaged or faulty","Other"];
-export function openReturn(sid){
+export function openReturn(sid,mode){
   if(refuse("perform_return","take returns"))return;
   const s=D().saleById[sid]; if(!s||s.void) return;
-  store.retState={sid, q:{}, sn:{}, nfr:{}, mode:"return", pay:(paymentsOf(s)[0]||{method:billDueRoom(s.id)>0&&can("collect_credit")?"due":"cash"}).method, reason:RETURN_REASONS[0], note:"", newItems:[], collect:"cash", keepDisc:true};
+  store.retState={sid, q:{}, sn:{}, nfr:{}, mode:mode==="exchange"?"exchange":"return", pay:(paymentsOf(s)[0]||{method:billDueRoom(s.id)>0&&can("collect_credit")?"due":"cash"}).method, reason:RETURN_REASONS[0], note:"", newItems:[], collect:"cash", keepDisc:true};
   closeModal(); renderReturnSheet();
 }
 export function renderReturnSheet(){

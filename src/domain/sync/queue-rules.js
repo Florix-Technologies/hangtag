@@ -101,7 +101,7 @@ export const UPLOAD_PERMISSIONS={
   return:["perform_return"],cust:["create_sale","collect_credit","create_order"],
   prod:["manage_products"],proddel:["manage_products"],img:["manage_products"],
   move:["manage_inventory","create_purchase","perform_return"],
-  settings:["manage_settings"],logo:["manage_settings"],event:["manage_settings"],eventdel:["manage_settings"],
+  settings:["manage_settings"],logo:["manage_settings"],docimg:["manage_settings"],autolog:["manage_settings"],event:["manage_settings"],eventdel:["manage_settings"],
   // section 3m: payments collected from customers, held bills, orders (RPC hangtag_save_order checks create_order)
   collection:["collect_credit"],held:["create_sale"],helddel:["create_sale"],order:["create_order"],
   // suppliers and purchases (section 3l); cancelling a purchase also needs manage_inventory (checked by the use case and hangtag_cancel_purchase)

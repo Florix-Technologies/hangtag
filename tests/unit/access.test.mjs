@@ -77,10 +77,10 @@ check('can(role, list | overrides, p)', roleCan('cashier', ROLE_DEFAULTS.cashier
   && roleCan('cashier', { cashier: ['manage_products'] }, 'manage_products') && !roleCan('cashier', { cashier: ['manage_products'] }, 'create_sale'));
 check('missing permissions of a cashier', eq(missingFor(ROLE_DEFAULTS.cashier), PERMISSIONS.filter((p) => !ROLE_DEFAULTS.cashier.includes(p))) && missingFor(PERMISSIONS).length === 0);
 check('role labels', roleLabel('cashier') === 'Cashier' && roleLabel('owner') === 'Owner' && roleLabel('stock_keeper') === 'Stock keeper' && roleLabel('') === '');
-check('tabs: a cashier sells, sees stock, products and customers, not reports; kitchen sees none of them',
-  tabAllowed('sell', ROLE_DEFAULTS.cashier) && tabAllowed('stock', ROLE_DEFAULTS.cashier) && !tabAllowed('report', ROLE_DEFAULTS.cashier)
-  && ['sell', 'stock', 'report', 'products', 'customers', 'home', 'orders', 'tables'].every((t) => !tabAllowed(t, ROLE_DEFAULTS.kitchen)) && tabAllowed('kitchen', ROLE_DEFAULTS.kitchen)
-  && Object.keys(TAB_PERMISSIONS).length === 9);
+check('tabs: a cashier sells and can find bills, stock, products and customers, not reports; kitchen sees none of them',
+  tabAllowed('sell', ROLE_DEFAULTS.cashier) && tabAllowed('bills', ROLE_DEFAULTS.cashier) && tabAllowed('stock', ROLE_DEFAULTS.cashier) && !tabAllowed('report', ROLE_DEFAULTS.cashier)
+  && ['sell', 'bills', 'stock', 'report', 'products', 'customers', 'home', 'orders', 'tables'].every((t) => !tabAllowed(t, ROLE_DEFAULTS.kitchen)) && tabAllowed('kitchen', ROLE_DEFAULTS.kitchen)
+  && Object.keys(TAB_PERMISSIONS).length === 10);
 check('roles offered: restaurants get server and kitchen, shops manager and cashier',
   eq(roleSuggestionsFor('restaurant'), ['manager', 'cashier', 'server', 'kitchen']) && eq(roleSuggestionsFor('Hotel / Restaurant'), ROLE_SUGGESTIONS.restaurant)
   && eq(roleSuggestionsFor('Clothing boutique'), ['manager', 'cashier']) && eq(roleSuggestionsFor(''), ['manager', 'cashier']) && eq(roleSuggestionsFor(undefined), ['manager', 'cashier']));

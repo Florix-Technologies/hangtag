@@ -26,10 +26,12 @@ function totalsHTML(I){
   h+=row("Total",inr(T.total),"big");
   if(G.length&&I.inclusive) h+=row("Taxable amount",inrx(T.taxable),"small")+G.map(g=>row("Includes "+g.label,inrx(g.amount),"small")).join("");
   if(T.credit) h+=row("Exchange credit","−"+inr(T.credit))+row("Amount due",inr(T.due),"big");
-  const P=payLines(I);
-  if(!P.length) h+=row("Paid",T.credit?"Covered by the exchange credit":"Nothing to pay");
-  else if(P.length===1) h+=row("Paid",esc(P[0].label)+(T.credit?" "+inrx(P[0].amount):"")+(P[0].note?` <small>${esc(P[0].note)}</small>`:""));
+  const P=payLines(I), owed=I.balance>0;
+  if(!P.length){ if(!owed) h+=row("Paid",T.credit?"Covered by the exchange credit":"Nothing to pay"); }
+  else if(P.length===1&&!owed) h+=row("Paid",esc(P[0].label)+(T.credit?" "+inrx(P[0].amount):"")+(P[0].note?` <small>${esc(P[0].note)}</small>`:""));
   else h+=P.map(p=>row("Paid by "+esc(p.label)+(p.note?` <small>${esc(p.note)}</small>`:""),inrx(p.amount))).join("");
+  // part (or all) of the bill left on the customer's account: the receipt says so, never "Paid" for the whole bill
+  if(owed) h+=row("Balance due"+(I.buyer?" (on account)":""),inr(I.balance),"big");
   if(I.change) h+=row("Change given",inrx(I.change),"small");
   if(I.returned) h+=row("Returned items",inr(I.returned),"small")+(I.refunded?row("Refunded",inr(I.refunded),"small"):"");
   return `<div class="r-tot">${h}</div>`;

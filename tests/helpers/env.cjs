@@ -18,6 +18,9 @@ const indexHtml = () => fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 // the app install window.__ev(src): evaluate test code against the app's internals (see src/app/test-hook.js).
 function hookedHtml() {
   let html = indexHtml().replace('<head>', '<head><script>window.__HANGTAG_TEST__=true</script>');
+  // The hook evaluates test code (new Function): only the page served to tests lets its Content-Security-Policy allow that.
+  // The live page keeps script-src without 'unsafe-eval' (the app itself never evaluates strings).
+  html = html.replace(/(<meta http-equiv="Content-Security-Policy" content="[^"]*script-src [^;"]*)/, "$1 'unsafe-eval'");
   // Older single-file build: the whole app is one inline script, so the hook is injected into it.
   const inline = /<script>\s*\(function\(\)\{/.test(html);
   if (inline) {

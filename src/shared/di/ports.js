@@ -249,6 +249,17 @@
  */
 
 /**
+ * "agentProvider": the Hangtag Agent's optional AI provider. Implementation: infrastructure/ai/agent-provider-client.js →
+ * Edge Function agent (the provider's key stays server-side; the function reads no shop data). The tools run on this device
+ * (features/assistant/services/agent-tools.js); reach it through features/assistant/services/agent-runner.js.
+ * @typedef {Object} AgentProviderPort
+ * @property {() => Promise<{available: boolean, provider: (string|null), model: (string|null)}>} config  Not available when it
+ *   isn't set up, this account isn't allowed, or the function can't be reached (never throws).
+ * @property {(req: {question: string, tools: Object[], transcript: Object[]}) => Promise<Object>} step  One round:
+ *   { type: "tool_calls", calls: [{ id, name, input }] } or { type: "answer", text }. Throws an AppError when it can't.
+ */
+
+/**
  * "teamService": the shop's team — members (staff accounts), roles and permissions, and the phones they use. Implementation:
  * infrastructure/team/team-client.js: changes → Edge Function team (service role; the database decides the caller is the owner);
  * reads and role permissions → the cloud gateway (REST with row security: the owner reads the whole team, a member only itself).

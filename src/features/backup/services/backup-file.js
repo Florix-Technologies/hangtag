@@ -8,6 +8,7 @@
 //   · Restoring only adds what this device doesn't have (optionally replacing products), all or nothing: if anything
 //     fails, every slice goes back to how it was. A safety copy of this device's data can be downloaded first. Restored
 //     records then upload through the usual queue, where every upload is a safe save by id (nothing in the cloud is deleted).
+import { docImagesOf } from '../../../domain/documents/doc-settings.js';
 import { store } from '../../../shared/state/store.js';
 import { migrateCatalog, products } from '../../products/services/catalog.js';
 import { D } from '../../inventory/services/ledger.js';
@@ -17,7 +18,7 @@ import { toast } from '../../../shared/components/toast.js';
 import { use } from '../../../shared/di/services.js';
 import { $ } from '../../../shared/dom.js';
 import { dayKey } from '../../../shared/formatting/dates.js';
-import { persistLocal, saveCashMoves, saveCatalog, saveCustomers, saveDayCloses, saveEvents, saveImgs, saveLogo, saveMoves, saveReturns, storage } from '../../../shared/state/persistence.js';
+import { persistLocal, saveCashMoves, saveCatalog, saveCustomers, saveDayCloses, saveEvents, saveDocImages, saveImgs, saveLogo, saveMoves, saveReturns, storage } from '../../../shared/state/persistence.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { objOr } from '../../../shared/utils/objects.js';
 import { logger } from '../../../shared/logging/logger.js';
@@ -35,7 +36,7 @@ const hashOf=text=>use("files").sha256Hex(new Blob([text]));
 export async function buildBackup(){
   const days=Object.assign({},store.remoteDays,store.localDays);
   const data={profile:withoutSecrets(store.profile||null),settings:withoutSecrets(store.settings),catalog:store.catalog,images:store.imgs,days,moves:store.moves,
-    returns:store.returnsMap,customers:store.customers,events:store.events||{},cashMoves:store.cashMoves||{},dayCloses:store.dayCloses||{},logo:store.logo||""};
+    returns:store.returnsMap,customers:store.customers,events:store.events||{},cashMoves:store.cashMoves||{},dayCloses:store.dayCloses||{},logo:store.logo||"",docImages:docImagesOf(store.docImages)};
   const body=JSON.stringify(data);
   return {app:"hangtag",version:BACKUP_VERSION,exportedAt:new Date().toISOString(),
     shop:{owner:store.authUser&&store.authUser.id||"",name:store.profile&&store.profile.shop_name||""},
@@ -89,7 +90,7 @@ export function inspectBackup(data,file){
       events:Object.keys(be).length,newEvents:Object.keys(be).filter(k=>!(store.events||{})[k]).length,cashMoves:Object.keys(bcm).length,newCashMoves:Object.keys(bcm).filter(k=>!(store.cashMoves||{})[k]).length,skipped,
       exportedAt:f.exportedAt||data.exportedAt||"",shop:f.shop&&f.shop.name||"",version:+f.version||0,fromOtherShop:!!(owner&&me&&owner!==me)}};
 }
-const SLICES=["catalog","imgs","moves","returnsMap","customers","events","cashMoves","dayCloses","localDays","logo"];
+const SLICES=["catalog","imgs","moves","returnsMap","customers","events","cashMoves","dayCloses","localDays","logo","docImages"];
 /* Every slice as it is now (a deep copy), to go back to if the restore fails */
 const snapshot=()=>JSON.parse(JSON.stringify(Object.fromEntries(SLICES.map(k=>[k,store[k]]).concat([["dirty",[...store.dirty]]]))));
 function putBack(s){
@@ -98,7 +99,7 @@ function putBack(s){
 }
 /* Save every restored slice; false when this device's storage refused one */
 function saveAll(){
-  const r=[saveCatalog(),saveImgs(),saveMoves(),saveReturns(),saveCustomers(),saveEvents(),saveCashMoves(),saveDayCloses(),saveLogo(),persistLocal()];
+  const r=[saveCatalog(),saveImgs(),saveMoves(),saveReturns(),saveCustomers(),saveEvents(),saveCashMoves(),saveDayCloses(),saveLogo(),saveDocImages(),persistLocal()];
   return r.every(x=>x!==false);
 }
 /* Add the backup's records this device doesn't have (replace: also products on both). Throws on a broken record. */
@@ -117,6 +118,8 @@ function mergeBackup(r,replace){
   if(!store.dayCloses) store.dayCloses={};
   Object.entries(r.dayCloses||{}).forEach(([k,c])=>{if(!store.dayCloses[k])store.dayCloses[k]=c});
   if(!store.logo&&typeof data.logo==="string"&&data.logo.indexOf("data:image/")===0) store.logo=data.logo;
+  // the signature and stamp: from the backup only where this device has none (like the logo)
+  { const im=docImagesOf(data.docImages), cur=docImagesOf(store.docImages); store.docImages={signature:cur.signature||im.signature,stamp:cur.stamp||im.stamp}; }
   let added=0;
   Object.keys(data.days||{}).forEach(id=>{
     const doc=data.days[id];if(!doc||!Array.isArray(doc.sales)||!/^[A-Za-z0-9_.-]+$/.test(id))return;

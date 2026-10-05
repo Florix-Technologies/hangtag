@@ -62,6 +62,12 @@ export function nextDocSeq(docs, cfg, t, till = ""){
 }
 export const nextDocNo = (docs, cfg, t, till = "") => formatDocNo(cfg, t, nextDocSeq(docs, cfg, t, till), till);
 
+/* A delivery challan's number from its sales order's: the same running number and till in the challan series
+   (SO-000127 → DC-000127, SO-B-000004 → DC-B-000004); an order numbered in an earlier format keeps "<order no>-DC" */
+export function challanNoOf(orderNo, orderCfg, challanCfg, t){
+  const p = parseDocNo(orderNo, orderCfg);
+  return p ? formatDocNo(challanCfg, t, p.seq, p.till) : (orderNo || "Order") + "-DC";
+}
 /* Which series this device makes documents in: "" (the shop's main series) or a till letter.
    stored: this device's saved choice ("" / a letter), or null before its first document. docs: every document the device
    knows, of every type, with its numbering: [{ no, dev, cfg }]. A device that already made documents keeps its series;
@@ -86,8 +92,9 @@ function freeTill(used){
   return [...TILL_LETTERS].find(l => !taken.has(l)) || TILL_LETTERS[TILL_LETTERS.length - 1];
 }
 
-/* Billing & Documents → Bill numbering, as typed → { config, preview, length, warning } or { error, field }.
-   till: this device's series (its numbers must fit in 16 characters); a second till's numbers are checked too (a warning). */
+/* Billing & Documents → Bill numbering, as typed → { config, preview, length } or { error, field }.
+   Every valid configuration must fit both the main series and a second till's series, so a later device cannot create an
+   invoice that only discovers the GST/e-invoice limit at export time. */
 export function checkNumberingSettings(input, { t = Date.now(), till = "" } = {}){
   const x = input || {}, up = v => String(v == null ? "" : v).trim().toUpperCase();
   const prefix = up(x.prefix == null ? DEFAULT_NUMBERING.prefix : x.prefix), suffix = up(x.suffix);
@@ -105,9 +112,9 @@ export function checkNumberingSettings(input, { t = Date.now(), till = "" } = {}
   const longest = l => formatDocNo(config, t, Math.pow(10, digits - 1), l).length;
   const preview = formatDocNo(config, t, start, till), length = longest(till);
   if(length > DOC_NO_MAX) return { error: `These numbers would be ${length} characters; GST invoices allow at most ${DOC_NO_MAX}. Shorten the prefix or suffix, or use fewer digits.`, field: "length", preview, length };
-  const other = till ? "" : TILL_LETTERS[0], otherLength = other ? longest(other) : length;
-  const warning = otherLength > DOC_NO_MAX ? `A second till's numbers (${formatDocNo(config, t, start, other)}) would be ${otherLength} characters, over the ${DOC_NO_MAX} GST allows. Use fewer digits if another device will make bills.` : "";
-  return { config, preview, length, warning, yearly: yearlyNumbering(config) };
+  const secondLength = longest(TILL_LETTERS[0]);
+  if(secondLength > DOC_NO_MAX) return { error: `A second till's numbers would be ${secondLength} characters; GST invoices allow at most ${DOC_NO_MAX}. Shorten the prefix or suffix, or use fewer digits.`, field: "length", preview, length: secondLength };
+  return { config, preview, length, yearly: yearlyNumbering(config) };
 }
 
 /* ---------- numbers made before (kept as they are) ---------- */

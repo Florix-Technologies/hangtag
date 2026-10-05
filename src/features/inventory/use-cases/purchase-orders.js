@@ -17,6 +17,7 @@ import { vRec } from '../services/ledger.js';
 import { purchasesList, supplierById } from '../services/purchase-state.js';
 import { inventoryIntelligence } from '../services/inventory-intelligence.js';
 import { savePurchase } from './record-purchase.js';
+import { planBySupplier, purchasePlan } from '../../../domain/inventory/purchase-plan.js';
 
 const upload = () => { renderSync(); flushSbQueue(); };
 const off = () => hasCap("uses_purchase_orders") ? null : { error: "Purchase orders are switched off for this shop. Switch them on in Settings → Business → Features." };
@@ -73,6 +74,26 @@ export function reorderGroups(){
   const purchases = purchasesList();
   return draftsFromReorder(recs, vid => lastSupplierOf(vid, purchases)).map(g => ({ ...g, supplier: g.supplierId ? (supplierById(g.supplierId) || {}).name || "" : "",
     total: g.items.reduce((a, l) => a + (l.price == null ? 0 : l.price * l.q), 0) }));
+}
+/* Smart reorder's suggestion as a purchase plan within a budget (domain/inventory/purchase-plan.js): what runs out first
+   (stock left at the forecast rate) before the better margin; lines without a cost price listed apart. Nothing is saved. */
+export function reorderPlan(budget = null){
+  const sig = new Map();
+  inventoryIntelligence().products.forEach(r => r.variants.forEach(v => sig.set(v.id, v)));
+  const lines = reorderGroups().flatMap(g => g.items.map(l => { const v = sig.get(l.v) || {};
+    return { ...l, supplierId: g.supplierId, supplier: g.supplier, days: v.forecastDaysRemaining != null ? v.forecastDaysRemaining : v.daysRemaining != null ? v.daysRemaining : null, sell: v.price == null ? null : v.price }; }));
+  return purchasePlan(lines, budget);
+}
+/* A plan's lines as draft purchase orders, one per supplier (lines whose supplier isn't known yet are left out)
+   → { pos, noSupplier (lines left out), errors } */
+export function posFromPlan(plan){
+  const out = { pos: [], noSupplier: 0, errors: [] };
+  planBySupplier(plan).forEach(g => {
+    if(!g.supplierId){ out.noSupplier += g.items.length; return; }
+    const r = poFromReorder(g.supplierId, g.items.map(l => ({ p: l.p, v: l.v, name: l.name, vl: l.vl || "", ...(l.u ? { u: l.u } : {}), q: l.q, price: l.price })));
+    if(r.error) out.errors.push(`${g.supplier}: ${r.error}`); else out.pos.push(r.po);
+  });
+  return out;
 }
 /* One supplier's suggestion as a draft PO (the owner reviews it before sending) → { po } or { error } */
 export function poFromReorder(supplierId, items){

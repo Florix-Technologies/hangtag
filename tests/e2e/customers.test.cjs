@@ -119,8 +119,8 @@ let fails = 0; const check = (n, ok, i) => { if (!ok) fails++; console.log((ok ?
     const r = e.getBoundingClientRect();
     return { label: e.textContent.trim(), w: Math.round(r.width), h: Math.round(r.height), vis: r.width > 0 && r.height > 0 };
   }).filter((e) => e.vis));
-  check('phone: the primary navigation is Home, Sell, Stock and More', JSON.stringify(phoneNav.map((e) => e.label)) === '["Home","Sell","Stock","More"]', phoneNav);
-  check('phone: every primary navigation item is a proper touch target', phoneNav.length === 4 && phoneNav.every((e) => e.h >= 44), phoneNav);
+  check('phone: the primary navigation is Home, Sell, Bills, Stock and More', JSON.stringify(phoneNav.map((e) => e.label)) === '["Home","Sell","Bills","Stock","More"]', phoneNav);
+  check('phone: every primary navigation item is a proper touch target', phoneNav.length === 5 && phoneNav.every((e) => e.h >= 44), phoneNav);
   await p.tap('.nav [data-navmore]'); await sleep(200);
   const customerGroup = await p.$eval('.navsheet [data-tab="customers"]', (e) => ({
     label: e.textContent.trim(),

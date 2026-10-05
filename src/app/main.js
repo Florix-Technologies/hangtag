@@ -27,6 +27,7 @@ import { onConnected } from '../features/sync/services/connection.js';
 import { loadPayConfig } from '../features/sales/use-cases/provider-payment.js';
 import { resumePayment } from '../features/sales/components/payment-sheet.js';
 import { checkUnverified } from '../features/finance/components/reconcile-view.js';
+import { runAutomation } from '../features/automation/services/automation.js';
 import { installAutoDelivery, processDeliveryQueue } from '../features/delivery/use-cases/auto-delivery.js';
 import { applyCatalogMigration } from '../features/products/services/catalog.js';
 import { initSupabase, memberPoll } from '../features/sync/services/connection.js';
@@ -36,8 +37,10 @@ import { sendPendingDocs } from '../features/inventory/use-cases/import-supplier
 import { processQuoteSends } from '../features/orders/use-cases/send-quotation.js';
 import { rememberReceiptPage } from '../features/shop/use-cases/receipt-page.js';
 import { installMenus } from '../shared/ui/kit.js';
+import { installGlobalDiagnostics } from '../shared/logging/diagnostics.js';
 
 installContainer();    // ports first: everything below may use them
+installGlobalDiagnostics(); // capture startup and background failures into the privacy-safe, on-device history
 installNavigation();   // the render bus (shared/ui/render.js) now reaches this app shell
 installModules();       // the pages of the navigation modules (and the parts later batches register)
 initState();
@@ -61,7 +64,10 @@ installPwa();
 installAutoDelivery();
 // Each time the cloud connects: a provider payment left open is shown again, hand-checked UPI is matched with the
 // provider, and receipts waiting to go out are sent
-onConnected(async()=>{ await loadPayConfig(true); resumePayment(); await checkUnverified(true); });
+// (UPI is matched, and reorder drafts are made, by Automation when the shop's rules say so: Settings → Automation)
+const automate = () => runAutomation({ online: store.sbStatus === "connected", checkUpi: () => checkUnverified(true) }).then(n => { if(n) renderAll(); }).catch(() => {});
+onConnected(async()=>{ await loadPayConfig(true); resumePayment(); await automate(); });
+setInterval(()=>{ if(store.authUser && store.bootDone) automate(); }, 5 * 60e3);
 onConnected(()=>processDeliveryQueue());
 // …and supplier bills' originals that couldn't reach the cloud yet go up (kept on this device until then)
 onConnected(()=>{ if(Object.keys(store.pendingDocs||{}).length) sendPendingDocs(); });

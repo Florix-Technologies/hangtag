@@ -41,7 +41,12 @@ const run = (b) => A.evaluate((b) => __ev('(async()=>{' + b + '})()'), b);
 async function until(cond, ms = 15000) { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await run('return !!(' + cond + ')').catch(() => false)) return true; await sleep(100); } return false; }
 const text = (sel) => A.$eval(sel, (e) => e.textContent).catch(() => '');
 check('signed in and connected; a hotel / restaurant shop', await until('sbStatus==="connected"') && (await run('return shopType()')) === 'restaurant');
-check('the navigation has Tables and Kitchen (the restaurant capabilities are on for this type of business)', !!(await A.$('.nav [data-tab="tables"]')) && !!(await A.$('.nav [data-tab="kitchen"]')));
+// the bar picks the workspace; Tables and Kitchen are tasks of the Sell workspace (its own bar), not more top-level places
+await run('setTab("sell");renderAll()'); await sleep(200);
+check('the Sell workspace has Tables and Kitchen (the restaurant capabilities are on for this type of business)', !!(await A.$('[data-subnav="sell"] [data-tab="tables"]')) && !!(await A.$('[data-subnav="sell"] [data-tab="kitchen"]'))
+  && !(await A.$('.nav [data-tab="tables"]')));
+await run('setTab("home");renderAll()'); await sleep(200);
+check('Home: the owner of a restaurant gets Tables as a quick action (in place of Scan to sell)', !!(await A.$('#homeBody .qa [data-tab="tables"]')) && !(await A.$('#homeBody .qa [data-act="scan"]')) && !!(await A.$('#homeBody .qa [data-tab="sell"]')));
 
 // ---------- 1. tables and their QR codes ----------
 await run('setTab("tables");renderAll()'); await sleep(200);
@@ -171,15 +176,17 @@ check('a receipt for the bill (the usual one)', /Masala Dosa/.test(await run('re
 // ---------- 6. switched off: hidden, unreachable, refused (and the guest page stops) ----------
 check('the owner switches Table ordering off', await run('const r=saveCapabilities({uses_tables:false});renderAll();return r.ok&&!hasCap("uses_tables")'));
 await sleep(200);
-check('…Tables and Kitchen leave the navigation (the features built on tables go with it)', !(await A.$('.nav [data-tab="tables"]')) && !(await A.$('.nav [data-tab="kitchen"]')) && !(await run('return hasCap("uses_kitchen")||hasCap("uses_table_qr")')));
+await run('setTab("sell");renderAll()'); await sleep(200);
+check('…Tables and Kitchen leave the navigation (the features built on tables go with it)', !(await A.$('[data-subnav="sell"] [data-tab="tables"]')) && !(await A.$('[data-subnav="sell"] [data-tab="kitchen"]'))
+  && !(await A.$('.nav [data-tab="tables"]')) && !(await run('return hasCap("uses_kitchen")||hasCap("uses_table_qr")')));
 await run('setTab("tables");renderAll()'); await sleep(200);
 check('…the Tables screen can\'t be opened directly', (await run('return prefs.tab')) !== 'tables' && !(await A.$eval('#v-tables', (e) => !e.hidden).catch(() => false)));
 check('…its use cases refuse', /doesn't use tables/.test(await run(`return (saveTable({name:"T9"})||{}).error||""`)) && /doesn't use tables/.test(await run(`return (sendTableOrder(${JSON.stringify(T2.id)},[{v:"coffee:",q:1}])||{}).error||""`)));
 await run('await flushSbQueue()');
 const off = await pg.as(`SELECT public.hangtag_table_menu(p_token => $1) AS r`, [T2.qr_token], null);
 check('…and the server refuses the guest page too (the shop\'s settings in the cloud decide)', off.rows[0].r.ok === false, off.rows[0].r);
-await run('saveCapabilities({uses_tables:true});renderAll()'); await sleep(200);
-check('switched back on: Tables is back', !!(await A.$('.nav [data-tab="tables"]')));
+await run('saveCapabilities({uses_tables:true});setTab("sell");renderAll()'); await sleep(200);
+check('switched back on: Tables is back in the Sell workspace', !!(await A.$('[data-subnav="sell"] [data-tab="tables"]')));
 
 await browser.close(); await pg.db.close();
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');

@@ -92,7 +92,7 @@ d.items = [OU.orderLine('p1:', 2), { ...OU.orderLine('p2:', 2.5), disc: { type: 
 d.notes = 'Deliver Friday';
 let s = OU.saveOrder(d);
 const quote = s.order;
-check('saved with the shop\'s number prefix and the total from the one bill calculation', !s.error && /^PQ-\d{6}-[0-9A-Z]{3}\d{3}$/.test(quote.no) && quote.total === OU.orderTotals(quote).total && quote.total > 0
+check('saved with the shop\'s short professional number prefix and the total from the one bill calculation', !s.error && /^PQ-(?:[B-HJ-NP-Z]-)?\d{6}$/.test(quote.no) && quote.total === OU.orderTotals(quote).total && quote.total > 0
   && quote.items[1].u === 'kg' && quote.cust.email === 'asha@example.com', s);
 // the document
 let html = QD.quotationHTML(quote);

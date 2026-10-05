@@ -2,10 +2,10 @@
 // bills, and the orders engine (quotations, sales orders: totals, statuses, conversion, billing, partial delivery).
 // Run: npm run test:unit
 import { DUE, payLabel, paymentProgress, paymentsOf, settlePayments } from '../../src/domain/sales/payments.js';
-import { checkCollection, collectionLabel, customerAccount, dueRefundRoom, outstandingByCustomer } from '../../src/domain/customers/credit.js';
+import { billBalances, checkCollection, collectionLabel, customerAccount, dueRefundRoom, outstandingByCustomer } from '../../src/domain/customers/credit.js';
 import { bankBook, cashBook, financialTransactions, reconcileSale } from '../../src/domain/finance/books.js';
 import { FINAL, ORDER_NEXT, ORDER_STATUSES, canMove, cartBlock, checkHold, checkOrder, convertQuote, fulfil, heldName, isExpired, isFinal, nextStatuses, orderCartLines,
-  orderCheckout, orderDeviceCode, orderNo, remaining, shownStatus, soldFromOrder, statusLabel } from '../../src/domain/orders/orders.js';
+  orderCheckout, orderNo, remaining, shownStatus, soldFromOrder, statusLabel } from '../../src/domain/orders/orders.js';
 import { collectionRow, heldRow, orderArgs, rowToCollection, rowToHeld, rowToOrder, rowToOrderItem, rowToSale, saleRow } from '../../src/infrastructure/supabase/mappers.js';
 import { UPLOAD_PERMISSIONS, dependsOn, uploadAllowed } from '../../src/domain/sync/queue-rules.js';
 import { TAB_PERMISSIONS, roleCan } from '../../src/domain/shop/permissions.js';
@@ -59,6 +59,11 @@ const collections = [{ id: 'k1', cust: 'c1', amount: 200, method: 'cash', t: 500
   check('account history: newest first, with the running balance', A.entries[0].kind === 'collection' && A.entries[0].status === 'cancelled' && A.entries[0].balance === 300
     && A.entries.find((e) => e.id === 'r1').balance === 500 && A.entries.find((e) => e.id === 'a').charge === 600 && A.entries.find((e) => e.id === 'k1').credit === 200);
   check('everyone\'s outstanding', eq(outstandingByCustomer({ sales, returns, collections }), { c1: 300, c2: 500 }));
+  check('per bill: what is still owed on each (Riya: 600 on account − 100 refunded − 200 collected = 300 on INV-1; Anil: 800 − 300 = 500)', eq(billBalances({ sales, returns, collections }), { a: 300, c: 500 }));
+  const older = { id: 'o1', no: 'INV-0', t: 50, total: 400, credit: 0, dueAmt: 400, cust: { id: 'c1', name: 'Riya' }, payments: [] };
+  const B = billBalances({ sales: [older, ...sales], returns, collections });
+  check('a payment collected later pays the customer\'s oldest bill first (₹200 → INV-0), the rest stays on the newer bill', eq(B, { o1: 200, a: 500, c: 500 }), B);
+  check('...and once everything is collected no bill is owed (a cancelled bill never is)', eq(billBalances({ sales, returns, collections: [...collections, { id: 'k4', cust: 'c1', amount: 300, method: 'cash', t: 800, status: 'posted' }, { id: 'k5', cust: 'c2', amount: 500, method: 'cash', t: 800, status: 'posted' }] }), {}));
   check('refund room on a bill: what is still on account after refunds to the account', dueRefundRoom(sales[0], returns) === 500 && dueRefundRoom(sales[1], returns) === 0 && dueRefundRoom(sales[3], []) === 0);
   check('collect: at most what they owe; UPI needs its reference and is unverified; card its machine reference', checkCollection({ amount: 301, method: 'cash' }, 300).field === 'amount'
     && checkCollection({ amount: 100, method: 'upi' }, 300).field === 'ref' && eq(checkCollection({ amount: '100', method: 'upi', ref: ' U1 ' }, 300).collection, { amount: 100, method: 'upi', ref: 'U1', verification: 'unverified' })
@@ -81,8 +86,8 @@ const collections = [{ id: 'k1', cust: 'c1', amount: 200, method: 'cash', t: 500
 
 // ---------- orders: numbers, statuses, totals ----------
 {
-  const n = orderNo('quote', new Date(2026, 8, 29).getTime(), 7, 'dev-abc');
-  check('numbers: QT- + date + device code + running number', /^QT-260929-[0-9A-Z]{3}007$/.test(n) && orderNo('sales', new Date(2026, 8, 29).getTime(), 1, 'dev-abc').startsWith('SO-260929-') && orderDeviceCode('a') !== orderDeviceCode('b') && orderDeviceCode('x').length === 3, n);
+  const n = orderNo('quote', new Date(2026, 8, 29).getTime(), 7, 'B');
+  check('numbers: every order type has a short independent series and a compact second-till marker', n === 'QT-B-000007' && orderNo('sales', new Date(2026, 8, 29).getTime(), 1) === 'SO-000001', n);
   check('status moves: a quotation goes draft → sent → accepted → converted; nothing leaves a final status', canMove('quote', 'draft', 'sent') && canMove('quote', 'sent', 'accepted') && canMove('quote', 'accepted', 'converted')
     && !canMove('quote', 'converted', 'draft') && !canMove('quote', 'cancelled', 'draft') && !canMove('sales', 'completed', 'partial') && canMove('sales', 'confirmed', 'partial') && !canMove('sales', 'partial', 'confirmed'));
   check('every kind lists its statuses, first and final ones', ORDER_STATUSES.quote.length === 6 && ORDER_STATUSES.sales.length === 5 && ORDER_STATUSES.table.includes('preparing')
@@ -273,7 +278,7 @@ const ownerAgain = () => { store.access = null; };
   ownerAgain();
   let r = OU.saveOrder({ ...d, items: [...d.items, OU.orderLine('p2:', 2)] });
   const quote = r.order;
-  check('saved: numbered QT-, version 0 until the cloud takes it, queued as one "order" item', /^QT-\d{6}-[0-9A-Z]{3}001$/.test(quote.no) && quote.version === 0 && q('order').length === 1 && quote.items[1].ln === 1 && quote.items[1].price === 200, r);
+  check('saved: short QT- number, version 0 until the cloud takes it, queued as one "order" item', /^QT-(?:[B-HJ-NP-Z]-)?\d{6}$/.test(quote.no) && quote.version === 0 && q('order').length === 1 && quote.items[1].ln === 1 && quote.items[1].price === 200, r);
   r = OU.setOrderStatus(quote.id, 'sent');
   check('status moves are saved (one queued upload per order)', r.order.status === 'sent' && q('order').length === 1 && OU.orderById(quote.id).no === quote.no);
   check('a move the rules don\'t allow is refused', OU.setOrderStatus(quote.id, 'completed').field === 'status');

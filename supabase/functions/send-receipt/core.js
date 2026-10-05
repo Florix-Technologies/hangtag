@@ -17,7 +17,7 @@ export const REQUEST_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 /* Messages one shop can send per hour (a runaway loop or a leaked session can't spam customers) */
 export const MAX_PER_HOUR = 60;
 /* What the function reads of a bill, its lines, its payments and the shop (with the caller's session) */
-export const SALE_COLUMNS = "id,bill_no,timestamp,subtotal,discount,total,credit,tax_amount,tax_inclusive,gst_mode,cgst_amount,sgst_amount,igst_amount,round_off,payment_method,is_void,customer_id,customer_name";
+export const SALE_COLUMNS = "id,bill_no,timestamp,subtotal,discount,total,credit,tax_amount,tax_inclusive,gst_mode,cgst_amount,sgst_amount,igst_amount,round_off,payment_method,due_amount,is_void,customer_id,customer_name";
 export const ITEM_COLUMNS = "line_no,product_name,variant_label,color,size,quantity,unit_price,discount_amount";
 export const PAYMENT_COLUMNS = "method,amount,reference,change_given,status";
 export const PROFILE_COLUMNS = "shop_name,address,city,state,phone,gstin";
@@ -147,8 +147,10 @@ export function billView({ sale, items, payments, shop, customer }) {
   const total = num(s.total), credit = num(s.credit), due = Math.max(0, r2(total - credit));
   const pays = (payments || []).filter((x) => x.status !== "cancelled" && num(x.amount) > 0)
     .map((x) => ({ label: PAY[x.method] || oneLine(x.method), amount: num(x.amount), ref: oneLine(x.reference), change: num(x.change_given) }));
-  // bills from before split payments have no payment rows: the bill's one method paid what was due
-  if (!pays.length && due > 0 && s.payment_method) pays.push({ label: PAY[s.payment_method] || oneLine(s.payment_method), amount: due, ref: "", change: 0 });
+  // what was left on the customer's account (part or all of the bill): never shown as paid
+  const owed = num(s.due_amount) > 0 ? r2(num(s.due_amount)) : 0;
+  // bills from before split payments have no payment rows: the bill's one method paid what was due (less what is on account)
+  if (!pays.length && r2(due - owed) > 0 && s.payment_method && s.payment_method !== "due") pays.push({ label: PAY[s.payment_method] || oneLine(s.payment_method), amount: r2(due - owed), ref: "", change: 0 });
   const rows = [["Subtotal", rupees(s.subtotal)]];
   if (num(s.discount) > 0) rows.push(["Discount", "−" + rupees(s.discount)]);
   gst.forEach(([l, a]) => rows.push([l + (incl ? " (included)" : ""), rupees(a)]));
@@ -158,8 +160,10 @@ export function billView({ sale, items, payments, shop, customer }) {
   pays.forEach((x) => rows.push(["Paid by " + x.label + (x.ref ? " (ref " + x.ref + ")" : ""), rupees(x.amount)]));
   const change = r2(pays.reduce((a, x) => a + x.change, 0));
   if (change > 0) rows.push(["Change given", rupees(change)]);
-  const paid = pays.length ? "paid by " + pays.map((x) => `${x.label} ${rupees(x.amount)}`).join(" + ")
-    : credit ? "covered by your exchange credit" : "nothing to pay";
+  // part (or all) of the bill left on the customer's account: said plainly, never "paid" for the whole bill
+  if (owed) rows.push(["Balance due (on account)", rupees(owed), true]);
+  const paid = (pays.length ? "paid by " + pays.map((x) => `${x.label} ${rupees(x.amount)}`).join(" + ")
+    : credit ? "covered by your exchange credit" : owed ? "" : "nothing to pay") + (owed ? (pays.length ? ", " : "") + rupees(owed) + " on your account" : "");
   return {
     shop: oneLine(p.shop_name) || "Our shop", contact: [[p.address, p.city, p.state].map(oneLine).filter(Boolean).join(", "), p.phone ? "Phone " + oneLine(p.phone) : "", p.gstin ? "GSTIN " + oneLine(p.gstin).toUpperCase() : ""].filter(Boolean),
     number: oneLine(s.bill_no || s.id), date: billDate(s.timestamp), title: gst.length ? "Tax invoice" : "Bill", customer: oneLine(customer && customer.name),

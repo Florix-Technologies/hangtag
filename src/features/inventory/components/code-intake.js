@@ -16,8 +16,16 @@ import { $, esc } from '../../../shared/dom.js';
 
 /* The card on the stock levels view */
 export const intakeCardHTML=()=>can("manage_inventory")?`<form id="intakeForm" class="card pu-code intake" autocomplete="off"><b>Stock in by barcode</b><input id="intakeCode" placeholder="Scan or type a barcode or SKU" enterkeyhint="go" aria-label="Barcode or SKU for stock in"><button class="btn sm" type="submit">Find</button><button type="button" class="btn sm" data-intake="scan">Scan</button></form>`:"";
-function stockInFor(vid,pid,cost){
+/* Stock in for the variant found (gs1: what a GS1 code said — its batch and expiry, or its serial, are filled in) */
+function stockInFor(vid,pid,cost,gs1){
   openStockOp("in",pid);
+  const O=store.stockOp;
+  if(O&&O.pid===pid&&O.trk){
+    if(O.trk==="serial") O.rows[vid]=gs1&&gs1.serial?gs1.serial:"";
+    else O.rows[vid]={q:"1",b:(gs1&&gs1.batch)||"",exp:(gs1&&gs1.expiry)||""};
+    if(cost!=null&&cost!=="") O.cost=String(cost);
+    renderStockOp(); return;
+  }
   if(store.stockOp&&store.stockOp.pid===pid){ store.stockOp.val[vid]="1"; if(cost!=null&&cost!=="") store.stockOp.cost=String(cost); renderStockOp(); const c=$("#soCost"); if(c&&cost!=null&&cost!=="") c.value=String(cost); const i=$(`#modalHost [data-sov="${CSS.escape(vid)}"]`); if(i){ i.focus(); i.select(); } }
 }
 /* → { status, message } (the camera shows the message) */
@@ -30,10 +38,10 @@ export function intakeCode(raw){
     store.quickProduct={code:r.unknown,name:"",unit:"pcs",price:"",cost:"",gst:"",hsn:"",err:""};
     return {status:"new",message:`New code ${r.unknown}: add the product.`};
   }
-  return {status:"found",hit:r.hit,message:`${r.hit.p.name}`};
+  return {status:"found",hit:r.hit,gs1:r.gs1||null,message:`${r.hit.p.name}${r.gs1&&r.gs1.batch?` · batch ${r.gs1.batch}`:""}${r.gs1&&r.gs1.expiry?` · expires ${r.gs1.expiry}`:""}`};
 }
 function afterCode(r){
-  if(r.status==="found") stockInFor(r.hit.v.id,r.hit.p.id);
+  if(r.status==="found") stockInFor(r.hit.v.id,r.hit.p.id,undefined,r.gs1);
   else if(r.status==="new") renderQuickProduct();
   else toast(r.message);
 }

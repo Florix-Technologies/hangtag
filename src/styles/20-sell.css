@@ -15,6 +15,27 @@
 .sellsearch .voicebtn{right:92px}
 .sellsearch:has(.voicebtn[hidden]) input{padding-right:96px}
 @media (max-width:599px){.sellsearch input{min-height:48px}.sellsearch .sb-ic{height:44px;min-width:44px;padding:0}.sellsearch .scanbtn{right:2px}.sellsearch .scanbtn span{display:none}.sellsearch .voicebtn{right:48px}.sellsearch input{padding-right:94px}.sellsearch:has(.voicebtn[hidden]) input{padding-right:52px}.sellbar .seg{display:none}}
+.sell-header{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;margin-bottom:12px}
+.sell-search{min-width:0}.search-input-wrapper{position:relative;display:flex;align-items:center;min-width:0;min-height:48px;padding:3px;border:1px solid var(--line-2);border-radius:var(--r-md);background:var(--bg);box-shadow:var(--shadow-xs);transition:border-color var(--t-fast),box-shadow var(--t-fast)}
+.search-input-wrapper:hover{border-color:var(--ink-3)}.search-input-wrapper:focus-within{border-color:var(--accent);box-shadow:var(--ring)}
+.search-input-wrapper .search-icon{position:absolute;left:13px;z-index:1;pointer-events:none;color:var(--ink-3)}
+.search-input-wrapper input{flex:1;min-width:0;min-height:40px;padding:8px 8px 8px 39px;border:0;outline:0;background:transparent;color:var(--ink);font-size:15px}
+.search-input-wrapper .voicebtn,.search-input-wrapper .scanbtn{display:inline-flex;align-items:center;justify-content:center;gap:6px;flex:none;min-width:40px;height:40px;padding:0 9px;border-radius:var(--r-sm);color:var(--ink-2);font-size:13.5px;font-weight:650;transition:background var(--t-fast),color var(--t-fast),border-color var(--t-fast)}
+.search-input-wrapper .voicebtn:hover,.search-input-wrapper .scanbtn:hover{background:var(--wash);color:var(--ink)}
+.search-input-wrapper .scanbtn{border:1px solid var(--line)}
+.sell-actions{display:flex;align-items:center}.view-toggle{display:flex}.view-toggle button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:44px;min-height:44px;padding:8px 10px}
+.sell-categories{display:flex;align-items:center;gap:12px;margin:0 0 14px}.sell-categories:has(.catchips:empty) .kbdlink{margin-top:-6px}
+/* A phone: the search on its own row, then the categories and the Grid / List switch side by side in their own cells (the
+   header's two parts join the page's grid), so the chips scroll inside their cell and never slide under the switch */
+@media(max-width:599px){
+  .sell-main{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:8px;grid-auto-flow:row dense}
+  .sell-main>*{grid-column:1/-1;min-width:0}
+  .sell-header{display:contents}
+  .sell-search{grid-column:1/-1;margin-bottom:9px}.search-input-wrapper{min-height:50px}.search-input-wrapper input{min-height:42px;font-size:16px}
+  .search-input-wrapper .voicebtn,.search-input-wrapper .scanbtn{width:44px;min-width:44px;height:44px;padding:0}.search-input-wrapper .scanbtn span{display:none}
+  .sell-header>.sell-actions{grid-column:2;align-self:start;justify-content:flex-end}.view-toggle button{min-width:44px;min-height:42px;padding:7px}.view-toggle .desktop-only{display:none}
+  .sell-main>.sell-categories{grid-column:1;margin:0 0 12px;min-height:44px}.sell-categories .kbdlink{display:none}
+}
 .catrow{display:flex;align-items:center;gap:12px;margin:0 0 14px}
 .catrow:has(.catchips:empty) .kbdlink{margin-top:-6px}
 .catchips{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;flex:1;min-width:0;padding:1px}
@@ -34,6 +55,10 @@
 .tile.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
 .tile .ph{width:100%;aspect-ratio:4/3}
 .tile .ph .ini{font-size:clamp(20px,5.6vw,34px)}
+/* no photo: a quiet placeholder — the tag glyph with the initials under it, in the product colour's own ink */
+.tile .ph.noimg{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px}
+.tile .ph.noimg .ini{position:static;inset:auto;font-size:12.5px;font-weight:700;letter-spacing:.14em;opacity:.85}
+.tile .ph.noimg .ph-glyph{width:clamp(30px,26%,52px);height:auto;opacity:.7}
 .tile.out .ph{filter:grayscale(1);opacity:.55}
 .tile.out .tn,.tile.out .tp{color:var(--ink-3)}
 /* option value chips (sizes): S M L +N */
@@ -170,7 +195,13 @@ html.kbd .kc{display:block}
 .voicebtn.listening{color:#fff!important;background:var(--crit)!important;animation:voice-pulse 1.2s ease-in-out infinite}
 @keyframes voice-pulse{0%,100%{box-shadow:0 0 0 0 rgba(201,54,54,.45)}50%{box-shadow:0 0 0 6px rgba(201,54,54,0)}}
 .voicestatus{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:-4px 0 12px;padding:10px 12px;border-radius:var(--r-md);background:var(--wash);border:1px solid var(--line);font-size:13.5px}
-.voicestatus.listening{background:var(--crit-soft);border-color:var(--crit-line)}
+.voicestatus.listening{background:var(--accent-soft);border-color:var(--line-2)}
+/* asking: the browser's microphone prompt is up; a message can be closed (and goes by itself) */
+.voicestatus.asking .vs-dot{background:var(--accent)}
+.voicestatus .vs-x{margin-left:auto;flex:none;width:32px;height:32px;display:grid;place-items:center;font-size:18px;line-height:1;color:var(--ink-3);border-radius:var(--r-sm)}
+.voicestatus .vs-x:hover{background:var(--wash-2);color:var(--ink)}.voicestatus .btn+.vs-x{margin-left:4px}
+.voicebtn[data-voice-state="asking"]{color:var(--accent);box-shadow:inset 0 0 0 2px var(--accent-soft)}
+.voicebtn[data-voice-state="blocked"]{color:var(--ink-3)}
 .voicestatus.bad{background:var(--warn-soft);border-color:var(--warn-line)}
 .voicestatus .vs-dot{width:9px;height:9px;border-radius:50%;background:var(--crit);flex:none;animation:pulse 1.2s infinite}
 .voicestatus .vs-t{flex:1;min-width:0}
@@ -179,3 +210,5 @@ html.kbd .kc{display:block}
 .voicebtn.unsupported{opacity:.55}
 .prodsearch input{padding-right:48px}
 .prodsearch .voicebtn{right:5px}
+/* a desktop bill: today's figures and the last bill under the bill being rung up (the reference POS layout) */
+.bp-today{padding:0 14px 14px}.bp-today .tmini{margin:12px 0 8px}

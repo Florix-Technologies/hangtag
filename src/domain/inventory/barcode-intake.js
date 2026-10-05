@@ -3,24 +3,31 @@
 // the counter needs (name, unit, price, cost, GST, HSN), the code as its barcode, then the stock goes in. A code is never on
 // two variants: an archived product or a variant off sale that has it is named instead. Pure.
 import { codeError, cleanCode } from '../catalog/barcode.js';
+import { gtinKey, parseGs1 } from '../catalog/gs1.js';
 import { cleanProductName, validHsn } from '../catalog/product-validation.js';
 import { vLabel } from '../catalog/options.js';
 
 /* products: the whole catalog (archived too) · variantsOf(p, all) → { hit: { p, v } } (live, on sale) | { off: { p, v } }
    (archived product or variant off sale) | { unknown: code } | { error } */
+/* A GS1 code (DataMatrix, GS1-128, Digital Link) is found by its GTIN, and also the same item's EAN-13 / UPC-A / GTIN-14;
+   then the answer carries what it says (gs1: batch, expiry, serial …) for the stock-in to fill in. A new GS1 code makes a
+   product with its GTIN as the barcode (the 13-digit EAN-13 when it starts with 0). */
 export function lookupCode(raw,products,variantsOf){
-  const code=cleanCode(raw);
+  const g=parseGs1(raw);
+  const code=g?(g.gtin[0]==="0"?g.gtin.slice(1):g.gtin):cleanCode(raw);
   if(!code) return {error:"Scan or type a code."};
   const all=[];(products||[]).forEach(p=>variantsOf(p,true).forEach(v=>all.push({p,v})));
-  const lc=code.toLowerCase();
-  const find=list=>list.find(h=>h.v.bc&&h.v.bc.trim()===code)||list.find(h=>h.v.bc&&h.v.bc.trim().toLowerCase()===lc)||list.find(h=>h.v.sku&&h.v.sku.trim().toLowerCase()===lc)||null;
+  const lc=code.toLowerCase(), key=g?g.gtin:gtinKey(code);
+  const find=list=>list.find(h=>h.v.bc&&h.v.bc.trim()===code)||list.find(h=>h.v.bc&&h.v.bc.trim().toLowerCase()===lc)||list.find(h=>h.v.sku&&h.v.sku.trim().toLowerCase()===lc)
+    ||(key?list.find(h=>h.v.bc&&gtinKey(h.v.bc.trim())===key):null)||null;
+  const extra=g?{gs1:g}:{};
   const live=find(all.filter(h=>!h.p.archived&&h.v.active!==false));
-  if(live) return {hit:live};
+  if(live) return {hit:live,...extra};
   const off=find(all);
-  if(off) return {off};
-  const bad=codeError(raw);
+  if(off) return {off,...extra};
+  const bad=g?null:codeError(raw);
   if(bad) return {error:bad};
-  return {unknown:code};
+  return {unknown:code,...extra};
 }
 /* Why a code found off sale can't take stock, in words */
 export const offSaleText=({p,v})=>`${cleanCode(v.bc||v.sku)} is on ${[p.name,vLabel(v)].filter(Boolean).join(" · ")}, which is ${p.archived?"archived":"off sale"}. ${p.archived?"Unarchive it":"Switch that variant on"} in Products first.`;

@@ -12,44 +12,45 @@ import { userLabel } from '../../shop/services/access.js';
 import { ICON } from '../../../shared/constants/icons.js';
 import { $, esc } from '../../../shared/dom.js';
 import { dtLong } from '../../../shared/formatting/dates.js';
-import { inrx } from '../../../shared/formatting/money.js';
+import { inr, inrx } from '../../../shared/formatting/money.js';
 import { gstDocsHTML } from '../../commerce/components/gst-documents.js';
 import { usesEinvoice, usesEway } from '../../commerce/use-cases/gst-documents.js';
 import { can } from '../../shop/services/access.js';
 import { actionsMenuHTML, statusChip } from '../../../shared/ui/kit.js';
+import { billChips, billState } from '../../bills/services/bill-status.js';
 import { documentFrameHTML, fitDocFrames } from './doc-render.js';
 import { docOptions, downloadDocumentPdf, printDocument, shareDocumentPdf } from './doc-actions.js';
 import { creditNoteModel, invoiceModel } from '../services/doc-models.js';
 
 /* ================= bill view (from Reports, the last bill, customers) ================= */
 
-/* The bill's actions: Print first; the rest in one menu — only what can be done with this bill, by this person */
+/* The bill's actions: Print, PDF and Send on the bar; the rest in one menu — only what can be done with this bill, by this
+   person: return, exchange, its credit notes, e-invoice / e-way bill, share, the receipt as an image, cancel or restore */
 function billActions(s,canReturn,rets){
   const id=esc(s.id), gst=!s.void&&(can("create_sale")||can("view_reports"));
   return actionsMenuHTML("bill-"+s.id,[
-    {label:"Download PDF",hint:"A4, in your template",icon:"download",attrs:`data-billpdf="${id}"`},
-    {label:"Download receipt image",icon:"receipt",attrs:`data-dlreceipt="${id}"`},
-    {label:"Share",icon:"share",attrs:navigator.share?`data-share="${id}"`:`data-billsharepdf="${id}"`},
-    !s.void?{label:"Send receipt",hint:"Email, WhatsApp or SMS",icon:"send",attrs:`data-gosend="${id}"`}:null,
+    canReturn?{label:"Return",hint:"Refund, with a credit note",icon:"convert",attrs:`data-return="${id}"`}:null,
+    canReturn?{label:"Exchange",hint:"Swap for other items",icon:"refresh",attrs:`data-exchange="${id}"`}:null,
+    ...rets.filter(r=>r.no).map(r=>({label:"Credit note "+r.no,hint:"Print or download",icon:"doc",attrs:`data-cnopen="${esc(r.id)}"`})),
     gst&&usesEinvoice()?{label:"E-Invoice",hint:"Readiness and JSON export",icon:"doc",attrs:`data-gstopen="einv|${id}"`}:null,
     gst&&usesEway()?{label:"E-Way Bill",hint:"Transport details and JSON export",icon:"truck",attrs:`data-gstopen="eway|${id}"`}:null,
-    canReturn||rets.some(r=>r.no)?{sep:true}:null,
-    canReturn?{label:"Return / exchange",hint:"Makes a credit note",icon:"convert",attrs:`data-return="${id}"`}:null,
-    ...rets.filter(r=>r.no).map(r=>({label:"Credit note "+r.no,hint:"Print or download",icon:"doc",attrs:`data-cnopen="${esc(r.id)}"`})),
+    {sep:true},
+    {label:"Share",icon:"share",attrs:navigator.share?`data-share="${id}"`:`data-billsharepdf="${id}"`},
+    {label:"Download receipt image",icon:"receipt",attrs:`data-dlreceipt="${id}"`},
     {sep:true},
     s.void?{label:"Restore bill",icon:"refresh",attrs:`data-unvoid="${id}"`}:rets.length?null:{label:"Cancel bill",hint:"Asks for the reason",icon:"x",danger:true,attrs:`data-void="${id}"`},
-  ],{label:"Actions"});
+  ],{label:"More"});
 }
 export function openBillView(sid,paper){
   const s=D().saleById[sid]; if(!s) return;
   const view=paper||(store.settings.paper==="a4"?"a4":"80mm");
   const M=billMoney(s);
   const money=`<div class="setsec"><h4>Payments</h4>${M.txns.length?M.txns.map(x=>`<div class="retline" data-txn="${esc(x.id)}"><b>${esc(PAY_LABELS[x.method]||x.method)}</b> · ${x.kind==="refund"?"refund −":""}${inrx(x.amount)}${x.ref?" · ref "+esc(x.ref):""}${x.change?` · received ${inrx(x.received)}, change ${inrx(x.change)}`:""}${x.status==="cancelled"?" · cancelled":""}</div>`).join(""):`<p class="note">Nothing was collected on this bill.</p>`}<p class="note">${M.ok?(s.void?"Cancelled — its payments are out of the cash and bank books.":`Payments match the amount due (${inrx(M.due)}).`):`Payments (${inrx(M.received)}) don't match the amount due (${inrx(M.due)}).`}${+s.dueAmt>0?` Left on ${esc(s.cust&&s.cust.name||"the customer")}'s account: <b>${inrx(s.dueAmt)}</b>.`:""}</p></div>`;
-  const rets=saleReturns(sid), canReturn=!s.void&&can("perform_return")&&s.items.some((i,k)=>i.q-(D().retLine[s.id+"|"+(i.ln!=null?i.ln:k)]||0)>0);
+  const st=billState(s), rets=saleReturns(sid), canReturn=!s.void&&can("perform_return")&&s.items.some((i,k)=>i.q-(D().retLine[s.id+"|"+(i.ln!=null?i.ln:k)]||0)>0);
   $("#modalHost").innerHTML=`<div class="scrim" data-modal-scrim><div class="sheet billview${view==="a4"?" wide":""}" role="dialog" aria-modal="true" aria-label="Bill ${esc(s.no)}">
-    <div class="sh-head"><div class="sh-t"><h3>Bill ${esc(s.no)} ${s.void?statusChip("Cancelled","bad"):rets.length?statusChip(rets.some(r=>r.kind==="exchange")?"Exchanged":"Returned","warn"):statusChip("Paid","ok")}</h3><p>${esc(dtLong(s.t))}${s.user?" · by "+esc(userLabel(s.user)):""}${s.void?" · cancelled"+(s.voidReason?": "+esc(s.voidReason):""):""}${s.kind==="exchange"?" · exchange":""}</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
+    <div class="sh-head"><div class="sh-t"><h3>Bill ${esc(s.no)} <span class="billchips">${billChips(s,st).map(([l,t])=>statusChip(l,t)).join("")}</span></h3>${st.owed?`<p class="billowed" data-billowed>${inr(st.owed)} still to collect from ${esc(s.cust&&s.cust.name||"the customer")}</p>`:""}<p>${esc(dtLong(s.t))}${s.user?" · by "+esc(userLabel(s.user)):""}${s.void?" · cancelled"+(s.voidReason?": "+esc(s.voidReason):""):""}${s.kind==="exchange"?" · exchange":""}</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
     <div class="billtools"><div class="seg billpaper" role="group" aria-label="Show as"><button type="button" data-billpaper="80mm:${esc(s.id)}" aria-pressed="${view!=="a4"}">Receipt</button><button type="button" data-billpaper="a4:${esc(s.id)}" aria-pressed="${view==="a4"}">A4 ${s.tax>0?"tax invoice":"bill"}</button></div>
-      <div class="btnrow">${billActions(s,canReturn,rets)}<button class="btn primary" data-print="${esc(s.id)}" data-paper="${view}">Print</button></div></div>
+      <div class="btnrow"><button class="btn" data-billpdf="${esc(s.id)}">PDF</button>${s.void?"":`<button class="btn" data-gosend="${esc(s.id)}">Send</button>`}${billActions(s,canReturn,rets)}<button class="btn primary" data-print="${esc(s.id)}" data-paper="${view}">Print</button></div></div>
     <div class="rcpt-prev${view==="a4"?" a4prev":""}">${view==="a4"?documentFrameHTML(invoiceModel(s),docOptions()):receiptHTML(s,view)}</div>
     ${printStateHTML(s.id)}
     <div id="sendBox-${esc(s.id)}">${sendBoxHTML(s)}</div>

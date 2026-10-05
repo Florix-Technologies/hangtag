@@ -59,9 +59,12 @@ export function custLineHTML(){
   return `<div class="custline walkin"><span>Customer · <b>Walk-in</b></span><button class="link xs" data-act="pickcust">+ Add customer</button></div>`;
 }
 export function emptyBillHTML(){
+  return `<div class="be">${ICON.bag}<p><b>No items yet</b><br>Tap a product, or search or scan.</p>${voucherSellHTML()}</div>`+todayHTML();
+}
+/* Today at this till: sold, bills, pieces, and the last bill with its receipt (under the bill on a desktop, as on an empty bill) */
+function todayHTML(){
   const t=todayStats();
-  let h=`<div class="be">${ICON.bag}<p><b>No items yet</b><br>Tap a product, or search or scan.</p>${voucherSellHTML()}</div>`;
-  h+=`<div class="tmini"><div><span>Sold today</span><b>${inr(t.rev)}</b></div><div><span>Bills</span><b>${t.bills}</b></div><div><span>Pieces</span><b>${t.pcs}</b></div></div>`;
+  let h=`<div class="tmini"><div><span>Sold today</span><b>${inr(t.rev)}</b></div><div><span>Bills</span><b>${t.bills}</b></div><div><span>Pieces</span><b>${t.pcs}</b></div></div>`;
   if(store.lastSale&&!isVoid(store.lastSale.id))h+=`<div class="lastbill"><div><div class="eyebrow">Last bill · ${esc(hhmm(store.lastSale.t))}</div><b>${inr(store.lastSale.total)}</b> · ${esc(payLabel(store.lastSale))}</div><button class="btn xs" data-billview="${esc(store.lastSale.id)}">Receipt</button></div>`;
   return h;
 }
@@ -85,7 +88,7 @@ export function billPanelHTML(where){
       <div data-billsum>${billSumHTML(T)}</div>
       <p class="discerr" id="discerr_${where}" data-discerr role="alert"${err?"":" hidden"}>${esc(err)}</p>
       <div class="pays">${payBtns(empty||!!err)}</div>${billQuoteHTML(empty)}
-    </div></div>`;
+    </div>${where==="panel"&&!empty?`<div class="bp-today">${todayHTML()}</div>`:""}</div>`;
 }
 export function billBarHTML(){
   if(!store.cart.length){const t=todayStats();return `<div class="bb-empty"><div><div class="eyebrow">Today</div><div class="bb-today"><b>${inr(t.rev)}</b><span>${t.bills} bill${t.bills===1?"":"s"} · ${t.pcs} pcs</span></div></div>${billHoldHTML(true)||`<span class="bb-hint">Tap a product<br>to start a bill</span>`}</div>`}

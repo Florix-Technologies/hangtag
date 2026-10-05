@@ -157,7 +157,7 @@ try {
   await A.goto('http://localhost:3210/', { waitUntil: 'networkidle0' });
   check('owner: signed in and connected', await A.until('sbStatus==="connected"'));
   check('owner: nothing hidden, every tab, no role marks on the page (unchanged for owners)', await A.run(`return !isMember()&&!document.documentElement.hasAttribute("data-noperm")&&!document.documentElement.hasAttribute("data-member")`)
-    && await A.vis('.nav [data-tab="report"]') && await A.vis('.nav [data-tab="products"]'));
+    && await A.vis('.nav [data-tab="report"]') && await A.vis('.nav [data-tab="stock"]') && await A.run('return tabOpen("products")&&tabOpen("report")&&tabOpen("customers")'));
   check('owner: requests carry no device header (owners have none)', A.sbRequests.length > 0 && A.sbRequests.every((x) => !x.device));
   await A.run('loadExamples();await new Promise(r=>setTimeout(r,300));await flushSbQueue()');
   check('owner: products uploaded', +(await q(`SELECT count(*) AS n FROM public.hangtag_products WHERE owner_id = $1`, [OWNER]))[0].n === 10);
@@ -202,9 +202,14 @@ try {
   check('no live updates for a member\'s phone (it polls)', await B.run('return !sbRealtimeChannel'));
 
   console.log('--- what a cashier may and may not do ---');
-  check('cashier phone workflow shows Sell and Customers, while hiding Stock, Products and Reports', !(await B.vis('.nav [data-tab="report"]')) && await B.vis('.nav [data-tab="sell"]')
-    && !(await B.vis('.nav [data-tab="products"]')) && !(await B.vis('.nav [data-tab="stock"]')) && await B.vis('.nav [data-tab="customers"]')
-    && await B.run('return tabOpen("products")&&tabOpen("stock")&&tabOpen("customers")&&!tabOpen("report")'));
+  // the phone bar is the same for everyone (Home · Sell · Bills · Stock · More); the role decides what is in it and in More
+  const cashierBar = await B.$$eval('.nav .navi.pb', (l) => l.filter((x) => x.getClientRects().length).map((x) => x.dataset.tab));
+  check('cashier phone workflow: Home · Sell · Bills · Stock (to look stock up) and More; no Reports, no Products', JSON.stringify(cashierBar) === JSON.stringify(['home', 'sell', 'bills', 'stock'])
+    && !(await B.vis('.nav [data-tab="report"]')) && !(await B.vis('.nav [data-tab="products"]'))
+    && await B.run('return tabOpen("products")&&tabOpen("stock")&&tabOpen("customers")&&!tabOpen("report")'), cashierBar);
+  await B.run('openNavMore()'); await sleep(150);
+  check('...Customers is in the cashier\'s More, Reports is not', await B.vis('#modalHost .navsheet [data-tab="customers"]') && !(await B.vis('#modalHost .navsheet [data-tab="report"]')));
+  await B.run('closeModal()');
   await B.run('setTab("report")'); await sleep(100);
   check('...and Reports can\'t be opened', (await B.run('return prefs.tab')) !== 'report');
   // The desktop workflow still exposes Products read-only; permission enforcement hides every write control there.

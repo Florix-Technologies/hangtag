@@ -3,7 +3,8 @@
 // loaded only then). Reports each code it reads; what a code means is decided by the app (features/sales).
 import { AppError, ERROR_CODES as C } from '../../shared/errors/app-error.js';
 
-const FORMATS = ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39", "itf", "qr_code"];
+// data_matrix: GS1 DataMatrix on medicines and food (with the browser's own detector; the bundled fallback reads the others)
+const FORMATS = ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39", "itf", "qr_code", "data_matrix"];
 const FRAME_MS = 120;   // time between two reads of the picture
 
 /* A camera error from the browser → an AppError with a plain message; details.kind: "denied" | "unavailable" | "busy" | "failed" */

@@ -61,6 +61,25 @@ check('archived catalog records are excluded', result.products.length === 5 && !
   check('product availability does not let a negative variant cancel sellable stock', row.availableStock === 20 && row.currentStock === 18, row);
 }
 
+// ---------- the forecast beside the reorder rule ----------
+check('rising demand: the forecast rate is above the 30-day average and the stock lasts less at it; few sale days, low confidence',
+  cable.forecastVelocity > cable.salesVelocity && cable.forecastDaysRemaining < cable.daysRemaining && cable.saleDays === 2 && cable.confidence === 'low' && !cable.risingRisk, cable);
+{
+  // 16 sold in 30 days (6 is the reorder point); 14 of them in the last 14 days: 8 left looks fine on average, not at the recent rate
+  const sales = [move('k1', 'spike:', -2, 20, 'SALE'), ...[1, 3, 5, 7, 9, 11, 13].map((d, i) => move('ks' + i, 'spike:', -2, d, 'SALE'))];
+  const a = analyzeInventory({ products: [product('spike', 'Spike', 100, 60)], entries: [move('k0', 'spike:', 24, 40), ...sales], now });
+  const row = a.products[0];
+  check('rising demand before the reorder point: "may need ordering sooner" (within lead time + buffer at the forecast rate)', !row.shouldReorder && row.reorderPoint === 6 && row.currentStock === 8
+    && row.trend === 'rising' && row.risingRisk && row.forecastDaysRemaining <= 10 && row.confidence === 'medium' && a.summary.risingRisk === 1, row);
+}
+{
+  const steady = analyzeInventory({ products: [product('st', 'Steady', 100, 60)], entries: [move('t0', 'st:', 40, 40), ...[2, 9, 16, 23].map((d, i) => move('t' + (i + 1), 'st:', -3, d, 'SALE'))], now }).products[0];
+  check('steady demand: the forecast is the 30-day average (nothing invented)', steady.trend === 'steady' && steady.forecastVelocity === steady.salesVelocity && !steady.risingRisk, steady);
+  const busy = analyzeInventory({ products: [product('bz', 'Busy', 100, 60)], entries: [move('b0', 'bz:', 100, 40), ...Array.from({ length: 12 }, (_, i) => move('b' + (i + 1), 'bz:', -2, i * 2 + 1, 'SALE'))], now }).products[0];
+  const none = analyzeInventory({ products: [product('nn', 'None', 100, 60)], entries: [move('n0', 'nn:', 5, 10)], now }).products[0];
+  check('confidence: high from 12 days of sales, none without sales (and no forecast)', busy.confidence === 'high' && none.confidence === 'none' && none.forecastDaysRemaining === null && none.forecastVelocity === 0, { busy: busy.confidence, none });
+}
+
 {
   const p = product('return', 'Returned Item', 100, 50);
   const a = analyzeInventory({ products: [p], entries: [move('r0', 'return:', 20, 40), move('r1', 'return:', -10, 4, 'SALE'), move('r2', 'return:', 0, 2, 'NOT_FOR_RESALE', 2)], now });

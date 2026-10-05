@@ -41,6 +41,9 @@ export const saveSupplierPays=()=>storage.set("rc_supplier_pays",store.supplierP
 export const saveDeliveryQueue=()=>storage.set("hangtag_delivery_queue",store.deliveryQueue);
 export const saveSettings=()=>storage.set("rc_settings",store.settings);
 export const saveLogo=()=>storage.set("rc_logo",store.logo||"");
+/* The authorised signature and company stamp printed on A4 documents ({ signature, stamp }: small data URLs) */
+export const saveDocImages=()=>storage.set("rc_docimg",store.docImages||{});
+export const saveAutoLog=()=>storage.set("rc_autolog",store.autoLog||[]);
 export const savePrinter=()=>storage.set("rc_printer",store.printer);
 /* This device's weighing scale settings (not synced: each counter has its own scale) */
 export const saveScale=()=>storage.set("hangtag_scale",store.scale);

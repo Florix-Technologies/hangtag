@@ -150,6 +150,16 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
     async saveDayClose(c){ sbOk(await table('hangtag_day_closes').upsert(dayCloseRow(c))); },
     async saveSettings(settings){ sbOk(await table('hangtag_meta').upsert({ key:'settings', value:settings, updated_at:new Date().toISOString() })); },
     /* The shop logo for receipts (a small data URL), or empty to remove it */
+    /* The authorised signature or company stamp (hangtag_meta "doc_signature" / "doc_stamp"); "" removes it */
+    async saveDocImage(kind, dataUrl){
+      if(kind !== 'signature' && kind !== 'stamp') throw new Error('Unknown document picture.');
+      if(dataUrl) sbOk(await table('hangtag_meta').upsert({ key:'doc_' + kind, value:{ data:dataUrl }, updated_at:new Date().toISOString() }));
+      else sbOk(await table('hangtag_meta').delete().eq('key','doc_' + kind));
+    },
+    /* The automation log of one device (its own entries, newest first, bounded) */
+    async saveAutomationLog(dev, entries){
+      sbOk(await table('hangtag_meta').upsert({ key:'autolog:' + String(dev).slice(0, 20), value:{ entries:(entries || []).slice(0, 100) }, updated_at:new Date().toISOString() }));
+    },
     async saveLogo(dataUrl){
       if(dataUrl) sbOk(await table('hangtag_meta').upsert({ key:'logo', value:{ data:dataUrl }, updated_at:new Date().toISOString() }));
       else sbOk(await table('hangtag_meta').delete().eq('key','logo'));
@@ -187,6 +197,18 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
       return data ? data.value : null;
     },
     /* The shop logo (data URL), "" when there is none */
+    /* { signature, stamp }: the pictures the shop keeps for its A4 documents ("" when none) */
+    async fetchDocImages(){
+      const { data } = sbOk(await table('hangtag_meta').select('key,value').in('key', ['doc_signature','doc_stamp']));
+      const out = { signature:'', stamp:'' };
+      (data || []).forEach(r => { const v = r.value && r.value.data; if(typeof v === 'string' && /^data:image\//.test(v)) out[r.key.slice(4)] = v; });
+      return out;
+    },
+    /* Every device's automation log, as one list */
+    async fetchAutomationLogs(){
+      const { data } = sbOk(await table('hangtag_meta').select('key,value').like('key', 'autolog:%'));
+      return (data || []).flatMap(r => r.value && Array.isArray(r.value.entries) ? r.value.entries : []);
+    },
     async fetchLogo(){
       const { data } = sbOk(await table('hangtag_meta').select('value').eq('key','logo').maybeSingle());
       return data && data.value && typeof data.value.data === 'string' ? data.value.data : "";
@@ -445,6 +467,8 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
        body { action, ... } → its answer. Throws an AppError: NOT_CONFIGURED, VALIDATION, CONFLICT, NOT_FOUND, AUTH,
        DELIVERY (the provider refused), NETWORK. */
     paymentIntent: body => callFunction("payment-gateway", body, "Verified payments"),
+    /* agent: the Hangtag Agent's optional AI provider ({ action: "config" } or one "step") */
+    agentStep: body => callFunction("agent", body, "The Hangtag Agent's AI"),
     /* send-receipt: ask the providers what happened to a bill's messages (delivered / failed) → { updated } */
     deliveryRefresh: saleId => callFunction("send-receipt", { action:"refresh", sale_id:saleId }, "Sending bills"),
     /* send-receipt: the bill's secure invoice link (made once, kept 12 months) → { url, token, expiresAt } */

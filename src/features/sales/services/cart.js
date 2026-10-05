@@ -13,6 +13,7 @@ import { checkQty, isWeighed, roundQty, sumQty, unitOf } from '../../../domain/c
 import { pcsOf } from '../../../domain/sales/sale.js';
 import { demandOf, isKit, kitPriceError, kitSnapshot, kitsAvailable } from '../../../domain/catalog/bundles.js';
 import { priceOf } from './pricing.js';
+import { reservedOf } from '../../orders/services/reservations.js';
 
 export const cartQtyV=vid=>sumQty(store.cart.filter(c=>c.v===vid).map(c=>c.q));
 export const cartQtyP=pid=>sumQty(store.cart.filter(c=>c.p===pid).map(c=>c.q));
@@ -20,11 +21,18 @@ export const cartQtyP=pid=>sumQty(store.cart.filter(c=>c.p===pid).map(c=>c.q));
    sells expired stock) less what the bill has */
 /* Kits (domain/catalog/bundles.js) count as their items: a kit can go on the bill while every item has stock left after
    everything the bill already takes (items on their own and inside other kits) */
+/* Stock reserved for online-store orders isn't sellable here (orders/services/reservations.js), unless the bill is that order's */
 export const availOf=vid=>{
   const r=vRec(vid), d=demandOf(store.cart);
-  if(r&&isKit(r.p)) return kitsAvailable(r.p.bundle,v=>roundQty(sellableOf(v)-(d[v]||0)));
-  return roundQty(sellableOf(vid)-(d[vid]||0));
+  if(r&&isKit(r.p)) return kitsAvailable(r.p.bundle,v=>roundQty(sellableOf(v)-reservedOf(v)-(d[v]||0)));
+  return roundQty(sellableOf(vid)-reservedOf(vid)-(d[vid]||0));
 };
+/* Why nothing more of it can go on the bill: sold out, or what is left is reserved for online orders */
+export function noStockText(vid){
+  const r=vRec(vid), name=r?`${r.p.name}${vLabel(r.v)?" "+vLabel(r.v):""}`:"That item", res=reservedOf(vid);
+  if(res>0&&sellableOf(vid)-(demandOf(store.cart)[vid]||0)>0) return `${name}: the rest (${res}) is reserved for online orders. Bill those orders, or cancel them, first.`;
+  return r&&isKit(r.p)?`${r.p.name}: an item of the kit is out of stock.`:`${name} is sold out.`;
+}
 /* Serial numbers on a set of bill lines (the cart, or an exchange's new items) */
 export const serialsOnLines=lines=>new Set((lines||[]).flatMap(c=>Array.isArray(c.sn)?c.sn:[]));
 /* Items on the bill: pieces, and one per line sold by weight or length */
@@ -86,11 +94,11 @@ export function removeSerial(lines,i,sn){
 export function addOne(vid){
   const r=vRec(vid); if(!r) return;
   // tracked by serial number: the pieces are chosen by their serials
-  if(isSerialV(vid)){ if(availOf(vid)<=0){ toast(`${r.p.name} ${vLabel(r.v)} is sold out.`); return; } serialHook(r.p.id,vid,"cart"); return; }
+  if(isSerialV(vid)){ if(availOf(vid)<=0){ toast(noStockText(vid)); return; } serialHook(r.p.id,vid,"cart"); return; }
   // sold by weight or volume: ask for the weight (typed, or read from the scale) instead of adding one
-  if(isWeighed(r.p.unit)){ if(availOf(vid)<=0){ toast(`${r.p.name} ${vLabel(r.v)} is sold out.`); return; } weighHook(vid); return; }
+  if(isWeighed(r.p.unit)){ if(availOf(vid)<=0){ toast(noStockText(vid)); return; } weighHook(vid); return; }
   const kb=kitBlock(vid); if(kb){ toast(kb); return; }
-  if(availOf(vid)<=0){ toast(isKit(r.p)?`${r.p.name}: an item of the kit is out of stock.`:`${r.p.name} ${vLabel(r.v)} is sold out.`); return; }
+  if(availOf(vid)<=0){ toast(noStockText(vid)); return; }
   addToLines(store.cart,vid,1); store.justAdded=r.p.id; saveCart(); renderAll();
   toast(`Added ${r.p.name}${vLabel(r.v)?" · "+vLabel(r.v):""}.`);
 }

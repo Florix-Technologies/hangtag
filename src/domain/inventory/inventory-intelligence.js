@@ -1,6 +1,11 @@
 // Deterministic inventory intelligence over the existing product catalog and stock ledger.
 // It never changes inventory or creates a purchase. A future recommender may explain or reprioritise these signals,
 // but quantities and money here always come from this pure calculation.
+// The reorder rule uses the average daily sales of the last velocityDays (reorder point = lead + safety days of sales).
+// Beside it, a forecast that looks ahead: when demand is rising or falling, the last trendDays weigh more
+// (forecastVelocity), how many days the stock lasts at that rate (forecastDaysRemaining), how sure it is (confidence:
+// from how many days had sales) and risingRisk — not at the reorder point yet, but at the rising rate it would run out
+// within the lead time and buffer, so it may need ordering sooner than the average says.
 import { vCost, vLabel, vPrice, variantsOf } from '../catalog/variants.js';
 import { decimalsOf, roundQty, sumQty } from '../catalog/units.js';
 
@@ -53,6 +58,22 @@ function demand(entries, from, to){
     else if(RETURN_TYPES.has(e.type)) returned += pieces;
   });
   return { sold: roundQty(sold), returned: roundQty(returned), net: roundQty(Math.max(0, sold - returned)) };
+}
+
+/* How many different days had a sale in a period (a forecast from 2 busy days is less sure than one from 20) */
+function saleDaysIn(entries, from, to){
+  const days = new Set();
+  (entries || []).forEach(e => { const t = finite(e && e.t, -Infinity); if(t >= from && t <= to && SALE_TYPES.has(e.type)) days.add(Math.floor(t / DAY)); });
+  return days.size;
+}
+/* high: 10+ days with sales and 15+ pieces; medium: 4+ days; low: fewer */
+export const confidenceOf = (saleDays, units) => saleDays >= 10 && units >= 15 ? 'high' : saleDays >= 4 ? 'medium' : saleDays > 0 ? 'low' : 'none';
+/* The rate ahead: the recent window weighs more when demand is moving; new demand is all recent */
+function forecastRate(trend, recentUnits, trendDays, velocity){
+  const recent = recentUnits / trendDays;
+  if(trend === 'new') return roundQty(recent);
+  if(trend === 'rising' || trend === 'falling') return roundQty(.6 * recent + .4 * velocity);
+  return velocity;
 }
 
 /* Age only what is still on the shelf. Outgoing entries consume the oldest positive lots first. If historical records
@@ -119,6 +140,9 @@ function variantSignal(p, v, entries, now, c){
   const daysRemaining = salesVelocity > 0 ? r1(currentPositive / salesVelocity) : null;
   const reorderPoint = salesVelocity > 0 ? ceilUnitQty(salesVelocity * (c.leadDays + c.safetyDays), p.unit) : 0;
   const shouldReorder = salesVelocity > 0 && currentStock <= reorderPoint;
+  const tr = trendOf(trendRecent, trendPrior), forecastVelocity = forecastRate(tr.trend, trendRecent, c.trendDays, salesVelocity);
+  const forecastDaysRemaining = forecastVelocity > 0 ? r1(currentPositive / forecastVelocity) : null;
+  const saleDays = saleDaysIn(entries, now - c.velocityDays * DAY, now);
   const suggestedReorderQty = shouldReorder ? ceilUnitQty(Math.max(0, salesVelocity * c.targetCoverDays - currentStock), p.unit) : 0;
   const daysSinceLastSale = elapsedDays(now, lastSale), price = vPrice(p, v), cost = vCost(p, v);
   const deadStock = currentPositive > 0 && ((lastSale == null && ages.oldestStockAgeDays != null && ages.oldestStockAgeDays >= c.deadDays) || (daysSinceLastSale != null && daysSinceLastSale >= c.deadDays));
@@ -135,13 +159,18 @@ function variantSignal(p, v, entries, now, c){
     salesVelocity,
     trendRecentUnits: trendRecent,
     trendPriorUnits: trendPrior,
-    ...trendOf(trendRecent, trendPrior),
+    ...tr,
     lastSale,
     daysSinceLastSale,
     ...ages,
     daysRemaining,
     reorderPoint,
     shouldReorder,
+    forecastVelocity,
+    forecastDaysRemaining,
+    saleDays,
+    confidence: confidenceOf(saleDays, recent.net),
+    risingRisk: !shouldReorder && forecastVelocity > salesVelocity && forecastDaysRemaining != null && forecastDaysRemaining <= c.leadDays + c.safetyDays,
     suggestedReorderQty,
     slowMoving,
     deadStock,
@@ -196,6 +225,12 @@ function combineProduct(p, variants, c, now){
     lowestDaysRemaining: covers.length ? Math.min(...covers) : null,
     reorderPoint: sumQty(variants.map(v => v.reorderPoint)),
     shouldReorder: variants.some(v => v.shouldReorder),
+    forecastVelocity: sumQty(variants.map(v => v.forecastVelocity)),
+    forecastDaysRemaining: (() => { const f = sumQty(variants.map(v => v.forecastVelocity)); return f > 0 ? r1(availableStock / f) : null; })(),
+    lowestForecastDays: (() => { const l = variants.filter(v => v.forecastDaysRemaining != null).map(v => v.forecastDaysRemaining); return l.length ? Math.min(...l) : null; })(),
+    saleDays: variants.reduce((n, v) => Math.max(n, v.saleDays), 0),
+    confidence: confidenceOf(variants.reduce((n, v) => Math.max(n, v.saleDays), 0), netUnitsSold),
+    risingRisk: variants.some(v => v.risingRisk) && !variants.some(v => v.shouldReorder),
     suggestedReorderQty: sumQty(variants.map(v => v.suggestedReorderQty)),
     slowMoving: slow.length > 0 && !variants.some(v => v.shouldReorder),
     hasSlowStock: slow.length > 0,
@@ -243,6 +278,7 @@ function summaryOf(rows){
     deadStockValue: money(rows.reduce((n, r) => n + r.deadStockValue, 0)),
     reorderCost: money(rows.reduce((n, r) => n + r.reorderCost, 0)),
     reorderCostComplete: rows.every(r => r.reorderCostComplete),
+    risingRisk: rows.filter(r => r.risingRisk).length,
   };
 }
 

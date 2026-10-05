@@ -66,7 +66,8 @@ const run = (b) => A.evaluate((b) => __ev('(async()=>{' + b + '})()'), b);
 async function until(cond, ms = 15000) { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await run('return !!(' + cond + ')').catch(() => false)) return true; await sleep(100); } return false; }
 const text = (sel) => A.$eval(sel, (e) => e.innerText.replace(/\s+/g, ' ').trim()).catch(() => null);
 // an A4 document is shown in its own frame (receipts/components/doc-render.js): its text, or the receipt's
-const docText = () => A.evaluate(() => { const f = document.querySelector('.rcpt-prev iframe'); const t = f && f.contentDocument ? f.contentDocument.body.innerText : (document.querySelector('.rcpt-prev') || {}).innerText; return String(t || '').replace(/\s+/g, ' ').trim(); });
+// (the bill view's own preview: Settings → Templates has a live preview of its own)
+const docText = () => A.evaluate(() => { const f = document.querySelector('.billview .rcpt-prev iframe'); const t = f && f.contentDocument ? f.contentDocument.body.innerText : (document.querySelector('.billview .rcpt-prev') || {}).innerText; return String(t || '').replace(/\s+/g, ' ').trim(); });
 const vis = (sel) => A.$eval(sel, (e) => !e.hidden && getComputedStyle(e).display !== 'none' && e.getClientRects().length > 0).catch(() => false);
 check('signed in and connected', await until('sbStatus==="connected"'));
 
@@ -134,7 +135,7 @@ await A.screenshot({ path: H.ARTIFACTS + '/bo2_invoice_a4.png' });
 await sleep(400);
 check('bill view lists what was sent (from the database)', /Sent to the customer/.test(await text(`[data-dlhist="${sid}"]`)) && /✓ Email · accounts@blr\.in/.test(await text(`[data-dlhist="${sid}"]`)) && /✕ SMS/.test(await text(`[data-dlhist="${sid}"]`)), await text(`[data-dlhist="${sid}"]`));
 await A.click(`[data-billpaper="80mm:${sid}"]`); await sleep(200);
-check('switch to the 80 mm receipt view', !(await A.$('.rcpt.a4')) && /Bill/.test(await text('.rcpt-prev')));
+check('switch to the 80 mm receipt view', !(await A.$('.rcpt.a4')) && /Bill/.test(await text('.billview .rcpt-prev')));
 await run('closeModal()');
 
 // ---------- Phase 16: the Epson printer ----------

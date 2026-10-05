@@ -75,12 +75,14 @@ export function thermalReceipt(inv,{cols=48}={}){
   row("TOTAL","Rs."+money(T.total),{bold:true,big:true});
   if(T.credit){ row("Exchange credit","-"+money(T.credit)); row("Amount due",money(T.due),{bold:true}); }
   L.push(rule);
-  if(!inv.payments.length) add(T.credit?"Nothing to pay (covered by credit)":"Nothing to pay");
+  if(!inv.payments.length&&!(inv.balance>0)) add(T.credit?"Nothing to pay (covered by credit)":"Nothing to pay");
   inv.payments.forEach(p=>{
     row("Paid by "+p.label,money(p.amount));
     if(p.method==="cash"&&p.change) row("  Received "+money(p.received),"Change "+money(p.change));
     if(p.ref) columns("  Ref: "+p.ref,"",w).map(t=>t.trimEnd()).filter(Boolean).forEach(t=>add(t));
   });
+  // part (or all) of the bill on the customer's account
+  if(inv.balance>0) row(inv.buyer?"BALANCE DUE (on account)":"BALANCE DUE",money(inv.balance),{bold:true});
   if(inv.returned) row("Returned items",money(inv.returned));
   if(inv.refunded) row("Refunded",money(inv.refunded));
   L.push(rule);

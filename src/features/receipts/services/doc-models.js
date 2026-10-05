@@ -18,12 +18,18 @@ import { orderTotals } from '../../orders/use-cases/orders.js';
 import { customerRepository } from '../../customers/repositories/customer-repository.js';
 import { purchasesList, supplierById } from '../../inventory/services/purchase-state.js';
 import { D } from '../../inventory/services/ledger.js';
+import { challanNoOf } from '../../../domain/documents/numbering.js';
+import { numberingFor } from '../../sales/services/doc-numbers.js';
 
 const day = v => { if(!v) return ""; const d = /^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? new Date(String(v) + "T12:00:00") : new Date(v); return Number.isNaN(+d) ? "" : d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }); };
 const pct = r => r == null ? "—" : Math.round(r * 100) / 100 + "%";
 const settings = () => docSettingsOf(store.settings);
 function seller(){ const S = sellerOf(store.profile || {}); return { name: S.name, lines: [S.address, S.phone && "Phone " + S.phone, S.gstin && "GSTIN " + S.gstin] }; }
-const base = () => { const D = settings(); return { seller: seller(), logo: store.logo || "", terms: D.terms, bank: D.bank, signature: D.signature, footer: store.settings && store.settings.footer || "" }; };
+/* What every document carries: the shop, its logo, terms, bank details, the signature line — and the authorised signature
+   and company stamp pictures when the shop has them and prints them (Settings → Billing & Documents → Templates) */
+const base = () => { const D = settings(), im = store.docImages || {};
+  return { seller: seller(), logo: store.logo || "", terms: D.terms, bank: D.bank, signature: D.signature, signImg: D.signImg && im.signature || "", stampImg: D.stampImg && im.stamp || "",
+    footer: store.settings && store.settings.footer || "" }; };
 
 /* ---------- a bill: Tax Invoice (with GST) or Bill ---------- */
 export function invoiceModel(s){
@@ -86,8 +92,9 @@ export function challanModel(o){
   if(!o || o.kind !== "sales") return null;
   const B = buyerOf(o), rows = (o.items || []).map((l, i) => { const left = Math.max(0, (+l.q || 0) - (+l.fq || 0));
     return [String(i + 1), { t: l.name || "", sub: l.vl || "" }, qtyText(l.q, l.u), qtyText(+l.fq || 0, l.u), qtyText(left, l.u)]; });
-  return Object.assign(base(), { kind: "challan", title: "Delivery Challan", number: (o.no || "Order") + "-DC",
-    meta: [["Challan no.", (o.no || "Order") + "-DC"], ["Date", day(Date.now())], ["Against order", o.no || ""]],
+  const no = challanNoOf(o.no, numberingFor("sales"), numberingFor("challan"), o.t || Date.now());
+  return Object.assign(base(), { kind: "challan", title: "Delivery Challan", number: no,
+    meta: [["Challan no.", no], ["Date", day(Date.now())], ["Against order", o.no || ""]],
     parties: [{ label: "Deliver to", name: B.name || "Customer", lines: [B.phone, B.address, B.gstin && "GSTIN " + B.gstin] }],
     columns: ["#", "Item", "Ordered", "Delivered before", "This delivery"], left: 2, rows, totals: [], terms: "", bank: "",
     notes: o.notes || "", notice: "Goods sent for delivery against the order above. This is not a bill.", signature: "Received by (name and signature)" });

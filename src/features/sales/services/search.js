@@ -3,6 +3,7 @@ import { store } from '../../../shared/state/store.js';
 import { variantsOf } from '../../../domain/catalog/variants.js';
 import { liveProducts } from '../../products/services/catalog.js';
 import { norm } from '../../../shared/utils/text.js';
+import { gtinKey, parseGs1 } from '../../../domain/catalog/gs1.js';
 
 export function variantText(p, v){ return norm([...(v.o || []), v.sku, v.bc].join(" ")); }
 export function productText(p){ return norm([p.name, p.cat, p.brand].join(" ")); }
@@ -17,14 +18,20 @@ export function sellProducts(){
     return toks.every(t => pt.includes(t) || vs.some(x => x.includes(t)));
   });
 }
-/* The exact variant for a scanned or typed code: barcode/QR text first (exactly as stored), then SKU (any case) */
+/* The exact variant for a scanned or typed code: barcode/QR text first (exactly as stored), then SKU (any case), then by
+   GTIN (domain/catalog/gs1.js): the same item's EAN-13 / UPC-A / GTIN-14, or a GS1 DataMatrix / GS1-128 / Digital Link of
+   it — then the hit carries what the code says (gs1: batch, serial, expiry …) */
 
 export function findByCode(code){
   const raw = String(code == null ? "" : code).trim(); if(!raw) return null;
   const all = liveProducts().flatMap(p => variantsOf(p).map(v => ({ p, v })));
   const lc = raw.toLowerCase();
-  return all.find(h => h.v.bc && h.v.bc.trim() === raw) || all.find(h => h.v.bc && h.v.bc.trim().toLowerCase() === lc)
-    || all.find(h => h.v.sku && h.v.sku.trim().toLowerCase() === lc) || null;
+  const exact = all.find(h => h.v.bc && h.v.bc.trim() === raw) || all.find(h => h.v.bc && h.v.bc.trim().toLowerCase() === lc)
+    || all.find(h => h.v.sku && h.v.sku.trim().toLowerCase() === lc);
+  if(exact) return exact;
+  const g = parseGs1(code), key = g ? g.gtin : gtinKey(raw);
+  const hit = key ? all.find(h => h.v.bc && gtinKey(h.v.bc.trim()) === key) : null;
+  return hit ? (g ? { ...hit, gs1: g } : hit) : null;
 }
 /* Individual variants matching every search word (e.g. "black xl") */
 

@@ -36,6 +36,8 @@ export function enqueue(item){
   // one waiting upload of the settings / logo is enough (it sends the latest value) — but not one already uploading:
   // that one may have read the old value, so a change made meanwhile gets its own upload
   if((item.type==="settings"||item.type==="logo")&&store.sbOfflineQueue.some(q=>q.type===item.type&&!q.tries&&!q.sending)){return}
+  if(item.type==="docimg"&&store.sbOfflineQueue.some(q=>q.type==="docimg"&&q.kind===item.kind&&!q.tries&&!q.sending)){return}
+  if(item.type==="autolog"&&store.sbOfflineQueue.some(q=>q.type==="autolog"&&!q.tries&&!q.sending)){return}   // one upload carries the whole log
   // one waiting upload per record (a bill, return, customer, move, event…): a later change replaces it where it stands
   store.sbOfflineQueue=mergeIntoQueue(store.sbOfflineQueue,item);saveSbQueue();
 }
@@ -83,6 +85,10 @@ export async function sendItem(item){
     await cloud.saveSettings(store.settings);
   } else if(item.type === "logo"){
     await cloud.saveLogo(store.logo || "");
+  } else if(item.type === "autolog"){
+    await cloud.saveAutomationLog(store.dev, (store.autoLog || []).filter(e => e.dev === store.dev));
+  } else if(item.type === "docimg"){
+    await cloud.saveDocImage(item.kind, (store.docImages || {})[item.kind] || "");
   } else if(item.type === "allsales"){
     await cloud.saveAllSales(D().sales);
   } else if(item.type === "collection"){
@@ -191,15 +197,17 @@ export function discardReview(index){
 }
 /* Review list: a bill or return refused because another one of the shop already has its number (two devices that took the
    same series before either saw the other's documents, a reinstall…) gets a new number and is sent again. When the clash
-   is in this device's own series, the device first moves to a series no other device uses (a till letter), so it can't
-   happen again. The old number was never saved in the cloud. → { ok, no } or { error }. A team member needs the right to
-   make that record. */
+   is in this device's own series and the number's holder is another device's document (or one this device hasn't seen),
+   the device first moves to a series no other device uses (a till letter), so it can't happen again; a clash with this
+   device's own document only takes the next number of its series. The old number was never saved in the cloud.
+   → { ok, no } or { error }. A team member needs the right to make that record. */
 export function renumberReview(index){
   const r = (store.syncReview||[])[index]; if(!numberTaken(r)) return { error: "This one isn't waiting for a new number." };
   const sale = r.item.type === "sale", no = denied(sale ? "create_sale" : "perform_return", sale ? "renumber bills" : "renumber returns"); if(no) return no;
   let fresh;
-  const type = sale ? "invoice" : "credit", was = parseDocNo(sale ? r.item.sale.no : r.item.ret.no, numberingFor(type));
-  if(was && was.till === deviceTill()) moveTillAfterConflict();
+  const type = sale ? "invoice" : "credit", rec = sale ? r.item.sale : r.item.ret, was = parseDocNo(rec.no, numberingFor(type));
+  const holder = (sale ? D().sales : D().rets).find(x => x.no === rec.no && x.id !== rec.id);
+  if(was && was.till === deviceTill() && !(holder && holder.dev === store.dev)) moveTillAfterConflict();
   if(sale){
     const id = r.item.sale.id; fresh = nextNumber("invoice", D().sales, r.item.sale.t, { claim: true });
     // the bill as kept in its day on this device (D() hands out copies)

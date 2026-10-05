@@ -109,6 +109,12 @@ const a4pdf = Buffer.from(docPdfBytes({ seller: { name: 'Aura Threads', lines: [
   meta: [['Invoice no.', 'INV-1'], ['Date', '25 September 2026'], ['Place of supply', 'Dadra and Nagar Haveli and Daman and Diu (26)']],
   parties: [], columns: ['#', 'Item', 'Amount'], left: 2, rows: [['1', { t: 'Kurta' }, 'Rs 999']], totals: [['Total', 'Rs 999', true]] })).toString('latin1');
 check('A4 PDF: a long place of supply wraps and keeps its code (26), nothing cut off', a4pdf.startsWith('%PDF') && a4pdf.includes('(Daman and Diu \\(26\\))') && !/Dadra and Nagar[^)]*\.\.\./.test(a4pdf), a4pdf.match(/\((?:Dadra|Haveli|Daman)[^)]*\)/g));
+const onAcct = { ...inv, payments: [{ ...inv.payments[0], amount: 1000, received: 1000, change: 0 }], paid: 1000, balance: inv.totals.due - 1000 };
+const acctLines = thermalReceipt(onAcct, { cols: 48 }).lines.map((l) => l.text);
+check('printed receipt of a bill left partly on account: what was paid, then BALANCE DUE (on account) — never "Paid" for the whole bill', acctLines.some((t) => /Paid by Cash\s+1,000\.00/.test(t))
+  && acctLines.some((t) => /BALANCE DUE \(on account\)\s+[\d,]+\.\d\d/.test(t)) && !acctLines.some((t) => /Nothing to pay/.test(t)), acctLines.slice(-12));
+const allAcct = thermalReceipt({ ...inv, payments: [], paid: 0, balance: inv.totals.due }, { cols: 48 }).lines.map((l) => l.text);
+check('...and of a bill all on account: no "Nothing to pay", only the balance due', !allAcct.some((t) => /Nothing to pay/.test(t)) && allAcct.some((t) => /BALANCE DUE/.test(t)), allAcct.slice(-8));
 const longNo = thermalReceipt({ ...inv, number: 'INV-260925-001' }, { cols: 32 }).lines.map((l) => l.text), cashBig = { ...inv, payments: [{ ...inv.payments[0], received: 12000, change: 1499.5 }] };
 check('58 mm: the bill number and the cash received are printed whole', longNo.some((t) => t.includes('Bill: INV-260925-001')) && longNo.every((t) => t.length <= 32)
   && thermalReceipt(cashBig, { cols: 32 }).lines.some((l) => l.text.includes('Received 12,000.00')));
@@ -264,13 +270,48 @@ store.sbOfflineQueue[0].sending = true; enqueue({ type: 'logo' });
 check('a logo changed while the old one is uploading gets its own upload', store.sbOfflineQueue.filter((q) => q.type === 'logo').length === 2);
 const { pullSettings } = await import('../../src/features/sync/services/pull.js');
 store.sbOfflineQueue = []; store.logo = 'data:old';
-override({ cloud: { fetchSettings: async () => null, fetchLogo: async () => { store.logo = 'data:new'; enqueue({ type: 'logo' }); return 'data:cloud'; } } });
+const IMGS = { signature: 'data:image/jpeg;base64,U0lH', stamp: '' };
+override({ cloud: { fetchSettings: async () => null, fetchDocImages: async () => IMGS, fetchLogo: async () => { store.logo = 'data:new'; enqueue({ type: 'logo' }); return 'data:cloud'; } } });
 await pullSettings();
 check('a logo picked while the cloud copy was downloading is kept (not replaced by the older cloud copy)', store.logo === 'data:new');
 store.sbOfflineQueue = [];
-override({ cloud: { fetchSettings: async () => null, fetchLogo: async () => 'data:cloud' } });
+override({ cloud: { fetchSettings: async () => null, fetchDocImages: async () => IMGS, fetchLogo: async () => 'data:cloud' } });
 await pullSettings();
 check('otherwise the cloud logo is brought down', store.logo === 'data:cloud');
+check('...and the signature and stamp with it', store.docImages && store.docImages.signature === IMGS.signature && store.docImages.stamp === '');
+// a signature picked on this device while the cloud copy was downloading is kept
+store.docImages = { signature: 'data:image/jpeg;base64,TUlORQ==', stamp: '' }; store.sbOfflineQueue = [];
+enqueue({ type: 'docimg', kind: 'signature' }); enqueue({ type: 'docimg', kind: 'signature' }); enqueue({ type: 'docimg', kind: 'stamp' });
+check('one waiting upload per picture (the signature twice → once; the stamp its own)', store.sbOfflineQueue.filter((q) => q.type === 'docimg').map((q) => q.kind).join() === 'signature,stamp');
+await pullSettings();
+check('a signature not yet uploaded is not replaced by the older copy in the cloud', store.docImages.signature === 'data:image/jpeg;base64,TUlORQ==');
+
+
+// ---------- document templates: Standard, Classic, Modern, Compact; the authorised signature and the company stamp ----------
+{
+  const { DOC_TEMPLATES, checkDocSettings, docSettingsOf, docImagesOf } = await import('../../src/domain/documents/doc-settings.js');
+  const { documentHTML } = await import('../../src/features/receipts/components/doc-render.js');
+  check('templates: Standard, Classic, Modern and Compact', DOC_TEMPLATES.map((t) => t.key).join() === 'standard,classic,modern,compact');
+  check('a shop that chose "Minimal" before gets Standard (the same look under its new name)', docSettingsOf({ docTpl: 'minimal' }).template === 'standard' && checkDocSettings({ docTpl: 'minimal', docAccent: '#1D5BBF' }).patch.docTpl === 'standard');
+  const saved = checkDocSettings({ docTpl: 'compact', docAccent: '#0B6B35', docGst: true, docTerms: '', docSign: '', docBank: '', docSignImg: false, docStampImg: true }).patch;
+  check('the signature and stamp are printed unless switched off (each on its own)', docSettingsOf({}).signImg && docSettingsOf({}).stampImg && saved.docSignImg === false && saved.docStampImg === true
+    && docSettingsOf(saved).signImg === false && docSettingsOf(saved).template === 'compact');
+  check('only pictures are kept as the signature or stamp (anything else from a device or backup is dropped)', docImagesOf({ signature: 'data:image/jpeg;base64,AAAA', stamp: 'javascript:alert(1)' }).stamp === '' && docImagesOf(null).signature === '');
+  // a tiny JPEG header (enough for the PDF writer to read its size)
+  const jpg = (w, h) => 'data:image/jpeg;base64,' + Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, h >> 8, h & 255, w >> 8, w & 255, 0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01, 0xff, 0xd9]).toString('base64');
+  const M = { seller: { name: 'Aura Threads', lines: ['12 MG Road'] }, title: 'Tax Invoice', meta: [['Invoice no.', 'INV-000001']], parties: [], columns: ['#', 'Item', 'Amount'], left: 2,
+    rows: [['1', { t: 'Kurta' }, 'Rs 999']], totals: [['Total', 'Rs 999', true]], signImg: jpg(300, 90), stampImg: jpg(200, 200) };
+  const html = documentHTML(M, { template: 'compact' });
+  check('the A4 document (preview, print) carries the signature above "Authorised signatory" and the stamp beside it, in the Compact template',
+    /class="doc t-compact/.test(html) && /<img class="d-signimg" src="data:image\/jpeg;base64,[^"]+" alt="Authorised signature">/.test(html) && /<img class="d-stamp" src="data:image\/jpeg;base64,[^"]+" alt="Company stamp">/.test(html)
+    && html.indexOf('d-signimg') < html.indexOf('Authorised signatory'));
+  check('...and without them, neither picture is drawn', !/d-signimg|d-stamp/.test(documentHTML({ ...M, signImg: '', stampImg: '' }, { template: 'standard' })));
+  const pdf = Buffer.from(docPdfBytes(M, { template: 'compact', accent: '#1D5BBF' })).toString('latin1');
+  check('the PDF embeds the signature and stamp once each (Im2, Im3) and draws them on the page', /\/XObject << \/Im2 \d+ 0 R \/Im3 \d+ 0 R >>/.test(pdf) && /\/Im2 Do/.test(pdf) && /\/Im3 Do/.test(pdf)
+    && (pdf.match(/\/Subtype \/Image/g) || []).length === 2, pdf.match(/\/XObject << [^>]+>>/));
+  const plain = Buffer.from(docPdfBytes({ ...M, signImg: '', stampImg: '' }, { template: 'standard' })).toString('latin1');
+  check('...a PDF without them has no pictures (and still the signatory line)', !/\/Subtype \/Image/.test(plain) && /Authorised signatory/.test(plain));
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

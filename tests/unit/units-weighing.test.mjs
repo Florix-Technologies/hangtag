@@ -1,10 +1,11 @@
-// Units, decimal quantities, device-scoped document numbers and weighing (schema.sql section 3k, batch T1): the units
-// module (checkQty, fmtQty, exact sums), bill / credit note numbers per device (two phones offline never make the same one),
+// Units, decimal quantities, till-scoped document numbers and weighing (schema.sql section 3k, batch T1): the units
+// module (checkQty, fmtQty, exact sums), short bill / credit note numbers with offline-safe till series,
 // the scale line parser and the Web Serial provider with a fake port, bills and returns of weights (2.5 kg, 0.75 back), the
 // stock ledger in thousandths, the weigh-to-cart use case and its permission, and a refused duplicate number in the sync
 // review given a new one. Run: npm run test:unit
 import { UNITS, checkQty, convertQty, decimalsOf, fmtQty, isDecimalUnit, isMeasured, isWeighed, perUnit, qtyText, roundQty, subQty, sumQty, unitId, unitOf } from '../../src/domain/catalog/units.js';
-import { deviceCode, formatCreditNoteNo, formatInvoiceNo, nextDocNo, nextDocSeq, pcsOf, splitDeviceNo } from '../../src/domain/sales/sale.js';
+import { pcsOf } from '../../src/domain/sales/sale.js';
+import { challanNoOf, checkNumberingSettings, formatDocNo, nextDocNo, nextDocSeq, numberingOf, splitDeviceNo, tillFor } from '../../src/domain/documents/numbering.js';
 import { createManualScale, createSerialScale, createWeightScale, parseScaleLine } from '../../src/infrastructure/hardware/weight-scale.js';
 import { checkScaleSettings, scaleSettingsOf } from '../../src/domain/shop/scale-settings.js';
 import { computeCheckout } from '../../src/domain/sales/checkout-totals.js';
@@ -39,27 +40,37 @@ const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   check('convertQty: g → kg, kg → g, lb → kg, ml → l; weight ↔ volume refused', convertQty(750, 'g', 'kg') === 0.75 && convertQty(1.25, 'kg', 'g') === 1250 && convertQty(1, 'lb', 'kg') === 0.454 && convertQty(500, 'ml', 'l') === 0.5 && convertQty(1, 'kg', 'l') === null);
 }
 
-// ---------- document numbers per device ----------
+// ---------- professional document numbers per till ----------
 {
-  const t = new Date(2026, 8, 29, 10).getTime(), t2 = new Date(2026, 8, 30, 9).getTime();
+  const t = new Date(2026, 8, 29, 10).getTime(), t2 = new Date(2027, 4, 1, 9).getTime();
   const A = 'dev-aaaa-1111', B = 'dev-bbbb-2222';
-  check('device code: 3 characters 0-9 A-Z, the same for the same device, different for these two', /^[0-9A-Z]{3}$/.test(deviceCode(A)) && deviceCode(A) === deviceCode(A) && deviceCode(A) !== deviceCode(B), [deviceCode(A), deviceCode(B)]);
-  check('format: prefix, yymmdd, device code, 3-digit running number; old format without a device', formatInvoiceNo('INV-', t, 7, A) === 'INV-260929-' + deviceCode(A) + '007' && formatInvoiceNo('INV-', t, 7) === 'INV-260929-007'
-    && formatCreditNoteNo(t, 1, A) === 'CN-260929-' + deviceCode(A) + '001');
-  // two phones selling offline the same morning: each counts only its own bills of the day
+  const cfg = { prefix: 'INV-', start: 1, padding: 6, suffix: '' };
+  check('format: short padded customer number; a second till gets one compact letter', formatDocNo(cfg, t, 7) === 'INV-000007' && formatDocNo(cfg, t, 7, 'B') === 'INV-B-000007');
+  // Two tills keep independent consecutive series. A sync conflict moves a device to a free letter; numbers stay short.
   const billsA = [], billsB = [];
   for (let k = 0; k < 5; k++) {
-    billsA.push({ no: nextDocNo('INV-', billsA, t + k, A), t: t + k, dev: A });
-    billsB.push({ no: nextDocNo('INV-', billsB, t + k, B), t: t + k, dev: B });
+    billsA.push({ no: nextDocNo(billsA, cfg, t + k), t: t + k, dev: A });
+    billsB.push({ no: nextDocNo(billsB, cfg, t + k, 'B'), t: t + k, dev: B });
   }
   const all = [...billsA, ...billsB].map((b) => b.no);
-  check('two devices offline the same day never make the same number', new Set(all).size === 10 && billsA[4].no.endsWith(deviceCode(A) + '005') && billsB[0].no.endsWith(deviceCode(B) + '001'), all);
-  check('after syncing, each keeps its own series (the other device\'s bills don\'t move it)', nextDocSeq([...billsA, ...billsB], t + 9, A) === 6 && nextDocSeq([...billsA, ...billsB], t + 9, B) === 6);
-  check('a new day starts at 001', nextDocNo('INV-', billsA, t2, A) === 'INV-260930-' + deviceCode(A) + '001');
-  check('past the highest number in the series even when this device knows fewer bills (a reinstall with the same id)', nextDocSeq([{ no: 'INV-260929-' + deviceCode(A) + '012', t, dev: 'someone-else' }], t, A) === 13);
-  check('old numbers on the day don\'t confuse the series', nextDocSeq([{ no: 'INV-260929-004', t, dev: A }], t, A) === 2);
-  check('quotes / sales orders / kitchen tickets use the same scheme', /^QT-260929-[0-9A-Z]{3}001$/.test(nextDocNo('QT-', [], t, A)) && /^SO-260929-[0-9A-Z]{3}002$/.test(nextDocNo('SO-', [{ no: 'SO-x', t, dev: A }], t, A)));
+  check('main and second-till offline series do not collide', new Set(all).size === 10 && billsA[4].no === 'INV-000005' && billsB[0].no === 'INV-B-000001', all);
+  check('after syncing, each keeps its own series (the other till\'s bills do not move it)', nextDocSeq([...billsA, ...billsB], cfg, t + 9) === 6 && nextDocSeq([...billsA, ...billsB], cfg, t + 9, 'B') === 6);
+  check('ordinary numbering continues across dates', nextDocNo(billsA, cfg, t2) === 'INV-000006');
+  check('past the highest visible number in the same series', nextDocSeq([{ no: 'INV-000012', t, dev: 'someone-else' }], cfg, t) === 13);
+  check('historical date/device numbers remain untouched and do not confuse the new series', nextDocSeq([{ no: 'INV-260929-K3F004', t, dev: A }], cfg, t) === 1);
+  check('quotes and sales orders use separate short series', nextDocNo([], { ...cfg, prefix: 'QT-' }, t) === 'QT-000001' && nextDocNo([{ no: 'SO-000001' }], { ...cfg, prefix: 'SO-' }, t) === 'SO-000002');
+  const fyCfg = { prefix: 'INV/{FY}/', start: 1, padding: 3, suffix: '' };
+  check('a {FY} series restarts only when the financial year changes', nextDocNo([{ no: 'INV/26-27/009' }], fyCfg, t) === 'INV/26-27/010' && nextDocNo([{ no: 'INV/26-27/009' }], fyCfg, t2) === 'INV/27-28/001');
+  check('a new device takes main when free, then the first free till letter after seeing main', tillFor({ stored: null, dev: A, docs: [] }) === ''
+    && tillFor({ stored: null, dev: B, docs: [{ no: 'INV-000001', dev: A, t, cfg }] }) === 'B');
+  const valid = checkNumberingSettings(cfg, { t, till: 'B' });
+  check('normal settings preview is GST/e-invoice length-safe', valid.preview === 'INV-B-000001' && valid.length <= 16 && !valid.error, valid);
+  const tooLongForAnotherTill = checkNumberingSettings({ prefix: 'ABCDEFGHIJ', start: 1, padding: 6, suffix: '' }, { t });
+  check('settings cannot save a number that would exceed 16 characters on a second till', tooLongForAnotherTill.field === 'length' && /second till/.test(tooLongForAnotherTill.error), tooLongForAnotherTill);
   check('splitDeviceNo: series + number; other numbers null', eq(splitDeviceNo('INV-260929-K3F012'), { series: 'INV-260929-K3F', n: 12 }) && splitDeviceNo('INV-260929-012') === null && splitDeviceNo('') === null);
+  { const so = numberingOf({ prefix: 'SO-' }), dc = numberingOf({ prefix: 'DC-' });
+    check('a delivery challan takes the running number of its order in the DC series (SO-000127 → DC-000127, a second till SO-B-000004 → DC-B-000004); an older order keeps "<no>-DC"',
+      challanNoOf('SO-000127', so, dc, Date.now()) === 'DC-000127' && challanNoOf('SO-B-000004', so, dc, Date.now()) === 'DC-B-000004' && challanNoOf('SO-260929-K3F001', so, dc, Date.now()) === 'SO-260929-K3F001-DC'); }
   check('pieces on a bill: a weighed line counts as one item', pcsOf({ items: [{ q: 2 }, { q: 2.5, u: 'kg' }, { q: 1.2, u: 'm' }] }) === 4 && pcsOf({ items: [{ q: 2 }, { q: 3, u: 'box' }] }) === 5);
 }
 
@@ -208,15 +219,16 @@ Object.assign(store, { dev: 'dev-aaaa-1111', remoteDays: {}, localDays: {}, dirt
   recordSale(s1);
   const s2 = newSaleRecord([{ v: 'tee:', p: 'tee', name: 'Tee', q: 1, price: 500 }], null, 'cash', { cust: null });
   recordSale(s2);
-  const code = deviceCode('dev-aaaa-1111');
-  check('bills get this device\'s numbers: …-' + code + '001, 002', new RegExp('^INV-\\d{6}-' + code + '001$').test(s1.no) && s2.no.endsWith(code + '002'), [s1.no, s2.no]);
+  check('bills get short consecutive customer-facing numbers', s1.no === 'INV-000001' && s2.no === 'INV-000002', [s1.no, s2.no]);
   check('the bill line keeps its unit and weight; the bill notes who made it', s1.items[0].q === 2.5 && s1.items[0].u === 'kg' && s1.user === 'owner-1' && s1.sub === 107.5);
   check('stock after selling 2.5 kg: 7.5 kg', stockOf('rice:') === 7.5);
   // another phone of the shop, same day, offline: its own series
+  storage.remove('hangtag_till');
   store.dev = 'dev-bbbb-2222';
   const s3 = newSaleRecord([{ v: 'tee:', p: 'tee', name: 'Tee', q: 1, price: 500 }], null, 'cash', { cust: null });
-  check('a second device the same day, knowing these bills, still starts its own series at 001', s3.no.endsWith(deviceCode('dev-bbbb-2222') + '001') && s3.no !== s1.no, s3.no);
+  check('a second device that knows the main series starts its compact B series at 000001', s3.no === 'INV-B-000001' && s3.no !== s1.no, s3.no);
   store.dev = 'dev-aaaa-1111';
+  storage.set('hangtag_till', '');
 
   // the database refused a number (two phones with the same code): the review gives it the next one
   const taken = { item: { type: 'sale', id: s2.id, sale: { ...s2 } }, err: `Bill number ${s2.no} is already used by another bill of this shop.`, code: 'CONFLICT', t: Date.now() };
@@ -226,7 +238,7 @@ Object.assign(store, { dev: 'dev-aaaa-1111', remoteDays: {}, localDays: {}, dirt
   check('a member who may not sell can\'t renumber a bill', /can't renumber bills/.test(renumberReview(0).error) && store.syncReview.length === 1);
   store.access = null;
   const rn = renumberReview(0);
-  check('renumbered past this device\'s bills, saved on the bill and queued again', rn.ok && rn.no.endsWith(code + '003') && D().saleById[s2.id].no === rn.no && store.syncReview.length === 0
+  check('a number collision moves this device to a free till series, saves the bill and queues it again', rn.ok && rn.no === 'INV-B-000001' && D().saleById[s2.id].no === rn.no && store.syncReview.length === 0
     && store.sbOfflineQueue.some((q) => q.type === 'sale' && q.sale && q.sale.no === rn.no), { rn, q: store.sbOfflineQueue });
 }
 

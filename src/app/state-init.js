@@ -1,4 +1,6 @@
 // Start-up values of the application state (restored from this device's storage, through the "storage" port, where saved).
+import { docImagesOf } from '../domain/documents/doc-settings.js';
+import { mergeLogs } from '../domain/automation/rules.js';
 import { store } from '../shared/state/store.js';
 import { DEFAULT_SETTINGS } from '../domain/shop/settings.js';
 import { discountInput } from '../domain/sales/discounts.js';
@@ -68,6 +70,8 @@ export function initState(){
   store.gstView = null;         // the GST filing view: { month } or { from, to }
   store.cartCust = storage.get("rc_cartcust",null);            // customer on the bill being rung up
   store.logo = storage.get("rc_logo","") || "";                // shop logo for receipts (small data URL; synced as hangtag_meta "logo")
+  store.autoLog = mergeLogs(storage.get("rc_autolog",[]) || []);   // the automation log (domain/automation/rules.js): this device's and, from the cloud, the other devices'
+  store.docImages = docImagesOf(storage.get("rc_docimg",null)); // authorised signature and company stamp on A4 documents (hangtag_meta "doc_signature" / "doc_stamp")
   store.printer = printerOf(storage.get("rc_printer",null));    // this device's receipt printer (not synced: each till has its own)
   store.printState = null;      // the last print from a bill: { sid, status: "printing"|"done"|"error", message }
   store.scale = scaleSettingsOf(storage.get("hangtag_scale",null));   // this device's weighing scale (not synced: each counter has its own)
@@ -84,6 +88,7 @@ export function initState(){
   store.lastSale = null;
   store.showAllBills = false;
   store.billQuery = "";
+  store.billLimit = 50;         // Bills: how many of the bills found are drawn (Show more adds the next page)
   store.warnedFull = false;
   store.sellQuery = "";
   store.sellCat = "";

@@ -27,20 +27,26 @@ const check = (name, ok, info) => { if(ok) passed++; else failed++; console.log(
 {
   const modules = [
     { id: 'home', order: 1, perms: ['view_products'] }, { id: 'sell', order: 2, perms: ['create_sale'] },
-    { id: 'stock', order: 3, perms: ['view_products', 'manage_inventory'] }, { id: 'report', order: 4, perms: ['view_reports'] },
-    { id: 'customers', order: 5, perms: ['create_sale'] }, { id: 'settings', order: 6, perms: [] },
+    { id: 'bills', order: 3, perms: ['create_sale', 'view_reports'] }, { id: 'stock', order: 4, perms: ['view_products', 'manage_inventory'] },
+    { id: 'report', order: 5, perms: ['view_reports'] }, { id: 'customers', order: 6, perms: ['create_sale'] }, { id: 'settings', order: 7, perms: [] },
   ];
-  const cashier = mobileModulesFor('cashier', modules, ['view_products', 'create_sale']).map(x => x.id);
-  const custom = mobileModulesFor('cashier', modules, ['view_products', 'create_sale', 'view_reports']).map(x => x.id);
+  const allowed = permissions => modules.filter(def => !def.perms.length || def.perms.some(p => permissions.includes(p)));
+  const cashierPerms = ['view_products', 'create_sale'];
+  const cashierModules = allowed(cashierPerms);
+  const cashier = mobileModulesFor('cashier', cashierModules, cashierPerms).map(x => x.id);
+  const customPerms = [...cashierPerms, 'view_reports'];
+  const custom = mobileModulesFor('cashier', allowed(customPerms), customPerms).map(x => x.id);
   const owner = mobileModulesFor('owner', [...modules, { id: 'extension', order: 7, perms: [] }], []).map(x => x.id);
-  check('cashier phone hides irrelevant default stock/report modules', JSON.stringify(cashier) === JSON.stringify(['sell', 'customers', 'home', 'settings']), cashier);
+  check('cashier phone keeps the intended Home, Sell, Bills and Stock workflow while Reports stays hidden', JSON.stringify(cashier) === JSON.stringify(['home', 'sell', 'bills', 'stock', 'customers', 'settings']), cashier);
   check('a custom report permission surfaces Reports without weakening permission checks', custom.includes('report') && !cashier.includes('report'), custom);
   check('owner phone keeps future modules after the known workflow instead of ranking them first', owner.at(-1) === 'extension', owner);
-  check('a role switch moves a phone off a newly hidden current tab', mobileLandingModule('cashier', modules, ['view_products', 'create_sale'], 'stock') === 'sell');
+  check('a role switch moves a phone off a newly hidden current tab', mobileLandingModule('cashier', cashierModules, cashierPerms, 'report') === 'home');
   const withSettingsPage = modules.map((m) => (m.id === 'settings' ? { ...m, landing: false } : m));
   check('a role with no work screen lands nowhere (never on Settings by itself), but stays on Settings it chose',
     mobileLandingModule('kitchen', withSettingsPage, ['manage_kitchen'], 'sell') === null && mobileLandingModule('kitchen', withSettingsPage, ['manage_kitchen'], 'settings') === 'settings');
   check('role home actions are ordered and unknown actions are omitted', JSON.stringify(orderMobileActions('server', [{ id: 'orders' }, { id: 'sale' }, { id: 'tables' }]).map(x => x.id)) === JSON.stringify(['tables', 'orders']));
+  check('the owner and manager keep Scan to sell and Tables among their home actions (they were dropped before)', JSON.stringify(orderMobileActions('owner', [{ id: 'stock' }, { id: 'tables' }, { id: 'scan' }, { id: 'sale' }]).map(x => x.id)) === JSON.stringify(['sale', 'scan', 'tables', 'stock'])
+    && JSON.stringify(orderMobileActions('manager', [{ id: 'tables' }, { id: 'stock' }, { id: 'reorder' }]).map(x => x.id)) === JSON.stringify(['reorder', 'stock', 'tables']));
 }
 
 // Voice is an optional browser adapter and has a typed-search fallback when absent.
@@ -54,6 +60,15 @@ const check = (name, ok, info) => { if(ok) passed++; else failed++; console.log(
   }
   const voice = createBrowserSpeech({ scope: { SpeechRecognition: Recognition } });
   check('voice adapter returns the device transcript for the existing search input', voice.available() && await voice.listen() === 'Samsung 256 black');
+  // the microphone is asked for from the Voice tap itself (getUserMedia: the browser's own prompt), and released at once
+  let stopped = 0, asked = 0;
+  const mic = (outcome) => createBrowserSpeech({ scope: { SpeechRecognition: Recognition, navigator: { mediaDevices: { getUserMedia: async (c) => { asked++;
+    if (outcome === 'ok') return { getTracks: () => [{ stop: () => { stopped++; } }] }; throw Object.assign(new Error(outcome), { name: outcome }); } } } } });
+  const granted = await mic('ok').requestMic();
+  check('voice: asking for the microphone uses the browser prompt and releases the microphone straight away', granted === 'granted' && asked === 1 && stopped === 1);
+  check('voice: a refused prompt reads as denied, no microphone as no-mic, anything else as failed', await mic('NotAllowedError').requestMic() === 'denied'
+    && await mic('NotFoundError').requestMic() === 'no-mic' && await mic('AbortError').requestMic() === 'failed');
+  check('voice: a browser without getUserMedia says so (speech recognition then asks by itself)', await createBrowserSpeech({ scope: { SpeechRecognition: Recognition, navigator: {} } }).requestMic() === 'unsupported');
 }
 
 // Provider-neutral contract: aliases are normalized and fees exist only when the provider supplies them.

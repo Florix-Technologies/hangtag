@@ -9,6 +9,7 @@
 // Inside a workspace, a bar on its page chooses the task (Sell: New sale · Held bills · Quotations …; Stock: Stock ·
 // Products · Purchases …; features/shop/components/module-page.js). One list of buttons serves both widths: .pb marks the
 // tab-bar places (styles/10-shell.css shows only those on a phone).
+import { applyRegion } from '../features/shop/services/region.js';
 import { store } from '../shared/state/store.js';
 import { invalidate } from '../features/inventory/services/ledger.js';
 import { renderReturnSheet } from '../features/returns/components/return-sheet.js';
@@ -27,6 +28,7 @@ import { chooseSubview, moduleDef, moduleShown, registeredModules, shownModules 
 import { moreGroups, navWhere, primaryNav } from '../features/shop/services/nav-model.js';
 import { currentPerms, currentRole } from '../features/shop/services/access.js';
 import { mobileLandingModule, mobileModulesFor, phoneBarFor } from '../domain/shop/mobile-workflow.js';
+import { renderGlobalActions } from '../features/search/components/open-anything.js';
 
 /* ================= render + navigation ================= */
 
@@ -71,6 +73,7 @@ export function renderNav(){
   }
   const none = !tabOpen(store.prefs.tab);
   drawNav();
+  renderGlobalActions();
   const where = none ? { area: "", id: "" } : navWhere(), { bar } = phoneNav(), wide = window.innerWidth >= 1000;
   // the places the bar shows at this width: every workspace on a desktop, the tab-bar places on a phone
   const barAreas = new Set($$(wide ? ".nav .navi" : ".nav .navi.pb").map(b => b.dataset.area));
@@ -89,6 +92,7 @@ export function renderNav(){
   $$("[data-density]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.density === store.prefs.density)));
 }
 function renderViews(){
+  applyRegion();   // money, dates and phone numbers the shop's way (features/shop/services/region.js)
   invalidate(); renderNav(); renderSync();
   const t = tabOpen(store.prefs.tab) ? store.prefs.tab : "", d = t && moduleDef(t);   // "": no screen for this role (renderNav shows the note)
   if(d && typeof d.render === "function") d.render();
@@ -117,7 +121,9 @@ export function openDestination(id){
 /* "More": every area the bar doesn't hold, in groups (a phone or tablet: its tab bar; a desktop: its workspace bar) */
 export function openNavMore(){
   const phone = phoneNav(), where = navWhere(), bar=window.innerWidth<1000?phone.bar:primaryNav().map(x=>x.tab);
-  const groups = moreGroups(bar, window.innerWidth < 1000 ? phone.allowed : null);
+  // a destination already one tap away in the app bar (the Hangtag Agent button on a desktop) isn't listed again
+  const agentBtn = $("#globalActions [data-tab=\"assistant\"]"), inHeader = new Set(agentBtn && agentBtn.offsetParent !== null ? ["assistant"] : []);
+  const groups = moreGroups(bar, window.innerWidth < 1000 ? phone.allowed : null).map(g => ({ ...g, items: g.items.filter(it => !inHeader.has(it.tab)) })).filter(g => g.items.length);
   $("#modalHost").innerHTML = `<div class="scrim" data-modal-scrim><div class="sheet navsheet" role="dialog" aria-modal="true" aria-labelledby="navMoreT">
     <div class="sh-head"><h3 id="navMoreT" style="margin:0;flex:1">More</h3><button class="iconbtn" type="button" data-modal-close aria-label="Close">${ICON.x}</button></div>
     ${groups.map(g => `<div class="navgrp">${g.label ? `<h4>${esc(g.label)}</h4>` : ""}<div class="navlist">${g.items.map(it =>

@@ -30,6 +30,10 @@
 
 /* the bill view: the receipt / A4 switch, Print and the Actions menu; A4 documents in their own frame */
 .billtools{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px}
+.billtools .btnrow{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}
+@media (max-width:599px){.billtools{align-items:stretch}.billtools .billpaper{flex:1 1 100%}.billtools .billpaper button{flex:1}.billtools .btnrow{flex:1 1 100%;display:grid;grid-template-columns:repeat(4,minmax(0,1fr))}.billtools .btnrow>.btn,.billtools .btnrow>.menuwrap>.btn{width:100%;min-height:var(--tap);padding-inline:6px}.billtools .btnrow>.menuwrap{display:block}}
+.billview .billchips{display:inline-flex;flex-wrap:wrap;gap:4px 6px;vertical-align:middle}
+.billview .billowed{margin:2px 0 0;font-size:13px;font-weight:600;color:var(--warn-ink)}
 .billview .sh-t h3{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .docprev{background:var(--wash);border-radius:var(--r-md);padding:10px;overflow:hidden}
 .docframe{display:block;width:100%;min-height:420px;border:0;background:#fff;border-radius:4px;box-shadow:var(--shadow-sm)}
@@ -49,9 +53,19 @@
 .tpl-classic{border-style:double;border-width:3px}.tpl-classic i{border:1px solid var(--line-2);background:none}
 .tpl-minimal i:first-child{background:none;border-bottom:1px solid var(--ink-3);border-radius:0}
 .accpick{display:flex;gap:10px;flex-wrap:wrap}
-.accsw{display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer}
-.accsw input{position:absolute;opacity:0;pointer-events:none}
+.accsw{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-width:44px;min-height:44px;cursor:pointer}
+.accsw input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;pointer-events:none}
 .accsw span{width:30px;height:30px;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(0,0,0,.12)}
 .accsw:has(input:checked) span{box-shadow:0 0 0 2px var(--bg),0 0 0 4px var(--ink)}
 .accsw:has(input:focus-visible) span{outline:2px solid var(--accent);outline-offset:3px}
 .accsw small{font-size:11.5px;color:var(--ink-3)}
+/* Templates: the live preview of the real document (it follows the form), the signature and stamp cards */
+.doclive{margin:10px 0 6px;max-height:560px;overflow:auto;border:1px solid var(--line);border-radius:var(--r-md);background:var(--wash)}
+.doclive .rcpt-prev{margin:0}
+.docpics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:6px 0 4px}
+.docpic{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--bg);min-width:0}
+.docpic>b{font-size:13.5px}
+.docpic-prev{display:grid;place-items:center;height:84px;border:1px dashed var(--line-2);border-radius:var(--r-sm);background:#fff;overflow:hidden}
+.docpic-prev img{max-width:92%;max-height:74px;object-fit:contain}
+.docpic-acts{display:flex;flex-wrap:wrap;gap:6px}.docpic .chk{margin:0;font-size:13px}
+@media (max-width:520px){.docpics{grid-template-columns:1fr}}

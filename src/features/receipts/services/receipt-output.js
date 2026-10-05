@@ -13,6 +13,8 @@ import { esc } from '../../../shared/dom.js';
 import { dtLong } from '../../../shared/formatting/dates.js';
 import { inr, inrx } from '../../../shared/formatting/money.js';
 import { logger } from '../../../shared/logging/logger.js';
+import { phoneDigits } from '../../../shared/formatting/regions.js';
+import { shopRegion } from '../../shop/services/region.js';
 
 /* The browser's print dialog, with a print-only page (80 mm receipt or A4 invoice, as set in Billing settings) */
 export function printSale(sid,want){
@@ -81,7 +83,8 @@ export async function shareReceipt(sid){
   }catch(e){ if(e&&e.name==="AbortError") return; logger.warn("Share failed:", e); }
   await downloadReceipt(sid);
 }
-export function waPhone(p){ let d=String(p||"").replace(/\D/g,""); if(d.length===10) d="91"+d; if(d.length===11&&d[0]==="0") d="91"+d.slice(1); return d.length>=11?d:""; }
+/* A phone number as WhatsApp wants it: the shop's country code and the number (shared/formatting/regions.js) */
+export const waPhone=p=>phoneDigits(p,shopRegion());
 /* WhatsApp on this device, with the bill typed in: the person presses Send in WhatsApp (nothing is sent from here) */
 export function whatsappReceipt(sid){
   const s=D().saleById[sid]; if(!s) return;

@@ -86,7 +86,7 @@ check('bill saved: 2 Tee M sold', stockOf('p1:M') === 8 && D().saleById[s1.id].t
 let r = recordReturn({ sid: s1.id, picks: { 0: 1 }, mode: 'return', pay: 'cash', reason: 'Wrong size' });
 const tee = s1.items[0];
 check('partial return: refund is what one Tee was paid (its share after the 10% and with 12% GST)', !r.error && r.refund === Math.round(tee.lt / 2 * 100) / 100 && r.ret.value === r.refund, { r, lt: tee.lt });
-check('credit note number in its own series', /^CN-\d{6}-[0-9A-Z]{3}001$/.test(r.ret.no), r.ret.no);
+check('credit note number in its own short series', /^CN-(?:[B-HJ-NP-Z]-)?\d{6}$/.test(r.ret.no), r.ret.no);
 check('return line keeps the GST reversed at the bill\'s rate, the HSN, and goes back on the shelf', r.ret.items[0].gst === 12 && r.ret.items[0].hsn === '6109' && r.ret.items[0].restock === true && P(r.ret.items[0].tx) + P(r.ret.items[0].cgst) + P(r.ret.items[0].sgst) === P(r.ret.value));
 check('stock +1 for the returned Tee', stockOf('p1:M') === 9);
 check('queued for upload, saved on this device', store.sbOfflineQueue.some((q) => q.type === 'return' && q.id === r.ret.id) && JSON.parse(storage.mem.rc_returns)[r.ret.id]);

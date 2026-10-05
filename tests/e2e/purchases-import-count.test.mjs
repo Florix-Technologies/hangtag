@@ -48,16 +48,18 @@ const TEE = await A.run(`const p=products().find(p=>p.name==="Tee");return {pid:
 const RICE = await A.run(`const p=products().find(p=>p.name==="Rice");return {pid:p.id,vid:p.variants[0].id,unit:p.unit}`);
 check('products saved (rice by the kg)', !!TEE.vid && RICE.unit === 'kg', RICE);
 
-console.log('--- Stock and Purchases in the navigation (phone) ---');
+console.log('--- Stock and its tasks in the navigation (phone) ---');
+// the bar picks the workspace (Stock); the workspace's own bar picks the task (Stock, Products, Stock count, Purchases …)
 await A.run(`setTab("stock");renderAll()`); await sleep(200);
 const parts = await A.P.$$eval('[data-subnav="stock"] [data-navsub],[data-subnav="stock"] [data-tab]', (b) => b.map((x) => x.dataset.navsub || x.dataset.tab));
-check('Stock shows its parts in a bar: Stock, Products and Stock count (purchasing is its own area)', ['stock:levels', 'products', 'stock:count'].every((p) => parts.includes(p)) && !parts.includes('stock:purchases'), parts);
+check('Stock shows its tasks in one bar: Stock, Products, Stock count, Purchases and Suppliers', ['stock:levels', 'products', 'stock:count', 'stock:purchases', 'stock:suppliers'].every((p) => parts.includes(p)), parts);
 await A.P.click('.nav [data-navmore]'); await sleep(200);
-const moreP = await A.P.$$eval('.navsheet .navgrp', (g) => g.map((x) => ({ h: ((x.querySelector('h4') || {}).textContent || '').trim(), items: [...x.querySelectorAll('[data-navsub],[data-tab]')].map((e) => e.dataset.navsub || e.dataset.tab) })).find((x) => x.h === 'Purchases'));
-check('More → Purchases lists Purchases and Suppliers', !!moreP && ['stock:purchases', 'stock:suppliers'].every((p) => moreP.items.includes(p)), moreP);
-await A.P.click('.navsheet [data-navsub="stock:purchases"]'); await sleep(250);
+const moreItems = await A.P.$$eval('.navsheet .navitem', (b) => b.map((x) => x.dataset.navsub || x.dataset.tab));
+check('More doesn\'t repeat Stock\'s tasks (no Purchases or Suppliers there)', moreItems.length > 0 && !moreItems.includes('stock:purchases') && !moreItems.includes('stock:suppliers'), moreItems);
+await A.run('closeModal()'); await sleep(100);
+await A.P.click('[data-subnav="stock"] [data-navsub="stock:purchases"]'); await sleep(250);
 const pparts = await A.P.$$eval('[data-subnav="stock"] [data-navsub]', (b) => b.map((x) => x.dataset.navsub + (x.getAttribute('aria-pressed') === 'true' ? '*' : '')));
-check('Purchases opens with its own bar (Purchases · Suppliers), Purchases chosen', pparts.includes('stock:purchases*') && pparts.includes('stock:suppliers'), pparts);
+check('Purchases opens from Stock\'s bar, chosen there (Suppliers next to it)', pparts.includes('stock:purchases*') && pparts.includes('stock:suppliers') && await A.run('return currentSubview("stock").id==="purchases"'), pparts);
 
 console.log('--- suppliers and a purchase ---');
 const SUP = await A.run(`const r=saveSupplier({name:"Ravi Textiles",phone:"9876543210",gstin:"27ABCDE1234F1Z5"});await flushSbQueue();return r.supplier&&r.supplier.id`);

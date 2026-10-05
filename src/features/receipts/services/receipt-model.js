@@ -33,8 +33,10 @@ export function receiptText(s){
   if(T.roundOff) L.push("Round off: "+(T.roundOff>0?"+":"")+inrx(T.roundOff));
   L.push(`*Total: ${inr(T.total)}*`+(I.inclusive&&G.length?` (incl. ${G.map(g=>g.label+" "+inrx(g.amount)).join(", ")})`:""));
   if(T.credit) L.push(`Exchange credit: −${inr(T.credit)}`, `Paid: ${inr(T.due)} (${I.payments.map(p=>p.label).join(" + ")||"covered by the credit"})`);
-  else if(I.payments.length>1) L.push("Paid: "+payLines(I).map(p=>`${p.label} ${inrx(p.amount)}`).join(" + "));
-  else L.push(I.payments[0]?"Paid by "+I.payments[0].label:"Nothing to pay");
+  else if(I.payments.length>1||(I.payments.length&&I.balance>0)) L.push("Paid: "+payLines(I).map(p=>`${p.label} ${inrx(p.amount)}`).join(" + "));
+  else if(I.payments[0]) L.push("Paid by "+I.payments[0].label);
+  else if(!(I.balance>0)) L.push("Nothing to pay");
+  if(I.balance>0) L.push(`*Balance due: ${inr(I.balance)}*`+(I.buyer?" (on account)":""));
   if(I.change) L.push("Change: "+inrx(I.change));
   if(I.footer) L.push("", I.footer);
   return L.join("\n");

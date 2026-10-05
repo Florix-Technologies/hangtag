@@ -82,7 +82,8 @@ export function pdfBytes(doc){
 
 /* ---------- documents: an A4 portrait page in the shop's template (features/receipts/components/doc-render.js) ----------
    m: the document model (title, number, meta, seller, logo, parties, columns, left, rows, tax, totals, words, notes, terms,
-   bank, signature, notice, footer, cancelled); o: { template: "modern"|"classic"|"minimal", accent: "#rrggbb" }.
+   bank, signature, signImg, stampImg (JPEG data URLs, drawn at the signature), notice, footer, cancelled);
+   o: { template: "standard"|"classic"|"modern"|"compact" ("minimal": the earlier name of standard), accent: "#rrggbb" }.
    Same content as the printed page; Helvetica, figures right-aligned, the table head repeated on every page. */
 const PW=595, PH=842, PM=40;
 const rgb=hex=>{const m=/^#?([0-9a-f]{6})$/i.exec(String(hex||""));const n=m?parseInt(m[1],16):0x1d5bbf;return [(n>>16&255)/255,(n>>8&255)/255,(n&255)/255].map(x=>x.toFixed(3)).join(" ")};
@@ -92,9 +93,9 @@ function wrap(s,width,size){
   return out.filter((l,i,a)=>l||i<a.length-1);
 }
 export function docPdfBytes(m,o={}){
-  const tpl=o.template||"modern", ACC=rgb(o.accent), minimal=tpl==="minimal", classic=tpl==="classic";
+  const tpl=o.template||"modern", ACC=rgb(o.accent), minimal=tpl==="minimal"||tpl==="standard", classic=tpl==="classic", compact=tpl==="compact";
   const INK="0.106 0.122 0.165", GRAY="0.42 0.44 0.52", DARK="0.23 0.25 0.31";
-  const pages=[]; let ops=[], y=PH-PM; const logo=jpegLogo(m.logo);
+  const pages=[]; let ops=[], y=PH-PM; const logo=jpegLogo(m.logo), sign=jpegLogo(m.signImg), stamp=jpegLogo(m.stampImg);
   const cell=c=>c&&typeof c==="object"?c:{t:c==null?"":String(c)};
   const text=(s,x,yy,size,bold,color)=>ops.push(`${color||INK} rg BT /${bold?"F2":"F1"} ${size} Tf ${x.toFixed(1)} ${yy.toFixed(1)} Td ${pdfStr(s)} Tj ET`);
   const rtext=(s,xr,yy,size,bold,color)=>text(s,xr-textWidth(s,size),yy,size,bold,color);
@@ -121,19 +122,20 @@ export function docPdfBytes(m,o={}){
     y=low-8;
   }
   // the lines
-  const cols=m.columns||[], size=cols.length>8?7:7.8, leftN=Math.max(1,Math.min(3,m.left||2)), rows=m.rows||[];
+  const cols=m.columns||[], size=(cols.length>8?7:7.8)-(compact?0.6:0), leftN=Math.max(1,Math.min(3,m.left||2)), rows=m.rows||[], HH=compact?13:15;
   const nameCol=cols[0]==="#"?1:0;
   const want=cols.map((h,j)=>Math.min(j===nameCol?240:110,Math.max(26,textWidth(h,size)+10,...rows.map(r=>{const c=cell(r[j]);return Math.max(textWidth(c.t,size),c.sub?textWidth(c.sub,size-1.4):0)+10;}))));
   const scale=(PW-2*PM)/Math.max(1,want.reduce((a,x)=>a+x,0)), widths=want.map(x=>x*scale), xs=widths.map((_,j)=>PM+widths.slice(0,j).reduce((a,x)=>a+x,0));
   const headColor=classic||minimal?INK:ACC;
-  const head=()=>{ if(!minimal) box(PM,y-15,PW-2*PM,15,classic?"0.95 0.95 0.96":"0.93 0.95 0.99");
-    cols.forEach((h,j)=>{ const t=fit(String(h).toUpperCase(),widths[j]-6,6.5); if(j<leftN) text(t,xs[j]+3,y-10.5,6.5,true,headColor); else rtext(t,xs[j]+widths[j]-3,y-10.5,6.5,true,headColor); });
-    y-=15; line(PM,y,PW-PM,y,minimal?0.8:0.5,minimal?INK:"0.79 0.80 0.84"); };
+  const head=()=>{ if(!minimal) box(PM,y-HH,PW-2*PM,HH,classic||compact?"0.95 0.95 0.96":"0.93 0.95 0.99");
+    cols.forEach((h,j)=>{ const t=fit(String(h).toUpperCase(),widths[j]-6,6.5); if(j<leftN) text(t,xs[j]+3,y-HH+4.5,6.5,true,headColor); else rtext(t,xs[j]+widths[j]-3,y-HH+4.5,6.5,true,headColor); });
+    y-=HH; line(PM,y,PW-PM,y,minimal?0.8:0.5,minimal?INK:"0.79 0.80 0.84"); };
   head();
   rows.forEach(r=>{
-    const h=r.map(cell).some(c=>c.sub)?21:14;
+    const h=r.map(cell).some(c=>c.sub)?(compact?17:21):(compact?11:14);
     if(y-h<PM+30){ newPage(); head(); }
-    r.forEach((c0,j)=>{ const c=cell(c0), t=fit(c.t,widths[j]-6,size); if(j<leftN){ text(t,xs[j]+3,y-10,size,j===nameCol); if(c.sub) text(fit(c.sub,widths[j]-6,size-1.4),xs[j]+3,y-18,size-1.4,false,GRAY); } else rtext(t,xs[j]+widths[j]-3,y-10,size,false); });
+    const ry=compact?8:10;
+    r.forEach((c0,j)=>{ const c=cell(c0), t=fit(c.t,widths[j]-6,size); if(j<leftN){ text(t,xs[j]+3,y-ry,size,j===nameCol); if(c.sub) text(fit(c.sub,widths[j]-6,size-1.4),xs[j]+3,y-ry-8,size-1.4,false,GRAY); } else rtext(t,xs[j]+widths[j]-3,y-ry,size,false); });
     y-=h; line(PM,y,PW-PM,y,0.4,classic?"0.79 0.80 0.84":"0.89 0.90 0.93");
   });
   if(!rows.length){ text("No items",PM+3,y-10,size,false,GRAY); y-=14; }
@@ -153,21 +155,24 @@ export function docPdfBytes(m,o={}){
   block("Amount in words",m.words); block("Notes",m.notes); block("Terms & conditions",m.terms); block("Bank & payment details",m.bank);
   y=Math.min(ly,ty)-20;
   // the signature, and the document's notice
-  if(y<PM+70) newPage();
-  const sx=PW-PM-170;
+  if(y<PM+(sign||stamp?92:70)) newPage();
+  const sx=PW-PM-170, lineY=sign?y-50:y-36;
   text(fit(m.signature||("For "+m.seller.name),170,8.5),sx,y-8,8.5,true);
-  line(sx,y-36,PW-PM,y-36,0.6,"0.60 0.63 0.68"); text("Authorised signatory",sx,y-46,7.5,false,GRAY);
+  if(sign){ const k=Math.min(150/sign.w,32/sign.h), w=sign.w*k, h=sign.h*k; ops.push(`q ${w.toFixed(1)} 0 0 ${h.toFixed(1)} ${(sx+(170-w)/2).toFixed(1)} ${(lineY+3).toFixed(1)} cm /Im2 Do Q`); }
+  if(stamp){ const k=Math.min(66/stamp.w,66/stamp.h), w=stamp.w*k, h=stamp.h*k; ops.push(`q ${w.toFixed(1)} 0 0 ${h.toFixed(1)} ${(sx-12-w).toFixed(1)} ${(lineY-12).toFixed(1)} cm /Im3 Do Q`); }
+  line(sx,lineY,PW-PM,lineY,0.6,"0.60 0.63 0.68"); text("Authorised signatory",sx,lineY-10,7.5,false,GRAY);
   if(m.notice) wrap(m.notice,sx-PM-20,7.5).forEach((l,i)=>text(l,PM,y-40-i*9,7.5,false,GRAY));
   newPage();
   pages.forEach((p,i)=>{ if(m.footer) p.push(`0.29 0.31 0.38 rg BT /F1 7.5 Tf ${PM} ${PM-14} Td ${pdfStr(fit(m.footer,PW-2*PM-80,7.5))} Tj ET`);
     p.push(`0.42 0.44 0.52 rg BT /F1 7 Tf ${PW-PM-52} ${PM-14} Td ${pdfStr(`Page ${i+1} of ${pages.length}`)} Tj ET`); });
   const objs=["<< /Type /Catalog /Pages 2 0 R >>",null,"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>"];
-  let imageId=0;
-  if(logo){ objs.push(`<< /Type /XObject /Subtype /Image /Width ${logo.w} /Height ${logo.h} /ColorSpace /${logo.space} /BitsPerComponent 8 /Filter /DCTDecode /Length ${logo.data.length} >>\nstream\n${logo.data}\nendstream`); imageId=objs.length; }
-  const kids=[];
+  // the pictures, once each: the logo (Im1), the authorised signature (Im2), the company stamp (Im3)
+  const pics=[["Im1",logo],["Im2",sign],["Im3",stamp]].filter(x=>x[1]), ids={};
+  pics.forEach(([n,im])=>{ objs.push(`<< /Type /XObject /Subtype /Image /Width ${im.w} /Height ${im.h} /ColorSpace /${im.space} /BitsPerComponent 8 /Filter /DCTDecode /Length ${im.data.length} >>\nstream\n${im.data}\nendstream`); ids[n]=objs.length; });
+  const kids=[], xobj=pics.length?` /XObject << ${pics.map(([n])=>`/${n} ${ids[n]} 0 R`).join(" ")} >>`:"";
   pages.forEach(p=>{ const content=p.join("\n"); objs.push(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
-    const cid=objs.length, xobj=imageId?` /XObject << /Im1 ${imageId} 0 R >>`:""; objs.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PW} ${PH}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >>${xobj} >> /Contents ${cid} 0 R >>`); kids.push(objs.length+" 0 R"); });
+    const cid=objs.length; objs.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PW} ${PH}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >>${xobj} >> /Contents ${cid} 0 R >>`); kids.push(objs.length+" 0 R"); });
   objs[1]=`<< /Type /Pages /Kids [${kids.join(" ")}] /Count ${kids.length} >>`;
   let out="%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"; const offs=[];
   objs.forEach((ob,i)=>{ offs.push(out.length); out+=`${i+1} 0 obj\n${ob}\nendobj\n`; });

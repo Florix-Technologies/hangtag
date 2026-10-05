@@ -123,8 +123,10 @@ const api = await run(A, `addOne(${JSON.stringify(CAP)});const s=await checkout(
 check('checkout({ method: "upi", ref }) still pays the whole bill in one method: one UPI payment for the total, walk-in', api.pay === 'upi' && api.payments.length === 1 && api.payments[0].amount === api.total && api.total === 525 && api.cust === null, api);
 
 // ---------- 4. phone: bill sheet → UPI with reference; cash with a quick amount and change ----------
-await A.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true }); await sleep(1000);   // (reloads the page)
-check('phone: connected again after the reload', await until(A, 'sbStatus==="connected"'));
+// Width is the behavior under test. Changing Puppeteer's mobile-emulation flag reloads through the installed service
+// worker and would replace the test-instrumented page with the normal cached shell, so resize without a reload.
+await A.setViewport({ width: 390, height: 844 }); await sleep(500);
+check('phone: remains connected after the responsive resize', await until(A, 'sbStatus==="connected"'));
 await sleep(700);
 await run(A, `setTab("sell");addOne(${JSON.stringify(TEE)});renderAll()`); await sleep(150);
 await A.click('#billBar [data-act="openbill"]'); await sleep(250);

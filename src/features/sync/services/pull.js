@@ -3,6 +3,7 @@ import { finishDownloadedProduct } from '../../../domain/catalog/options.js';
 import { store } from '../../../shared/state/store.js';
 import { DEFAULT_SETTINGS } from '../../../domain/shop/settings.js';
 import { keepNewerCaps } from '../../../domain/shop/capabilities.js';
+import { mergeLogs } from '../../../domain/automation/rules.js';
 import { sbSessionOk } from '../../auth/services/auth-settings.js';
 import { products } from '../../products/services/catalog.js';
 import { renderSync } from '../components/sync-status.js';
@@ -10,7 +11,7 @@ import { enqueue, flushSbQueue, markSynced } from './outbox.js';
 import { use } from '../../../shared/di/services.js';
 import { toast } from '../../../shared/components/toast.js';
 import { dayKey } from '../../../shared/formatting/dates.js';
-import { saveCashMoves, saveCatalog, saveCustomers, saveDayCloses, saveEvents, saveImgs, saveLogo, saveMoves, saveReturns, saveSettings } from '../../../shared/state/persistence.js';
+import { saveAutoLog, saveCashMoves, saveCatalog, saveCustomers, saveDayCloses, saveDocImages, saveEvents, saveImgs, saveLogo, saveMoves, saveReturns, saveSettings } from '../../../shared/state/persistence.js';
 import { saveCollections, saveHeldCarts, saveOrders, savePurchases, saveSupplierPays, saveSuppliers, saveTableSessions, saveTables } from '../../../shared/state/persistence.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { logger } from '../../../shared/logging/logger.js';
@@ -121,6 +122,14 @@ export async function pullSettings(){
     const logo = await use("cloud").fetchLogo();
     if(!waiting("logo")){ store.logo = logo; saveLogo(); }
   }
+  // the signature and stamp: the cloud's copy, unless this device is still sending its own
+  if(!waiting("docimg")){
+    const im = await use("cloud").fetchDocImages();
+    if(!waiting("docimg")){ store.docImages = im; saveDocImages(); }
+  }
+  // the automation log of every device (Settings → Automation), with this device's own
+  try{ const log = await use("cloud").fetchAutomationLogs(); store.autoLog = mergeLogs(store.autoLog || [], log); saveAutoLog(); }
+  catch(e){ logger.warn("Automation log:", e); }
 }
 export async function pullFromSupabase(showToast = true){
   if(!store.sbClient || store.sbStatus !== "connected" || !(await sbSessionOk())) return;
@@ -259,6 +268,7 @@ export async function pushLocalToSupabase(){
   Object.values(store.supplierPays || {}).sort((x, y) => (x.reverses ? 1 : 0) - (y.reverses ? 1 : 0)).forEach(x => enqueue({ type:"spay", id:x.id, pay:x }));
   enqueue({ type:"settings" });
   if(store.logo) enqueue({ type:"logo" });
+  ["signature","stamp"].forEach(kind => { if(store.docImages && store.docImages[kind]) enqueue({ type:"docimg", kind }); });
   renderSync();
   if(!store.sbClient || store.sbStatus !== "connected" || !(await sbSessionOk())){ toast("Saved on this device. It will upload when you're online."); return false; }
   await flushSbQueue();

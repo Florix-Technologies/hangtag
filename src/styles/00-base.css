@@ -21,7 +21,7 @@
   /* data: chart series and payment methods (the same colour for a method everywhere) */
   --s1:#2A78D6; --s1-track:#DCEAFB;
   --s-upi:#2A78D6; --s-cash:#1BAF7A; --s-card:#E06A35;
-  --b-upi:#1C5CAB; --b-cash:#0D7652; --b-card:#B4481D;
+  --b-upi:#1C5CAB; --b-cash:#0D7652; --b-card:#5B3FC8;
   --grid:#EEF0F4; --axis:#C6CAD4;
   --h1:#CDE2FB; --h2:#9EC5F4; --h3:#6DA7EC; --h4:#3987E5; --h5:#256ABF; --h6:#184F95;
   /* type: one family, a short scale */

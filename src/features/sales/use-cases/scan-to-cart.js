@@ -3,11 +3,12 @@ import { store } from '../../../shared/state/store.js';
 import { vLabel } from '../../../domain/catalog/variants.js';
 import { scanCodeError } from '../../../domain/sales/scan-rules.js';
 import { findByCode } from '../services/search.js';
-import { addSerials, addToLines, availOf, cartQtyV, serialsOnLines } from '../services/cart.js';
+import { addSerials, addToLines, availOf, cartQtyV, noStockText, serialsOnLines } from '../services/cart.js';
 import { isSerialV, serialForSale } from '../../inventory/services/tracking.js';
 import { prod } from '../../products/services/catalog.js';
 import { saveCart } from '../../../shared/state/persistence.js';
 import { isWeighed } from '../../../domain/catalog/units.js';
+import { dayKey } from '../../../shared/formatting/dates.js';
 
 /* A serial number scanned at the till (camera, scanner, search box): that very piece goes on the bill →
    { status: "added" | "limit", message, variantId } or null when the code isn't a serial ready to sell */
@@ -32,9 +33,15 @@ export function scanToCart(raw){
   if(availOf(hit.v.id) <= 0){
     const onBill = cartQtyV(hit.v.id);
     return onBill ? { status: "limit", message: `All ${onBill} in stock are already on the bill (${label}).`, label, variantId: hit.v.id }
-      : { status: "sold-out", message: `${label} is sold out.`, label, variantId: hit.v.id };
+      : { status: "sold-out", message: noStockText(hit.v.id), label, variantId: hit.v.id };
   }
+  // a GS1 code says more: an expired pack isn't sold unless the shop allows it (Settings → Products & Inventory), and the
+  // serial it carries goes on the bill by itself
+  const g = hit.gs1 || null, today = dayKey(Date.now());
+  if(g && g.expiry && g.expiry < today && !(store.settings && store.settings.sellExpired))
+    return { status: "invalid", message: `${label}: this pack expired on ${g.expiry}. Expired stock isn't sold in this shop.`, label, variantId: hit.v.id };
   if(isWeighed(hit.p.unit)) return { status: "weigh", message: `Weigh ${label}`, label, variantId: hit.v.id };
+  if(isSerialV(hit.v.id) && g && g.serial){ const sr = scanSerialToCart(g.serial); if(sr && sr.variantId === hit.v.id) return sr; }
   if(isSerialV(hit.v.id)) return { status: "serial", message: `Choose the serial number of ${label}`, label, variantId: hit.v.id, productId: hit.p.id };
   addToLines(store.cart, hit.v.id, 1); store.justAdded = hit.p.id; saveCart();
   const q = cartQtyV(hit.v.id);

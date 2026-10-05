@@ -30,6 +30,7 @@ import { inr, inrx } from '../../../shared/formatting/money.js';
 import { can, refuse } from '../../shop/services/access.js';
 import { billIdForPayment } from '../use-cases/provider-payment.js';
 import { releaseVoucher, useVoucher, usesVouchers } from '../../commerce/use-cases/vouchers.js';
+import { progressHTML } from './checkout-steps.js';
 
 const due=()=>billTotals(store.cart,store.disc).total;
 /* A gift voucher taken for this bill (domain/sales/vouchers.js): it pays this much, the rest is paid as usual */
@@ -38,8 +39,11 @@ const rest=()=>toRupees(Math.max(0,toPaise(due())-toPaise(vAmt())));
 const blankState=method=>({mode:"single",method:PAY_METHODS.includes(method)?method:"cash",recv:"",ref:{upi:"",card:""},last4:"",amt:{cash:"",upi:"",card:""},
   via:{upi:"manual",card:"terminal"},viaSet:{},pi:{},upiReceived:false,cardReceived:false,err:""});
 /* store.payState = { mode: "single" | "split" | "credit" (the amounts in amt are paid now, the rest goes on account), method, recv (cash handed over), ref: { upi, card }, last4 (card), amt: { cash, upi, card },
-     via: { upi: "manual"|"qr", card: "terminal"|"link" }, pi: { upi?, card? } (provider intents), saleId, err } */
-export function openPayment(method){
+     via: { upi: "manual"|"qr", card: "terminal"|"link" }, pi: { upi?, card? } (provider intents), saleId, err,
+     flow: { customer, review } ("done" / "skipped": the checkout steps on the way here), guided (came through Review & pay) }
+   opts.flow: from the guided checkout (sales/components/checkout-flow.js); without it (the bill's Cash / UPI / Card
+   buttons, C / U / K) Customer and Review were skipped */
+export function openPayment(method,opts={}){
   if(!store.cart.length||refuse("create_sale","take payments")) return;
   const bad=billDiscountError(); if(bad){ toast(bad); return; }
   // serial numbers chosen for every serial-tracked line, and enough unexpired batch stock (checked again when it completes)
@@ -47,7 +51,7 @@ export function openPayment(method){
   // a provider payment was still open for this bill when the app closed: show it again rather than start over
   if(store.payPending&&!store.payState&&resumePayment()) return;
   store.checkoutFlow=null;
-  store.payState=blankState(method);
+  store.payState=Object.assign(blankState(method),{flow:opts.flow||{customer:"skipped",review:"skipped"},guided:!!opts.flow});
   preferProvider();
   renderPayment(true);
   const s=store.payState, before=JSON.stringify([providerReady("upi"),providerReady("card"),s.via]);
@@ -202,8 +206,8 @@ export function renderPayment(focus){
   const act=document.activeElement, keep=act&&act.closest&&act.closest("#paySheet")?(act.dataset&&act.dataset.payf?`[data-payf="${act.dataset.payf}"]`:act.id?"#"+act.id:null):null;
   const sel=keep&&act.selectionStart!=null?[act.selectionStart,act.selectionEnd]:null;
   $("#modalHost").innerHTML=`<div class="scrim" data-modal-scrim><div class="sheet paysheet" id="paySheet" role="dialog" aria-modal="true" aria-labelledby="payT">
-    <ol class="checkout-progress" aria-label="Checkout steps"><li class="done">Items</li><li class="done">Customer</li><li class="done">Review</li><li class="on">Payment</li></ol>
-    <div class="sh-head"><div class="sh-t"><h3 id="payT">Payment</h3><p>Bill #${billNo()} · ${pcs} piece${pcs===1?"":"s"} · ${c&&c.name?esc(c.name):"Walk-in"}</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
+    ${progressHTML("payment",s.flow||{customer:"skipped",review:"skipped"})}
+    <div class="sh-head"><div class="sh-t"><h3 id="payT">Payment</h3><p>Bill ${esc(billNo())} · ${pcs} piece${pcs===1?"":"s"} · ${c&&c.name?esc(c.name):"Walk-in"}</p></div>${s.guided?`<button type="button" class="btn sm" data-checkoutback>Back</button>`:""}<button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
     <div class="paysum">${sumRow("Subtotal",inr(T.sub))}${T.disc?discountRowsHTML(T,store.disc):sumRow("Discount",inr(0),"muted")}${gstRowsHTML(T)}${roundRowHTML(T)}
       <div class="row tot"><span>Grand total</span><span class="grand" data-paydue>${inr(D)}</span></div></div>
     <div class="seg paymodes" role="group" aria-label="Payment method">${modes.map(([k,l])=>`<button type="button" data-paymode="${k}" aria-pressed="${cur===k}">${l}</button>`).join("")}</div>

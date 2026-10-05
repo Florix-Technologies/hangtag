@@ -1,5 +1,6 @@
 // Camera scanning rules: which scanned texts can be product codes, and not counting one sticker many times. Pure.
 import { CODE_MAX_LEN, isPrintableCode } from '../catalog/barcode.js';
+import { parseGs1 } from '../catalog/gs1.js';
 
 /* A code seen again within this time (ms) of the last sighting is the same sticker still in view, not a new scan */
 export const REPEAT_MS = 1500;
@@ -8,6 +9,7 @@ export const REPEAT_MS = 1500;
 export function scanCodeError(raw){
   const t = String(raw == null ? "" : raw).trim();
   if(!t) return "No code was read. Try again.";
+  if(parseGs1(t)) return null;   // a GS1 DataMatrix / GS1-128 (with its separators) or a GS1 Digital Link: read by its GTIN
   if(t.length > CODE_MAX_LEN || !isPrintableCode(t)) return "That code can't belong to a product in this shop.";
   return null;
 }

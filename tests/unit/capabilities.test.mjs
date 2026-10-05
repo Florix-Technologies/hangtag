@@ -120,9 +120,9 @@ check('12 a profile without a type is retail', shopType() === 'retail' && hasCap
 const ids = () => shownModules().map((d) => d.id);
 {
   store.profile = { shop_name: 'Aura', business_type: 'retail' };
-  check('8 the core modules are registered with the existing tab ids', ['home', 'sell', 'orders', 'stock', 'products', 'customers', 'report', 'settings'].every((id) => registeredModules().includes(id)));
-  check('8 retail owner: Home, Sell, Inventory, Products, Customers, Reports, Settings (no Orders while none of its parts exists)',
-    eq(ids(), ['home', 'sell', 'stock', 'products', 'customers', 'report', 'settings']) && !moduleShown('orders'));
+  check('8 the core modules are registered with the existing tab ids and the first-class Bills workspace', ['home', 'sell', 'bills', 'orders', 'stock', 'products', 'customers', 'report', 'settings'].every((id) => registeredModules().includes(id)));
+  check('8 retail owner: Home, Sell, Bills, Stock, Products, Customers, Reports, Settings (no Orders while none of its parts exists)',
+    eq(ids(), ['home', 'sell', 'bills', 'stock', 'products', 'customers', 'report', 'settings']) && !moduleShown('orders'));
   check('8 the first version\'s tabs still open', ['sell', 'stock', 'report', 'products', 'customers'].every(tabOpen) && !tabOpen('settings') && !tabOpen('nope'));
   registerSubview('orders', { id: 'quotes', label: 'Quotations', order: 20, caps: ['uses_quotations'], perms: ['create_order'], render() {} });
   registerSubview('orders', { id: 'tableorders', label: 'Table orders', order: 40, caps: ['uses_tables'], perms: ['create_order'], render() {} });
@@ -191,8 +191,8 @@ const ids = () => shownModules().map((d) => d.id);
 
 // ---------- 10: the settings sections: Team & Devices for every business, the rest by role, features and type ----------
 {
-  check('10 the settings sections: Business, Payments & Banks, Billing & Documents, Products & Inventory, Sales & Customers, Purchasing, Storefront, Restaurant, Team & Devices, Integrations, Advanced',
-    eq(SETTINGS_SECTIONS.map((s) => s.label), ['Business', 'Payments & Banks', 'Billing & Documents', 'Products & Inventory', 'Sales & Customers', 'Purchasing', 'Storefront', 'Restaurant', 'Team & Devices', 'Integrations', 'Advanced']));
+  check('10 the settings sections: Business, Payments & Banks, Billing & Documents, Products & Inventory, Sales & Customers, Purchasing, Storefront, Restaurant, Automation, Team & Devices, Integrations, Advanced',
+    eq(SETTINGS_SECTIONS.map((s) => s.label), ['Business', 'Payments & Banks', 'Billing & Documents', 'Products & Inventory', 'Sales & Customers', 'Purchasing', 'Storefront', 'Restaurant', 'Automation', 'Team & Devices', 'Integrations', 'Advanced']));
   check('10 the owner of every type of business has Team & Devices, Integrations and Advanced', BUSINESS_TYPE_KEYS.concat(['Clothing boutique', null]).every((t) => {
     store.profile = { shop_name: 'S', business_type: t }; const k = settingsSections().map((s) => s.key); return ['business', 'payments', 'billing', 'devices', 'integrations', 'advanced'].every((x) => k.includes(x)); }));
   store.profile = { shop_name: 'S', business_type: 'restaurant' };
@@ -205,7 +205,7 @@ const ids = () => shownModules().map((d) => d.id);
   setAccess({ userId: MEMBER, shopId: SHOP, role: 'cashier', perms: ROLE_DEFAULTS.cashier, overrides: {} });
   check('10 a cashier: only Team & Devices (itself and this device): no shop settings, integrations or Advanced', eq(settingsSections().map((s) => s.key), ['devices']));
   setAccess({ userId: MEMBER, shopId: SHOP, role: 'custom', perms: ['view_products', 'manage_settings'], overrides: {} });
-  check('10 a member allowed to manage settings: the shop settings, still no Integrations or Advanced', eq(settingsSections().map((s) => s.key), ['business', 'payments', 'billing', 'inventory', 'sales', 'purchasing', 'storefront', 'devices']));
+  check('10 a member allowed to manage settings: the shop settings, still no Integrations or Advanced', eq(settingsSections().map((s) => s.key), ['business', 'payments', 'billing', 'inventory', 'sales', 'purchasing', 'storefront', 'automation', 'devices']));
   registerSettingsPart('devices', { id: 'scale', order: 20, perms: ['manage_settings'], html: () => '<div id="scaleSet"></div>' });
   check('10 later batches add parts to a section (with their own permission)', settingsPartsHTML('devices') === '<div id="scaleSet"></div>');
   setAccess({ userId: MEMBER, shopId: SHOP, role: 'cashier', perms: ROLE_DEFAULTS.cashier, overrides: {} });

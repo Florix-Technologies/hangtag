@@ -55,7 +55,7 @@ async function lastResult(db, sql) { const res = await db.exec(sql); return res[
   const rep1 = await lastResult(db, NEW);
   check('upgrade runs', true);
   const bad1 = rep1.rows.filter(r => !r.ok);
-  check('migration report: every check ok', rep1.rows.length === 60 && !bad1.length, rep1.rows.map(r => `${r.check_name}: ${r.value}/${r.expected}`));
+  check('migration report: every check ok', rep1.rows.length === 64 && !bad1.length, rep1.rows.map(r => `${r.check_name}: ${r.value}/${r.expected}`));
   const rep2 = await lastResult(db, NEW);
   check('runs a second time with the same report (safe to re-run)', JSON.stringify(rep2.rows) === JSON.stringify(rep1.rows));
   const bk = (await db.query(`SELECT (SELECT count(*) FROM public.hangtag_backup_v2_sizes)::int s, (SELECT count(*) FROM public.hangtag_backup_v2_sale_items)::int i`)).rows[0];

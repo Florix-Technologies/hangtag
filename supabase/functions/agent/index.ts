@@ -7,14 +7,15 @@
 // - Who: the owner, or a team member with view_reports (hangtag_can, with the phone's x-hangtag-device key forwarded).
 // Deploy with JWT verification on (the default).
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { agentConfig, allowedToUse, anthropicRequest, configView, readAnthropic, validateRequest } from "./core.js";
+import { agentConfig, allowedToUse, anthropicRequest, configView, rateDecision, rateLimits, readAnthropic, validateRequest } from "./core.js";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-hangtag-device",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
-const reply = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
+const reply = (status: number, body: unknown, extra: Record<string, string> = {}) =>
+  new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json", ...extra } });
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -48,6 +49,13 @@ Deno.serve(async (req) => {
   const cfg = agentConfig(env), allowed = allowedToUse(user, env, owner);
   if (r.action === "config") return reply(200, configView(cfg, allowed));
   if (!cfg || !allowed) return reply(503, { ok: false, error: "not_configured", message: "The Hangtag Agent's AI isn't set up for this shop." });
+
+  // the server-side rate limit, per user and per shop (counted only for requests that go ahead; refused before any
+  // provider call). If the limit can't be checked, nothing is sent: the limit protects the provider's cost.
+  const { data: take, error: takeErr } = await admin.rpc("hangtag_agent_take", { p_user: user.id, p_shop: shopId, ...rateLimits(env) });
+  if (takeErr) { console.error("agent: rate limit unavailable:", takeErr.code); return reply(503, { ok: false, error: "server_error", message: "The Hangtag Agent can't answer right now. Try again later." }); }
+  const limit = rateDecision(take);
+  if (!limit.ok) return reply(429, limit.body, limit.headers);
 
   const call = anthropicRequest(cfg, r);
   let res: Response;

@@ -91,13 +91,15 @@ await db.exec(NEW); await db.exec(NEW);
 console.log('=== the schema runs twice; the report has the team rows ===');
 {
   const rep = await report(db);
-  check('migration report: 60 rows, all ok on an empty database', rep.length === 60 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: 64 rows, all ok on an empty database', rep.length === 64 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   const pols = (await db.query(`SELECT count(*)::int n FROM pg_policies WHERE schemaname = 'public' AND policyname = 'Own rows only'`)).rows[0].n;
   check('no table keeps the old "Own rows only" rule', pols === 0, pols);
   const noRls = (await db.query(`SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE 'hangtag_%' AND NOT c.relrowsecurity`)).rows;
   check('row security is on for every hangtag table', noRls.length === 0, noRls);
   const defs = (await db.query(`SELECT table_name FROM information_schema.columns WHERE table_schema = 'public' AND column_name = 'owner_id' AND table_name LIKE 'hangtag_%'
-      AND table_name NOT LIKE 'hangtag_backup%' AND coalesce(column_default, '') NOT LIKE '%hangtag_shop_id()%'`)).rows;
+      AND table_name NOT LIKE 'hangtag_backup%' AND coalesce(column_default, '') NOT LIKE '%hangtag_shop_id()%'
+      -- section 3t: plans and payments are written only by the database for a shop it names itself (never by the app)
+      AND table_name NOT IN ('hangtag_subscriptions', 'hangtag_trial_claims', 'hangtag_subscription_payments', 'hangtag_promo_redemptions')`)).rows;
   check('every shop table fills owner_id with the shop (hangtag_shop_id())', defs.length === 0, defs);
 }
 
@@ -381,7 +383,12 @@ console.log('=== shop A and shop B never meet ===');
   for (const who of [A, CA, B, OUT]) sec.push(await tryAs(db, who, `SELECT count(*) FROM public.hangtag_webhook_secrets`));
   check('webhook secrets: nobody in the app reads them, not even the shop\'s owner', sec.every(denied), sec);
   const tables = (await db.query(`SELECT table_name AS t FROM information_schema.columns WHERE table_schema = 'public' AND column_name = 'owner_id'
-      AND table_name LIKE 'hangtag_%' AND table_name NOT LIKE 'hangtag_backup%' AND table_name <> 'hangtag_webhook_secrets' ORDER BY 1`)).rows.map((x) => x.t);
+      AND table_name LIKE 'hangtag_%' AND table_name NOT LIKE 'hangtag_backup%' AND table_name <> 'hangtag_webhook_secrets'
+      -- section 3t: plans and plan payments are the database's own (checked in supabase/tests/subscriptions.test.mjs)
+      AND table_name NOT IN ('hangtag_subscriptions', 'hangtag_trial_claims', 'hangtag_subscription_payments', 'hangtag_promo_redemptions') ORDER BY 1`)).rows.map((x) => x.t);
+  const planRows = [];
+  for (const t of ['hangtag_subscriptions', 'hangtag_trial_claims', 'hangtag_promo_redemptions', 'hangtag_promo_codes', 'hangtag_agent_usage']) planRows.push(await tryAs(db, A, `SELECT * FROM public.${t}`));
+  check('plan records, trial claims, promo codes and Agent counters: no app user reads them (only through their functions)', planRows.every(denied), planRows);
   await asService(db, `INSERT INTO public.hangtag_enrollments (owner_id, user_id, token_hash) VALUES ($1, $2, $3), ($4, $5, $6)`, [A, CA.id, hash('enroll-a'), B, CB.id, hash('enroll-b')]);
   const empty = [], leaks = [];
   for (const t of tables) {
@@ -605,7 +612,7 @@ console.log('=== accounts removed ===');
 console.log('=== report after use ===');
 {
   let rep = await report(db);
-  check('migration report: every row ok with a team, devices and audit rows present', rep.length === 60 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: every row ok with a team, devices and audit rows present', rep.length === 64 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   await db.query(`INSERT INTO public.hangtag_products (owner_id, id, name) VALUES ($1, 'stray', 'Stray')`, [CA.id]);
   rep = await report(db);
   check('the report spots a member that runs a shop of its own', rep.find((r) => /no shop of their own/.test(r.check_name)).ok === false);
@@ -636,7 +643,7 @@ console.log('=== upgrade from the schema on the live database today (fixtures/le
   r = !r.err && o.o === A ? await tryAs(up, A, `UPDATE public.hangtag_products SET archived = TRUE WHERE id = 'p1' RETURNING id`) : r;
   check('…and keeps saving bills and changing products (owner_id still the owner)', !r.err && r.r.rows.length === 1, r);
   const rep = await report(up);
-  check('the report is all ok after the upgrade', rep.length === 60 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
+  check('the report is all ok after the upgrade', rep.length === 64 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');

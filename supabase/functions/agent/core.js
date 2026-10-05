@@ -106,3 +106,27 @@ export function readAnthropic(json, offered) {
   if (calls.length) return { type: "tool_calls", text, calls };
   return text ? { type: "answer", text: text.slice(0, 2000) } : { type: "error" };
 }
+
+/* The server-side rate limit (hangtag_agent_take in the database, section 3t). Limits from the function's secrets:
+   AGENT_RATE_PER_MINUTE (10), AGENT_RATE_PER_DAY (200), AGENT_SHOP_RATE_PER_MINUTE (30), AGENT_SHOP_RATE_PER_DAY (600);
+   0 switches a window off. The shop is the one the database resolved for the caller — never a value from the request. */
+const limitOf = (v, d) => { const n = Number(v); return v == null || String(v).trim() === "" || !Number.isFinite(n) ? d : Math.max(0, Math.floor(n)); };
+export function rateLimits(env) {
+  return {
+    p_per_minute: limitOf(env.AGENT_RATE_PER_MINUTE, 10), p_per_day: limitOf(env.AGENT_RATE_PER_DAY, 200),
+    p_shop_per_minute: limitOf(env.AGENT_SHOP_RATE_PER_MINUTE, 30), p_shop_per_day: limitOf(env.AGENT_SHOP_RATE_PER_DAY, 600),
+  };
+}
+const WINDOW_TEXT = {
+  user_minute: "You've asked a lot in the last minute.", shop_minute: "Your shop has asked a lot in the last minute.",
+  user_day: "You've reached today's limit for AI answers.", shop_day: "Your shop has reached today's limit for AI answers.",
+};
+/* The database's answer → go ahead, or a 429 reply with Retry-After. Anything unexpected refuses (the limit protects money). */
+export function rateDecision(take) {
+  if (take && take.allowed === true) return { ok: true };
+  const retry = Math.max(1, Math.min(86400, Math.ceil(Number(take && take.retry_after) || 60)));
+  const wait = retry < 90 ? `${retry} seconds` : retry < 5400 ? `${Math.ceil(retry / 60)} minutes` : `${Math.ceil(retry / 3600)} hours`;
+  const why = (take && WINDOW_TEXT[take.limit]) || "Too many requests.";
+  return { ok: false, status: 429, retryAfter: retry, headers: { "Retry-After": String(retry) },
+    body: { ok: false, error: "rate_limited", limit: (take && take.limit) || null, retry_after: retry, message: `${why} Try again in ${wait}.` } };
+}

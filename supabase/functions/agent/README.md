@@ -22,11 +22,19 @@ Agent doesn't recognise go to an AI model that may only use the Agent's tools.
   transcript }` → `{ type: "tool_calls", calls }` or `{ type: "answer", text }`. Calls to tools that weren't offered
   are dropped. Limits in `core.js` `LIMITS`.
 
+- **Rate limit (server-side):** after the allow-list and role checks and before any provider call, the function counts
+  the request in the database (`hangtag_agent_take`, schema.sql section 3t, service role only — the app can't call or reset
+  it): per person per minute (`AGENT_RATE_PER_MINUTE`, default 10) and per day (`AGENT_RATE_PER_DAY`, 200), per shop per
+  minute (`AGENT_SHOP_RATE_PER_MINUTE`, 30) and per day (`AGENT_SHOP_RATE_PER_DAY`, 600); `0` switches a window off.
+  Over a limit → HTTP 429 `{ ok: false, error: "rate_limited", limit, retry_after, message }` with a `Retry-After` header.
+  A refused request isn't counted, so it never extends the wait; another person or shop is never affected. If the limit
+  can't be checked (e.g. the migration isn't applied yet) nothing is sent to the provider.
+
 Deploy (JWT verification on, the default):
 
 ```
 supabase functions deploy agent
-supabase secrets set ANTHROPIC_API_KEY=… AGENT_ALLOWED_USERS=owner@example.com
+supabase secrets set ANTHROPIC_API_KEY=… AGENT_ALLOWED_USERS=owner@example.com   # optional: AGENT_MODEL, AGENT_RATE_PER_MINUTE …
 ```
 
-Unit tests (Node, no network): `tests/unit/agent.test.mjs`.
+Unit tests (Node, no network): `tests/unit/agent.test.mjs`, `tests/unit/agent-rate-limit.test.mjs`; the counting: `supabase/tests/agent-rate.test.mjs`.

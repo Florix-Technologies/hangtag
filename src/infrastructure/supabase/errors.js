@@ -10,6 +10,8 @@ export function toAppError(e){
   const code = String((e && (e.code || e.status)) || ""), msg = String((e && e.message) || e || "");
   const make = (c, text) => new AppError(c, text, { cause: e, details: { code } });
   if(NETWORK.test(msg)) return make(C.NETWORK, "No internet connection. It will try again.");
+  // the shop's plan has ended (schema.sql section 3t): kept and sent again after renewal, never a refusal to review
+  if(code === "HT402" || /HANGTAG_SUBSCRIPTION_INACTIVE/.test(msg)) return make(C.SUBSCRIPTION, "This shop's Hangtag plan has ended. Renew it in Plans & Billing; your changes are kept until then.");
   if(code === "42501" || /row-level security|permission denied/i.test(msg)) return make(C.PERMISSION, "This account isn't allowed to change that.");
   // hangtag_doc_no_check: another bill (credit note) of the shop already has this number; the message says which
   if(code === "23505" && /^(Bill|Credit note) number .+ is already used/.test(msg)) return new AppError(C.CONFLICT, msg, { cause: e, details: { code, kind: "number" } });

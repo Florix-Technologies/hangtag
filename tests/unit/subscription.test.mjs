@@ -1,0 +1,75 @@
+// The app's side of Hangtag plans (domain/billing/subscription.js): which states lock, the trusted time (a clock moved back
+// never extends access, a restart keeps the latest time seen), days left, the lock screen's and Home banner's words; an
+// upload refused with HT402 stays queued (never the review list) and maps to the SUBSCRIPTION error.
+// Run: node tests/unit/subscription.test.mjs
+import { bannerFor, daysLeft, isLocked, lockCopy, perMonth, planFacts, stateAt, statusChip, trustedNow } from '../../src/domain/billing/subscription.js';
+import { failureAction } from '../../src/domain/sync/queue-rules.js';
+import { toAppError } from '../../src/infrastructure/supabase/errors.js';
+import { ERROR_CODES } from '../../src/shared/errors/app-error.js';
+
+let fails = 0;
+const check = (name, ok, info) => { if (!ok) fails++; console.log((ok ? 'PASS ' : 'FAIL ') + name + (!ok && info !== undefined ? '  ' + JSON.stringify(info).slice(0, 400) : '')); };
+const DAY = 86400000, T0 = Date.parse('2026-10-06T10:00:00Z');
+const iso = (t) => new Date(t).toISOString();
+const trial = (endsIn) => ({ state: 'trial_active', plan_code: null, trial_started_at: iso(T0 - 2 * DAY), trial_ends_at: iso(T0 + endsIn), access_until: iso(T0 + endsIn), server_now: iso(T0), is_owner: true });
+const paid = (endsIn) => ({ state: 'paid_active', plan_code: 'm3', plan_label: '3 months', trial_started_at: iso(T0 - 40 * DAY), trial_ends_at: iso(T0 - 33 * DAY), period_start: iso(T0 - 60 * DAY), period_end: iso(T0 + endsIn), access_until: iso(T0 + endsIn), server_now: iso(T0) });
+
+console.log('=== states and the lock ===');
+check('a running trial: not locked', !isLocked(trial(5 * DAY), T0) && stateAt(trial(5 * DAY), T0) === 'trial_active');
+check('a running paid plan: not locked', !isLocked(paid(30 * DAY), T0));
+for (const s of ['trial_expired', 'paid_expired', 'suspended']) check(`${s}: locked`, isLocked({ state: s }, T0));
+check('suspended locks even with paid time left', isLocked({ ...paid(30 * DAY), state: 'suspended' }, T0));
+check('no plan yet (setup not finished) or the server can\'t say: never locked', !isLocked({ state: 'none' }, T0) && !isLocked({ state: 'unavailable' }, T0) && !isLocked(null, T0) && !isLocked({}, T0));
+check('a trial the server called running locks itself the moment it runs out (no wait for the next check)', isLocked(trial(1000), T0 + 1000) && stateAt(trial(1000), T0 + 2000) === 'trial_expired');
+check('…a paid plan likewise becomes "plan ended"', stateAt(paid(1000), T0 + 1000) === 'paid_expired');
+check('an unknown time never locks a running plan', !isLocked(trial(5 * DAY), null));
+
+console.log('=== the trusted time ===');
+{
+  const base = { serverAt: T0, perfAt: 1000, clientAt: T0 };
+  check('in this session: server time + monotonic time since (the device clock is ignored)', trustedNow({ ...base, perfNow: 61000, clockNow: T0 - 365 * DAY }) === T0 + 60000);
+  check('the device clock moved back a year after a restart: no time gained', trustedNow({ serverAt: T0, clientAt: T0, clockNow: T0 - 365 * DAY }) === T0);
+  check('…and never earlier than the latest trusted time seen (floor)', trustedNow({ serverAt: T0, clientAt: T0, clockNow: T0 - DAY, floor: T0 + 3 * DAY }) === T0 + 3 * DAY);
+  check('after a restart, real time passing counts (clock moved forward 2 days → 2 days later)', trustedNow({ serverAt: T0, clientAt: T0, clockNow: T0 + 2 * DAY }) === T0 + 2 * DAY);
+  const s = trial(3 * DAY);
+  const back = trustedNow({ serverAt: T0 + 4 * DAY, clientAt: T0 + 4 * DAY, clockNow: T0, floor: T0 + 4 * DAY });
+  check('a trial that ran out stays locked when the clock is set back before its end', isLocked(s, back), back);
+  check('a performance mark from before (another session) is not used', trustedNow({ serverAt: T0, perfAt: 5000, perfNow: 100, clientAt: T0, clockNow: T0 + 1000 }) === T0 + 1000);
+  check('nothing known → null (the caller decides; nothing locks)', trustedNow({}) === null);
+}
+
+console.log('=== days left and words ===');
+{
+  check('days left: a part day counts as a day; 7 days at the start of a trial', daysLeft(trial(7 * DAY), T0) === 7 && daysLeft(trial(6.2 * DAY), T0) === 7 && daysLeft(trial(1), T0) === 1);
+  check('days left: never negative; 0 when locked', daysLeft(trial(-DAY), T0) === 0 && daysLeft({ state: 'suspended', access_until: iso(T0 + DAY) }, T0) === 0);
+  const tl = lockCopy({ state: 'trial_expired', trial_ends_at: iso(T0) }, T0 + DAY, true);
+  check('trial ended (owner): "Your free trial has ended", the date, data is safe', tl.title === 'Your free trial has ended' && tl.chip === 'Trial expired' && !!tl.ended && /data is safe/.test(tl.body), tl);
+  const pl = lockCopy({ state: 'paid_expired', period_end: iso(T0) }, T0 + DAY, true);
+  check('plan ended: "Your plan has ended", "Plan expired"', pl.title === 'Your plan has ended' && pl.chip === 'Plan expired', pl);
+  const mem = lockCopy({ state: 'paid_expired', period_end: iso(T0) }, T0 + DAY, false);
+  check('a team member is asked to get the owner to renew (no payment)', /Ask the owner/.test(mem.body), mem);
+  const su = lockCopy({ state: 'suspended' }, T0, true);
+  check('suspended: its own words', su.title === 'Your shop is suspended' && /support/.test(su.body), su);
+  check('chips', statusChip(trial(5 * DAY), T0).label === 'Free trial' && statusChip(trial(DAY), T0).tone === 'warn' && statusChip(paid(60 * DAY), T0).label === 'Active'
+    && statusChip({ state: 'trial_expired' }, T0).tone === 'bad' && statusChip({ state: 'none' }, T0).tone === 'muted');
+  const b = bannerFor(trial(5 * DAY), T0);
+  check('Home banner during the trial: days left, the end date, "Choose a plan"', b && /Free trial · 5 days left · ends /.test(b.text) && b.cta === 'Choose a plan', b);
+  check('Home banner: a paid plan with a week or less: "Renew"; more than a week: none', bannerFor(paid(3 * DAY), T0).cta === 'Renew' && bannerFor(paid(30 * DAY), T0) === null);
+  check('no banner when locked or before setup', bannerFor({ state: 'trial_expired' }, T0) === null && bannerFor({ state: 'none' }, T0) === null);
+  const f = planFacts(trial(5 * DAY), T0).map((r) => r.label);
+  check('plan facts: plan, trial, ends on, days remaining', f.includes('Plan') && f.includes('Trial') && f.includes('Trial ends on') && f.includes('Days remaining'), f);
+  check('"a month" hint only for plans of several months, from the server\'s price', perMonth({ months: 3, price: 1349 }) === 450 && perMonth({ months: 1, price: 499 }) === null && perMonth({ months: 6, price: 0 }) === null);
+}
+
+console.log('=== the upload queue and the server\'s refusal ===');
+{
+  check('SUBSCRIPTION → keep it queued (retry), never the review list — whatever the tries', failureAction('SUBSCRIPTION', 1, {}) === 'retry' && failureAction('SUBSCRIPTION', 99, { member: true }) === 'retry');
+  const e = toAppError({ code: 'HT402', message: 'HANGTAG_SUBSCRIPTION_INACTIVE: This shop\'s Hangtag plan has ended. Renew it in Plans & Billing.' });
+  check('the database\'s HT402 → SUBSCRIPTION with a plain message', e.code === ERROR_CODES.SUBSCRIPTION && /Plans & Billing/.test(e.message), e);
+  const e2 = toAppError({ code: '400', message: 'HANGTAG_SUBSCRIPTION_INACTIVE: …' });
+  check('…also when only the message says so', e2.code === ERROR_CODES.SUBSCRIPTION);
+  check('other errors keep their codes', toAppError({ code: 'P0001', message: 'x' }).code === ERROR_CODES.VALIDATION && toAppError(new Error('Failed to fetch')).code === ERROR_CODES.NETWORK);
+}
+
+console.log(fails ? `\n${fails} FAILED` : '\nall passed');
+process.exit(fails ? 1 : 0);

@@ -469,6 +469,18 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
     paymentIntent: body => callFunction("payment-gateway", body, "Verified payments"),
     /* agent: the Hangtag Agent's optional AI provider ({ action: "config" } or one "step") */
     agentStep: body => callFunction("agent", body, "The Hangtag Agent's AI"),
+    /* Hangtag plans (schema.sql section 3t): the shop's plan (works while it is locked), the plans on sale, a plan's price
+       with a promo code (computed by the database), the owner's plan payments, and the subscription function (checkout,
+       verify) — the browser never sends a price, discount or amount */
+    async subscriptionStatus(){ const { data } = sbOk(await db().rpc('hangtag_subscription_status')); return data || null; },
+    async subscriptionPlans(){ const { data } = sbOk(await db().rpc('hangtag_subscription_plans')); return Array.isArray(data) ? data : []; },
+    async subscriptionQuote(plan, promo){ const { data } = sbOk(await db().rpc('hangtag_subscription_quote', { p_plan: plan, p_promo: promo || null })); return data || null; },
+    async subscriptionPayments(){
+      const { data } = sbOk(await table('hangtag_subscription_payments').select('id, plan_code, price, discount, amount, currency, promo_code, status, created_at, paid_at, period_start, period_end')
+        .order('created_at', { ascending: false }).limit(20));
+      return Array.isArray(data) ? data : [];
+    },
+    subscriptionCall: body => callFunction("subscription", body, "Online payment"),
     /* send-receipt: ask the providers what happened to a bill's messages (delivered / failed) → { updated } */
     deliveryRefresh: saleId => callFunction("send-receipt", { action:"refresh", sale_id:saleId }, "Sending bills"),
     /* send-receipt: the bill's secure invoice link (made once, kept 12 months) → { url, token, expiresAt } */

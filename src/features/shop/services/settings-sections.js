@@ -11,6 +11,8 @@ import { shopCaps, shopType } from './shop-caps.js';
 export const SETTINGS_SECTIONS = [
   { key: "business", label: "Business", icon: "store", perms: ["manage_settings"], sub: "Your shop's details, its type of business and the features it uses.",
     keywords: "shop name owner phone address city state gstin gst number type of business retail grocery restaurant electronics features capabilities recommended" },
+  { key: "plans", label: "Plans & Billing", icon: "receipt", owner: true, sub: "Your Hangtag plan: the free trial, renewing, promo codes and payments.",
+    keywords: "plan plans subscription trial free trial renew renewal upgrade pay payment promo code coupon discount price expiry expires hangtag billing invoice" },
   { key: "payments", label: "Payments & Banks", icon: "bank", perms: ["manage_settings"], sub: "How customers pay you, your bank accounts and the cash drawer.",
     keywords: "upi id qr verified razorpay card machine bank account accounts balance opening transfer money in out adjustment default expense categories cash drawer" },
   { key: "billing", label: "Billing & Documents", icon: "receipt", perms: ["manage_settings"], sub: "Bill numbers, document templates, your logo, GST on bills and receipts sent to customers.",

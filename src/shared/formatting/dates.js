@@ -15,3 +15,5 @@ export const dayLab=s=>parseDay(s).toLocaleDateString(LOC,{day:"numeric",month:"
 export const dayLong=s=>parseDay(s).toLocaleDateString(LOC,{weekday:"short",day:"numeric",month:"short"});
 export function agoText(t){ const s = Math.round((Date.now()-t)/1000); if(s < 45) return "just now"; const m = Math.round(s/60); if(m < 60) return m+" min ago"; const h = Math.round(m/60); if(h < 24) return h+" h ago"; return Math.round(h/24)+" d ago"; }
 export const dtLong=t=>new Date(t).toLocaleString(LOC,{day:"numeric",month:"short",year:"numeric",hour:"numeric",minute:"2-digit"});
+/* A calendar date with the year, the region's way ("12 Oct 2026") */
+export const dateText=t=>new Date(t).toLocaleDateString(LOC,{day:"numeric",month:"short",year:"numeric"});

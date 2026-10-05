@@ -17,6 +17,7 @@ import { requestSignOut } from '../../../shared/ui/session-actions.js';
 import { orderRepository } from '../../orders/repositories/order-repository.js';
 import { purchaseItemOff, purchaseItemOn } from '../../inventory/services/purchase-state.js';
 import { bizRepository } from '../../commerce/repositories/biz-repository.js';
+import { noteSubscriptionRefused, subscriptionLocked } from '../../billing/services/subscription.js';
 
 /* Add work for the cloud; identical product uploads are merged so the queue stays short */
 
@@ -142,6 +143,7 @@ function toReview(item, err){
 export async function flushSbQueueOnce(){
   if(!store.sbClient || store.sbStatus !== "connected" || !store.sbOfflineQueue.length) return;
   if(!(await sbSessionOk())) return;   // keep everything queued until signed in again
+  if(subscriptionLocked()) return;      // the shop's plan has ended: everything stays queued and goes up after renewal
   store.syncing = true; renderSync();
   const done = new Set(), review = new Set();
   let again = true, stopped = false;
@@ -156,6 +158,8 @@ export async function flushSbQueueOnce(){
       try{ await sendItem(item); done.add(item); sentNow++; const k = recordKey(item); if(k) waiting.delete(k); }
       catch(err){
         logger.warn("Queue sync item failed:", item.type, err);
+        // the shop's plan has ended (HT402): nothing more can go up until renewal — keep it all queued, ask the server
+        if(err && err.code === "SUBSCRIPTION"){ item.err = err.message; stopped = true; noteSubscriptionRefused(); break; }
         item.tries = (item.tries||0) + 1; item.err = err && (err.message || err.code) || String(err);
         const member = isMember(), refused = err && err.code === "PERMISSION";
         if(member && refused){

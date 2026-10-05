@@ -85,6 +85,7 @@ export const isBlocked=(item,waiting)=>dependsOn(item).some(k=>waiting.has(k));
    For a team member (opts.member), PERMISSION means the role may not do this: retrying won't help, so it goes to review
    (a phone that lost the shop altogether is signed out before this is asked). For the owner it stays a retry, as before. */
 export function failureAction(code,tries,opts){
+  if(code==="SUBSCRIPTION") return "retry";   // the plan ended: kept, sent after renewal (never the review list)
   if(REVIEW_NOW.includes(code)) return "review";
   if(code==="PERMISSION"&&opts&&opts.member) return "review";
   if(code==="NOT_FOUND"&&(tries||0)>=REVIEW_AFTER_TRIES) return "review";

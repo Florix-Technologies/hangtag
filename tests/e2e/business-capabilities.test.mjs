@@ -87,7 +87,7 @@ try {
   await A.click('.navsheet [data-tab="settings"]'); await sleep(250);
   check('Settings opens from More as a dedicated page', await A.vis('#v-settings .setpage') && await A.vis('#setQ'));
   const secs = await A.$$eval('.setlist [data-setgo] b', (b) => b.map((x) => x.textContent));
-  check('settings in sections (a grocery: no Restaurant)', JSON.stringify(secs) === JSON.stringify(['Business', 'Payments & Banks', 'Billing & Documents', 'Products & Inventory', 'Sales & Customers', 'Purchasing', 'Storefront', 'Automation', 'Team & Devices', 'Integrations', 'Advanced']), secs);
+  check('settings in sections (a grocery: no Restaurant)', JSON.stringify(secs) === JSON.stringify(['Business', 'Plans & Billing', 'Payments & Banks', 'Billing & Documents', 'Products & Inventory', 'Sales & Customers', 'Purchasing', 'Storefront', 'Automation', 'Team & Devices', 'Integrations', 'Advanced']), secs);
   await A.run('const q=document.getElementById("setQ");q.value="printer";q.dispatchEvent(new Event("input",{bubbles:true}))'); await sleep(150);
   check('settings search finds the printer in Team & Devices', /Receipt printer on this device/.test(await A.text('#setResults') || '') && /Team & Devices/.test(await A.text('#setResults') || ''), await A.text('#setResults'));
   await A.run('const q=document.getElementById("setQ");q.value="";q.dispatchEvent(new Event("input",{bubbles:true}))');

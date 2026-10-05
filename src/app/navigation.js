@@ -29,6 +29,8 @@ import { moreGroups, navWhere, primaryNav } from '../features/shop/services/nav-
 import { currentPerms, currentRole } from '../features/shop/services/access.js';
 import { mobileLandingModule, mobileModulesFor, phoneBarFor } from '../domain/shop/mobile-workflow.js';
 import { renderGlobalActions } from '../features/search/components/open-anything.js';
+import { renderLockScreen } from '../features/billing/components/plans-billing.js';
+import { subscriptionLocked } from '../features/billing/services/subscription.js';
 
 /* ================= render + navigation ================= */
 
@@ -93,6 +95,8 @@ export function renderNav(){
 }
 function renderViews(){
   applyRegion();   // money, dates and phone numbers the shop's way (features/shop/services/region.js)
+  // the shop's Hangtag plan has ended: the lock screen replaces every screen (features/billing; the server refuses writes too)
+  if(renderLockScreen()){ closeSheets(); closeModal(); return; }
   invalidate(); renderNav(); renderSync();
   const t = tabOpen(store.prefs.tab) ? store.prefs.tab : "", d = t && moduleDef(t);   // "": no screen for this role (renderNav shows the note)
   if(d && typeof d.render === "function") d.render();
@@ -103,6 +107,7 @@ function renderViews(){
   else if(store.billOpen) renderBillSheet();
 }
 function switchTab(t){
+  if(subscriptionLocked()){ renderViews(); return; }   // no route, shortcut or button opens a screen while locked
   const d = moduleDef(t);
   // a module without a page (an action, e.g. Team) does its action instead
   if(d && d.view === false){ if(moduleShown(t) && typeof d.open === "function") d.open(); return; }

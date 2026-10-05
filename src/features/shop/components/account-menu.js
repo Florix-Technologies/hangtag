@@ -57,6 +57,7 @@ export function openAcctMenu(){
   const m = aEl("acctMenu"), email = (store.authUser && store.authUser.email) || storage.get("hangtag_auth_email", "");
   m.innerHTML = '<div class="am-head"><span class="avatar lg">' + avatarHTML() + '</span><div><b></b><span class="ame"></span><span class="ams"></span></div></div>' +
     cashDrawerHTML() +
+    (isMember() ? "" : '<button type="button" role="menuitem" data-am="plans">Plans &amp; Billing</button>') +
     '<button type="button" role="menuitem" data-am="settings">Settings</button>' +
     '<button type="button" role="menuitem" data-am="backup">Download backup</button>' +
     '<hr><button type="button" role="menuitem" data-am="signout" class="danger">Sign out</button>';

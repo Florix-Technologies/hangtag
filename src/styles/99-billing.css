@@ -1,0 +1,89 @@
+/* Plans & Billing (features/billing): the lock screen that replaces the app when the shop's plan has ended, the plan
+   cards, the promo code, the summary, the wait for the payment, the payment history, and Home's slim trial banner.
+   Phone-first (320 px up), tokens only (dark mode follows them). */
+
+/* ---------- the lock: nothing of the app is shown or reachable behind it ---------- */
+html[data-locked] body > :not(#lockScreen){display:none !important}
+html[data-locked] body{overflow:auto;background:var(--bg)}
+.lockscr{min-height:100vh;min-height:100dvh;display:flex;justify-content:center;align-items:flex-start;padding:24px 16px calc(24px + env(safe-area-inset-bottom));background:var(--bg);box-sizing:border-box}
+.lock-card{width:100%;max-width:560px;background:var(--card);border:1px solid var(--line);border-radius:var(--r-xl);box-shadow:var(--shadow-sm);padding:24px 20px;box-sizing:border-box}
+.lock-brand{font-size:var(--fs-sm);font-weight:700;color:var(--ink-3);letter-spacing:.02em;margin-bottom:14px;overflow-wrap:anywhere}
+.lock-brand span{font-weight:600;color:var(--ink-2)}
+.lock-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+.lock-head h1{margin:0;font-size:clamp(22px,6vw,28px);line-height:1.2;color:var(--ink);outline:none;flex:1 1 220px}
+.lock-ended{margin:10px 0 0;color:var(--ink-2)}
+.lock-sub{margin:8px 0 0;color:var(--ink-2);line-height:var(--lh)}
+.lock-sec{margin-top:22px;padding-top:18px;border-top:1px solid var(--line)}
+.lock-sec h2{margin:0 0 12px;font-size:var(--fs-lg);color:var(--ink)}
+.lock-foot{display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;margin-top:22px;padding-top:16px;border-top:1px solid var(--line)}
+.lock-foot .btn{min-height:44px}
+
+/* ---------- the plan now ---------- */
+.subnow-h{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.subnow-h h5{margin:0}
+.subbig{margin:12px 0 4px;font-size:var(--fs-xl);font-weight:700;color:var(--ink);display:flex;flex-direction:column;gap:2px}
+.subbig span{font-size:var(--fs-sm);font-weight:500;color:var(--ink-2)}
+.subfacts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px 16px;margin:12px 0 0}
+.subfacts div{min-width:0}
+.subfacts dt{font-size:var(--fs-xs);color:var(--ink-3);text-transform:uppercase;letter-spacing:.04em}
+.subfacts dd{margin:2px 0 0;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+
+/* ---------- choosing a plan ---------- */
+.subck{display:flex;flex-direction:column;gap:14px}
+.subplans{border:0;margin:0;padding:0;display:grid;grid-template-columns:1fr;gap:8px;min-width:0}
+/* a phone: one plan per row — the choice, its name and the month price, the price on the right */
+.subplan{position:relative;display:grid;grid-template-columns:auto 1fr auto;grid-template-areas:"r l p" "r m p";column-gap:12px;align-items:center;min-height:56px;padding:10px 14px;border:1px solid var(--line);border-radius:var(--r-lg);background:var(--card);cursor:pointer;transition:border-color var(--t-fast) var(--ease),box-shadow var(--t-fast) var(--ease)}
+.subplan input{grid-area:r;width:20px;height:20px;margin:0;accent-color:var(--accent)}
+.subplan .sp-l{grid-area:l;font-weight:700;color:var(--ink)}
+.subplan .sp-p{grid-area:p;font-size:var(--fs-lg);font-weight:700;color:var(--ink);white-space:nowrap}
+.subplan .sp-m{grid-area:m;font-size:var(--fs-xs);color:var(--ink-3)}
+.subplan:has(input:checked){border-color:var(--accent);box-shadow:0 0 0 1px var(--accent);background:var(--accent-soft)}
+.subplan:has(input:focus-visible){outline:2px solid var(--ring);outline-offset:2px}
+.subpromo label{display:block;font-size:var(--fs-sm);font-weight:600;color:var(--ink-2);margin-bottom:6px}
+.subpromo-row{display:flex;gap:8px}
+.subpromo-row input{flex:1 1 auto;min-width:0;min-height:44px;padding:0 12px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--card);color:var(--ink);font:inherit;text-transform:uppercase;letter-spacing:.04em}
+.subpromo-row input::placeholder{text-transform:none;letter-spacing:0}
+.subpromo-row .btn{min-height:44px;flex:none}
+.subpromo-msg{margin:6px 0 0;font-size:var(--fs-sm);min-height:1.2em;color:var(--ink-2)}
+.subpromo-msg.ok{color:var(--good-ink)}
+.subpromo-msg.bad{color:var(--crit-ink)}
+.subsum{margin:0;border:1px solid var(--line);border-radius:var(--r-lg);overflow:hidden}
+.subsum div{display:flex;justify-content:space-between;gap:12px;padding:10px 14px;border-top:1px solid var(--line)}
+.subsum div:first-child{border-top:0}
+.subsum dt{color:var(--ink-2)}
+.subsum dd{margin:0;font-variant-numeric:tabular-nums;color:var(--ink);text-align:right}
+.subsum .tot{background:var(--wash)}
+.subsum .tot dt,.subsum .tot dd{font-weight:700;color:var(--ink);font-size:var(--fs-lg)}
+.subpay{width:100%;min-height:48px;font-size:var(--fs-lg)}
+.subfine{margin:-4px 0 0;font-size:var(--fs-xs)}
+.subnote{padding:12px 14px;border:1px dashed var(--line-2);border-radius:var(--r-md);background:var(--wash);margin:0}
+.subwait,.subdone{display:flex;flex-direction:column;gap:6px;padding:14px;border-radius:var(--r-lg);border:1px solid var(--accent-line);background:var(--accent-soft);color:var(--ink)}
+.subwait span{color:var(--ink-2);font-size:var(--fs-sm)}
+.subwait .btnrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+.subwait .btn{min-height:44px}
+.subdone{border-color:var(--good-line);background:var(--good-soft);color:var(--good-ink)}
+
+/* ---------- payment history ---------- */
+.subhist{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:var(--r-lg);overflow:hidden}
+.subhist li{display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid var(--line);flex-wrap:wrap}
+.subhist li:first-child{border-top:0}
+.subhist .sh-main{flex:1 1 160px;min-width:0;display:flex;flex-direction:column}
+.subhist .sh-main small{color:var(--ink-3);overflow-wrap:anywhere}
+.subhist .sh-amt{font-weight:700;font-variant-numeric:tabular-nums;color:var(--ink)}
+
+/* ---------- Home: the slim trial / renewal line ---------- */
+.subban{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin:0 0 12px;padding:10px 14px;border:1px solid var(--accent-line);border-radius:var(--r-lg);background:var(--accent-soft);color:var(--accent-ink);font-weight:600}
+.subban span{flex:1 1 200px;min-width:0}
+.subban.warn{border-color:var(--warn-line);background:var(--warn-soft);color:var(--warn-ink)}
+.subban small{font-weight:500}
+.subban .btn{min-height:40px}
+
+@media (min-width:560px){
+  /* wider: the three plans side by side, the price under the name */
+  .subplans{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .subplan{grid-template-columns:auto 1fr;grid-template-areas:"r l" "r p" "r m";padding:12px}
+}
+@media (min-width:768px){
+  .lockscr{align-items:center;padding:40px 24px}
+  .lock-card{padding:32px}
+}

@@ -12,6 +12,7 @@ export const ERROR_CODES = Object.freeze({
   NOT_CONFIGURED: "NOT_CONFIGURED",       // a server feature isn't set up (e.g. reading bills needs an API key on the server)
   PRINTER: "PRINTER",                     // the receipt printer couldn't be reached or didn't confirm the print
   DELIVERY: "DELIVERY",                   // the email / WhatsApp / SMS service didn't accept the message
+  SUBSCRIPTION: "SUBSCRIPTION",           // the shop's Hangtag plan has ended: the server refuses its writes (HT402) until renewed
   UNKNOWN: "UNKNOWN",
 });
 

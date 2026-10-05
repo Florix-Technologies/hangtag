@@ -116,6 +116,7 @@ export function initState(){
   store.emailMode = "signin";      // "signin" | "signup" | "forgot"
   store.profile = storage.get("hangtag_profile", null);   // this account's profile (kept per account on this device); a team member: its shop's
   store.access = objOr(storage.get("hangtag_access", null), null);   // a team member's role and permissions in its shop (null: the owner)
+  store.subscription = objOr(storage.get("hangtag_subscription", null), null);   // the shop's Hangtag plan as the server last said (features/billing)
   store.team = null;            // Settings → Team & devices / Roles & permissions (the owner's screens)
   /* ================= Supabase Database Engine ================= */
 

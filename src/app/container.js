@@ -27,6 +27,7 @@ import { rasterizeLogo } from '../infrastructure/printing/raster.js';
 import { createDeliveryClient } from '../infrastructure/messaging/delivery-client.js';
 import { createPaymentGatewayClient } from '../infrastructure/payments/payment-gateway-client.js';
 import { createAgentProviderClient } from '../infrastructure/ai/agent-provider-client.js';
+import { createSubscriptionClient } from '../infrastructure/billing/subscription-client.js';
 import { createLocalFirstCashRepository } from '../infrastructure/repositories/local-first-cash-repository.js';
 import { createTeamClient } from '../infrastructure/team/team-client.js';
 import { createWeightScale } from '../infrastructure/hardware/weight-scale.js';
@@ -72,6 +73,8 @@ export function installContainer(){
   provide("paymentGateway", createPaymentGatewayClient({ cloud: cloudGateway }));
   // The Hangtag Agent's optional AI provider (Edge Function agent; its key stays there)
   provide("agentProvider", createAgentProviderClient({ cloud: cloudGateway }));
+  // The shop's Hangtag plan: status, plans and prices, promo quotes, payments (database), checkout and verify (Edge Function)
+  provide("subscriptionService", createSubscriptionClient({ cloud: cloudGateway }));
   provide("cashRepository", createLocalFirstCashRepository({ store, persist: { saveCashMoves, saveDayCloses }, outbox: { enqueue } }));
   // A weighing scale on a cable (Web Serial, with this device's settings), else the weight is typed
   provide("weightScale", createWeightScale({ serial: typeof navigator !== "undefined" ? navigator.serial : null, getSettings: () => store.scale }));

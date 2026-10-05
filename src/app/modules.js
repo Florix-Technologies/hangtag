@@ -48,6 +48,7 @@ import { installStoreEvents, renderStorePage, storeOpen } from '../features/comm
 import { docTemplatesHTML, installDocTemplateEvents } from '../features/receipts/components/doc-templates.js';
 import { automationSettingsHTML, installAutomationEvents } from '../features/automation/components/automation-view.js';
 import { diagnosticsHTML, installDiagnosticsEvents } from '../features/shop/components/diagnostics-view.js';
+import { installPlansBillingEvents, plansBillingHTML } from '../features/billing/components/plans-billing.js';
 
 let installed = false;
 export function installModules(){
@@ -94,6 +95,8 @@ export function installModules(){
   registerSettingsPart("automation", { id: "rules", order: 10, perms: ["manage_settings"], html: automationSettingsHTML });
   // Settings → Advanced: how this device is doing and its recent technical problems (privacy-safe, on this device)
   registerSettingsPart("advanced", { id: "diagnostics", order: 50, html: diagnosticsHTML });
+  // Settings → Plans & Billing (the owner's): the shop's Hangtag plan, renewing with a promo code, the payments
+  registerSettingsPart("plans", { id: "plans", order: 10, html: plansBillingHTML });
   // Settings → Payments & Banks: the shop's bank accounts (section 3s)
   registerSettingsPart("payments", { id: "banks", order: 10, perms: ["manage_settings", "view_reports"], html: bankAccountsSettingsHTML });
   // Restaurant (W2-B): the tables (a till, or servers ordering on their phones) and the kitchen screen — only with the shop's
@@ -114,6 +117,7 @@ export function installModules(){
   installDocTemplateEvents();
   installAutomationEvents();
   installDiagnosticsEvents();
+  installPlansBillingEvents();
   document.addEventListener("click", e => {
     // a destination that is a part of a module (Purchases is Stock → Purchases): open the module on that part
     const ns = e.target && e.target.closest && e.target.closest("[data-navsub]");

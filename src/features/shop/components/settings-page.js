@@ -65,6 +65,7 @@ function sectionBody(key){
     case "sales": { const parts = settingsPartsHTML("sales"); return parts ? parts + featuresLine("sales") : featuresLine("sales"); }
     case "purchasing": return reorderFormHTML() + settingsPartsHTML("purchasing") + featuresLine("purchasing");
     case "automation": return settingsPartsHTML("automation");
+    case "plans": return settingsPartsHTML("plans");
     case "storefront": { const parts = settingsPartsHTML("storefront"); return parts ? parts + featuresLine("storefront") : ""; }
     case "restaurant": return settingsPartsHTML("restaurant") + featuresLine("restaurant");
     case "devices": return (member ? "" : teamHTML()) + printerSetupHTML() + settingsPartsHTML("devices") + youHTML();

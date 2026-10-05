@@ -38,6 +38,7 @@ import { processQuoteSends } from '../features/orders/use-cases/send-quotation.j
 import { rememberReceiptPage } from '../features/shop/use-cases/receipt-page.js';
 import { installMenus } from '../shared/ui/kit.js';
 import { installGlobalDiagnostics } from '../shared/logging/diagnostics.js';
+import { installSubscription, onSubscriptionChange, subscriptionLocked } from '../features/billing/services/subscription.js';
 
 installContainer();    // ports first: everything below may use them
 installGlobalDiagnostics(); // capture startup and background failures into the privacy-safe, on-device history
@@ -65,15 +66,21 @@ installAutoDelivery();
 // Each time the cloud connects: a provider payment left open is shown again, hand-checked UPI is matched with the
 // provider, and receipts waiting to go out are sent
 // (UPI is matched, and reorder drafts are made, by Automation when the shop's rules say so: Settings → Automation)
-const automate = () => runAutomation({ online: store.sbStatus === "connected", checkUpi: () => checkUnverified(true) }).then(n => { if(n) renderAll(); }).catch(() => {});
+// The shop's Hangtag plan (features/billing): asked from the server when the cloud connects, on return to the app, every
+// 10 minutes and when it runs out. Locked: the lock screen replaces the app and background work waits; renewed: the upload
+// queue goes up again at once.
+installSubscription({ onConnected });
+onSubscriptionChange(locked => { renderAll(); if(!locked) flushSbQueue(); });
+const unlocked = fn => (...a) => subscriptionLocked() ? undefined : fn(...a);
+const automate = () => subscriptionLocked() ? Promise.resolve(0) : runAutomation({ online: store.sbStatus === "connected", checkUpi: () => checkUnverified(true) }).then(n => { if(n) renderAll(); }).catch(() => {});
 onConnected(async()=>{ await loadPayConfig(true); resumePayment(); await automate(); });
 setInterval(()=>{ if(store.authUser && store.bootDone) automate(); }, 5 * 60e3);
-onConnected(()=>processDeliveryQueue());
+onConnected(unlocked(()=>processDeliveryQueue()));
 // …and supplier bills' originals that couldn't reach the cloud yet go up (kept on this device until then)
-onConnected(()=>{ if(Object.keys(store.pendingDocs||{}).length) sendPendingDocs(); });
+onConnected(unlocked(()=>{ if(Object.keys(store.pendingDocs||{}).length) sendPendingDocs(); }));
 // …quotations queued to send go out, and the owner's app keeps the shop's invoice-link page (unless the server sets one)
-onConnected(()=>processQuoteSends());
-onConnected(()=>rememberReceiptPage(false));
+onConnected(unlocked(()=>processQuoteSends()));
+onConnected(unlocked(()=>rememberReceiptPage(false)));
 renderAll();
 // Sign in, then connect to the cloud database
 

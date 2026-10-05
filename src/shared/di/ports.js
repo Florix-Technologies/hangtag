@@ -249,6 +249,19 @@
  */
 
 /**
+ * "subscriptionService": the shop's Hangtag plan (Plans & Billing, the lock). Implementation:
+ * infrastructure/billing/subscription-client.js → database functions of schema.sql section 3t + the subscription Edge Function.
+ * @typedef {Object} SubscriptionServicePort
+ * @property {() => Promise<Object|null>} status  The shop's plan (hangtag_subscription_status). Throws an AppError when it can't.
+ * @property {() => Promise<Object[]>} plans  The plans on sale with their prices (from the database).
+ * @property {(plan: string, promo: string) => Promise<Object>} quote  The price, the promo discount and the amount (computed by the database).
+ * @property {() => Promise<Object[]>} payments  The owner's plan payments, newest first.
+ * @property {() => Promise<{available: boolean, provider: (string|null)}>} config  Whether online payment is set up (never throws).
+ * @property {(plan: string, promo: string) => Promise<Object>} checkout  Starts a payment: { payment_id, amount, pay_url } or { free: true, status: "paid" }.
+ * @property {(paymentId: string) => Promise<Object>} verify  Asks the provider: { status: "paid"|"pending"|… }.
+ */
+
+/**
  * "agentProvider": the Hangtag Agent's optional AI provider. Implementation: infrastructure/ai/agent-provider-client.js →
  * Edge Function agent (the provider's key stays server-side; the function reads no shop data). The tools run on this device
  * (features/assistant/services/agent-tools.js); reach it through features/assistant/services/agent-runner.js.

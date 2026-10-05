@@ -15,6 +15,7 @@ import { moduleShown } from '../../shop/services/modules.js';
 import { orderMobileActions } from '../../../domain/shop/mobile-workflow.js';
 import { shopTypeLabel } from '../../shop/services/shop-caps.js';
 import { agentInsights, attentionItems, recentBills, salesTrend, stockAlerts, todayFigures } from '../services/home-signals.js';
+import { subscriptionBannerHTML } from '../../billing/components/plans-billing.js';
 import { billChips } from '../../bills/services/bill-status.js';
 import { NAV_ICONS } from '../../../shared/constants/nav-icons.js';
 import { UI_ICON, statusChip } from '../../../shared/ui/kit.js';
@@ -97,6 +98,7 @@ export function homeHTML(){
   const acts = homeActions();
   let h = `<div class="viewhead hhead"><div><div class="eyebrow">${esc(new Date(now).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" }))}</div>
     <h2 class="vt">${esc(p.shop_name || "Your shop")}</h2><p>${esc(shopTypeLabel())}</p></div>${acts.length ? `<div class="qa" role="group" aria-label="Quick actions">${acts.map((a, i) => `<button type="button" class="btn ${i === 0 ? "primary" : ""} qa-b" ${a.attr}>${NAV_ICONS[a.icon] || ""}<span>${esc(a.label)}</span></button>`).join("")}</div>` : ""}</div>`;
+  h += subscriptionBannerHTML();   // the free trial's days left, or a paid plan ending within a week (owner and managers)
   const sells = canAny(["create_sale", "view_reports"]), reports = can("view_reports");
   const today = sells ? todayHTML(role === "owner") : "";
   if(reports) h += `<div class="homegrid wide">${today}<div class="hcol">${attentionHTML()}${sells ? billsHTML() : ""}</div><div class="hcol">${insightsHTML()}${trendHTML()}</div></div>`;

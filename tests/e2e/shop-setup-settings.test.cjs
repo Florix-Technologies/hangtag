@@ -70,7 +70,7 @@ const USER=(extra)=>`({user:Object.assign({id:'u1',email:'raj@example.com',creat
     // account menu
     await A.click('#acctBtn');await sleep(150);
     check('account menu shows name, email and shop',await vis(A,'#acctMenu')&&(await txt(A,'#acctMenu .am-head b'))==='Raj Kumar'&&(await txt(A,'#acctMenu .ame'))==='raj@example.com'&&(await txt(A,'#acctMenu .ams'))==='Raj Boutique');
-    check('menu has Profile & shop settings, Download backup, Sign out',JSON.stringify(await A.$$eval('#acctMenu [data-am]',b=>b.map(x=>x.dataset.am)))==='["settings","backup","signout"]');
+    check('menu has Plans & Billing, Profile & shop settings, Download backup, Sign out',JSON.stringify(await A.$$eval('#acctMenu [data-am]',b=>b.map(x=>x.dataset.am)))==='["plans","settings","backup","signout"]');
     await A.screenshot({path:SHOT+'e6-menu.png'});
     await A.keyboard.press('Escape');await sleep(100);
     check('Escape closes the menu',!(await vis(A,'#acctMenu')));

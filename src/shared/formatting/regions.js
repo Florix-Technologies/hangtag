@@ -1,15 +1,24 @@
 // Where the shop is: its currency, how money, numbers and dates are written, and how its phone numbers are dialled from
 // abroad. The app reads these from here (money.js and dates.js are configured from the shop's settings.region; India by
 // default), so another country is an entry in REGIONS — not a search through the app. Pure.
-// What is still India-only and would come with another country: tax (GST, e-invoice, e-way bills: tax "gst"), the
-// messages the send-receipt and receipt Edge Functions write (₹), and the money core's hundredths (domain/sales/paise.js:
-// every currency here has 2 decimals).
+//   symbol       the currency as the app writes it before an amount (₹)
+//   printSymbol  the same in plain ASCII, for outputs that can't print the symbol: the PDF's built-in fonts (WinAnsi has £
+//                and $, not ₹) and receipt printers (ASCII only). money.js decides per output which one is written.
+//   words        the currency in words: amounts in words on documents ("Rupees … and … Paise Only") and in sentences
+//                ("Enter the budget in rupees.")
+//   compact      the numbering: "indian" (thousand, lakh, crore) or "international" (thousand, million, billion), for short
+//                money and amounts in words
+//   cashSteps    the round sums a customer is likely to hand over (quick cash on the payment screen)
+// What is still India-only and would come with another country: tax (GST, e-invoice, e-way bills: tax "gst"), UPI (an
+// Indian payment system, always in INR), the messages the send-receipt and receipt Edge Functions write (₹), and the money
+// core's hundredths and whole-unit round off (domain/sales/paise.js, checkout-totals.js: every currency here has 2 decimals).
+const words = (major, minor, plain) => Object.freeze({ major, minor, plain });
 export const REGIONS = Object.freeze({
-  IN: Object.freeze({ code: "IN", name: "India", currency: "INR", symbol: "₹", minor: 2, locale: "en-IN", phoneCode: "91", phoneDigits: 10, compact: "indian", tax: "gst" }),
-  AE: Object.freeze({ code: "AE", name: "United Arab Emirates", currency: "AED", symbol: "AED ", minor: 2, locale: "en-AE", phoneCode: "971", phoneDigits: 9, compact: "international", tax: "vat" }),
-  GB: Object.freeze({ code: "GB", name: "United Kingdom", currency: "GBP", symbol: "£", minor: 2, locale: "en-GB", phoneCode: "44", phoneDigits: 10, compact: "international", tax: "vat" }),
-  US: Object.freeze({ code: "US", name: "United States", currency: "USD", symbol: "$", minor: 2, locale: "en-US", phoneCode: "1", phoneDigits: 10, compact: "international", tax: "sales" }),
-  SG: Object.freeze({ code: "SG", name: "Singapore", currency: "SGD", symbol: "S$", minor: 2, locale: "en-SG", phoneCode: "65", phoneDigits: 8, compact: "international", tax: "gst-sg" }),
+  IN: Object.freeze({ code: "IN", name: "India", currency: "INR", symbol: "₹", printSymbol: "Rs.", words: words("Rupees", "Paise", "rupees"), minor: 2, locale: "en-IN", phoneCode: "91", phoneDigits: 10, compact: "indian", cashSteps: Object.freeze([100, 500, 2000]), tax: "gst" }),
+  AE: Object.freeze({ code: "AE", name: "United Arab Emirates", currency: "AED", symbol: "AED ", printSymbol: "AED ", words: words("Dirhams", "Fils", "dirhams"), minor: 2, locale: "en-AE", phoneCode: "971", phoneDigits: 9, compact: "international", cashSteps: Object.freeze([10, 50, 100]), tax: "vat" }),
+  GB: Object.freeze({ code: "GB", name: "United Kingdom", currency: "GBP", symbol: "£", printSymbol: "GBP ", words: words("Pounds", "Pence", "pounds"), minor: 2, locale: "en-GB", phoneCode: "44", phoneDigits: 10, compact: "international", cashSteps: Object.freeze([5, 20, 50]), tax: "vat" }),
+  US: Object.freeze({ code: "US", name: "United States", currency: "USD", symbol: "$", printSymbol: "$", words: words("Dollars", "Cents", "dollars"), minor: 2, locale: "en-US", phoneCode: "1", phoneDigits: 10, compact: "international", cashSteps: Object.freeze([5, 20, 100]), tax: "sales" }),
+  SG: Object.freeze({ code: "SG", name: "Singapore", currency: "SGD", symbol: "S$", printSymbol: "S$", words: words("Singapore Dollars", "Cents", "dollars"), minor: 2, locale: "en-SG", phoneCode: "65", phoneDigits: 8, compact: "international", cashSteps: Object.freeze([5, 10, 50]), tax: "gst-sg" }),
 });
 export const DEFAULT_REGION = "IN";
 export const regionOf = code => REGIONS[String(code || "").toUpperCase()] || REGIONS[DEFAULT_REGION];

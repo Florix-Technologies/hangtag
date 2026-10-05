@@ -21,6 +21,7 @@ export function installAccountMenuEvents(){
     const b = e.target.closest("[data-am]"); if(!b) return;
     const act = b.dataset.am; closeAcctMenu();
     if(act === "settings") openSettings();
+    else if(act === "plans") openSettings("plans");
     else if(act === "backup") downloadBackup();
     else if(act === "signout") requestSignOut();
     else if(act.startsWith("cash:")) openCashForm(act.slice(5));   // a team member's cash drawer (no Reports tab)

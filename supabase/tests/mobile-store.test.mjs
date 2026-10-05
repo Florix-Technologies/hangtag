@@ -117,7 +117,7 @@ console.log('=== private status and duplicate billing ===');
   await db.exec('COMMIT');
   const afterBill = value(await attempt(db, null, `SELECT public.hangtag_mobile_order_status($1) result`, [mobile.order_token]));
   const catalog = value(await attempt(db, null, `SELECT public.hangtag_mobile_catalog($1) result`, [ta]));
-  check('existing bill/payment state drives customer confirmation and releases the matching reservation exactly once', afterBill?.state === 'fulfilled'
+  check('existing bill/payment state drives customer confirmation (billed and paid: completed) and releases the matching reservation exactly once', afterBill?.state === 'completed'
     && afterBill.payment_state === 'confirmed' && catalog.items[0].variants[0].available === 1, { afterBill, available:catalog.items[0].variants[0].available });
 
   let duplicate;
@@ -147,7 +147,7 @@ console.log('=== explicit switch-off ===');
   await as(db, A, `UPDATE public.hangtag_meta SET value='{"caps":{"uses_mobile_store":false},"capsAt":2}'::jsonb WHERE key='settings'`);
   const off = value(await attempt(db, null, `SELECT public.hangtag_mobile_catalog($1) result`, [ta]));
   const status = value(await attempt(db, null, `SELECT public.hangtag_mobile_order_status($1) result`, [mobile.order_token]));
-  check('switching the store off closes catalog and checkout while existing customer status remains available', off?.ok === false && status?.ok === true && status.state === 'fulfilled', { off, status });
+  check('switching the store off closes catalog and checkout while existing customer status remains available', off?.ok === false && status?.ok === true && status.state === 'completed', { off, status });
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');

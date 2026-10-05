@@ -1,3 +1,8 @@
+/* Store area: what customers see (products on sale, sold out) */
+.storeshelf .shelf-n{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:4px 0 8px}
+.storeshelf .shelf-n div{border:1px solid var(--line);border-radius:var(--r-md);padding:10px 12px;min-width:0}
+.storeshelf .shelf-n b{display:block;font-size:var(--fs-xl);color:var(--ink);font-variant-numeric:tabular-nums}
+.storeshelf .shelf-n span{font-size:var(--fs-xs);color:var(--ink-3)}
 /* The commerce batch (schema.sql section 3r): price lists, purchase orders and receiving, kits, gift vouchers, GST
    documents, repack, webhooks. Phone first: big tap targets, short pages, one sticky primary action. */
 html[data-noperm~="manage_products"] :is([data-biz="plmanage"]),

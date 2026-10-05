@@ -296,6 +296,86 @@ END $$;
 REVOKE ALL ON FUNCTION public.hangtag_cap_on(UUID,TEXT) FROM PUBLIC,anon;
 GRANT EXECUTE ON FUNCTION public.hangtag_cap_on(UUID,TEXT) TO authenticated;
 
+-- The public store pages (Wave 12): the catalog also gives the shop's region (its currency and number style: the store page
+-- writes money the shop's way), and an order's status page gives its stages (received → confirmed → ready → completed, or
+-- cancelled), its lines, the total and how to reach the shop. Otherwise exactly as section 3s / 3q define them.
+CREATE OR REPLACE FUNCTION public.hangtag_mobile_catalog(p_token TEXT)
+RETURNS JSONB LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE shop RECORD; items JSONB; cats JSONB; logo TEXT; region TEXT; tax_on BOOLEAN := FALSE; tax_incl BOOLEAN := TRUE; default_rate NUMERIC := 5;
+BEGIN
+    IF p_token IS NULL OR p_token !~ '^st_[A-Za-z0-9_-]{32,61}$' THEN
+        RETURN jsonb_build_object('ok', FALSE, 'message', 'This shop link is not valid. Ask the shop for a new link.');
+    END IF;
+    SELECT p.id, p.shop_name, p.city INTO shop FROM public.hangtag_profiles p WHERE p.store_token = p_token;
+    IF NOT FOUND THEN RETURN jsonb_build_object('ok', FALSE, 'message', 'This mobile store is not open right now.'); END IF;
+    -- closed (switched off, or the shop's plan has ended): its name and town, so the page says whose store is closed
+    IF NOT public.hangtag_cap_on(shop.id, 'uses_mobile_store') THEN
+        RETURN jsonb_build_object('ok', FALSE, 'closed', TRUE, 'message', 'This mobile store is not open right now.',
+            'shop', COALESCE(NULLIF(btrim(shop.shop_name), ''), 'Shop'), 'city', NULLIF(btrim(COALESCE(shop.city, '')), ''));
+    END IF;
+    SELECT CASE WHEN m.value->>'region' ~ '^[A-Z]{2}$' THEN m.value->>'region' END,
+           COALESCE(CASE WHEN jsonb_typeof(m.value->'taxOn')='boolean' THEN (m.value->>'taxOn')::BOOLEAN END,FALSE),
+           COALESCE(CASE WHEN jsonb_typeof(m.value->'taxIncl')='boolean' THEN (m.value->>'taxIncl')::BOOLEAN END,TRUE),
+           COALESCE(CASE WHEN jsonb_typeof(m.value->'taxRate')='number' THEN (m.value->>'taxRate')::NUMERIC END,5)
+      INTO region,tax_on,tax_incl,default_rate FROM public.hangtag_meta m WHERE m.owner_id=shop.id AND m.key='settings';
+    SELECT COALESCE(jsonb_agg(x.item ORDER BY x.sort_key), '[]'::jsonb) INTO items FROM (
+        SELECT jsonb_build_object('id', p.id, 'name', p.name, 'description', COALESCE(p.description, ''),
+                   'brand', COALESCE(p.brand, ''), 'category', COALESCE(p.category, ''), 'gst', CASE WHEN tax_on THEN COALESCE(p.gst_rate,default_rate) ELSE 0 END,
+                   'unit', COALESCE(p.unit, 'pcs'), 'image', CASE WHEN im.image_data ~ '^data:image/(png|jpeg|webp);base64,' THEN im.image_data END,
+                   'variants', (SELECT COALESCE(jsonb_agg(jsonb_build_object('v', v.id,
+                       'label', COALESCE((SELECT string_agg(e.value, ' / ' ORDER BY e.n) FROM jsonb_array_elements_text(v.option_values) WITH ORDINALITY e(value,n)), ''),
+                       'price', public.hangtag_list_price(p.owner_id, NULL, NULL, p.id, v.id, COALESCE(v.price, p.price)), 'available', public.hangtag_mobile_available(p.owner_id, v.id))
+                       ORDER BY v.sort_order, v.id), '[]'::jsonb)
+                     FROM public.hangtag_variants v WHERE v.owner_id = p.owner_id AND v.product_id = p.id AND v.active)) AS item,
+               lower(COALESCE(p.category, 'zzz')) || '|' || lpad(p.sort_order::TEXT, 10, '0') || '|' || lower(p.name) AS sort_key
+          FROM public.hangtag_products p LEFT JOIN public.hangtag_images im ON im.owner_id = p.owner_id AND im.product_id = p.id
+         WHERE p.owner_id = shop.id AND NOT p.archived AND p.bundle IS NULL
+           AND EXISTS (SELECT 1 FROM public.hangtag_variants v WHERE v.owner_id = p.owner_id AND v.product_id = p.id AND v.active)
+         ORDER BY lower(COALESCE(p.category, 'zzz')), p.sort_order, lower(p.name) LIMIT 500) x;
+    SELECT COALESCE(jsonb_agg(c ORDER BY lower(c)), '[]'::jsonb) INTO cats FROM (
+        SELECT DISTINCT btrim(p.category) c FROM public.hangtag_products p WHERE p.owner_id = shop.id AND NOT p.archived AND p.bundle IS NULL AND btrim(COALESCE(p.category, '')) <> '') q;
+    -- the shop's logo (the one printed on its receipts), only when it is a picture
+    SELECT CASE WHEN jsonb_typeof(m.value) = 'string' AND (m.value #>> '{}') ~ '^data:image/(png|jpeg|webp);base64,' THEN m.value #>> '{}' END
+      INTO logo FROM public.hangtag_meta m WHERE m.owner_id = shop.id AND m.key = 'logo';
+    RETURN jsonb_build_object('ok', TRUE, 'shop', COALESCE(NULLIF(btrim(shop.shop_name), ''), 'Shop'), 'city', NULLIF(btrim(COALESCE(shop.city, '')), ''), 'logo', logo, 'tax_on', tax_on,
+        'tax_inclusive', tax_incl, 'items', items, 'categories', cats, 'region', COALESCE(region, 'IN'));
+END $$;
+CREATE OR REPLACE FUNCTION public.hangtag_mobile_order_status(p_order_token TEXT)
+RETURNS JSONB LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE o public.hangtag_orders; ordered NUMERIC; billed NUMERIC; state TEXT; state_label TEXT; payment_state TEXT; payment_label TEXT;
+    prof RECORD; items JSONB; region TEXT;
+BEGIN
+    IF p_order_token IS NULL OR p_order_token !~ '^mo_[A-Za-z0-9_-]{32,61}$' THEN RETURN jsonb_build_object('ok', FALSE, 'message', 'That order link is not valid.'); END IF;
+    SELECT * INTO o FROM public.hangtag_orders x WHERE x.public_token = p_order_token;
+    IF NOT FOUND THEN RETURN jsonb_build_object('ok', FALSE, 'message', 'That order was not found.'); END IF;
+    SELECT COALESCE(sum(i.qty),0) INTO ordered FROM public.hangtag_order_items i WHERE i.owner_id=o.owner_id AND i.order_id=o.id;
+    SELECT COALESCE(sum(i.quantity),0) INTO billed FROM public.hangtag_sales s JOIN public.hangtag_sale_items i ON i.owner_id=s.owner_id AND i.sale_id=s.id
+     WHERE s.owner_id=o.owner_id AND s.order_id=o.id AND NOT s.is_void;
+    IF EXISTS (SELECT 1 FROM public.hangtag_sales s WHERE s.owner_id=o.owner_id AND s.order_id=o.id AND NOT s.is_void
+        AND COALESCE((SELECT sum(p.amount) FROM public.hangtag_payments p WHERE p.owner_id=s.owner_id AND p.sale_id=s.id AND p.status='completed'),0)
+            >= GREATEST(s.total-s.credit-s.due_amount,0)) THEN payment_state:='confirmed'; payment_label:='Payment confirmed';
+    ELSE payment_state:='awaiting_staff'; payment_label:=CASE o.payment_preference WHEN 'upi' THEN 'UPI to be verified by staff' WHEN 'cash' THEN 'Cash at checkout' ELSE 'Pay at checkout' END; END IF;
+    -- received (placed) → confirmed (the shop has worked on it) → ready (all of it billed, payment pending) → completed (paid);
+    -- or cancelled. "partial": some of it is ready.
+    IF o.status='cancelled' THEN state:='cancelled'; state_label:='Cancelled';
+    ELSIF ordered>0 AND billed>=ordered THEN
+        IF payment_state='confirmed' THEN state:='completed'; state_label:='Completed'; ELSE state:='ready'; state_label:='Ready'; END IF;
+    ELSIF billed>0 THEN state:='partial'; state_label:='Partly ready';
+    -- a store order arrives already reserved (status confirmed, version 1): "Received" until the shop works on it
+    ELSIF COALESCE(o.version, 1) > 1 THEN state:='confirmed'; state_label:='Confirmed';
+    ELSE state:='received'; state_label:='Received'; END IF;
+    SELECT p.shop_name, p.phone, p.city INTO prof FROM public.hangtag_profiles p WHERE p.id = o.owner_id;
+    SELECT CASE WHEN m.value->>'region' ~ '^[A-Z]{2}$' THEN m.value->>'region' END INTO region FROM public.hangtag_meta m WHERE m.owner_id = o.owner_id AND m.key = 'settings';
+    SELECT COALESCE(jsonb_agg(jsonb_build_object('name', i.name, 'label', COALESCE(i.variant_label, ''), 'qty', i.qty) ORDER BY i.line_no), '[]'::jsonb) INTO items
+      FROM public.hangtag_order_items i WHERE i.owner_id = o.owner_id AND i.order_id = o.id;
+    RETURN jsonb_build_object('ok',TRUE,'order_no',o.no,'state',state,'state_label',state_label,'payment_state',payment_state,'payment_label',payment_label,
+        'total',o.total,'mode',COALESCE(o.checkout_mode,'store'),'updated_at',o.updated_at,'placed_at',o.created_at,'items',items,
+        'shop',COALESCE(NULLIF(btrim(prof.shop_name),''),'Shop'),'shop_phone',NULLIF(btrim(COALESCE(prof.phone,'')),''),'shop_city',NULLIF(btrim(COALESCE(prof.city,'')),''),
+        'region',COALESCE(region,'IN'));
+END $$;
+REVOKE ALL ON FUNCTION public.hangtag_mobile_order_status(TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.hangtag_mobile_order_status(TEXT) TO anon,authenticated;
+
 -- (internal) A promo code checked for a shop and a plan: { code, valid, reason, message, kind, value, discount }.
 -- Counted uses: paid redemptions, plus checkouts started in the last 30 minutes by OTHER shops (so a burst of checkouts
 -- cannot overrun the total limit, and trying again does not block yourself).

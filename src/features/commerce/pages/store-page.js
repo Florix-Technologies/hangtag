@@ -43,8 +43,8 @@ export function storeShelf(){
   return { onSale: onSale.length, soldOut };
 }
 /* A store order's stage as the customer's status page names it (store.html): new until the shop works on it */
-const stageOf = o => o.status === "cancelled" ? ["Cancelled", "muted"] : o.status === "completed" ? ["Completed", "ok"] : o.status === "partial" ? ["Part ready", "warn"]
-  : (+o.version || 1) > 1 ? ["Confirmed", "info"] : ["New", "warn"];
+const stageOf = o => o.status === "cancelled" ? ["Cancelled", "muted"] : o.status === "completed" ? ["Completed", "ok"] : o.status === "partial" ? ["Partly ready", "warn"]
+  : (+o.version || 1) > 1 ? ["Confirmed", "info"] : ["Received", "warn"];
 
 export function renderStorePage(){
   const host = document.getElementById("v-store"); if(!host) return;

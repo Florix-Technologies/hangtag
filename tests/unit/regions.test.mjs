@@ -4,6 +4,7 @@
 import { REGIONS, compactParts, phoneDigits, regionOf } from '../../src/shared/formatting/regions.js';
 import { configureMoney, currencySymbol, inr, inrShort, inrx } from '../../src/shared/formatting/money.js';
 import { configureDates, dayLab, dayLong } from '../../src/shared/formatting/dates.js';
+import { moneyFor } from '../../supabase/functions/send-receipt/core.js';
 
 let passed = 0, failed = 0;
 const check = (n, ok, info) => { if (ok) { passed++; console.log('PASS ' + n); } else { failed++; console.log('FAIL ' + n + (info !== undefined ? '  ' + JSON.stringify(info).slice(0, 400) : '')); } };
@@ -17,6 +18,13 @@ configureMoney(REGIONS.US);
 check('US: dollars, and billions', inr(2500) === '$2,500' && inrShort(3.2e9) === '$3.2B' && inrx(0.07) === '$0.07');
 configureMoney(REGIONS.GB);
 check('UK: pounds', inr(1234567) === '£1,234,567');
+configureMoney(REGIONS.IE);
+check('Ireland: euro — € on screen, EUR on paper (thermal printers have no €)', inr(1234567) === '€1,234,567' && inrx(10.5) === '€10.50' && currencySymbol() === '€'
+  && REGIONS.IE.currency === 'EUR' && REGIONS.IE.printSymbol === 'EUR ' && regionOf('ie') === REGIONS.IE);
+{
+  const ie = moneyFor('IE'), inn = moneyFor(undefined);
+  check('receipts the server sends: in the shop\'s currency (€ for Ireland), India unchanged by default', ie(1234.5) === '€1,234.50' && inn(123456) === '₹1,23,456' && moneyFor('US')(5) === '$5');
+}
 configureMoney(null);
 check('back to India when no region is given', inr(1234567) === '₹12,34,567');
 configureDates('en-US');

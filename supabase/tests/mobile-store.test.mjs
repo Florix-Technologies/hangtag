@@ -108,6 +108,9 @@ console.log('=== private status and duplicate billing ===');
     && before.payment_state === 'awaiting_staff' && !Object.hasOwn(before, 'customer') && !Object.hasOwn(before, 'owner_id'), { invalid, before });
 
   const orderId = (await as(db, A, `SELECT id FROM public.hangtag_orders WHERE public_token=$1`, [mobile.order_token])).rows[0].id;
+  await db.query(`UPDATE public.hangtag_orders SET version = 2 WHERE id = $1`, [orderId]);   // the shop worked on it (saved again)
+  const confirmed = value(await attempt(db, null, `SELECT public.hangtag_mobile_order_status($1) result`, [mobile.order_token]));
+  check('once the shop has worked on the order, the customer sees "Confirmed"', confirmed?.state === 'confirmed' && confirmed.state_label === 'Confirmed', confirmed);
   await db.exec('BEGIN');
   await db.query(`INSERT INTO public.hangtag_sales(owner_id,id,timestamp,total,payment_method,order_id) VALUES($1,'bill-one',100,500,'cash',$2)`, [A, orderId]);
   await db.query(`INSERT INTO public.hangtag_sale_items(owner_id,sale_id,line_no,product_id,product_name,size,quantity,unit_price,variant_id)

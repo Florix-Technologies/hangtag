@@ -2,6 +2,8 @@
 // The Anthropic API key lives only here, as a function secret (ANTHROPIC_API_KEY) - never in the app.
 // Deploy with JWT verification on (the default): only signed-in Hangtag users can call it.
 import Anthropic from "npm:@anthropic-ai/sdk@0.128.0";
+import { createClient } from "npm:@supabase/supabase-js@2";
+import { planGate } from "../_shared/plan-gate.js";
 import { validateUpload } from "./core.js";
 import { createClaudeProvider } from "./providers/claude.js";
 import { createMockProvider } from "./providers/mock.js";
@@ -24,7 +26,20 @@ function provider() {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return reply(405, { ok: false, error: "method_not_allowed", message: "Use POST." });
-  if (!req.headers.get("Authorization")) return reply(401, { ok: false, error: "unauthorized", message: "Sign in first." });
+  const auth = req.headers.get("Authorization");
+  if (!auth) return reply(401, { ok: false, error: "unauthorized", message: "Sign in first." });
+  const url = Deno.env.get("SUPABASE_URL")!, anon = Deno.env.get("SUPABASE_ANON_KEY")!, service = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const db = createClient(url, anon, { global: { headers: { Authorization: auth } }, auth: { persistSession: false } });
+  const { data: who } = await db.auth.getUser();
+  const user = who && who.user;
+  if (!user) return reply(401, { ok: false, error: "unauthorized", message: "Sign in again." });
+  const { data: shopData, error: shopErr } = await db.rpc("hangtag_shop_id");
+  const shopId: string | null = shopErr ? user.id : shopData;   // (PGRST202: a database without section 3i, where every account is its own shop)
+  if (!shopId) return reply(403, { ok: false, error: "forbidden", message: "This account isn't connected to a shop." });
+  const admin = createClient(url, service, { auth: { persistSession: false } });
+  // the shop's Hangtag plan: a shop whose trial or plan has ended can't use this by calling it directly either
+  const gate = await planGate(admin, shopId);
+  if (gate) return reply(gate.status, gate.body);
   let body: unknown;
   try { body = await req.json(); } catch { return reply(400, { ok: false, error: "bad_request", message: "Send the bill as JSON." }); }
   const up = validateUpload(body);

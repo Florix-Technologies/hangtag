@@ -31,6 +31,11 @@ is section 3t of `schema.sql`. Run it on a database that already has `schema.sql
   UPDATE public.hangtag_promo_codes SET active = false WHERE code = 'LAUNCH20';          -- switch one off
   ```
   Uses are recorded in `hangtag_promo_redemptions` against the paid payment.
+  The limits are checked again when a payment is activated (one at a time per code): a free (100%) checkout beyond a
+  limit is refused; money already taken is honoured and that payment gets the note "Review: promo code used beyond its limit".
+- **One trial per inbox:** the trial claim also covers name+tag@ addresses and Gmail dots / googlemail.com.
+- **Edge Functions:** agent, extract-bill, send-receipt and payment-gateway refuse a shop whose plan has ended (HTTP 402
+  `subscription_inactive`, `functions/_shared/plan-gate.js`), before any provider call or write.
 - **Give a shop paid time without a payment, or suspend it** (SQL Editor):
   ```sql
   SELECT public.hangtag_admin_grant((SELECT id FROM auth.users WHERE email = 'owner@shop.in'), 'm3', 'Launch offer');

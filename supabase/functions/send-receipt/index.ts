@@ -21,6 +21,7 @@
 //   session and device key, forwarded as x-hangtag-device), never the caller's own id; the member needs create_sale.
 // Deploy with JWT verification on (the default).
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { planGate } from "../_shared/plan-gate.js";
 import { CHANNEL_LABELS, ITEM_COLUMNS, MAX_PER_HOUR, ORDER_COLUMNS, ORDER_ITEM_COLUMNS, PAYMENT_COLUMNS, PROFILE_COLUMNS, QUOTE_PERMISSION, SALE_COLUMNS, SEND_PERMISSION,
   allowedToSend, billMessage, configuredChannels, deliveryOutcome, fromName, linkRow, linkUrl, liveLink, newToken, providerConfig, providerStatus, quoteMessage,
   receiptBase, recipientFor, requestedReceiptBase, reservationRow, validateRequest } from "./core.js";
@@ -65,6 +66,12 @@ Deno.serve(async (req) => {
   if (r.action === "channels") return reply(200, { ok: true, channels: configuredChannels(allowed ? env() : {}) });
   if (!shopId) return reply(403, { ok: false, error: "forbidden", message: "This account isn't connected to a shop." });
   const shop: string = shopId;
+  // the shop's Hangtag plan: a shop whose trial or plan has ended can't use this by calling it directly either
+  const gate = await planGate(admin, shop);
+  if (gate) return reply(gate.status, gate.body);
+  // the shop's region (settings.region): receipts in its currency and time zone (India when not set)
+  const { data: regionRow } = await admin.from("hangtag_meta").select("value").eq("owner_id", shopId).eq("key", "settings").maybeSingle();
+  const region: string = regionRow && regionRow.value && typeof regionRow.value.region === "string" ? regionRow.value.region : "IN";
   const quote = r.action === "send" && !!r.orderId;
   if (shop !== user.id && r.action !== "refresh") {
     const { data: can } = await db.rpc("hangtag_can", { p: quote ? QUOTE_PERMISSION : SEND_PERMISSION });
@@ -163,7 +170,7 @@ Deno.serve(async (req) => {
       db.from("hangtag_profiles").select(PROFILE_COLUMNS).eq("id", shop).maybeSingle(),
     ]);
     if (lines.error || qprofile.error) { console.error("send-receipt: couldn't read the quotation:", (lines.error || qprofile.error)!.message); return unavailable(); }
-    const qmsg = quoteMessage(r.channel, { order, items: lines.data || [], shop: qprofile.data || {}, customer: qc });
+    const qmsg = quoteMessage(r.channel, { order, items: lines.data || [], shop: qprofile.data || {}, customer: qc, region });
     return await sendLogged({ orderId: order.id, requestId: r.requestId }, qto, qcfg, qmsg, qprofile.data && qprofile.data.shop_name);
   }
 
@@ -197,7 +204,7 @@ Deno.serve(async (req) => {
     if (p) return reply(409, { ok: false, error: "busy", message: "This receipt is being sent already." });
   }
   const link = r.channel === "email" ? null : await billLink(sale.id);
-  const message = billMessage(r.channel, { sale, items: items.data || [], payments: payments.data || [], shop: profile.data || {}, customer, link: link && link.url || "",
+  const message = billMessage(r.channel, { sale, items: items.data || [], payments: payments.data || [], shop: profile.data || {}, customer, region, link: link && link.url || "",
     linkParam: String(Deno.env.get("WHATSAPP_LINK_PARAM") || "").toLowerCase() === "on" });
 
   return await sendLogged({ saleId: sale.id, auto: r.auto }, to, cfg, message, profile.data && profile.data.shop_name);

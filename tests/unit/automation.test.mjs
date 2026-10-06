@@ -2,7 +2,7 @@
 // the watch rules (Off / Notify me: they only notice and tell), the shop's settings with safe defaults, the form check,
 // what changed (for the log), the reminder text, and the log (bounded, newest first, each entry once across devices;
 // the Hangtag Agent's entries carry an audit). Run: npm run test:unit
-import { AUTOMATION_DEFAULTS, AUTOMATION_RULES, LOG_ACTIONS, LOG_MAX, POLICY_LABELS, WATCH_DEFAULTS, WATCH_LABELS, WATCH_POLICIES, WATCH_RULES, automationOf, automationRule, checkAutomationSettings, dueReminderText, logEntry, mergeLogs, policyChanges, watchOf, watchRule } from '../../src/domain/automation/rules.js';
+import { AUTOMATION_DEFAULTS, AUTOMATION_RULES, LOG_ACTIONS, LOG_MAX, NOTICE_MAX, POLICY_LABELS, WATCH_DEFAULTS, WATCH_LABELS, WATCH_POLICIES, WATCH_RULES, automationOf, automationRule, checkAutomationSettings, dueReminderText, logEntry, mergeLogs, policyChanges, watchOf, watchRule } from '../../src/domain/automation/rules.js';
 
 let passed = 0, failed = 0;
 const check = (n, ok, info) => { if (ok) { passed++; console.log('PASS ' + n); } else { failed++; console.log('FAIL ' + n + (info !== undefined ? '  ' + JSON.stringify(info).slice(0, 400) : '')); } };
@@ -59,6 +59,12 @@ const mk = (id, t, dev) => ({ id, t, rule: 'dues', action: 'approved', key: 'due
 const merged = mergeLogs([mk('a', 1, 'A'), mk('b', 3, 'A')], [mk('b', 3, 'A'), mk('c', 2, 'B')], [{ id: '', t: 9 }, null]);
 check('logs of several devices merge: each entry once, newest first, broken ones dropped', merged.map((x) => x.id).join() === 'b,c,a');
 check('the log keeps at most ' + LOG_MAX + ' entries', mergeLogs(Array.from({ length: 150 }, (_, i) => mk('i' + i, i + 1, 'A'))).length === LOG_MAX && mergeLogs(Array.from({ length: 150 }, (_, i) => mk('i' + i, i + 1, 'A')))[0].id === 'i149');
+
+const audit = { id: 'g', t: 1, rule: 'agent', action: 'approved', key: 'agent:po:p1', text: 'saved' };
+const month = Array.from({ length: 300 }, (_, i) => ({ id: 'n' + i, t: 10 + i, rule: 'stock', action: 'notified', key: 'notify:stock:stock:' + i, text: 'x' }));
+const kept = mergeLogs([audit], month);
+check('a month of daily notices (10 a day) never pushes the Agent audit out; notices keep their own ' + NOTICE_MAX + ' newest',
+  kept.some((e) => e.id === 'g') && kept.filter((e) => e.action === 'notified').length === NOTICE_MAX && kept[0].id === 'n299');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

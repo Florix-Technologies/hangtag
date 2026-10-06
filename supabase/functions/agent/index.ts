@@ -7,6 +7,7 @@
 // - Who: the owner, or a team member with view_reports (hangtag_can, with the phone's x-hangtag-device key forwarded).
 // Deploy with JWT verification on (the default).
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { planGate } from "../_shared/plan-gate.js";
 import { agentConfig, allowedToUse, anthropicRequest, configView, rateDecision, rateLimits, readAnthropic, validateRequest } from "./core.js";
 
 const CORS = {
@@ -49,6 +50,9 @@ Deno.serve(async (req) => {
   const cfg = agentConfig(env), allowed = allowedToUse(user, env, owner);
   if (r.action === "config") return reply(200, configView(cfg, allowed));
   if (!cfg || !allowed) return reply(503, { ok: false, error: "not_configured", message: "The Hangtag Agent's AI isn't set up for this shop." });
+  // the shop's Hangtag plan: a shop whose trial or plan has ended can't use this by calling it directly either
+  const gate = await planGate(admin, shopId);
+  if (gate) return reply(gate.status, gate.body);
 
   // the server-side rate limit, per user and per shop (counted only for requests that go ahead; refused before any
   // provider call). If the limit can't be checked, nothing is sent: the limit protects the provider's cost.

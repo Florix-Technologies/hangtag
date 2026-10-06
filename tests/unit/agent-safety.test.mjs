@@ -46,7 +46,7 @@ check('the page saves only in confirmProposal(), and that runs only from the "Sa
   && /closest\('\[data-agentconfirm\]'\)\)\{ event\.preventDefault\(\); confirmProposal\(\);/.test(page));
 check('...once (a second tap after it\'s saved does nothing)', /if\(!p \|\| state\.saved\) return;/.test(page));
 const actions = src('src/features/assistant/use-cases/agent-actions.js');
-check('what can be saved: a draft purchase order, through the same checks as one made by hand', JSON.stringify(namesFrom(actions, 'purchase-orders.js')) === '["poFromReorder"]'
+check('what can be saved: a draft purchase order, through the same checks as one made by hand (poList only reads)', JSON.stringify(namesFrom(actions, 'purchase-orders.js')) === '["poFromReorder","poList"]'
   && JSON.stringify([...new Set([...actions.matchAll(/kind === "([a-z_]+)"/g)].map((m) => m[1]))]) === '["purchase_order"]' && /requiresConfirmation !== true/.test(actions));
 
 // ---------- the audit, run ----------

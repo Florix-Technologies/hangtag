@@ -184,10 +184,12 @@ await run(`settings=Object.assign({},settings,{taxOn:${G.was},gstExports:[]})`);
 
 // unusual sales (off unless chosen): four past Thursdays (or whatever today is) of 3 bills each, and today far below
 await run(`const real=Date.now;for(const ago of [7,14,21,28]) for(let i=0;i<3;i++){setTab("sell");addOne(${JSON.stringify(KURTA)});lastCheckout=0;Date.now=()=>real()-ago*864e5-i*60e3;const p=checkout("cash");Date.now=real;await p;closeModal();closeSheets();}`);
-check('unusual sales: off by default — nothing said', await run(`return !watchFindings(${at(23)}).some(f=>f.id==="unusual")`));
+// the time to judge at: now (just after the bills above), or 11:30 if earlier — the rule says nothing before 11
+const UT = 'Math.max(Date.now() + 60e3, (()=>{const t=new Date();t.setHours(11,30,0,0);return +t})())';
+check('unusual sales: off by default — nothing said', await run(`return !watchFindings(${UT}).some(f=>f.id==="unusual")`));
 await run('openSettings("automation")'); await sleep(300);
 await A.click('#autoForm input[name="w_unusual"][value="notify"]'); await saveForm();
-const U = await run(`return watchFindings(${at(23)}).filter(f=>f.id==="unusual").map(f=>({title:f.title,sub:f.sub}))`);
+const U = await run(`return watchFindings(${UT}).filter(f=>f.id==="unusual").map(f=>({title:f.title,sub:f.sub}))`);
 check('...Notify me: today\'s ₹1,000 against a usual ₹3,000 by this time → "Sales slower than usual"', U.length === 1 && U[0].title === 'Sales slower than usual' && /₹1,000 so far · a usual \w+ has ₹3,000 by now/.test(U[0].sub), U);
 check('...too early in the day to tell: nothing', await run(`return !watchFindings((()=>{const t=new Date();t.setHours(9,0,0,0);return +t})()).some(f=>f.id==="unusual")`));
 

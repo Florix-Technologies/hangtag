@@ -33,8 +33,12 @@ const stub = async (r) => {
   if (v.action === 'config') return reply(200, { ok: true, available: payable, provider: payable ? 'razorpay' : null });
   try {
     if (v.action === 'checkout') {
-      const c = (await pg.as(`SELECT public.hangtag_subscription_checkout($1, $2, 'razorpay') AS c`, [v.plan, v.promo], who)).rows[0].c;
-      if (+c.amount === 0) { const a = (await sql(`SELECT public.hangtag_subscription_activate($1, $2, 0) AS a`, [c.payment_id, 'free:' + c.payment_id]))[0].a; return reply(200, { ok: true, free: true, status: 'paid', payment_id: c.payment_id, period_end: a.period_end }); }
+      if (!payable) {   // as index.ts: the price first; with something to pay and no provider, nothing is created
+        const q = (await pg.as(`SELECT public.hangtag_subscription_quote($1, $2) AS q`, [v.plan, v.promo], who)).rows[0].q;
+        if (+q.amount > 0) return reply(503, { ok: false, error: 'not_configured', message: "Online payment isn't set up yet. Contact Hangtag support to renew." });
+      }
+      const c =(await pg.as(`SELECT public.hangtag_subscription_checkout($1, $2, 'razorpay') AS c`, [v.plan, v.promo], who)).rows[0].c;
+      if (+c.amount === 0) { const a = (await sql(`SELECT public.hangtag_subscription_activate($1, $2, 0) AS a`, [c.payment_id, 'free:' + c.payment_id]))[0].a; if (a && a.ok === false) return reply(409, { ok: false, error: 'promo', reason: a.reason, message: a.message }); return reply(200, { ok: true, free: true, status: 'paid', payment_id: c.payment_id, period_end: a.period_end }); }
       await sql(`SELECT public.hangtag_subscription_attach($1, 'razorpay', $2)`, [c.payment_id, 'plink_' + c.payment_id.replace(/-/g, '').slice(0, 14)]);
       return reply(200, { ok: true, payment_id: c.payment_id, amount: +c.amount, pay_url: 'https://pay.example.test/' + c.payment_id, provider: 'razorpay' });
     }
@@ -219,6 +223,22 @@ for (const w of [320, 375, 768, 1280]) {
   await A.setViewport({ width: w, height: 800 }); await sleep(250);
   check(`Plans & Billing at ${w}px: no horizontal overflow`, !(await overflow()) && await vis('#plansBlk .subplans'));
 }
+
+console.log('--- online payment not set up: said plainly, nothing faked ---');
+payable = false;
+await A.setViewport({ width: 1280, height: 900 });
+const nPay = async () => (await sql(`SELECT count(*)::int AS n FROM public.hangtag_subscription_payments WHERE owner_id = $1`, [UID]))[0].n;
+const n0 = await nPay(), end0 = (await sql(`SELECT period_end FROM public.hangtag_subscriptions WHERE owner_id = $1`, [UID]))[0].period_end;
+await run('openSettings("plans")'); await until('!!document.getElementById("subPlan-set-m1")');
+await A.click('#subPlan-set-m3'); await sleep(600);   // choosing another plan clears the earlier "Payment received"
+await run('const b=document.querySelector("#plansBlk [data-sub-act=pay]"); if(b && !b.disabled) b.click();');
+const said = await until('/Online payment isn.t set up yet/.test((document.querySelector("#plansBlk")||{}).innerText||"")');
+const end1 = (await sql(`SELECT period_end FROM public.hangtag_subscriptions WHERE owner_id = $1`, [UID]))[0].period_end;
+check('Pay with no payment provider set up: "Online payment isn\'t set up yet" (Pay goes away), no payment made, the plan unchanged — never a fake success',
+  said && !(await A.$('#plansBlk [data-sub-act="pay"]')) && await nPay() === n0 && String(end1) === String(end0), { n0, end0, end1, t: (await text('#plansBlk') || '').slice(0, 300) });
+const notSet = await run('try{ await use("subscriptionService").checkout("m1", ""); return "accepted"; }catch(e){ return e.code; }');
+check('…and a checkout asked for directly is refused as not set up (no payment created)', notSet === 'NOT_CONFIGURED' && await nPay() === n0, notSet);
+payable = true;
 
 await browser.close();
 console.log(fails ? `\n${fails} FAILED` : '\nall passed');

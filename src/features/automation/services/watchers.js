@@ -66,9 +66,9 @@ const FINDERS = {
     if(!(moduleShown("orders") && canAny(["create_sale", "create_order"]))) return [];
     const late = Object.values(store.orders || {}).filter(o => o && o.kind === "sales" && ["draft", "confirmed", "partial"].includes(o.status) && +o.t > 0 && now - o.t >= W.lateDays * DAY);
     if(!late.length) return [];
-    const oldest = Math.min(...late.map(o => o.t)), online = late.filter(o => o.source === "customer").length;
+    const oldest = Math.min(...late.map(o => o.t)), online = late.filter(o => o.source === "customer").length, value = Math.round(late.reduce((a, o) => a + (+o.total || 0), 0) * 100) / 100;
     return [{ id: "late", tone: "bad", title: `${plural(late.length, "order")} late`, sub: `Open more than ${plural(W.lateDays, "day")} · the oldest ${Math.floor((now - oldest) / DAY)} days${online ? ` · ${online} from your online store` : ""}`,
-      attr: 'data-tab="orders" data-subview="orders:sales"', cta: "Open" }];
+      attr: 'data-tab="orders" data-subview="orders:sales"', cta: "Open", count: late.length, value, online }];
   },
   unusual(now){
     if(!(moduleShown("report") && can("view_reports"))) return [];

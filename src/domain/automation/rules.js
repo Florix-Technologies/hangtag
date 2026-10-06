@@ -128,8 +128,12 @@ export function logEntry(e){
   return out;
 }
 /* Newest first, each entry once (by id), at most LOG_MAX */
+export const NOTICE_MAX = 60;   // "Noticed" lines (watch rules, once a day each) are kept apart: they never push out the rest
 export function mergeLogs(...lists){
-  const seen = new Set(), out = [];
-  lists.flat().filter(Boolean).map(logEntry).filter(e => e.id && e.t).sort((a, b) => b.t - a.t).forEach(e => { if(!seen.has(e.id)){ seen.add(e.id); out.push(e); } });
-  return out.slice(0, LOG_MAX);
+  const seen = new Set(), out = []; let kept = 0, notices = 0;
+  lists.flat().filter(Boolean).map(logEntry).filter(e => e.id && e.t).sort((a, b) => b.t - a.t).forEach(e => {
+    if(seen.has(e.id)) return; seen.add(e.id);
+    if(e.action === "notified" ? notices++ < NOTICE_MAX : kept++ < LOG_MAX) out.push(e);
+  });
+  return out;
 }

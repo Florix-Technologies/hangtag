@@ -45,6 +45,7 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
     try{ info = r.error && r.error.context && typeof r.error.context.json === "function" ? await r.error.context.json() : (r.data || null); }catch{ info = null; }
     const msg = info && info.message, code = info && info.error, status = r.error && r.error.context && r.error.context.status;
     const E = (c, m) => new AppError(c, m, { cause: r.error, details: info });
+    if(code === "subscription_inactive") throw E(ERROR_CODES.SUBSCRIPTION, msg || "This shop's Hangtag plan has ended. Renew it in Plans & Billing.");
     if(code === "not_configured") throw E(ERROR_CODES.NOT_CONFIGURED, msg || `${what} isn't set up yet.`);
     if(code === "unauthorized" || (!code && status === 401)) throw E(ERROR_CODES.AUTH, "Sign in again.");
     if(code === "forbidden") throw E(ERROR_CODES.PERMISSION, msg || "Your role can't do that.");
@@ -538,6 +539,7 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
       let info = null;
       try{ info = r.error && r.error.context && typeof r.error.context.json === "function" ? await r.error.context.json() : (r.data || null); }catch{ info = null; }
       const msg = info && info.message, status = r.error && r.error.context && r.error.context.status;
+      if(info && info.error === "subscription_inactive") throw new AppError(ERROR_CODES.SUBSCRIPTION, msg || "This shop's Hangtag plan has ended. Renew it in Plans & Billing.", { cause: r.error, details: info });
       if(info && info.error === "not_configured") throw new AppError(ERROR_CODES.NOT_CONFIGURED, msg || "Sending isn't set up yet.", { cause: r.error, details: info });
       if(info && ["missing_contact","cancelled","rate_limited","not_found","bad_request","bad_channel","too_long","busy"].includes(info.error)) throw new AppError(ERROR_CODES.VALIDATION, msg || "The bill couldn't be sent.", { cause: r.error, details: info });
       if(info && info.error === "unauthorized") throw new AppError(ERROR_CODES.AUTH, "Sign in again to send bills.", { cause: r.error, details: info });
@@ -557,6 +559,7 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
       if(!r.error) return r.data;
       let info = null;
       try{ info = r.error.context && typeof r.error.context.json === "function" ? await r.error.context.json() : null; }catch{ info = null; }
+      if(info && info.error === "subscription_inactive") throw new AppError(ERROR_CODES.SUBSCRIPTION, info.message || "This shop's Hangtag plan has ended. Renew it in Plans & Billing.", { cause: r.error, details: info });
       if(info && info.error === "not_configured") throw new AppError(ERROR_CODES.NOT_CONFIGURED, "Reading bills isn't set up yet.", { cause: r.error, details: info });
       if(info && info.message) throw new AppError(ERROR_CODES.VALIDATION, info.message, { cause: r.error, details: info });
       if(/relay|404|not found/i.test(String(r.error.message || "")) && !info) throw new AppError(ERROR_CODES.NOT_CONFIGURED, "Reading bills isn't set up yet.", { cause: r.error });

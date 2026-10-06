@@ -381,5 +381,31 @@ console.log('=== the migration on a database with shops already set up ===');
   check('every function of section 3t is SECURITY DEFINER with search_path = \'\'', defs.length >= 18 && defs.every((d) => d.prosecdef && /search_path=""/.test(d.cfg)), defs.filter((d) => !d.prosecdef || !/search_path=""/.test(d.cfg)));
 }
 
+console.log('--- promo limits across several open checkouts; one trial per inbox ---');
+{
+  await sql(db, `INSERT INTO public.hangtag_promo_codes (code, kind, value, max_uses, per_account_limit, active) VALUES ('FREEONE', 'percent', 100, NULL, 1, true), ('HALFONE', 'percent', 50, NULL, 1, true) ON CONFLICT (code) DO NOTHING`);
+  const c1 = (await checkout(db, B, 'm1', 'FREEONE')).r.rows[0].c, c2 = (await checkout(db, B, 'm1', 'FREEONE')).r.rows[0].c;
+  const a1 = (await activate(db, c1.payment_id, 'free:' + c1.payment_id, 0)).r.rows[0].a, a2 = (await activate(db, c2.payment_id, 'free:' + c2.payment_id, 0)).r.rows[0].a;
+  const n1 = (await sql(db, `SELECT count(*)::int AS n FROM public.hangtag_promo_redemptions WHERE code = 'FREEONE' AND owner_id = $1`, [B]))[0].n;
+  const p2 = (await sql(db, `SELECT status, period_end FROM public.hangtag_subscription_payments WHERE id = $1`, [c2.payment_id]))[0];
+  check('a 100% code checked out twice before either was used: one plan; the second is refused (failed, no plan time)', a1.ok === true && a2.ok === false && a2.reason === 'promo_limit' && n1 === 1 && p2.status === 'failed' && !p2.period_end, { a1, a2, n1, p2 });
+  check('…and a third checkout with it is refused at once (already used)', /already used/.test((await checkout(db, B, 'm1', 'FREEONE')).err || ''));
+  const h1 = (await checkout(db, B, 'm1', 'HALFONE')).r.rows[0].c, h2 = (await checkout(db, B, 'm3', 'HALFONE')).r.rows[0].c;
+  const b1 = (await activate(db, h1.payment_id, 'pay_H1', +h1.amount)).r.rows[0].a, b2 = (await activate(db, h2.payment_id, 'pay_H2', +h2.amount)).r.rows[0].a;
+  const notes = await sql(db, `SELECT id, note FROM public.hangtag_subscription_payments WHERE id IN ($1, $2)`, [h1.payment_id, h2.payment_id]);
+  check('two paid checkouts with a once-only code: the money taken is honoured, and the second payment is marked for review', b1.ok === true && b2.ok === true
+    && !notes.find((x) => x.id === h1.payment_id).note && /promo code used beyond its limit/.test(notes.find((x) => x.id === h2.payment_id).note || ''), notes);
+  const U = ['77777777-0000-0000-0000-000000000001', '77777777-0000-0000-0000-000000000002', '77777777-0000-0000-0000-000000000003', '77777777-0000-0000-0000-000000000004'];
+  const mails = ['ravi.shop@gmail.com', 'Ravi.Shop+second@gmail.com', 'r.a.v.i.shop@googlemail.com', 'ravishop@example.com'];
+  const states = [];
+  for (const [i, id] of U.entries()) {
+    await sql(db, `INSERT INTO auth.users (id, email) VALUES ($1, $2)`, [id, mails[i]]);
+    await as(db, id, `UPDATE public.hangtag_profiles SET shop_name = 'Ravi ' || $2, onboarded_at = NOW() WHERE id = $1`, [id, String(i)]);
+    states.push((await status(db, id)).state);
+  }
+  check('one trial per inbox: name+tag@ and Gmail dots / googlemail.com are the same inbox; another address gets its own trial', JSON.stringify(states) === JSON.stringify(['trial_active', 'trial_expired', 'trial_expired', 'trial_active']), states);
+  for (const id of U) await sql(db, `DELETE FROM auth.users WHERE id = $1`, [id]);
+}
+
 console.log(fails ? `\n${fails} FAILED` : '\nall passed');
 process.exit(fails ? 1 : 0);

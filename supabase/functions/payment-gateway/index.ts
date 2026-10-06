@@ -10,6 +10,7 @@
 //   member's permission (core.js ACTION_PERMISSIONS).
 // Deploy with JWT verification on (the default). Payments that arrive later are caught by ../payment-webhook as well.
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { planGate } from "../_shared/plan-gate.js";
 import { LIMITS, allowedToPay, apiUrl, basicAuth, configView, createLinkBody, createQrBody, expiresAt, intentReply, linkView,
   matchManual, nextIntent, permissionFor, qrView, razorpayConfig, validateRequest } from "./core.js";
 
@@ -49,6 +50,9 @@ Deno.serve(async (req) => {
   if (r.action === "config") return reply(200, configView(cfg, allowed));
   if (!cfg || !allowed || !shopId) return reply(503, { ok: false, error: "not_configured", message: "Verified payments aren't set up for this shop yet." });
   const shop: string = shopId;
+  // the shop's Hangtag plan: a shop whose trial or plan has ended can't use this by calling it directly either
+  const gate = await planGate(admin, shop);
+  if (gate) return reply(gate.status, gate.body);
   const need = permissionFor(r.action);
   if (shop !== user.id && need) {
     const { data: can } = await db.rpc("hangtag_can", { p: need });

@@ -5,7 +5,7 @@
 // Every confirmation (saved or refused) and every "Not now" is written to the automation log as an audit entry: who (the
 // person signed in), what, when, why (the question asked), the tool, before and after, the approval (the person's tap) and
 // the outcome. The Agent cannot change stock, prices, bills or payments: there is no such proposal kind.
-import { poFromReorder } from '../../inventory/use-cases/purchase-orders.js';
+import { poFromReorder, poList } from '../../inventory/use-cases/purchase-orders.js';
 import { logAutomation } from '../../automation/services/automation.js';
 import { inr } from '../../../shared/formatting/money.js';
 
@@ -23,19 +23,22 @@ export function confirmAgentProposal(proposal, ctx = {}){
   if(proposal.kind === "purchase_order"){
     const items = Array.isArray(proposal.items) ? proposal.items.filter(l => l && l.v && +l.q > 0).slice(0, MAX_LINES) : [];
     const who = proposal.supplier || "the supplier";
+    let drafts = 0;
+    try{ drafts = poList().filter(p => p.supplierId === proposal.supplierId && p.status === "draft").length; }catch{ drafts = 0; }
+    const before = drafts ? `${drafts} draft purchase order${drafts === 1 ? "" : "s"} for ${who} already` : `No draft purchase order for ${who}`;
     if(!items.length){
       logAutomation({ rule: "agent", action: "failed", key: `agent:po:${proposal.supplierId || "none"}:${Date.now()}`, text: `Draft purchase order for ${who}: no lines.`, why, tool,
-        before: `No draft purchase order for ${who}`, after: "Nothing saved", outcome: "Refused: the draft has no lines" });
+        before, after: "Nothing saved", outcome: "Refused: the draft has no lines" });
       return { error: "This draft has no lines." };
     }
     const r = poFromReorder(proposal.supplierId, items.map(l => ({ p: l.p, v: l.v, name: l.name, vl: l.vl || "", ...(l.u ? { u: l.u } : {}), q: +l.q, price: l.price == null ? null : +l.price, ...(l.gst != null ? { gst: l.gst } : {}) })));
     if(r.error){
       logAutomation({ rule: "agent", action: "failed", key: `agent:po:${proposal.supplierId || "none"}:${Date.now()}`, text: `Draft purchase order for ${who} was refused.`, why, tool,
-        before: `No draft purchase order for ${who}`, after: "Nothing saved", outcome: `Refused: ${r.error}` });
+        before, after: "Nothing saved", outcome: `Refused: ${r.error}` });
       return r;
     }
     logAutomation({ rule: "agent", action: "approved", key: `agent:po:${r.po.id}`, text: `Draft purchase order ${r.po.no} for ${who} saved from the Agent's proposal. Not sent.`, why, tool,
-      before: `No draft purchase order for ${who}`, after: `Draft ${r.po.no} for ${who}: ${lines(items.length)}${proposal.total ? `, about ${inr(proposal.total)}` : ""}`,
+      before, after: `Draft ${r.po.no} for ${who}: ${lines(items.length)}${proposal.total ? `, about ${inr(proposal.total)}` : ""}`,
       outcome: "Saved as a draft after the person tapped Save (not sent to the supplier)" });
     return r;
   }

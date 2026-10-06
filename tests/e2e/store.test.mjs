@@ -121,7 +121,7 @@ console.log('--- the order in the shop ---');
 await run('await pullOrders(); renderAll();');   // the shop's devices get it live (realtime); the stand-in has no realtime, so pull
 check('the order reaches the shop\'s Orders', await until(`Object.values(orders||{}).some(o=>o.source==="customer"&&o.custName!==undefined||o.source==="customer")`, 15000));
 await run('setTab("store");renderAll()'); await sleep(300);
-check('the Store area lists it as New, with the customer and the amount', /Asha Verma/.test(await text('#v-store') || '') && /New/.test(await text('#v-store .olist') || '') && /₹998/.test(await text('#v-store .olist') || ''), await text('#v-store .olist'));
+check('the Store area lists it as Received (as the customer sees it), with the customer and the amount', /Asha Verma/.test(await text('#v-store') || '') && /Received/.test(await text('#v-store .olist') || '') && /₹998/.test(await text('#v-store .olist') || ''), await text('#v-store .olist'));
 
 console.log('--- the status link, and closing the store ---');
 const T = await open(statusUrl, { width: 375, session: false });

@@ -61,10 +61,13 @@ export function attentionItems(now = Date.now()){
   const add = (id, tone, title, sub, attr, cta) => items.push({ id, tone, title, sub, attr, cta });
   // what Automation's watch rules notice (Settings → Automation → Watch: low stock, money owed, payment mismatches, late
   // orders, unusual sales, expiring stock, receipts not sent, daily closing, GST): one source, a rule set to Off shows nothing
-  watchFindings(now).forEach(f => add(f.id, f.tone, f.title, f.sub, f.attr, f.cta));
+  const W = watchFindings(now);
+  W.forEach(f => add(f.id, f.tone, f.title, f.sub, f.attr, f.cta));
   if(moduleShown("orders") && canAny(["create_sale", "create_order"])){
-    const o = q.orders();
-    if(o.sales) add("orders", o.mobile ? "warn" : "info", `${plural(o.sales, "order")} to deliver`, `${inr(o.salesValue)}${o.mobile ? ` · ${o.mobile} from your online store` : ""}`, 'data-tab="orders"', "Open");
+    // orders still to deliver, without the late ones (the late item has them): each order is counted once
+    const o = q.orders(), L = W.find(f => f.id === "late") || {}, n = o.sales - (L.count || 0);
+    const value = Math.max(0, Math.round((o.salesValue - (L.value || 0)) * 100) / 100), mobile = Math.max(0, o.mobile - (L.online || 0));
+    if(n > 0) add("orders", mobile ? "warn" : "info", `${plural(n, "order")} to deliver`, `${inr(value)}${mobile ? ` · ${mobile} from your online store` : ""}`, 'data-tab="orders"', "Open");
     if(o.quotes) add("quotes", "info", `${plural(o.quotes, "quotation")} waiting`, inr(o.quoteValue), 'data-tab="orders"', "Follow up");
   }
   const held = Object.values(store.heldCarts || {}).filter(Boolean).length;

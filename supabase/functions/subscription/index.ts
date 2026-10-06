@@ -48,6 +48,8 @@ Deno.serve(async (req) => {
     if (Number(c.amount) === 0) {
       const { data: a, error: aErr } = await admin.rpc("hangtag_subscription_activate", { p_payment: c.payment_id, p_provider_payment: "free:" + c.payment_id, p_amount: 0 });
       if (aErr) { console.error("subscription: free activation failed:", aErr.code); return reply(503, { ok: false, error: "server_error", message: "Couldn't start the plan. Try again." }); }
+      // the code's limits are checked again under a lock: a burst of free checkouts gives one plan, not several
+      if (a && a.ok === false) return reply(409, { ok: false, error: "promo", reason: a.reason || "promo_limit", message: a.message || "This promo code has already been used." });
       return reply(200, { ok: true, free: true, payment_id: c.payment_id, status: "paid", amount: 0, state: a.state, period_end: a.period_end });
     }
     try {

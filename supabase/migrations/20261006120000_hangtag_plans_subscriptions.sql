@@ -133,14 +133,17 @@ CREATE TABLE IF NOT EXISTS public.hangtag_agent_usage (
 );
 
 -- A shop's plan record: made once (idempotent), when its setup is finished or at its first business write. A team member
--- has no shop of its own, so no trial. The email's trial is claimed; a second account with the same email starts with
--- its trial already over.
+-- has no shop of its own, so no trial. The email's trial is claimed; a second account with the same email — or the same
+-- inbox under another name: name+tag@…, and for Gmail n.a.m.e@gmail.com / @googlemail.com — starts with its trial over.
 CREATE OR REPLACE FUNCTION public.hangtag_subscription_ensure(p_owner UUID)
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
     trial_days INT;
     em TEXT;
     k TEXT;
+    nk TEXT;
+    lp TEXT;
+    dom TEXT;
     claimed UUID;
     started TIMESTAMPTZ := NOW();
 BEGIN
@@ -152,11 +155,16 @@ BEGIN
     SELECT lower(btrim(u.email)) INTO em FROM auth.users u WHERE u.id = p_owner;
     IF COALESCE(em, '') <> '' THEN
         k := md5(em);
-        INSERT INTO public.hangtag_trial_claims (email_key, owner_id) VALUES (k, p_owner) ON CONFLICT (email_key) DO NOTHING;
-        SELECT c.owner_id INTO claimed FROM public.hangtag_trial_claims c WHERE c.email_key = k;
+        lp := regexp_replace(split_part(em, '@', 1), '\+.*$', '');
+        dom := split_part(em, '@', 2);
+        IF dom IN ('gmail.com', 'googlemail.com') THEN lp := replace(lp, '.', ''); dom := 'gmail.com'; END IF;
+        nk := md5(lp || '@' || dom);
+        INSERT INTO public.hangtag_trial_claims (email_key, owner_id) VALUES (nk, p_owner) ON CONFLICT (email_key) DO NOTHING;
+        IF k <> nk THEN INSERT INTO public.hangtag_trial_claims (email_key, owner_id) VALUES (k, p_owner) ON CONFLICT (email_key) DO NOTHING; END IF;
+        SELECT c.owner_id INTO claimed FROM public.hangtag_trial_claims c WHERE c.email_key IN (k, nk) AND c.owner_id <> p_owner LIMIT 1;
     END IF;
     INSERT INTO public.hangtag_subscriptions (owner_id, trial_started_at, trial_ends_at)
-    VALUES (p_owner, started, CASE WHEN claimed IS NOT NULL AND claimed <> p_owner THEN started ELSE started + make_interval(days => trial_days) END)
+    VALUES (p_owner, started, CASE WHEN claimed IS NOT NULL THEN started ELSE started + make_interval(days => trial_days) END)
     ON CONFLICT (owner_id) DO NOTHING;
 END $$;
 
@@ -516,6 +524,10 @@ BEGIN
     IF (SELECT count(*) FROM public.hangtag_subscription_payments y WHERE y.owner_id = me AND y.created_at > NOW() - interval '1 hour') >= 20 THEN
         RAISE EXCEPTION 'Too many payment attempts. Try again in an hour.' USING ERRCODE = 'P0001';
     END IF;
+    -- one checkout at a time per promo code, so a burst of checkouts is counted against its limits one by one
+    IF btrim(COALESCE(p_promo, '')) <> '' THEN
+        PERFORM 1 FROM public.hangtag_promo_codes c WHERE c.code = upper(btrim(p_promo)) FOR UPDATE;
+    END IF;
     q := public.hangtag_subscription_quote(p_plan, p_promo);
     IF q -> 'promo' IS NOT NULL AND jsonb_typeof(q -> 'promo') = 'object' AND NOT (q #>> '{promo,valid}')::BOOLEAN THEN
         RAISE EXCEPTION '%', q #>> '{promo,message}' USING ERRCODE = 'P0001';
@@ -568,6 +580,8 @@ RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
     pay RECORD;
     per JSONB;
+    lim RECORD;
+    over BOOLEAN := FALSE;
 BEGIN
     SELECT * INTO pay FROM public.hangtag_subscription_payments y WHERE y.id = p_payment FOR UPDATE;
     IF NOT FOUND THEN RAISE EXCEPTION 'Payment not found.' USING ERRCODE = 'P0002'; END IF;
@@ -581,10 +595,23 @@ BEGIN
     IF pay.amount > 0 AND btrim(COALESCE(p_provider_payment, '')) = '' THEN
         RAISE EXCEPTION 'The provider''s payment reference is missing.' USING ERRCODE = 'P0001';
     END IF;
+    -- the promo code's limits, checked again now (one activation at a time per code): several checkouts opened before one
+    -- was paid can't use a code beyond its limits. Nothing to pay → refused (the payment fails, no plan time); money the
+    -- provider took is honoured and the payment is marked for review.
+    IF pay.promo_code IS NOT NULL THEN
+        SELECT c.max_uses, c.per_account_limit INTO lim FROM public.hangtag_promo_codes c WHERE c.code = pay.promo_code FOR UPDATE;
+        over := (SELECT count(*) FROM public.hangtag_promo_redemptions r WHERE r.code = pay.promo_code AND r.owner_id = pay.owner_id) >= COALESCE(lim.per_account_limit, 1)
+             OR (lim.max_uses IS NOT NULL AND (SELECT count(*) FROM public.hangtag_promo_redemptions r WHERE r.code = pay.promo_code) >= lim.max_uses);
+        IF over AND pay.amount = 0 THEN
+            UPDATE public.hangtag_subscription_payments SET status = 'failed', note = 'Promo code limit reached' WHERE id = pay.id;
+            RETURN jsonb_build_object('ok', FALSE, 'refused', TRUE, 'reason', 'promo_limit', 'message', 'This promo code has already been used.');
+        END IF;
+    END IF;
     -- money the provider confirmed is honoured even if the checkout had been marked expired or cancelled meanwhile
     per := public.hangtag_subscription_extend(pay.owner_id, pay.plan_code);
     UPDATE public.hangtag_subscription_payments SET status = 'paid', provider_payment_id = NULLIF(btrim(COALESCE(p_provider_payment, '')), ''),
-        paid_at = NOW(), period_start = (per ->> 'start')::TIMESTAMPTZ, period_end = (per ->> 'end')::TIMESTAMPTZ
+        paid_at = NOW(), period_start = (per ->> 'start')::TIMESTAMPTZ, period_end = (per ->> 'end')::TIMESTAMPTZ,
+        note = CASE WHEN over THEN 'Review: promo code used beyond its limit' ELSE note END
      WHERE id = pay.id;
     IF pay.promo_code IS NOT NULL THEN
         INSERT INTO public.hangtag_promo_redemptions (payment_id, code, owner_id, plan_code, discount)

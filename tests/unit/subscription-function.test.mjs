@@ -7,6 +7,8 @@ import crypto from 'node:crypto';
 import { callbackUrl, rpcErrorReply, validateRequest, verifyDecision } from '../../supabase/functions/subscription/core.js';
 import { providerFor } from '../../supabase/functions/subscription/providers/index.js';
 import { linkState, toPaise, verifySignature } from '../../supabase/functions/subscription/providers/razorpay.js';
+import { readFileSync } from 'node:fs';
+import { PLAN_ENDED, planGate } from '../../supabase/functions/_shared/plan-gate.js';
 
 let fails = 0;
 const check = (name, ok, info) => { if (!ok) fails++; console.log((ok ? 'PASS ' : 'FAIL ') + name + (!ok && info !== undefined ? '  ' + JSON.stringify(info).slice(0, 500) : '')); };
@@ -97,6 +99,24 @@ console.log('=== the webhook ===');
   const t = p.readWebhook(JSON.parse(raw));
   check('the event → the link, the Hangtag payment and what was paid', t && t.orderId === 'plink_ABC123xyz' && t.paymentRef === PID && t.view.state === 'paid' && t.view.paid === 49900 && t.view.paymentId === 'pay_7', t);
   check('other events are ignored', p.readWebhook({ event: 'payment.captured', payload: { payment: { entity: {} } } }) === null && p.readWebhook({}) === null);
+}
+
+console.log('=== the plan gate of the business Edge Functions ===');
+{
+  const fake = (r) => ({ rpc: async (name, args) => { fake.last = { name, args }; if (r instanceof Error) throw r; return r; } });
+  const open = await planGate(fake({ data: true, error: null }), 'shop-1');
+  check('a running trial or plan: go ahead (the shop is asked by its id)', open === null && fake.last.name === 'hangtag_access_ok' && fake.last.args.p_owner === 'shop-1');
+  const ended = await planGate(fake({ data: false, error: null }), 'shop-1');
+  check('a plan that has ended: 402 "subscription_inactive" with a way to renew', ended && ended.status === 402 && ended.body === PLAN_ENDED && PLAN_ENDED.error === 'subscription_inactive' && /Plans & Billing/.test(PLAN_ENDED.message));
+  check('a database without the plans update: nothing to enforce, go ahead', (await planGate(fake({ data: null, error: { code: 'PGRST202' } }), 's')) === null && (await planGate(fake({ data: null, error: { code: '42883' } }), 's')) === null);
+  const err = await planGate(fake({ data: null, error: { code: '57014' } }), 's'), thrown = await planGate(fake(new Error('network')), 's');
+  check('the check failing otherwise: refused (503), never let through', err.status === 503 && thrown.status === 503);
+  for (const fn of ['agent', 'extract-bill', 'send-receipt', 'payment-gateway']) {
+    const src = readFileSync(new URL(`../../supabase/functions/${fn}/index.ts`, import.meta.url), 'utf8');
+    const at = src.indexOf('await planGate('), after = (re) => { const m = src.slice(at).search(re); return m >= 0; }, before = (re) => src.slice(0, at).search(re) < 0;
+    check(`${fn}: checks the shop's plan before any provider call or service-role write`, at > 0 && /import \{ planGate \} from "\.\.\/_shared\/plan-gate\.js"/.test(src)
+      && before(/fetch\(|\.extract\(|admin\.from\(|admin\.rpc\("hangtag_agent_take"|createPayment|sendVia|\.insert\(|\.update\(/) && after(/return reply\(gate\.status, gate\.body\)/), fn);
+  }
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nall passed');

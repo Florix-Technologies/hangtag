@@ -128,14 +128,20 @@ export const fromName = (shopName) => String(shopName || "Hangtag").replace(/["<
 /* ---------- the message, from the bill's saved figures (nothing is recalculated) ---------- */
 const num = (v) => (v == null || v === "" || isNaN(+v) ? 0 : +v);
 const r2 = (n) => Math.round(n * 100) / 100;
-export const rupees = (n) => { const v = r2(num(n)); return "₹" + v.toLocaleString("en-IN", { minimumFractionDigits: Number.isInteger(v) ? 0 : 2, maximumFractionDigits: 2 }); };
+/* The shop's region (settings.region, as src/shared/formatting/regions.js): currency mark, number style and time zone */
+export const MONEY_REGIONS = Object.freeze({ IN: ["₹", "en-IN", "Asia/Kolkata"], AE: ["AED ", "en-AE", "Asia/Dubai"], GB: ["£", "en-GB", "Europe/London"],
+  IE: ["€", "en-IE", "Europe/Dublin"], US: ["$", "en-US", "America/New_York"], SG: ["S$", "en-SG", "Asia/Singapore"] });
+const regionOf = (code) => MONEY_REGIONS[String(code || "").toUpperCase()] || MONEY_REGIONS.IN;
+export const moneyFor = (code) => { const [mark, loc] = regionOf(code); return (n) => { const v = r2(num(n)); return mark + v.toLocaleString(loc, { minimumFractionDigits: Number.isInteger(v) ? 0 : 2, maximumFractionDigits: 2 }); }; };
+export const rupees = moneyFor("IN");
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const oneLine = (s) => String(s ?? "").replace(/[\r\n\t]+/g, " ").trim();
 const PAY = { cash: "Cash", upi: "UPI", card: "Card" };
-const billDate = (t) => { const d = new Date(num(t)); return isNaN(d) ? "" : d.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }); };
+const dateFor = (code) => { const [, loc, timeZone] = regionOf(code); return (t) => { const d = new Date(num(t)); return isNaN(d) ? "" : d.toLocaleString(loc, { timeZone, day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }); }; };;
 
 /* The bill as shown in a message: { shop, contact, number, date, title, customer, lines, more, rows, paid, total } */
-export function billView({ sale, items, payments, shop, customer }) {
+export function billView({ sale, items, payments, shop, customer, region }) {
+  const rupees = moneyFor(region), billDate = dateFor(region);
   const s = sale || {}, p = shop || {}, incl = s.tax_inclusive !== false;
   const lines = (items || []).slice().sort((a, b) => num(a.line_no) - num(b.line_no)).map((i) => ({
     name: oneLine(i.product_name), detail: oneLine(i.variant_label || [i.color, i.size].filter((x) => x != null && x !== "").join(" / ")),
@@ -175,6 +181,7 @@ const lineText = (l) => `${l.name}${l.detail ? " (" + l.detail + ")" : ""} × ${
 /* The message for a channel: email { subject, html, text } · SMS { text } · WhatsApp { text, params } (template values
    {{1}} customer, {{2}} shop, {{3}} bill number, {{4}} amount) */
 export function billMessage(channel, data) {
+  const rupees = moneyFor(data && data.region);
   const B = billView(data), more = B.more ? [`… and ${B.more} more items`] : [];
   const link = data && data.link ? String(data.link) : "";
   if (channel === "sms") {
@@ -218,7 +225,8 @@ const UNIT_SYM = { pcs: "", box: " box", pack: " pack", dozen: " dozen", kg: " k
 const day = (v) => { const s = str(v).slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return ""; const d = new Date(s + "T12:00:00Z"); return isNaN(d) ? "" : d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric" }); };
 const discText = (d) => { if (!d || typeof d !== "object" || !(num(d.value) > 0)) return ""; return d.type === "fixed" ? "−" + rupees(d.value) : "−" + num(d.value) + "%"; };
 /* The quotation as shown in a message: { shop, contact, number, date, validUntil, customer, lines, more, total, notes, terms } */
-export function quoteView({ order, items, shop, customer }) {
+export function quoteView({ order, items, shop, customer, region }) {
+  const rupees = moneyFor(region), billDate = dateFor(region);
   const o = order || {}, p = shop || {};
   const lines = (items || []).slice().sort((a, b) => num(a.line_no) - num(b.line_no)).map((i) => ({
     name: oneLine(i.name), detail: oneLine(i.variant_label), qty: num(i.qty), unit: UNIT_SYM[i.unit] || "", rate: num(i.price), discount: discText(i.disc) }));
@@ -234,6 +242,7 @@ const quoteLine = (l) => `${l.name}${l.detail ? " (" + l.detail + ")" : ""} × $
 /* The message for a quotation: email { subject, html, text } · WhatsApp { text, params } (the quotation template's values
    {{1}} customer, {{2}} shop, {{3}} quotation number, {{4}} amount, {{5}} valid until). Headed QUOTATION, never a bill. */
 export function quoteMessage(channel, data) {
+  const rupees = moneyFor(data && data.region);
   const Q = quoteView(data), more = Q.more ? [`… and ${Q.more} more items`] : [];
   const validity = Q.validUntil ? `Valid until ${Q.validUntil}` : "";
   if (channel === "whatsapp") {

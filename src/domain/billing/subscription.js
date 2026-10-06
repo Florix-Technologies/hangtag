@@ -15,14 +15,21 @@ const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
      in this session  the server's time at the last check + the monotonic time since (performance.now: unaffected by the
                       device clock);
      after a restart  the server's time + how far the device clock moved since (never negative);
-   and never earlier than the latest trusted time this device has seen (floor). Moving the clock back can't extend access;
+     every session    at least where the session started (sessionAt) + the monotonic time since (sessionPerf): a session
+                      that hasn't heard from the server (offline, the clock set back) still moves on;
+   and never earlier than the latest trusted time this device has seen (floor, saved as it moves). Moving the clock back
+   can't stop the time the lock uses (only the hours the app was closed go uncounted until the server is reached);
    moving it forward can only lock sooner — and the next check with the server puts it right. */
-export function trustedNow({ serverAt, perfAt, perfNow, clientAt, clockNow, floor } = {}){
+export function trustedNow({ serverAt, perfAt, perfNow, clientAt, clockNow, floor, sessionAt, sessionPerf } = {}){
   let t = null;
   if(Number.isFinite(serverAt)){
     if(Number.isFinite(perfAt) && Number.isFinite(perfNow) && perfNow >= perfAt) t = serverAt + (perfNow - perfAt);
     else if(Number.isFinite(clientAt) && Number.isFinite(clockNow)) t = serverAt + Math.max(0, clockNow - clientAt);
     else t = serverAt;
+  }
+  if(Number.isFinite(sessionAt) && Number.isFinite(sessionPerf) && Number.isFinite(perfNow) && perfNow >= sessionPerf){
+    const s = sessionAt + (perfNow - sessionPerf);
+    if(t == null || s > t) t = s;
   }
   if(Number.isFinite(floor) && (t == null || floor > t)) t = floor;
   return t;

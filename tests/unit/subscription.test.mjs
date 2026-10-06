@@ -36,6 +36,13 @@ console.log('=== the trusted time ===');
   check('a trial that ran out stays locked when the clock is set back before its end', isLocked(s, back), back);
   check('a performance mark from before (another session) is not used', trustedNow({ serverAt: T0, perfAt: 5000, perfNow: 100, clientAt: T0, clockNow: T0 + 1000 }) === T0 + 1000);
   check('nothing known → null (the caller decides; nothing locks)', trustedNow({}) === null);
+  // offline, restarted with the clock set back a year: the session moves on by monotonic time from where it started
+  const off = { serverAt: T0, clientAt: T0, clockNow: T0 - 365 * DAY, floor: T0, sessionAt: T0, sessionPerf: 1000 };
+  const t1 = trustedNow({ ...off, perfNow: 1000 + 2 * DAY });
+  check('offline with the clock set back: time still moves on in the session (2 days open → 2 days later)', t1 === T0 + 2 * DAY, t1);
+  check('…so a trial with 1 day left locks while the app is used offline', isLocked(trial(DAY), t1) && !isLocked(trial(DAY), trustedNow({ ...off, perfNow: 1000 + DAY / 2 })));
+  check('…and the next start continues from the saved floor (open time adds up across restarts)', trustedNow({ ...off, floor: t1, sessionAt: t1, perfNow: 1000 + DAY }) === t1 + DAY);
+  check('a session mark from the future of this page is ignored (performance time never goes back)', trustedNow({ ...off, perfNow: 500 }) === T0);
 }
 
 console.log('=== days left and words ===');

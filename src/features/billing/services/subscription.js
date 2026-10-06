@@ -14,7 +14,8 @@ import { isMember } from '../../shop/services/access.js';
 
 export const SUBSCRIPTION_KEY = "hangtag_subscription";   // per account (features/auth/services/account-data.js USER_KEYS)
 const CHECK_EVERY = 10 * 60e3, FOCUS_GAP = 30e3, FLOOR_SAVE_GAP = 60e3;
-let perfAt = null;          // performance.now() when this session last heard from the server
+let heard = null;           // { rec, perf }: the record made from the server's last answer in this session, performance.now() then
+let session = null;         // { rec, at, perf }: a record's trusted time when this session first needed it, performance.now() then
 let lastAsk = 0, asking = null, timer = null, savedFloor = 0;
 const listeners = new Set();
 const perfNow = () => (typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : null);
@@ -31,7 +32,13 @@ export const subscriptionStatus = () => { const r = subscriptionRecord(); return
 export function subscriptionNow(){
   const r = subscriptionRecord();
   if(!r) return null;
-  const t = trustedNow({ serverAt: r.serverAt, perfAt, perfNow: perfNow(), clientAt: r.clientAt, clockNow: Date.now(), floor: r.floor });
+  const pn = perfNow(), perfAt = heard && heard.rec === r ? heard.perf : null;
+  const base = { serverAt: r.serverAt, perfAt, perfNow: pn, clientAt: r.clientAt, clockNow: Date.now(), floor: r.floor };
+  // a session that hasn't heard from the server about this record moves on from where it started (offline with the clock
+  // set back, too); each account's record has its own
+  if(perfAt == null && Number.isFinite(pn) && !(session && session.rec === r)){ const t0 = trustedNow(base); session = t0 != null ? { rec: r, at: t0, perf: pn } : null; }
+  const own = perfAt == null && session && session.rec === r ? session : null;
+  const t = trustedNow({ ...base, sessionAt: own ? own.at : null, sessionPerf: own ? own.perf : null });
   if(t != null && t > (r.floor || 0)){
     r.floor = t;
     if(t - savedFloor > FLOOR_SAVE_GAP){ savedFloor = t; storage.set(SUBSCRIPTION_KEY, r); }   // a restart never goes back in time
@@ -59,7 +66,7 @@ function remember(status){
   const before = subscriptionStatus(), lockedBefore = subscriptionLocked();
   const serverAt = Date.parse(status && status.server_now);
   const rec = { status, serverAt: Number.isFinite(serverAt) ? serverAt : Date.now(), clientAt: Date.now(), floor: Number.isFinite(serverAt) ? serverAt : null };
-  perfAt = perfNow();
+  heard = { rec, perf: perfNow() }; session = null;   // the server's answer is the time from now on
   store.subscription = rec;
   savedFloor = rec.floor || 0;
   storage.set(SUBSCRIPTION_KEY, rec);

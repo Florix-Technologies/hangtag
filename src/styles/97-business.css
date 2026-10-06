@@ -134,6 +134,7 @@ button.hatt-row:hover{background:var(--wash)}
 .segopt input{position:absolute;opacity:0;width:1px;height:1px}
 .segopt:has(input:checked){border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink);background:var(--wash)}
 .segopt:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:2px}
+.watchrule .segopt{flex-basis:84px}
 .autorule .autofield{display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:8px;margin:12px 0 0;flex-wrap:wrap;text-align:left}
 .autorule .autofield .lab,.autorule .autofield .fhint{margin:0}
 .autorule .autofield input{width:88px;flex:none}
@@ -145,7 +146,7 @@ button.hatt-row:hover{background:var(--wash)}
 .autolog .al-audit{display:flex;flex-wrap:wrap;gap:2px 10px;margin-top:3px;color:var(--ink-3);font-size:12px;overflow-wrap:anywhere}
 .autolog .al-audit span{min-width:0}
 .autogroup{margin:0 0 6px}.autogroup + .autogroup{margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}
-.autolog .al-who{color:var(--ink-3);font-size:12px;text-align:right;overflow-wrap:anywhere;max-width:16ch}
+.autolog .al-who{color:var(--ink-3);font-size:12px;text-align:right;max-width:24ch;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (max-width:599px){.autolog li{grid-template-columns:minmax(0,1fr)}.autolog .al-who{text-align:left;max-width:none}}
 .apprlist{list-style:none;margin:0;padding:0;display:grid;gap:8px}
 .appr{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-md)}
@@ -190,6 +191,7 @@ button.hatt-row:hover{background:var(--wash)}
 .diag-list .dg-when{color:var(--ink-3);white-space:nowrap;font-variant-numeric:tabular-nums}
 .diag-list .dg-what{overflow-wrap:anywhere}
 .diag-list .dg-what small{display:block;color:var(--ink-3)}
+.diag-list .dg-count{color:var(--ink-3);font-size:12px;font-variant-numeric:tabular-nums}
 .diag-list li.error b{color:var(--crit-ink,var(--crit))}.diag-list li.warn b{color:var(--warn-ink)}
 
 /* Diagnostics & health: the last 24 hours by category (counts only) */

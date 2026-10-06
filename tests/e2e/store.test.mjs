@@ -133,6 +133,10 @@ const C = await open(storeUrl, { width: 320, session: false });
 check('the storefront now says the shop\'s store is closed', await waitFor(C, () => /closed right now/.test(document.body.innerText)) && /Aura Threads/.test(await text('.brand h1', C) || '') && !(await overflow(C)));
 const T2 = await open(statusUrl, { width: 375, session: false });
 check('…while the customer\'s order status still opens', await waitFor(T2, () => /Received/.test((document.querySelector('.stages') || {}).innerText || '')));
+await sql(`UPDATE public.hangtag_orders SET status = 'cancelled' WHERE public_token = $1`, [statusUrl.match(/o=(mo_[A-Za-z0-9_-]+)/)[1]]);
+const T3 = await open(statusUrl, { width: 375, session: false });
+check('a cancelled order says so: "Order cancelled", cancelled by the shop, a cross (not the green tick), no stages', await waitFor(T3, () => /Order cancelled/.test(document.body.innerText))
+  && /Cancelled by the shop/.test(await text('main', T3) || '') && !!(await T3.$('.tick.off')) && !(await T3.$('.stages')));
 
 await browser.close();
 console.log(fails ? `\n${fails} FAILED` : '\nall passed');

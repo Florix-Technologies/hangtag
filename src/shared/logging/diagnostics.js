@@ -89,7 +89,7 @@ function write(list){
 }
 
 /* The categories the health panel counts (structured events) */
-export const DIAG_CATEGORIES = Object.freeze({ api: "API (slow or failed calls)", sync: "Sync", payment: "Payments", email: "Email", whatsapp: "WhatsApp",
+export const DIAG_CATEGORIES = Object.freeze({ api: "Server calls", sync: "Sync", payment: "Payments", email: "Email", whatsapp: "WhatsApp",
   sms: "SMS", printer: "Printer", agent: "Agent tools", automation: "Automation", database: "Database" });
 const safeOp = v => { const s = text(v).toLowerCase().replace(/[^a-z0-9_:.-]/g, "-").slice(0, 60); return /^[a-z0-9]/.test(s) ? s : ""; };
 /* a duration as a band, never the exact time */

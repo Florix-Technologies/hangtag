@@ -42,7 +42,7 @@ const auditHTML = e => { const parts = Object.keys(AUDIT_WORDS).filter(k => e[k]
 function logHTML(){
   const list = (store.autoLog || []).slice(0, 30);
   if(!list.length) return `<p class="note" style="margin:0">Nothing yet. What automation notices and does, and every approval or dismissal, shows here.</p>`;
-  return `<ol class="autolog">${list.map(e => `<li data-autolog="${esc(e.action)}" data-logrule="${esc(e.rule)}"><span class="al-when">${esc(dayKey(e.t) === dayKey(Date.now()) ? hhmm(e.t) : dayLab(dayKey(e.t)) + " · " + hhmm(e.t))}</span><span class="al-what"><b>${esc(LOG_ACTIONS[e.action] || e.action)}</b> · ${esc((automationRule(e.rule) || { label: e.rule }).label)}<small>${esc(e.text)}</small>${auditHTML(e)}</span><span class="al-who">${esc(e.by || "")}</span></li>`).join("")}</ol>`;
+  return `<ol class="autolog">${list.map(e => `<li data-autolog="${esc(e.action)}" data-logrule="${esc(e.rule)}"><span class="al-when">${esc(dayKey(e.t) === dayKey(Date.now()) ? hhmm(e.t) : dayLab(dayKey(e.t)) + " · " + hhmm(e.t))}</span><span class="al-what"><b>${esc(LOG_ACTIONS[e.action] || e.action)}</b> · ${esc((automationRule(e.rule) || { label: e.rule }).label)}<small>${esc(e.text)}</small>${auditHTML(e)}</span><span class="al-who" title="${esc(e.by || "")}">${esc(e.by || "")}</span></li>`).join("")}</ol>`;
 }
 export function automationSettingsHTML(){
   const A = automationSettings();

@@ -21,7 +21,7 @@ function el(tag, cls, text){ const n = document.createElement(tag); if(cls) n.cl
 function button(text, cls, fn, label){ const n = el('button', cls, text); n.type = 'button'; n.addEventListener('click', fn); if(label) n.setAttribute('aria-label', label); return n; }
 function icon(path, cls){ const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('aria-hidden', 'true'); if(cls) s.setAttribute('class', cls);
   s.innerHTML = `<path d="${path}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`; return s; }
-const BAG = 'M6 8h12l-1 12H7L6 8zm3 0V6a3 3 0 0 1 6 0v2', SEARCH = 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zm9 2-4.4-4.4', CHECK = 'M5 12.5 10 17 19 7', STORE = 'M4 10h16M5 10l1-5h12l1 5M6 10v9h12v-9M10 19v-5h4v5';
+const CROSS = 'M7 7l10 10M17 7 7 17', BAG = 'M6 8h12l-1 12H7L6 8zm3 0V6a3 3 0 0 1 6 0v2', SEARCH = 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zm9 2-4.4-4.4', CHECK = 'M5 12.5 10 17 19 7', STORE = 'M4 10h16M5 10l1-5h12l1 5M6 10v9h12v-9M10 19v-5h4v5';
 function readLocal(k, fallback){ try{ return JSON.parse(localStorage.getItem(k)) || fallback; }catch{ return fallback; } }
 function save(){ try{ localStorage.setItem(key, JSON.stringify({ cart, customer, note, payment, checkoutKey })); }catch{ /* private mode: the cart lives on this page only */ } }
 function randomKey(prefix){ const b = new Uint8Array(18); crypto.getRandomValues(b); return prefix + Array.from(b, x => x.toString(16).padStart(2, '0')).join(''); }
@@ -226,7 +226,7 @@ function statusLink(){
 function renderPlaced(){
   app.appendChild(header(menu ? 'menu' : '').top);
   const page = el('main', 'page narrow'), card = el('section', 'card done');
-  const tick = el('div', 'tick'); tick.appendChild(icon(CHECK)); card.appendChild(tick);
+  const off = placed.state === 'cancelled', tick = el('div', off ? 'tick off' : 'tick'); tick.appendChild(icon(off ? CROSS : CHECK)); card.appendChild(tick);
   const fresh = view === 'placed';
   card.appendChild(el('h2', '', placed.state === 'cancelled' ? 'Order cancelled' : fresh ? (link.mode === 'assisted' ? 'Cart ready for staff' : 'Order received') : 'Your order'));
   card.appendChild(el('p', 'order-no', placed.order_no || ''));

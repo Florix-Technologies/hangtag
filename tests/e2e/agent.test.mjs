@@ -92,6 +92,15 @@ check('...the page says so, with the way to Purchase orders', /Saved as draft PO
 await run('await flushSbQueue()');
 const row = (await q(`SELECT status, source, jsonb_array_length(items) AS n FROM public.hangtag_purchase_orders`))[0];
 check('...and in the cloud as a draft', row && row.status === 'draft' && row.source === 'reorder' && row.n === 1, row);
+const au = await run('return autoLog.filter(e=>e.rule==="agent").map(e=>({action:e.action,why:e.why,tool:e.tool,before:e.before,after:e.after,outcome:e.outcome,by:e.by,t:e.t>0}))');
+check('the audit: Save and "Not now" are in the automation log — who, when, why (the question), the tool, before, after, the approval and the outcome',
+  au.length === 2 && au[0].action === 'approved' && au[0].why === 'Draft a purchase order for Lakshmi' && au[0].tool === 'draft_purchase_order' && au[0].before === 'No draft purchase order for Lakshmi Textiles'
+  && /^Draft PO-\d+ for Lakshmi Textiles: 1 line/.test(au[0].after) && /after the person tapped Save \(not sent to the supplier\)/.test(au[0].outcome) && !!au[0].by && au[0].t
+  && au[1].action === 'dismissed' && au[1].why === 'Draft a purchase order' && au[1].after === 'Nothing saved' && au[1].outcome === 'Dismissed by the person (Not now)', au);
+await run('openSettings("automation")'); await sleep(300);
+const act = await text('#autoLogBlk') || '';
+check('...shown in Settings → Automation → Activity', /Approved · Hangtag Agent/.test(act) && /Asked: “Draft a purchase order for Lakshmi”/.test(act) && /Tool: draft_purchase_order/.test(act) && /Outcome: Saved as a draft/.test(act) && /Dismissed · Hangtag Agent/.test(act), act.slice(0, 400));
+await run('setTab("assistant");renderAll()'); await sleep(200);
 
 console.log('--- questions it doesn\'t know; an AI provider ---');
 await ask('Write a thank-you note for my staff');

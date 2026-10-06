@@ -142,6 +142,9 @@ button.hatt-row:hover{background:var(--wash)}
 .autolog li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:4px 12px;align-items:start;padding:9px 0;border-top:1px solid var(--line);font-size:13.5px}
 .autolog .al-when{color:var(--ink-3);font-variant-numeric:tabular-nums;white-space:nowrap}
 .autolog .al-what small{display:block;color:var(--ink-2);overflow-wrap:anywhere}
+.autolog .al-audit{display:flex;flex-wrap:wrap;gap:2px 10px;margin-top:3px;color:var(--ink-3);font-size:12px;overflow-wrap:anywhere}
+.autolog .al-audit span{min-width:0}
+.autogroup{margin:0 0 6px}.autogroup + .autogroup{margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}
 .autolog .al-who{color:var(--ink-3);font-size:12px;text-align:right;overflow-wrap:anywhere;max-width:16ch}
 @media (max-width:599px){.autolog li{grid-template-columns:minmax(0,1fr)}.autolog .al-who{text-align:left;max-width:none}}
 .apprlist{list-style:none;margin:0;padding:0;display:grid;gap:8px}

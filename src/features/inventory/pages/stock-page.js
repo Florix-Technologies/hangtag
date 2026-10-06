@@ -17,7 +17,9 @@ import { dayKey, dayLab, hhmm } from '../../../shared/formatting/dates.js';
 import { intakeCardHTML } from '../components/code-intake.js';
 import { inr, numberText } from '../../../shared/formatting/money.js';
 import { qtyText, roundQty } from '../../../domain/catalog/units.js';
-import { allBatches, batchesOf, expiryDays, expiryOf, serialsOf, trackingOfP } from '../services/tracking.js';
+import { batchesOf, expiryDays, expiryOf, serialsOf, trackingOfP } from '../services/tracking.js';
+import { expiryAlerts } from '../services/alerts.js';
+export { expiryAlerts };
 import { EXPIRY_LABELS } from '../../../domain/inventory/tracking.js';
 import { usesRepack } from '../use-cases/repack.js';
 import { isKit } from '../../../domain/catalog/bundles.js';
@@ -37,11 +39,6 @@ export function trackedStockHTML(p){
   if(!rows.length) return `<div class="trk" data-trk="${esc(p.id)}"><p class="note">No batch in stock.</p></div>`;
   return `<div class="trk" data-trk="${esc(p.id)}"><table class="trk-bt"><thead><tr>${many?"<th>Variant</th>":""}<th>Batch</th><th>Expiry</th><th class="num">In stock</th></tr></thead><tbody>${rows.map(({v,b})=>{const x=expiryOf(b.exp);
     return `<tr class="${x||""}">${many?`<td>${esc(vLabel(v)||"One size")}</td>`:""}<td>${esc(b.b)}</td><td>${b.exp?esc(b.exp):"—"}${x&&x!=="fresh"?` <em class="exp ${x}">${EXPIRY_LABELS[x]}</em>`:""}</td><td class="num">${esc(qtyText(b.qty,p.unit))}</td></tr>`}).join("")}</tbody></table></div>`;
-}
-/* Batches that have expired or expire soon, with stock (the shop's warning period: settings.expiryDays) */
-export function expiryAlerts(){
-  return allBatches().filter(b=>b.qty>0&&b.exp&&vRec(b.vid)).map(b=>({b,x:expiryOf(b.exp),r:vRec(b.vid)})).filter(a=>a.x==="expired"||a.x==="soon")
-    .sort((a,b)=>a.b.exp.localeCompare(b.b.exp));
 }
 function expiryCardHTML(){
   const list=expiryAlerts(); if(!list.length) return "";

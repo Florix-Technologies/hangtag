@@ -17,7 +17,7 @@ import { createReadOnlyBusinessQuery } from '../services/business-query.js';
 import { createBusinessAssistant } from '../services/business-assistant.js';
 import { appAgentToolHost } from '../services/agent-tools.js';
 import { createAgentAI } from '../services/agent-runner.js';
-import { confirmAgentProposal } from '../use-cases/agent-actions.js';
+import { confirmAgentProposal, dismissAgentProposal } from '../use-cases/agent-actions.js';
 import { inventoryIntelligence } from '../../inventory/services/inventory-intelligence.js';
 import { openBillView } from '../../receipts/components/bill-view.js';
 import { openProductView } from '../../products/components/product-view.js';
@@ -109,8 +109,8 @@ async function ask(question){
   if(answer && answer.autoOpen && answer.actions && answer.actions[0] && answer.actions[0].kind === 'open') performAgentAction(answer.actions[0].target, answer.actions[0].id);
 }
 function confirmProposal(){
-  const p = state.answer && state.answer.proposal; if(!p) return;
-  const r = confirmAgentProposal(p);
+  const p = state.answer && state.answer.proposal; if(!p || state.saved) return;
+  const r = confirmAgentProposal(p, { question: state.question, tool: p.kind === "purchase_order" ? "draft_purchase_order" : "" });
   if(r.error){ toast(r.error); return; }
   state = { ...state, saved: { id: r.po.id, no: r.po.no } }; renderAssistantPage();
   toast(`Draft purchase order ${r.po.no} saved. It isn't sent yet.`);
@@ -126,7 +126,7 @@ export function installAssistantEvents(){
     const o = t.closest('[data-agentopen]');
     if(o){ event.preventDefault(); const [target, id] = o.dataset.agentopen.split('|'); performAgentAction(target, id); return; }
     if(t.closest('[data-agentconfirm]')){ event.preventDefault(); confirmProposal(); return; }
-    if(t.closest('[data-agentdismiss]') && state.answer){ event.preventDefault(); state = { ...state, answer: { ...state.answer, proposal: null } }; renderAssistantPage(); }
+    if(t.closest('[data-agentdismiss]') && state.answer){ event.preventDefault(); dismissAgentProposal(state.answer.proposal, { question: state.question }); state = { ...state, answer: { ...state.answer, proposal: null } }; renderAssistantPage(); }
   });
   document.addEventListener('submit', event => {
     if(!event.target || event.target.id !== 'askForm') return;

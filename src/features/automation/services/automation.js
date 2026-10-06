@@ -21,6 +21,7 @@ import { can, canAny, signedInAs } from '../../shop/services/access.js';
 import { hasCap } from '../../shop/services/shop-caps.js';
 import { enqueue } from '../../sync/services/outbox.js';
 import { logger } from '../../../shared/logging/logger.js';
+import { watchFindings } from './watchers.js';
 
 const DAY = 864e5;
 const SNOOZE = { reorder: DAY, dues: 3 * DAY };
@@ -112,10 +113,21 @@ export function dismissAutomation(key, now = Date.now()){
   logAutomation({ rule: f.rule, action: "dismissed", key, text: f.title });
   return { ok: true };
 }
+/* What the watch rules set to Notify find goes to the log once a day per rule and subject (not on every check) → how many */
+export function noteWatchFindings(now = Date.now()){
+  const day = dayKey(now); let n = 0;
+  for(const f of watchFindings(now)){
+    const key = `notify:${f.rule}:${f.subject}:${day}`;
+    if((store.autoLog || []).some(e => e.key === key)) continue;
+    logAutomation({ rule: f.rule, action: "notified", key, text: `${f.title}${f.sub ? " · " + f.sub : ""}` }); n++;
+  }
+  return n;
+}
 /* What runs by itself (policy "Automatically"), safe to repeat: reorder drafts (one per supplier) and, through checkUpi,
-   asking the payment provider about UPI payments checked by hand. → how many things it did */
+   asking the payment provider about UPI payments checked by hand; and the watch rules' daily notes. → how many things it did */
 export async function runAutomation({ now = Date.now(), checkUpi = null, online = false } = {}){
   const A = automationSettings(); let done = 0;
+  try{ noteWatchFindings(now); }catch(e){ logger.event("automation", "rule-failed", { op: "watch", code: e && e.code }, "warn"); }
   const reorder = AUTOMATION_RULES.find(r => r.key === "reorder");
   if(A.reorder === "auto" && ruleUsable(reorder)){
     for(const f of reorderFindings()){

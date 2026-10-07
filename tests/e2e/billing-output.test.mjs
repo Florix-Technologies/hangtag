@@ -83,7 +83,7 @@ const custId = await run('return Object.values(customers).find(c=>c.name==="Blr 
 await run('openSettings("devices")'); await sleep(200);
 const printerHere = !!(await A.$('#printerForm [name=kind]'));
 await run('openSettings("billing")'); await sleep(200);
-check('settings: Billing & Documents has the logo; Team & Devices has this device\'s printer', await vis('#receiptSetup') && /No logo/.test(await text('#receiptSetup .logoprev')) && printerHere);
+check('settings: Bills & Documents has the logo; This device has this device\'s printer', await vis('#receiptSetup') && /No logo/.test(await text('#receiptSetup .logoprev')) && printerHere);
 const logoInput = await A.$('#receiptSetup [data-logofile]'); await logoInput.uploadFile(LOGO); await sleep(700);
 check('logo uploaded: shown in settings and kept for this shop', !!(await A.$('#receiptSetup .logoprev img')) && await run('return /^data:image\\/jpeg;base64,/.test(logo)'));
 await run('await flushSbQueue()');
@@ -135,7 +135,7 @@ await A.screenshot({ path: H.ARTIFACTS + '/bo2_invoice_a4.png' });
 await sleep(400);
 check('bill view lists what was sent (from the database)', /Sent to the customer/.test(await text(`[data-dlhist="${sid}"]`)) && /✓ Email · accounts@blr\.in/.test(await text(`[data-dlhist="${sid}"]`)) && /✕ SMS/.test(await text(`[data-dlhist="${sid}"]`)), await text(`[data-dlhist="${sid}"]`));
 await A.click(`[data-billpaper="80mm:${sid}"]`); await sleep(200);
-check('switch to the 80 mm receipt view', !(await A.$('.rcpt.a4')) && /Bill/.test(await text('.billview .rcpt-prev')));
+check('switch to the 80 mm receipt view: the same number label as the A4 invoice', !(await A.$('.billview .a4prev')) && !!(await A.$('.billview .rcpt-prev .rcpt')) && /Invoice no\. INV-/.test(await text('.billview .rcpt-prev')), await text('.billview .rcpt-prev'));
 await run('closeModal()');
 
 // ---------- Phase 16: the Epson printer ----------

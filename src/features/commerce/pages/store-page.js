@@ -72,13 +72,13 @@ export function renderStorePage(){
         <p class="note">Put it on the counter, the door or your bags. It opens the store above.</p>
         <div class="btnrow"><button type="button" class="btn" data-store="qr">${UI_ICON.qr} Show</button><button type="button" class="btn" data-store="dl">${UI_ICON.download} Download</button><button type="button" class="btn" data-store="print">${UI_ICON.print} Print</button></div></section>
     </div>`;
-    body += `<section class="card"><div class="card-h"><div><h3>Store orders</h3><p>${orders.length ? `${waiting} waiting for you · ${orders.length} in all` : "Orders customers send from your store appear here and in Orders → Sales orders."}</p></div>${orders.length ? `<button type="button" class="link xs" data-tab="orders" data-subview="orders:sales">All sales orders ${UI_ICON.chevron}</button>` : ""}</div>
+    body += `<section class="card"><div class="card-h"><div><h3>Store orders</h3><p>${orders.length ? `${waiting} waiting for you · ${orders.length} in all` : "Orders customers send from your store appear here and in Sell → Sales orders."}</p></div>${orders.length ? `<button type="button" class="link xs" data-tab="orders" data-subview="orders:sales">All sales orders ${UI_ICON.chevron}</button>` : ""}</div>
       ${orders.length ? `<div class="olist">${orders.slice(0, 12).map(o => `<button type="button" class="orow chev" data-ordopen="${esc(o.id)}"><span class="o-main"><span class="o-t">${esc(o.no || "Order")} · ${esc((o.cust && o.cust.name) || o.custName || "Customer")}</span><span class="o-s">${esc(o.t ? agoText(o.t) : "")}${o.checkoutMode === "assisted" ? " · in-store cart" : ""}${o.paymentPreference ? " · " + esc({ upi: "prefers UPI", cash: "prefers cash", counter: "pays at the counter" }[o.paymentPreference] || "") : ""}</span></span><span class="o-end"><span class="o-amt">${inr(o.total || 0)}</span>${statusChip(stageOf(o)[0], stageOf(o)[1])}</span></button>`).join("")}</div>`
         : emptyStateHTML({ icon: "store", title: "No store orders yet", text: open ? "Share your store link or QR to get the first one." : "Open your store and share it to start taking orders.", cls: "compact plain" })}</section>`;
     body += `<section class="card"><div class="card-h"><div><h3>In-store assisted cart</h3><p>A separate link for customers standing in the shop: they build a cart on their phone and your staff finish it at the counter. Keep its QR near the trial room or the counter, apart from the public store QR.</p></div></div>
       <div class="btnrow"><button type="button" class="btn" data-store="copyassisted">${UI_ICON.copy} Copy assisted-cart link</button><button type="button" class="btn" data-store="qrassisted">${UI_ICON.qr} Show its QR</button></div></section>`;
   }
-  host.innerHTML = head + status + body;
+  host.innerHTML = `<div class="subnav" data-subnav="store" role="group" aria-label="Sell workspace" hidden></div>` + head + status + body;
 }
 function qrSheet(kind){
   const L = storeLinks(); if(!L) return;

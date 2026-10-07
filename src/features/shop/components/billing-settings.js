@@ -1,6 +1,6 @@
 // The shop's settings forms in Settings (components/settings-page.js): Products & Inventory → stock alert; Payments & Banks →
-// payment methods and the cash drawer's expense categories; Billing & Documents → bill numbers and paper, logo, GST, the
-// receipts sent by themselves; Purchasing → reorder planning; Team & Devices → this device's receipt printer. Every form
+// payment methods and the cash drawer's expense categories; Bills & Documents → bill numbers and paper, logo, GST, the
+// receipts sent by themselves; Purchasing → reorder planning; This device → this device's receipt printer. Every form
 // has Save and Cancel (Cancel puts back what is saved: the form is drawn with the saved values).
 import { store } from '../../../shared/state/store.js';
 import { renderSync } from '../../sync/components/sync-status.js';
@@ -36,7 +36,7 @@ export function expenseCatsHTML(){
     <label class="f full"><span class="lab">Expense categories, one per line</span><textarea name="cats" rows="4">${esc(expenseCats().join("\n"))}</textarea><span class="fhint">Offered when cash is spent from the drawer (Reports → Cash book → Expense)</span></label>
     ${errHTML("expCatErr")}${formActionsHTML({save:"Save categories"})}</form>`;
 }
-/* Billing & Documents → Bill numbering: the next bill's number on this device as the form stands, and why it can't be used
+/* Bills & Documents → Bill numbering: the next bill's number on this device as the form stands, and why it can't be used
    (domain/documents/numbering.js) */
 function numberPreviewHTML(input){
   const till=deviceTill(), r=checkNumberingSettings(input,{till});
@@ -50,7 +50,7 @@ function numberPreviewHTML(input){
     <small>Each document type has its own series: ${esc(others.join(" · "))}.</small>`;
 }
 const numberingInput=form=>{const f=new FormData(form);return {prefix:f.get("prefix"),start:f.get("invoiceStart"),padding:f.get("invoicePadding"),suffix:f.get("invoiceSuffix")};};
-/* Billing & Documents: bill numbers, receipt paper and footer */
+/* Bills & Documents: bill numbers, receipt paper and footer */
 export function receiptFormHTML(){
   const s=store.settings, pad=+s.invoicePadding||6;
   return `<form id="billingForm" class="authform setblk" novalidate><h5>Bill numbering</h5><p class="note">Bill numbers are made automatically when a sale completes: nobody types them, and a number given is never changed.</p><div class="pgrid">
@@ -64,7 +64,7 @@ export function receiptFormHTML(){
     <label class="f full"><span class="lab">Receipt footer</span><input name="footer" maxlength="120" value="${esc(s.footer||"")}"></label>
   </div>${errHTML("billErr")}${formActionsHTML({save:"Save bill settings"})}</form>`;
 }
-/* Billing & Documents: GST on bills, and GST filing preparation */
+/* Bills & Documents: GST on bills, and GST filing preparation */
 export function taxFormsHTML(){
   const s=store.settings;
   return `<form id="taxForm" class="authform setblk" novalidate><h5>GST on bills</h5><div class="pgrid">
@@ -93,7 +93,7 @@ export function paymentsFormHTML(){
   <p class="note" style="margin:0">Cards on your own card machine: the payment screen asks only for the machine's reference and the last 4 digits, both optional. Never the card number, CVV or PIN.</p>
   <p id="payErr2" class="autherr" hidden></p>${formActionsHTML({save:"Save payment methods"})}</form></div>`;
 }
-/* Billing & Documents: receipts sent by themselves when a bill completes */
+/* Bills & Documents: receipts sent by themselves when a bill completes */
 export function autoSendFormHTML(){
   const a=Object.assign({whatsapp:false,sms:false,email:false},store.settings.autoSend||{}),ch=store.channels;
   const box=(k,label)=>{const off=ch&&ch[k]===false;return `<label class="chk" data-chan="${k}"><input type="checkbox" name="${k}"${a[k]?" checked":""}${off&&!a[k]?" disabled":""}> ${label}${off?` <small class="muted">(not set up on the server yet)</small>`:""}</label>`};
@@ -110,7 +110,7 @@ export async function refreshPaymentsForm(){
   const f=$("#autoSendForm"),ch=store.channels;
   if(f&&ch) ["whatsapp","sms","email"].forEach(k=>{const i=f.querySelector(`[name="${k}"]`);if(i&&ch[k]===false&&!i.checked)i.disabled=true});
 }
-/* Billing & Documents: the logo (every device of the shop) */
+/* Bills & Documents: the logo (every device of the shop) */
 export function receiptSetupHTML(){
   return `<div class="setblk" id="receiptSetup"><h5>Logo</h5>
     <div class="logoedit"><span class="logoprev">${store.logo?`<img src="${esc(store.logo)}" alt="Shop logo">`:`<span class="note">No logo</span>`}</span>
@@ -127,7 +127,7 @@ export function reorderFormHTML(){
   </div><p class="note" style="margin:0">Smart reorder suggests what to buy when a variant's stock would run out within the lead time plus safety stock, and how much to cover this many days.</p>
   ${errHTML("reorderErr")}${formActionsHTML({save:"Save reorder planning"})}</form>`;
 }
-/* Team & Devices: the receipt printer of this device (every person, whatever the role) */
+/* This device: the receipt printer of this device (every person, whatever the role) */
 export function printerSetupHTML(){
   const p=store.printer, ep=p.kind==="epson";
   return `<div class="setblk" id="printerSetup"><h5>Receipt printer on this device</h5>

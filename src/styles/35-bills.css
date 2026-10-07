@@ -6,6 +6,9 @@
 .billfilters.statuses{padding-top:10px;border-top:1px solid var(--line)}
 .billcustom{display:flex;gap:10px;max-width:460px}.billcustom .f{flex:1}
 .bill-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;margin-bottom:var(--sp-5);overflow:hidden;border:1px solid var(--line);border-radius:var(--r-lg);background:var(--line);box-shadow:var(--shadow-xs)}
+/* receipts that reached nobody: how many, Send again (the Bills workspace) */
+.bill-alert{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 14px;margin:0 0 12px;padding:10px 14px;border-radius:var(--r-md);border:1px solid var(--crit-line);background:var(--crit-soft);color:var(--crit-ink);font-size:13.5px}
+.bill-alert-acts{display:flex;align-items:center;gap:12px}
 .bill-kpis>div{display:flex;flex-direction:column;gap:3px;min-width:0;padding:14px 16px;background:var(--card)}
 .bill-kpis span,.bill-kpis small{font-size:12px;color:var(--ink-3)}.bill-kpis b{font-size:19px;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis}
 .bill-results-head{display:flex;justify-content:space-between;align-items:end;margin-bottom:10px}.bill-results-head h3{margin:0;font-size:var(--fs-md)}.bill-results-head p{margin:2px 0 0;color:var(--ink-3);font-size:12.5px}
@@ -25,3 +28,7 @@
 .bill-kpis b.warn{color:var(--warn-ink)}
 .billrow-end>b.void{text-decoration:line-through;color:var(--ink-3)}
 .billmore{display:flex;justify-content:center;margin-top:12px}.billmore .muted{font-weight:500;color:var(--ink-3)}
+
+/* Search: the bills found, counted and totalled, with Show in Bills; the Bills page's chips for Search's amount and method */
+.command-sum{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 4px;padding:0 10px;font-size:12.5px;color:var(--ink-3)}
+.billfilters.searchchips{margin:0 0 10px}

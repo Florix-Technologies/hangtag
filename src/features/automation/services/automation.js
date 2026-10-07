@@ -5,6 +5,8 @@
 // suggestion, the bills still owed on, the UPI payments checked by hand): nothing is stored but the log.
 //   reorder: one open reorder draft per supplier at a time (a draft already waiting is never doubled)
 //   dues:    a customer's bills on account unpaid for longer than the days set, with the reminder written out
+//   custom:  the shop's own rules set to "Write a reminder" (services/custom-rules.js), always asked first
+//   resend:  receipts the shop sends by itself that failed for a passing reason, tried again once a day ("Automatically")
 // A dismissal (or an approval) is remembered in the log and keeps the same finding away for a while (SNOOZE).
 import { AUTOMATION_RULES, automationOf, dueReminderText, logEntry, mergeLogs } from '../../../domain/automation/rules.js';
 import { store } from '../../../shared/state/store.js';
@@ -22,9 +24,11 @@ import { hasCap } from '../../shop/services/shop-caps.js';
 import { enqueue } from '../../sync/services/outbox.js';
 import { logger } from '../../../shared/logging/logger.js';
 import { watchFindings } from './watchers.js';
+import { customFindings } from './custom-rules.js';
+import { sendFailedAgain } from '../../delivery/use-cases/auto-delivery.js';
 
 const DAY = 864e5;
-const SNOOZE = { reorder: DAY, dues: 3 * DAY };
+const SNOOZE = { reorder: DAY, dues: 3 * DAY, custom: 3 * DAY };
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + "s"}`;
 export const automationSettings = () => automationOf(store.settings);
 /* May this person act on the rule here? (its permissions, and the feature it needs) */
@@ -32,6 +36,8 @@ export const ruleUsable = r => (!r.perms || r.perms.some(p => can(p))) && (!r.ca
 
 /* ---------- the log ---------- */
 const who = () => signedInAs() || (store.authUser && store.authUser.email) || "This device";
+/* An automatic action is approved by the shop's setting for its rule (Settings → Automation) */
+const bySetting = key => `Automatic: “${(AUTOMATION_RULES.find(r => r.key === key) || { label: key }).label}” is set to Automatically`;
 export function logAutomation(e){
   const entry = logEntry({ id: "a" + uid(), t: Date.now(), by: who(), dev: store.dev, ...e });
   store.autoLog = mergeLogs([entry], store.autoLog || []); saveAutoLog();
@@ -81,12 +87,15 @@ export function automationFindings(now = Date.now()){
       if(r.key === "dues") out.push(...dueFindings(A.dueDays, now));
     }catch(e){ logger.event("automation", "rule-failed", { op: "findings", code: e && e.code }, "warn"); }   // a rule that can't read its data finds nothing this time
   });
+  // the shop's own rules that write a reminder: always for a person's OK
+  customFindings(now).filter(f => f.action === "remind" && f.act).forEach(f => out.push({ key: f.id, rule: "custom", title: `Remind ${f.act.name || "a customer"} about ${inr(f.act.amount || 0)}`,
+    sub: f.sub, act: f.act, approve: "Open WhatsApp" }));
   return out;
 }
 /* What waits for a person's OK: the findings of rules set to "Ask me first", not dismissed or approved lately */
 export function pendingApprovals(now = Date.now()){
   const A = automationSettings();
-  return automationFindings(now).filter(f => A[f.rule] === "ask" && !snoozed(f.key, f.rule, now));
+  return automationFindings(now).filter(f => (f.rule === "custom" || A[f.rule] === "ask") && !snoozed(f.key, f.rule, now));
 }
 
 /* ---------- acting ---------- */
@@ -96,13 +105,15 @@ export function approveAutomation(key, now = Date.now()){
   if(!f) return { error: "That isn't waiting any more." };
   if(f.act.kind === "po"){
     const r = poFromReorder(f.act.supplierId, f.act.items);
-    if(r.error){ logAutomation({ rule: f.rule, action: "failed", key, text: `Draft purchase order for ${f.act.supplier}: ${r.error}` }); return r; }
-    logAutomation({ rule: f.rule, action: "approved", key, text: `Draft purchase order ${r.po.no} for ${f.act.supplier} (${plural(f.act.items.length, "product")}). Not sent.` });
+    if(r.error){ logAutomation({ rule: f.rule, action: "failed", key, text: `Draft purchase order for ${f.act.supplier}: ${r.error}`, why: f.title, before: "No reorder draft for this supplier", after: "Nothing saved", approvedBy: who(), outcome: `Refused: ${r.error}` }); return r; }
+    logAutomation({ rule: f.rule, action: "approved", key, text: `Draft purchase order ${r.po.no} for ${f.act.supplier} (${plural(f.act.items.length, "product")}). Not sent.`,
+      why: "Smart reorder suggests restocking", before: "No reorder draft for this supplier", after: `Draft ${r.po.no}: ${plural(f.act.items.length, "line")}`, approvedBy: who(), outcome: "Saved as a draft (not sent to the supplier)" });
     return { ok: true, po: r.po };
   }
   if(f.act.kind === "remind"){
     const num = waPhone(f.act.phone);
-    logAutomation({ rule: f.rule, action: "approved", key, text: `Payment reminder to ${f.act.name} opened in WhatsApp (${f.title.replace(/^Remind .+? about /, "")}).` });
+    logAutomation({ rule: f.rule, action: "approved", key, text: `Payment reminder to ${f.act.name} opened in WhatsApp (${f.title.replace(/^Remind .+? about /, "")}).`,
+      why: f.sub, before: "No reminder sent", after: "WhatsApp opened with the message typed in", approvedBy: who(), outcome: "The person sends it in WhatsApp (nothing sent by Hangtag)" });
     return { ok: true, url: `https://wa.me/${num}?text=${encodeURIComponent(f.act.text)}`, phone: !!num };
   }
   return { error: "That can't be done here." };
@@ -110,7 +121,7 @@ export function approveAutomation(key, now = Date.now()){
 export function dismissAutomation(key, now = Date.now()){
   const f = automationFindings(now).find(x => x.key === key);
   if(!f) return { error: "That isn't waiting any more." };
-  logAutomation({ rule: f.rule, action: "dismissed", key, text: f.title });
+  logAutomation({ rule: f.rule, action: "dismissed", key, text: f.title, before: "Waiting for an OK", after: "Nothing done", approvedBy: `Not approved: dismissed by ${who()}`, outcome: "Dismissed (asked again later)" });
   return { ok: true };
 }
 /* What the watch rules set to Notify find goes to the log once a day per rule and subject (not on every check) → how many */
@@ -120,6 +131,12 @@ export function noteWatchFindings(now = Date.now()){
     const key = `notify:${f.rule}:${f.subject}:${day}`;
     if((store.autoLog || []).some(e => e.key === key)) continue;
     logAutomation({ rule: f.rule, action: "notified", key, text: `${f.title}${f.sub ? " · " + f.sub : ""}` }); n++;
+  }
+  // the shop's own rules set to "Note it": the log only
+  for(const f of customFindings(now).filter(x => x.action === "log")){
+    const key = `notify:custom:${f.subject}:${day}`;
+    if((store.autoLog || []).some(e => e.key === key)) continue;
+    logAutomation({ rule: "custom", action: "notified", key, text: `${f.title}${f.sub ? " · " + f.sub : ""}` }); n++;
   }
   return n;
 }
@@ -133,13 +150,30 @@ export async function runAutomation({ now = Date.now(), checkUpi = null, online 
     for(const f of reorderFindings()){
       const r = poFromReorder(f.act.supplierId, f.act.items);
       if(r.error) logger.event("automation", "rule-failed", { op: "reorder" }, "warn");
-      logAutomation(r.error ? { rule: "reorder", action: "failed", key: f.key, text: `Draft purchase order for ${f.act.supplier}: ${r.error}` }
-        : { rule: "reorder", action: "auto", key: f.key, text: `Drafted purchase order ${r.po.no} for ${f.act.supplier} (${plural(f.act.items.length, "product")}). Not sent.` });
+      logAutomation(r.error ? { rule: "reorder", action: "failed", key: f.key, text: `Draft purchase order for ${f.act.supplier}: ${r.error}`, approvedBy: bySetting("reorder"), outcome: `Refused: ${r.error}` }
+        : { rule: "reorder", action: "auto", key: f.key, text: `Drafted purchase order ${r.po.no} for ${f.act.supplier} (${plural(f.act.items.length, "product")}). Not sent.`,
+          why: "Smart reorder suggests restocking", before: "No reorder draft for this supplier", after: `Draft ${r.po.no}: ${plural(f.act.items.length, "line")}`, approvedBy: bySetting("reorder"), outcome: "Saved as a draft (not sent to the supplier)" });
       if(!r.error) done++;
     }
   }
+  // receipts that failed for a passing reason (the provider, the internet), an hour or more ago: once a day each
+  const resend = AUTOMATION_RULES.find(r => r.key === "resend");
+  if(A.resend === "auto" && online && ruleUsable(resend)){
+    try{
+      const day = dayKey(now), d = D(), jobs = (store.deliveryQueue || []).filter(j => j.status === "failed" && j.temp && j.autoRetried !== day && now - (+j.t || 0) >= 36e5 && d.saleById[j.saleId] && !d.saleById[j.saleId].void);
+      const sids = [...new Set(jobs.map(j => j.saleId))];
+      if(sids.length){
+        jobs.forEach(j => { j.autoRetried = day; });
+        done += sendFailedAgain(sids);
+        const nos = sids.map(id => d.saleById[id].no || "a bill");
+        logAutomation({ rule: "resend", action: "auto", key: `resend:${day}:${sids.join(",")}`.slice(0, 120), text: `${plural(sids.length, "receipt")} sent again: ${nos.slice(0, 4).join(", ")}${nos.length > 4 ? " and more" : ""}.`,
+          why: "They failed for a passing reason (the provider or the internet)", before: "Failed", after: "Queued to send again", approvedBy: bySetting("resend"), outcome: "Sending again (once today)" });
+      }
+    }catch(e){ logger.event("automation", "rule-failed", { op: "resend", code: e && e.code }, "warn"); }   // tried on the next run
+  }
   if(A.upi === "auto" && online && checkUpi && canAny(["create_sale"]) && D().sales.some(isUnverified)){
-    try{ const n = await checkUpi(); if(n){ done += n; logAutomation({ rule: "upi", action: "auto", key: `upi:${dayKey(now)}`, text: `${plural(n, "UPI payment")} verified by the payment provider.` }); } }
+    try{ const n = await checkUpi(); if(n){ done += n; logAutomation({ rule: "upi", action: "auto", key: `upi:${dayKey(now)}`, text: `${plural(n, "UPI payment")} verified by the payment provider.`,
+      why: "UPI payments checked by hand", before: "Unverified", after: "Verified by the provider's own record", approvedBy: bySetting("upi"), outcome: "Only the provider's record marks a payment verified" }); } }
     catch(e){ logger.event("automation", "rule-failed", { op: "upi", code: e && e.code }, "warn"); }   // tried again on the next run
   }
   return done;

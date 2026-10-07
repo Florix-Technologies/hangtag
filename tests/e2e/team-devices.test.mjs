@@ -164,9 +164,11 @@ try {
 
   console.log('--- the owner adds a cashier with a sign-in QR ---');
   await A.run('openSettings("devices")'); await sleep(200);
-  check('Settings → Team & Devices shows the team with the shop code', await A.vis('#teamSec [data-team="open"]') && (await A.text('#teamSec')).includes(core.shopCode(OWNER)));
-  await A.click('#teamSec [data-team="open"]');
-  check('Team & devices opens (empty team)', await A.until('team&&!team.loading') && /No team members yet/.test(await A.text('.teamsheet') || ''));
+  check('Settings → This device doesn\'t repeat the team (its one place is More → Team)', !(await A.$('#teamSec')) && !(await A.$('#set-devices [data-team]')));
+  await A.click('.nav [data-navmore]'); await sleep(200);
+  await A.click('.navsheet [data-tab="team"]');
+  check('More → Team opens the team (empty), with the shop code staff need', await A.until('team&&!team.loading') && /No team members yet/.test(await A.text('.teamsheet') || '')
+    && (await A.text('.teamsheet') || '').toUpperCase().includes(core.shopCode(OWNER).toUpperCase()), await A.text('.teamsheet'));
   await A.click('[data-team="add"]'); await sleep(150);
   const roleOpts = await A.$$eval('#teamAddForm [name=role] option', (o) => o.map((x) => x.value));
   check('roles offered for a clothing shop: manager and cashier (cashier chosen)', JSON.stringify(roleOpts) === '["manager","cashier"]' && await A.$eval('#teamAddForm [name=role]', (s) => s.value) === 'cashier', roleOpts);
@@ -202,13 +204,13 @@ try {
   check('no live updates for a member\'s phone (it polls)', await B.run('return !sbRealtimeChannel'));
 
   console.log('--- what a cashier may and may not do ---');
-  // the phone bar is the same for everyone (Home · Sell · Bills · Stock · More); the role decides what is in it and in More
+  // the phone bar is the role's (domain/shop/role-workspace.js): a cashier sells, finds bills and serves customers; Stock is in More
   const cashierBar = await B.$$eval('.nav .navi.pb', (l) => l.filter((x) => x.getClientRects().length).map((x) => x.dataset.tab));
-  check('cashier phone workflow: Home · Sell · Bills · Stock (to look stock up) and More; no Reports, no Products', JSON.stringify(cashierBar) === JSON.stringify(['home', 'sell', 'bills', 'stock'])
+  check('cashier phone workflow: Home · Sell · Bills · Customers and More; no Reports, no Products', JSON.stringify(cashierBar) === JSON.stringify(['home', 'sell', 'bills', 'customers'])
     && !(await B.vis('.nav [data-tab="report"]')) && !(await B.vis('.nav [data-tab="products"]'))
     && await B.run('return tabOpen("products")&&tabOpen("stock")&&tabOpen("customers")&&!tabOpen("report")'), cashierBar);
   await B.run('openNavMore()'); await sleep(150);
-  check('...Customers is in the cashier\'s More, Reports is not', await B.vis('#modalHost .navsheet [data-tab="customers"]') && !(await B.vis('#modalHost .navsheet [data-tab="report"]')));
+  check('...Stock (to look stock up) is in the cashier\'s More, Reports is not', await B.vis('#modalHost .navsheet [data-tab="stock"]') && !(await B.vis('#modalHost .navsheet [data-tab="report"]')));
   await B.run('closeModal()');
   await B.run('setTab("report")'); await sleep(100);
   check('...and Reports can\'t be opened', (await B.run('return prefs.tab')) !== 'report');

@@ -220,6 +220,11 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
       return (data || []).map(rowToDelivery);
     },
     /* A bill's messages to its customer, newest first */
+    /* Every send of the last days, newest first (bills' receipts and quotations), at most 500 */
+    async fetchRecentDeliveries(since){
+      const { data } = sbOk(await table('hangtag_deliveries').select('*').gte('created_at', new Date(since).toISOString()).order('created_at', { ascending:false }).limit(500));
+      return (data || []).map(rowToDelivery);
+    },
     async fetchDeliveries(saleId){
       const { data } = sbOk(await table('hangtag_deliveries').select('*').eq('sale_id', saleId).order('created_at', { ascending:false }));
       return (data || []).map(rowToDelivery);

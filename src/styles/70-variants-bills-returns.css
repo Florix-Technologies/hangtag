@@ -190,6 +190,18 @@
 @media (hover:none){.kc,.kh,.deskonly{display:none!important}}
 /* returns: not for resale; Sell: selling at an event; Reports: summary */
 .rt-nfr{font-size:12.5px;margin-top:4px;color:var(--ink-2)}
+/* a returned line: why it came back (its own reason), whether it goes back on the shelf; an exchange's "Swap for" */
+.rt-why{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin-top:6px}
+.rt-reason{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-2)}
+.rt-reason select{font:inherit;font-size:13px;padding:5px 8px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--card);color:var(--ink);min-height:34px}
+.rt-why .rt-nfr{margin-top:0}
+.rt-swap{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px;font-size:12.5px;color:var(--ink-3)}
+/* Reports: returns by reason */
+.rr{display:grid;gap:6px}
+.rr-row{display:grid;grid-template-columns:minmax(90px,1.2fr) minmax(40px,2fr) auto auto;align-items:center;gap:8px;font-size:13px}
+.rr-n{min-width:0;overflow-wrap:anywhere}.rr-bar{height:8px;border-radius:4px;background:var(--wash);overflow:hidden}.rr-bar i{display:block;height:100%;background:var(--warn)}
+.rr-q{font-variant-numeric:tabular-nums}.rr-v{color:var(--ink-3);font-variant-numeric:tabular-nums;text-align:right}
+.rr-top{margin:0;padding-left:18px;font-size:13px;line-height:1.6}
 .sellat{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px}
 .sellat .f.inline{display:flex;align-items:center;gap:8px;margin:0;font-weight:600}
 .sellat select{min-height:40px}

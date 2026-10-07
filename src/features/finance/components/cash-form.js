@@ -14,12 +14,12 @@ import { refuse } from '../../shop/services/access.js';
 
 const HINT={opening:"Cash put in the drawer at the start of the day.",in:"Cash added to the drawer, e.g. change brought from the bank.",
   out:"Cash taken out, e.g. banked or handed to the owner.",expense:"Cash spent on the shop."};
-/* kind: "opening" | "in" | "out" | "expense" | "close" | "reverse:<entry id>" */
+/* kind: "opening" | "in" | "out" | "expense" | "move" (cash in or out, chosen in the form) | "close" | "reverse:<entry id>" */
 export function openCashForm(kind){
   if(refuse("create_sale","record cash"))return;
   if(kind==="close") store.cashForm={kind:"close",day:dayKey(Date.now()),scope:"shop",counted:"",note:"",err:""};
   else if(kind.startsWith("reverse:")) store.cashForm={kind:"reverse",id:kind.slice(8),reason:"",err:""};
-  else store.cashForm={kind:"move",type:kind,amount:"",reason:"",category:"",err:""};
+  else store.cashForm={kind:"move",type:kind==="move"?"in":kind,choose:kind==="move",amount:"",reason:"",category:"",err:""};
   renderCashForm(true);
 }
 const f=(label,input)=>`<label class="f"><span class="lab">${label}</span>${input}</label>`;
@@ -43,8 +43,8 @@ export function renderCashForm(focus){
       ${f("Why is it being reversed?",`<input name="reason" maxlength="200" value="${esc(F.reason)}" required>`)}`:`<p class="note">That entry wasn't found.</p>`;
     go="Reverse it";
   }else{
-    title=CASH_MOVE_LABELS[F.type];
-    body=`<p class="note">${esc(HINT[F.type]||"")}</p><div class="pgrid">${f(moneyLabel("Amount"),`<input name="amount" type="number" inputmode="decimal" min="0" step="any" value="${esc(F.amount)}" required>`)}
+    title=F.choose?"Cash in or out":CASH_MOVE_LABELS[F.type];
+    body=`<p class="note">${esc(F.choose?"Cash put into or taken out of the drawer without a bill: change brought from the bank, cash handed to the owner.":HINT[F.type]||"")}</p><div class="pgrid">${F.choose?f("Money",`<select name="type"><option value="in"${F.type==="in"?" selected":""}>In: put into the drawer</option><option value="out"${F.type==="out"?" selected":""}>Out: taken from the drawer</option></select>`):""}${f(moneyLabel("Amount"),`<input name="amount" type="number" inputmode="decimal" min="0" step="any" value="${esc(F.amount)}" required>`)}
       ${F.type==="expense"?f("Category",`<select name="category"><option value="">Choose…</option>${expenseCats().map(c=>`<option${c===F.category?" selected":""}>${esc(c)}</option>`).join("")}</select>`):""}
       ${f(F.type==="opening"?"Note <small>(optional)</small>":"Reason",`<input name="reason" maxlength="200" value="${esc(F.reason)}"${F.type==="opening"?"":" required"}>`)}</div>`;
     go="Save";
@@ -67,7 +67,7 @@ export function submitCashForm(form){
   let r;
   if(F.kind==="close"){ Object.assign(F,{day:d.get("day")||F.day,scope:d.get("scope")||"shop",counted:d.get("counted"),note:d.get("note")}); r=closeDay(F); }
   else if(F.kind==="reverse"){ F.reason=d.get("reason"); r=recordCashMove({type:"reversal",reverses:F.id,reason:F.reason}); }
-  else { Object.assign(F,{amount:d.get("amount"),reason:d.get("reason")||"",category:d.get("category")||""}); r=recordCashMove(F); }
+  else { Object.assign(F,{amount:d.get("amount"),reason:d.get("reason")||"",category:d.get("category")||""}); if(F.choose) F.type=d.get("type")==="out"?"out":"in"; r=recordCashMove(F); }
   if(r.error){ F.err=r.error; renderCashForm(false); return; }
   store.cashForm=null; closeModal(); renderAll();
   toast(F.kind==="close"?`Day closed · counted ${inrx(r.close.counted)} · difference ${inrx(r.close.diff)}.`:F.kind==="reverse"?"Entry reversed.":`${CASH_MOVE_LABELS[r.move.type]} of ${inrx(r.move.amount)} saved.`);

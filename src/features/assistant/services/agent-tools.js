@@ -23,6 +23,16 @@ import { recentBills, salesTrend, stockAlerts, todayFigures } from '../../home/s
 import { can } from '../../shop/services/access.js';
 import { hasCap, shopTypeLabel } from '../../shop/services/shop-caps.js';
 import { createReadOnlyBusinessQuery } from './business-query.js';
+import { businessTodayView } from '../../reports/services/business-today.js';
+import { customerInsightOf } from '../../customers/services/customer-insight.js';
+import { briefingView } from '../../reports/services/daily-briefing.js';
+import { REF_LABELS } from '../../../domain/reports/business-today.js';
+import { governToolResult } from '../../../domain/agent/governance.js';
+import { currentTrace, traceStep } from '../../../shared/logging/diagnostics.js';
+import { logger } from '../../../shared/logging/logger.js';
+
+/* What a reason may open from an answer (performAgentAction shows each; nothing is changed) */
+const OPENABLE = ["bill", "product", "customer", "report", "reconcile", "reorder", "cashbook", "bankbook", "customers", "bills", "banks", "pos", "stock"];
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + "s"}`;
 const PERIOD_WORDS = { today: "today", yesterday: "yesterday", "7d": "in the last 7 days", month: "this month", lastmonth: "last month", "30d": "in the last 30 days" };
@@ -38,7 +48,7 @@ function bestMatches(list, q, keys){
 const RUN = {
   get_today_sales(_, d){
     const x = d.today();
-    const ch = x.changePct == null ? "" : x.changePct === 0 ? ", the same as this time yesterday" : `, ${Math.abs(x.changePct)}% ${x.changePct > 0 ? "more" : "less"} than this time yesterday`;
+    const vs = x.comparedWith || "this time yesterday", ch = x.changePct == null ? "" : x.changePct === 0 ? `, the same as ${vs}` : `, ${Math.abs(x.changePct)}% ${x.changePct > 0 ? "more" : "less"} than ${vs}`;
     const pay = x.payments ? ` Cash ${inr(x.payments.cash)}, UPI ${inr(x.payments.upi)}, card ${inr(x.payments.card)}.` : "";
     const chans = x.channels && x.channels.length > 1 ? ` By channel: ${x.channels.map(c => `${c.label} ${inr(c.sales)}`).join(", ")}.` : "";
     return { text: x.bills ? `Today: ${inr(x.sales)} from ${plural(x.bills, "bill")}${ch}. Average bill ${inr(x.averageBill)}, ${plural(x.pieces, "piece")} sold.${pay}${chans}` : "No bills yet today.", data: x };
@@ -92,6 +102,38 @@ const RUN = {
     const x = d.profile();
     return { text: `${x.name || "This shop"}: ${x.type}${x.city ? `, ${x.city}` : ""}${x.state ? `, ${x.state}` : ""}. ${x.gstin ? `GST registered (${x.gstin}).` : "Not GST registered."}${x.features.length ? ` Uses ${x.features.join(", ")}.` : ""}`, data: x };
   },
+  get_business_today({ figure }, d){
+    const x = d.businessToday(), by = Object.fromEntries(x.figures.map(f => [f.key, f]));
+    const pick = { sales: ["sales"], average_bill: ["avgBill"], margin: ["profit"], receivables: ["receivables"], stock: ["stock"], reconciliation: ["reconciliation"],
+      payments: [["cash", "upi", "card"].find(k => by[k] && by[k].unusual) || "cash"], all: x.unusual.length ? x.unusual : ["sales"] }[figure] || ["sales"];
+    const figs = pick.map(k => by[k]).filter(Boolean);
+    if(!figs.length) return { text: figure === "margin" ? "Gross profit isn't available to your role." : "That figure isn't available to your role.", data: { figure, figures: [] } };
+    const says = f => [f.headline, ...f.reasons.map(r => r.text), f.check ? "Worth checking: " + f.check : ""].filter(Boolean).join(" ");
+    const text = figure === "all" ? (x.unusual.length ? [x.summary, ...figs.map(f => f.reasons.map(r => r.text).join(" "))].filter(Boolean).join(" ") : x.summary + " " + says(by.sales)) : figs.map(says).join(" ");
+    const ref = figs.flatMap(f => f.reasons).map(r => r.ref).find(r => r && OPENABLE.includes(r.target));
+    return { text: text.trim(), data: { figure, comparedWith: x.comparison ? x.comparison.label : null, unusual: x.unusual, summary: x.summary,
+        figures: figs.map(f => ({ key: f.key, label: f.label, value: f.value, sub: f.sub, unusual: f.unusual, headline: f.headline, reasons: f.reasons.map(r => ({ text: r.text, ref: r.ref || null })), check: f.check || null })) },
+      action: ref ? { kind: "open", target: ref.target, id: ref.id || "", label: REF_LABELS[ref.target] || "Open" } : null };
+  },
+  get_customer_insight({ name }, d){
+    const m = d.findCustomers(name);
+    if(!m.length) return { error: `No customer called “${name}”.` };
+    if(m.length > 1 && norm(m[0].name) !== norm(name)) return { text: `${m.length} customers match “${name}”: ${m.slice(0, 5).map(c => c.name).join(", ")}. Which one?`, data: { matches: m.slice(0, 5) } };
+    const c = m[0], x = d.customerInsight(c.id), S = x.summary;
+    if(!S.bills) return { text: `${c.name} hasn't bought anything yet.`, data: { customer: { id: c.id, name: c.name }, summary: S }, action: { kind: "open", target: "customer", id: c.id, label: `Open ${c.name}` } };
+    const ago = S.daysSinceLast === 0 ? "today" : S.daysSinceLast === 1 ? "yesterday" : `${S.daysSinceLast} days ago`, top = x.products.slice(0, 3), main = x.payments.methods[0];
+    const text = [`${c.name}: ${inr(S.purchases)} over ${plural(S.bills, "bill")} (${inr(S.avgBill)} a bill), last on ${dayLong(dayKey(S.last))} (${ago}).`,
+      S.outstanding > 0 ? `Owes ${inr(S.outstanding)}${S.oldestDueDays != null ? `, the oldest part from ${S.oldestDueDays} days ago` : ""}.` : "Owes nothing.",
+      top.length ? `Buys most: ${top.map(p => `${p.name} (${p.q})`).join(", ")}.` : "", main ? `Pays mostly by ${main.label} (${main.share}%).` : "", ...x.insights.map(i => i.text)].filter(Boolean).join(" ");
+    return { text, data: { customer: { id: c.id, name: c.name }, summary: S, topProducts: x.products.slice(0, 5).map(p => ({ id: p.id, name: p.name, qty: p.q, amount: p.amount, bills: p.bills, last: dayKey(p.last) })),
+      payments: x.payments, insights: x.insights.map(i => i.text) }, action: { kind: "open", target: "customer", id: c.id, label: `Open ${c.name}'s profile` } };
+  },
+  get_daily_briefing(_, d){
+    const x = d.briefing(), ref = x.first.ref && OPENABLE.includes(x.first.ref.target) ? x.first.ref : null;
+    return { text: [`First: ${x.first.text}`, ...x.sections.map(s => `${s.title}: ${s.lines.map(l => l.text).join(" ")}`)].join(" "),
+      data: { title: x.title, first: x.first, quiet: x.quiet, sections: x.sections.map(s => ({ key: s.key, title: s.title, lines: s.lines.map(l => ({ text: l.text, ref: l.ref || null })) })) },
+      action: ref ? { kind: "open", target: ref.target, id: ref.id || "", label: REF_LABELS[ref.target] || "Open" } : null };
+  },
   open_bill({ bill_no }, d){
     const m = d.findBills(bill_no);
     if(!m.length) return { error: `No bill numbered “${bill_no}” on this device.` };
@@ -141,6 +183,8 @@ const RUN = {
   },
 };
 
+/* How many rows a tool's figures carry (its first list), for the chain */
+const rowsIn = d => { const list = Object.values(d || {}).find(Array.isArray); return list ? list.length : 0; };
 /* access: { can(perm), hasCap(cap) }; data: the shop's records */
 export function createAgentToolHost({ access, data }){
   const allowed = t => (!t.perms.length || t.perms.some(p => access.can(p))) && (!t.cap || access.hasCap(t.cap));
@@ -149,15 +193,22 @@ export function createAgentToolHost({ access, data }){
     listTools: () => AGENT_TOOLS.filter(allowed).map(mcpToolOf),
     allowed: name => { const t = agentTool(name); return !!t && allowed(t); },
     /* MCP tools/call → { content, structuredContent: { ...data, action?, proposal? }, isError } */
-    callTool(name, args){
-      const t = agentTool(name);
-      if(!t) return toolError(`There is no tool called “${name}”.`);
-      if(!allowed(t)) return toolError(t.cap && !access.hasCap(t.cap) ? `${t.title} is switched off for this shop.` : `Your role can't use “${t.title}”.`);
-      const a = checkToolArgs(t, args); if(!a.ok) return toolError(a.error);
+    callTool(toolName, args){
+      // each call is a step of the question's chain (shared/logging/diagnostics.js: the tool, whether it worked, the rows)
+      const trace = currentTrace(), t0 = Date.now(), step = (ok, code, ms) => { if(trace) traceStep(trace, "tool", { op: toolName, ok, code, ms }); };
+      const t = agentTool(toolName);
+      if(!t){ step(false, "UNKNOWN_TOOL"); return toolError(`There is no tool called “${toolName}”.`); }
+      if(!allowed(t)){ step(false, "NOT_ALLOWED"); return toolError(t.cap && !access.hasCap(t.cap) ? `${t.title} is switched off for this shop.` : `Your role can't use “${t.title}”.`); }
+      const a = checkToolArgs(t, args); if(!a.ok){ step(false, "BAD_ARGUMENTS"); return toolError(a.error); }
       let r;
-      try{ r = RUN[t.name](a.args, data); }catch{ return toolError(`Couldn't read the shop's data for “${t.title}”.`); }
-      if(r.error) return toolError(r.error);
-      return toolResult(r.text, { tool: t.name, kind: t.kind, ...r.data, ...(r.action ? { action: r.action } : {}), ...(r.proposal ? { proposal: r.proposal } : {}) });
+      try{ r = RUN[t.name](a.args, data); }catch{ step(false, "READ_FAILED"); return toolError(`Couldn't read the shop's data for “${t.title}”.`); }
+      if(r.error){ step(false, "NO_ANSWER"); return toolError(r.error); }
+      // governed (domain/agent/governance.js): only a screen the app has, only a proposal a person can save, no shop or user ids
+      const g = governToolResult(t, r);
+      if(g.refused.length) logger.event("agent", "tool-refused", { op: toolName, count: g.refused.length }, "warn");
+      step(true, g.refused.length ? "GOVERNED" : "", Date.now() - t0);
+      if(trace) traceStep(trace, "result", { op: toolName, count: rowsIn(g.data) });
+      return toolResult(r.text, { tool: t.name, kind: t.kind, ...g.data, ...(g.action ? { action: g.action } : {}), ...(g.proposal ? { proposal: g.proposal } : {}), ...(g.refused.length ? { refused: g.refused } : {}) });
     },
   });
 }
@@ -169,7 +220,8 @@ export function appAgentData(now = () => Date.now()){
   return {
     today(){
       const T = todayFigures(now()), x = q.sales("today");
-      return { date: dayKey(now()), sales: T.sales, bills: T.bills, averageBill: T.bills ? Math.round(T.avg * 100) / 100 : 0, pieces: T.pieces, returns: x.returns || 0, changePct: T.vsYesterday, payments: T.money,
+      return { date: dayKey(now()), sales: T.sales, bills: T.bills, averageBill: T.bills ? Math.round(T.avg * 100) / 100 : 0, pieces: T.pieces, returns: x.returns || 0, changePct: T.change,
+        comparedWith: T.comparison ? T.comparison.label : null, payments: T.money,
         channels: (T.channels || []).map(c => ({ channel: c.key, label: c.label, sales: c.sales, bills: c.bills })) };
     },
     trend(days){ const x = salesTrend(now(), days); return { days: x.days.map(y => ({ date: y.k, sales: y.sales, bills: y.bills })), total: x.total, previousTotal: x.prevTotal }; },
@@ -211,6 +263,15 @@ export function appAgentData(now = () => Date.now()){
       return m.slice(0, 8).map(c => ({ id: c.id, name: c.name, phone: c.phone || "", owes: (owed.find(r => r.id === c.id) || {}).amount || 0 }));
     },
     reorderGroups: () => reorderGroups(),
+    /* Business today, every figure (the tool is for those who see reports and books) */
+    businessToday: () => businessTodayView(now(), { profit: true, money: true, position: true }),
+    /* the owner's morning briefing (yesterday, and what to do first) */
+    briefing: () => briefingView(now()),
+    /* a customer's insight, with only the observations this person may see (as on the profile) */
+    customerInsight(id){
+      const x = customerInsightOf(id, now()), money = can("view_reports") || can("collect_credit");
+      return { ...x, insights: x.insights.filter(i => i.kind === "serve" || (money && (i.id !== "standing" || can("view_reports")))) };
+    },
   };
 }
 /* The tool host for the person signed in, on this shop's records */

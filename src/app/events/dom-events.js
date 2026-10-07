@@ -25,7 +25,7 @@ import { onPrint } from '../../features/printing/components/print-actions.js';
 import { onDeliveryRefresh, onInvoiceLink, onRevokeLinks, onSend } from '../../features/delivery/components/send-actions.js';
 import { renderReport, showTable } from '../../features/reports/pages/report-page.js';
 import { exportCsv } from '../../features/reports/services/csv-export.js';
-import { openReturn, renderReturnSheet, saveReturn, setReturnQty } from '../../features/returns/components/return-sheet.js';
+import { openReturn, renderReturnSheet, saveReturn, setReturnQty, setReturnReason, swapReturnLine } from '../../features/returns/components/return-sheet.js';
 import { exAvail } from '../../features/returns/services/return-rules.js';
 import { closeSheets, renderBill, renderBillSheet, updateBillTotals } from '../../features/sales/components/bill-panel.js';
 import { addPicked, openPicker, renderPicker, setPickQty } from '../../features/sales/components/variant-picker.js';
@@ -154,6 +154,7 @@ export function installDomEvents(){
     // returns / exchanges
     const rtm=t.closest("[data-rtm]");if(rtm&&store.retState){const ln=+rtm.dataset.rtm;store.retState.q[ln]=Math.max(0,(store.retState.q[ln]||0)-1);renderReturnSheet();return}
     const rtp=t.closest("[data-rtp]");if(rtp&&store.retState){const ln=+rtp.dataset.rtp;store.retState.q[ln]=(store.retState.q[ln]||0)+1;renderReturnSheet();return}
+    const rsw=t.closest("[data-rtswap]");if(rsw&&store.retState){const [ln,vid]=rsw.dataset.rtswap.split("|");swapReturnLine(+ln,vid);return}
     const rmo=t.closest("[data-rtmode]");if(rmo&&store.retState){store.retState.mode=rmo.dataset.rtmode;renderReturnSheet();return}
     const rpy=t.closest("[data-rtpay]");if(rpy&&store.retState){const [k,val]=rpy.dataset.rtpay.split(":");if(k==="collect"&&store.retState.collect!==val)store.retState.collectRecv=false;store.retState[k]=val;renderReturnSheet();return}
     const exm=t.closest("[data-exm]");if(exm&&store.retState){const i=+exm.dataset.exm,c=store.retState.newItems[i];if(c){c.q--;if(c.q<=0)store.retState.newItems.splice(i,1)}renderReturnSheet();return}
@@ -290,6 +291,7 @@ export function installDomEvents(){
     if(t.id==="prodCat"){store.prodCat=t.value;renderProducts();return}
     if(t.id==="rtReason"&&store.retState){store.retState.reason=t.value;return}
     if(t.matches("[data-rtnfr]")&&store.retState){store.retState.nfr[t.dataset.rtnfr]=t.checked;renderReturnSheet();return}
+    if(t.matches("[data-rtreason]")&&store.retState){setReturnReason(t.dataset.rtreason,t.value);return}
     if(t.matches("[data-rtkeep]")&&store.retState){store.retState.keepDisc=t.checked;renderReturnSheet();return}
     if(t.matches("[data-rtprov]")&&store.retState){store.retState.provRefund=t.checked;return}
     if(t.matches("[data-paysend]")&&store.payState){paySend(t.checked);return}

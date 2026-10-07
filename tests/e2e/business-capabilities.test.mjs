@@ -87,15 +87,15 @@ try {
   await A.click('.navsheet [data-tab="settings"]'); await sleep(250);
   check('Settings opens from More as a dedicated page', await A.vis('#v-settings .setpage') && await A.vis('#setQ'));
   const secs = await A.$$eval('.setlist [data-setgo] b', (b) => b.map((x) => x.textContent));
-  check('settings in sections (a grocery: no Restaurant)', JSON.stringify(secs) === JSON.stringify(['Business', 'Plans & Billing', 'Payments & Banks', 'Billing & Documents', 'Products & Inventory', 'Sales & Customers', 'Purchasing', 'Storefront', 'Automation', 'Team & Devices', 'Integrations', 'Advanced']), secs);
+  check('settings in sections (a grocery: no Restaurant; no price lists, so no Sales & Customers)', JSON.stringify(secs) === JSON.stringify(['Business', 'Plans & Billing', 'Payments & Banks', 'Bills & Documents', 'Products & Inventory', 'Purchasing', 'Automation', 'This device', 'Integrations', 'Advanced']), secs);
   await A.run('const q=document.getElementById("setQ");q.value="printer";q.dispatchEvent(new Event("input",{bubbles:true}))'); await sleep(150);
-  check('settings search finds the printer in Team & Devices', /Receipt printer on this device/.test(await A.text('#setResults') || '') && /Team & Devices/.test(await A.text('#setResults') || ''), await A.text('#setResults'));
+  check('settings search finds the printer in This device', /Receipt printer on this device/.test(await A.text('#setResults') || '') && /This device/.test(await A.text('#setResults') || ''), await A.text('#setResults'));
   await A.run('const q=document.getElementById("setQ");q.value="";q.dispatchEvent(new Event("input",{bubbles:true}))');
   check('Business holds the profile with its type', (await A.$eval('#ps_business_type', (e) => e.value)) === 'grocery' && await A.vis('#set-business #profileForm'));
   await A.run('openSettings("billing")'); await sleep(150);
   const billingOk = await A.vis('#set-billing #billingForm') && await A.vis('#set-billing #taxForm') && (await A.$$('#billingForm')).length === 1 && await A.vis('#set-billing #docTplForm');
   await A.run('openSettings("devices")'); await sleep(150);
-  check('Billing & Documents holds the bill, GST and template forms once; Team & Devices the printer', billingOk && await A.vis('#set-devices #printerForm') && (await A.$$('#printerForm')).length === 1);
+  check('Bills & Documents holds the bill, GST and template forms once; This device the printer', billingOk && await A.vis('#set-devices #printerForm') && (await A.$$('#printerForm')).length === 1);
   // each setting has one editor in the whole of Settings: open every section and see where each form is
   const formsIn = {};
   for (const key of await A.$$eval('.setlist [data-setgo]', (b) => b.map((x) => x.dataset.setgo))) {
@@ -106,7 +106,7 @@ try {
   check('no settings form is in two sections (one place to change each setting)', !twice.length && JSON.stringify(formsIn.billingForm) === '["billing"]' && JSON.stringify(formsIn.taxForm) === '["billing"]'
     && JSON.stringify(formsIn.printerForm) === '["devices"]' && JSON.stringify(formsIn.profileForm) === '["business"]', formsIn);
   await A.run('openSettings("devices")'); await sleep(150);
-  check('Team & devices is there for a grocery, with roles', await A.vis('#teamSec [data-team="open"]') && await A.vis('#teamSec [data-team="roles"]'));
+  check('the team has one place, More → Team: Settings → This device does not repeat it', !(await A.$('#teamSec')) && !(await A.$('#set-devices [data-team]')));
   await A.run('openSettings("business")'); await sleep(150);
   check('Capabilities: recommended for Grocery first, with human names', /Recommended for Grocery/.test(await A.text('#capsForm .capgrp') || '') && /Batch tracking/.test(await A.text('#capsForm') || '')
     && !/uses_/.test(await A.text('#capsForm') || ''));
@@ -159,7 +159,7 @@ try {
   await A.run('openSettings("business")'); await sleep(200);
   const recRest = /Recommended for Hotel \/ Restaurant/.test(await A.text('#capsForm .capgrp') || '');
   await A.run('openSettings("devices")'); await sleep(150);
-  check('Features recommended for Hotel / Restaurant; Team & devices still there; a Restaurant section', recRest && await A.vis('#teamSec [data-team="open"]')
+  check('Features recommended for Hotel / Restaurant; a Restaurant section (the team stays in More)', recRest && !(await A.$('#teamSec'))
     && (await A.$$eval('.setlist [data-setgo]', (b) => b.map((x) => x.dataset.setgo))).includes('restaurant'));
   await A.run('closeSettings();openEditor(null)'); await sleep(200);
   check('restaurant product form kept simple: no variants section for a new product', !(await A.$('[data-edtoggle="hasOpts"]')) && !(await A.$('[data-capnote="weight"]')));
@@ -176,10 +176,10 @@ try {
   await P.click('.nav [data-navmore]'); await sleep(200);
   const more = await P.$$eval('.navsheet [data-tab]', (b) => b.map((x) => x.dataset.tab));
   const moreGroups = await P.$$eval('.navsheet .navgrp h4', (h) => h.map((x) => x.textContent));
-  check('More lists secondary workspaces in groups; restaurant tasks stay contextual inside Sell',
+  check('More is a plain list: Customers and Reports first, then Team and Settings; no Store (it is in Sell); restaurant tasks stay inside Sell',
     more.includes('customers') && more.includes('report') && more.includes('settings')
       && !more.includes('tables') && !more.includes('kitchen') && !more.some((t) => ptabs.includes(t))
-      && moreGroups.includes('Customers') && moreGroups.includes('Business & Settings'), { more, groups: moreGroups });
+      && !more.includes('store') && more.indexOf('customers') === 0 && more.indexOf('report') === 1 && !moreGroups.length, { more, groups: moreGroups });
   await P.click('.navsheet [data-tab="settings"]'); await sleep(250);
   check('phone: Settings opens from More (its sections first)', await P.vis('#v-settings .setlist'));
   check('phone: the settings fit the width', await P.evaluate(() => document.documentElement.scrollWidth - window.innerWidth) <= 1);

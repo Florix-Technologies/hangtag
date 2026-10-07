@@ -1,29 +1,32 @@
-// Where every page sits: the navigation model. A small, stable primary bar chooses the workspace; contextual navigation
-// inside Sell and Stock chooses the task. Everything secondary is grouped under More. Presentation only: whether a destination
+// Where every page sits: the navigation model. A small, stable primary bar chooses the workspace (Home · Sell · Bills ·
+// Stock · Customers · Reports · More); contextual navigation inside Sell and Stock chooses the task. Every destination has
+// ONE place: selling online (Store) is a Sell task; More holds only what isn't a daily workspace (Team, Settings; on a
+// phone also the workspaces its short tab bar has no room for). Presentation only: whether a destination
 // exists for this person is the module registry's (services/modules.js: capabilities, permissions, available()).
 import { store } from '../../../shared/state/store.js';
 import { currentSubview, moduleDef, moduleShown, subviewsOf } from './modules.js';
+import { currentPerms, currentRole } from './access.js';
+import { roleBar } from '../../../domain/shop/role-workspace.js';
 
 /* key, label (the heading; "" for areas that are one destination), items: { tab, sub?, label?, side? }.
    side: false keeps a destination out of the desktop sidebar (it is still in its area's bar and in More). */
 export const NAV_AREAS = [
   { key: "home", label: "", items: [{ tab: "home" }] },
   { key: "sell", label: "Sell", items: [{ tab: "sell", label: "New sale" }, { tab: "orders", sub: "held" },
-    { tab: "orders", sub: "quote" }, { tab: "orders", sub: "sales" }, { tab: "tables" }, { tab: "kitchen" }] },
+    { tab: "orders", sub: "quote" }, { tab: "orders", sub: "sales" }, { tab: "store" }, { tab: "tables" }, { tab: "kitchen" }] },
   { key: "bills", label: "", items: [{ tab: "bills" }] },
   { key: "stock", label: "Stock", items: [{ tab: "stock", sub: "levels", label: "Stock" }, { tab: "products" },
-    { tab: "stock", sub: "count" }, { tab: "stock", sub: "purchases" }, { tab: "stock", sub: "suppliers" },
+    { tab: "stock", sub: "purchases" }, { tab: "stock", sub: "suppliers" }, { tab: "stock", sub: "count" },
     { tab: "stock", sub: "pos" }, { tab: "stock", sub: "tracking" }, { tab: "stock", sub: "smart" }] },
   { key: "customers", label: "", items: [{ tab: "customers" }] },
   { key: "reports", label: "", items: [{ tab: "report" }] },
-  { key: "commerce", label: "Commerce", items: [{ tab: "store" }] },
   { key: "agent", label: "Hangtag Agent", items: [{ tab: "assistant" }] },
   { key: "team", label: "", items: [{ tab: "team" }] },
   { key: "settings", label: "", items: [{ tab: "settings" }] },
 ];
 export const PRIMARY_TABS = Object.freeze(["home", "sell", "bills", "stock", "customers", "report"]);
 /* More's headings on a phone for areas that are one destination */
-const MORE_HEADINGS = { customers: "Customers", reports: "Reports", bills: "Bills", team: "Team & Devices", settings: "Business & Settings", home: "", sell: "Sell", agent: "Hangtag Agent" };
+const MORE_HEADINGS = { customers: "Customers", reports: "Reports", bills: "Bills", team: "Team", settings: "Settings", home: "", sell: "Sell", agent: "Hangtag Agent" };
 
 const subOf = (tab, sub) => subviewsOf(tab).find(d => d.id === sub) || null;
 /* Is this destination shown to the person signed in, in this shop? */
@@ -43,12 +46,18 @@ export function navAreas(){
   return NAV_AREAS.map(a => ({ key: a.key, label: a.label, items: a.items.filter(destShown).map(it => Object.assign({}, it, { id: destId(it), label: destLabel(it) })) }))
     .filter(a => a.items.length);
 }
-/* The stable workspaces shown across the desktop. A role/capability may remove one; More remains. */
+/* The workspaces shown across the desktop, by role (domain/shop/role-workspace.js): the owner and a manager the shop's
+   usual bar (PRIMARY_TABS); a cashier Sell, Bills and Customers; a server Tables, Orders and Kitchen; the kitchen its
+   screen. The shop's features and the person's permissions may remove one; More holds the rest. A workspace that is a part
+   of another area (a server's Tables, in Sell) is its own place in the bar: its area is itself. */
+const BAR_LABELS = { home: "Home", sell: "Sell", bills: "Bills", stock: "Stock", customers: "Customers", report: "Reports" };
 export function primaryNav(){
   const areas=navAreas();
-  return PRIMARY_TABS.map(tab=>{
+  return roleBar(currentRole(), currentPerms()).map(tab=>{
     const area=areas.find(a=>a.items.some(it=>it.tab===tab)), it=area&&area.items.find(x=>x.tab===tab);
-    return it?Object.assign({},it,{area:area.key,label:tab==="report"?"Reports":tab==="stock"?"Stock":tab.charAt(0).toUpperCase()+tab.slice(1)}):null;
+    if(!it) return null;
+    const root=area.items[0].tab===tab;
+    return Object.assign({},it,{area:root?area.key:tab,label:BAR_LABELS[tab]||(it.sub?moduleDef(tab)&&moduleDef(tab).label||it.label:it.label)});
   }).filter(Boolean);
 }
 /* Where the page on screen is: { area, id } (the module's part decides for a module split over areas) */

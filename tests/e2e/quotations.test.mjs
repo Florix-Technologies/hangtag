@@ -59,7 +59,7 @@ check('the owner\'s app keeps the shop\'s invoice-link page (this app\'s receipt
 await run('openSettings("integrations")'); await sleep(250);
 check('Settings → Integrations keeps the invoice-link page', /Invoice links/.test(await text('#invoicePage')) && /localhost:3210\/receipt\.html/.test(await text('#invoicePage')));
 await run('openSettings("billing")'); await sleep(200);
-check('Settings → Billing & Documents has the quotation template', !!(await A.$('#quoteSetForm')));
+check('Settings → Bills & Documents has the quotation template', !!(await A.$('#quoteSetForm')));
 await type('#quoteSetForm [name="quoteTitle"]', 'Tax invoice');
 await A.click('#quoteSetForm [type="submit"]'); await sleep(200);
 check('a quotation title that says invoice is refused', /can't say invoice/.test(await text('#quoteSetErr')));

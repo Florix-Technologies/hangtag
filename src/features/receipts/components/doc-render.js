@@ -1,5 +1,5 @@
 // One look for every A4 document (tax invoice, bill, quotation, sales order, delivery challan, credit note, purchase
-// order): the shop's template (Standard, Classic, Modern, Compact) and accent colour from Settings → Billing & Documents → Templates
+// order): the shop's template (Standard, Classic, Modern, Compact) and accent colour from Settings → Bills & Documents → Templates
 // (domain/documents/doc-settings.js). The same model also makes the PDF (shared/utils/pdf.js docPdfBytes) and the preview.
 // The 80 mm receipt keeps its own compact layout (components/receipt-view.js).
 //   model: { kind, title, number, meta: [[label, value]], seller: { name, lines }, logo, parties: [{ label, name, lines }],

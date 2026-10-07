@@ -37,7 +37,7 @@ const check = (name, ok, info) => { if(ok) passed++; else failed++; console.log(
   const customPerms = [...cashierPerms, 'view_reports'];
   const custom = mobileModulesFor('cashier', allowed(customPerms), customPerms).map(x => x.id);
   const owner = mobileModulesFor('owner', [...modules, { id: 'extension', order: 7, perms: [] }], []).map(x => x.id);
-  check('cashier phone keeps the intended Home, Sell, Bills and Stock workflow while Reports stays hidden', JSON.stringify(cashier) === JSON.stringify(['home', 'sell', 'bills', 'stock', 'customers', 'settings']), cashier);
+  check('cashier phone: its own Home, Sell, Bills and Customers first, Stock after (to look up), while Reports stays hidden', JSON.stringify(cashier) === JSON.stringify(['home', 'sell', 'bills', 'customers', 'stock', 'settings']), cashier);
   check('a custom report permission surfaces Reports without weakening permission checks', custom.includes('report') && !cashier.includes('report'), custom);
   check('owner phone keeps future modules after the known workflow instead of ranking them first', owner.at(-1) === 'extension', owner);
   check('a role switch moves a phone off a newly hidden current tab', mobileLandingModule('cashier', cashierModules, cashierPerms, 'report') === 'home');

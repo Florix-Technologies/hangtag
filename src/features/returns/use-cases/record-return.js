@@ -25,11 +25,13 @@ import { creditNoteNo, exchangeAvail, exchangeCustomer, exchangeDiscount, return
 import { lineAllocOf, lineBackOf } from '../../inventory/services/tracking.js';
 import { normSerial, returnBatchAlloc } from '../../../domain/inventory/tracking.js';
 import { returnRepository } from '../repositories/return-repository.js';
+import { cleanReason, reasonsNote } from '../../../domain/returns/return-reasons.js';
 import { uid } from '../../../shared/utils/ids.js';
 import { can, denied, notAllowedText, userId } from '../../shop/services/access.js';
 
 /* req: { sid, picks: { [line no]: pieces }, serials: { [line no]: [serials coming back] } (lines sold by serial number), mode: "return" | "exchange", pay (refund method), collect (how the customer pays
-   an exchange's difference: a method, or split parts), reason, notForResale: { [line no]: true }, newItems (exchange lines),
+   an exchange's difference: a method, or split parts), reason (for every line), reasons: { [line no]: reason } (each line's own),
+   notForResale: { [line no]: true }, newItems (exchange lines),
    keepDiscount (exchange: apply the original bill's % discount; default yes) }
    → { ret, sale (the exchange's new bill, or null), refund, collect } — or { error } and nothing is saved */
 export function recordReturn(req){
@@ -74,11 +76,13 @@ export function recordReturn(req){
       track[L.ln]={sn:want};
     } else { const a=lineAllocOf(s.id,L.ln); if(a&&a.length) track[L.ln]={bt:returnBatchAlloc(a,lineBackOf(s.id,L.ln),L.q)}; }
   }
+  // why each line came back (its own reason, else the return's); the note keeps them all in words
+  const reasons=req.reasons||{}, why=ln=>cleanReason(reasons[ln]!=null?reasons[ln]:req.reason);
   const items=Q.lines.map(L=>{const i=byLn[L.ln];
     return {ln:L.ln,v:d.resolve(i)||i.v,p:i.p,n:i.n,c:i.c||"",s:i.s||"",vl:lineLabel(i),ov:i.ov||[],sku:i.sku||"",q:L.q,price:L.unit,value:L.value,
-      cost:i.cost==null?null:i.cost,restock:!nfr[L.ln],tx:L.tx,cgst:L.cgst,sgst:L.sgst,igst:L.igst,gst:L.rate,hsn:L.hsn,...(i.u?{u:i.u}:{}),...(track[L.ln]||{})}});
+      cost:i.cost==null?null:i.cost,restock:!nfr[L.ln],...(why(L.ln)?{reason:why(L.ln)}:{}),tx:L.tx,cgst:L.cgst,sgst:L.sgst,igst:L.igst,gst:L.rate,hsn:L.hsn,...(i.u?{u:i.u}:{}),...(track[L.ln]||{})}});
   const ret={id:"r"+uid(),no:creditNoteNo(t),sale:s.id,t,kind:ex?"exchange":"return",ex:exId,refund:S.refund,pay:toAcct?DUE:PAY_METHODS.includes(req.pay)?req.pay:"cash",
-    value:S.value,ro:Math.round((Q.roundOff+S.roundOff)*100)/100,note:String(req.reason||"").slice(0,200),dev:store.dev,...(userId()?{user:userId()}:{}),items};
+    value:S.value,ro:Math.round((Q.roundOff+S.roundOff)*100)/100,note:reasonsNote(items.map(i=>i.reason))||String(req.reason||"").slice(0,200),dev:store.dev,...(userId()?{user:userId()}:{}),items};
   // the new bill first (it is paid now), then the return; both are on this device before anything uploads
   if(newSale){ store.lastSale=newSale; recordSale(newSale); }
   returnRepository().record(ret);

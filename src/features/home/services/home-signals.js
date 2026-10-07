@@ -1,12 +1,14 @@
 // Home's figures, read from the shop's own records through the calculations Reports, Smart reorder and Ask Hangtag
 // already use (nothing is worked out a second way, nothing here changes data):
-//   today:     sales, bills, average bill, against this time yesterday; gross profit only when cost prices cover enough
-//              of the sales to be honest about it; cash / UPI / card taken
+//   today:     sales, bills, average bill, against a usual <weekday> by this time (reports/services/business-today.js
+//              chooses the comparison); gross profit only when cost prices cover enough of the sales to be honest about it;
+//              cash / UPI / card taken. Home shows them, explained, through businessTodayView (the Business today card).
 //   attention: what someone should act on (stock running out, orders to deliver, held bills, UPI to verify, money
 //              received that isn't on a bill, customer and supplier dues, purchase orders to receive, receipts this
 //              device couldn't send), each with where to act on it, worst first; only what this person may act on
-//   insights:  the Hangtag Agent's few observations from the data (what to reorder, the sales pace, the week's best
-//              seller, money tied up in stock that isn't selling), each with where to look
+//   insights:  the Hangtag Agent's few observations from the data (what to reorder, rising demand, the week's best
+//              seller, money tied up in stock that isn't selling), each with where to look; the sales pace is Business
+//              today's (its Sales figure says how today compares, and why)
 //   trend:     the last 7 days of sales; recent: the latest bills with their state
 import { store } from '../../../shared/state/store.js';
 import { D } from '../../inventory/services/ledger.js';
@@ -20,30 +22,28 @@ import { watchFindings } from '../../automation/services/watchers.js';
 import { salesByChannel } from '../../commerce/services/channels.js';
 import { billContext, billState } from '../../bills/services/bill-status.js';
 import { paymentSummary, profitSummary } from '../../../domain/reports/sales-report.js';
+import { THRESHOLDS, pickComparison } from '../../../domain/reports/business-today.js';
+import { sameTimeDays } from '../../reports/services/business-today.js';
 import { can, canAny } from '../../shop/services/access.js';
 import { moduleShown } from '../../shop/services/modules.js';
-import { addDays, dayKey, fmtDate } from '../../../shared/formatting/dates.js';
+import { addDays, dayKey } from '../../../shared/formatting/dates.js';
 import { inr } from '../../../shared/formatting/money.js';
 import { esc } from '../../../shared/dom.js';
 
 /* Gross profit shows only when cost prices are known for at least this share of the day's sales */
-export const PROFIT_MIN_COVERAGE = 0.8;
-const DAY = 864e5;
+export const PROFIT_MIN_COVERAGE = THRESHOLDS.profitCoverage;
+
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + "s"}`;
 const pct = (a, b) => b ? Math.round((a - b) / b * 100) : null;
 
 /* Variants running low or sold out (products on sale), fewest first */
 export { stockAlerts };
 
-/* Sales of one day up to a time (the whole day when `until` is past it) */
-function dayFigures(k, until = Infinity){
-  const x = periodData(k, k, "");
-  return kstats(x.live.filter(s => s.t <= until), x.rets.filter(r => r.t <= until));
-}
-
+/* Today so far: sales, bills, average bill, pieces; the change against the comparison (a usual <weekday> by this time, else
+   last <weekday>, else yesterday: comparison.label) ; gross profit and the money split for those who see reports */
 export function todayFigures(now = Date.now()){
-  const k = dayKey(now), x = periodData(k, k, ""), K = kstats(x.live, x.rets), Y = dayFigures(addDays(k, -1), now - DAY);
-  const out = { sales: K.rev, bills: K.bills, avg: K.avg, pieces: K.pcs, vsYesterday: Y.bills ? pct(K.rev, Y.rev) : null, profit: null, money: null, channels: [] };
+  const k = dayKey(now), x = periodData(k, k, ""), K = kstats(x.live, x.rets), C = pickComparison(sameTimeDays(now));
+  const out = { sales: K.rev, bills: K.bills, avg: K.avg, pieces: K.pcs, change: C ? pct(K.rev, C.total) : null, comparison: C, profit: null, money: null, channels: [] };
   try{ out.channels = salesByChannel(k, k, ""); }catch{ out.channels = []; }
   if(can("view_reports")){
     const P = profitSummary(netLines(x.live, x.rets));
@@ -103,10 +103,6 @@ export function agentInsights(now = Date.now(), limit = 3){
     if(soon.length){ const r = soon[0];
       add("rising", `Demand for ${r.name} is up ${Math.max(0, r.trendPercent || 0)}%: at the recent rate it lasts about ${r.lowestForecastDays} days — order soon.${soon.length > 1 ? ` ${soon.length - 1} more like it.` : ""}`, 'data-tab="stock" data-subview="stock:smart"', "Smart reorder"); }
   }
-  // the pace: today against the same weekday last week, up to this time
-  const k = dayKey(now), T = dayFigures(k, now), W = dayFigures(addDays(k, -7), now - 7 * DAY), d = W.bills && T.bills ? pct(T.rev, W.rev) : null;
-  if(d != null && Math.abs(d) >= 10){ const wd = fmtDate(now - 7 * DAY, { weekday: "long" });
-    add("pace", `Sales are ${Math.abs(d)}% ${d > 0 ? "ahead of" : "behind"} last ${wd} at this time (${inr(T.rev)} against ${inr(W.rev)}).`, moduleShown("report") ? 'data-tab="report"' : "", "Reports"); }
   const best = createReadOnlyBusinessQuery({ now: () => now }).products("7d", "quantity", 1)[0];
   if(best && best.quantity >= 3){ const p = liveProducts().find(x => x.id === best.id);
     add("best", `${best.name} is this week's best seller: ${best.quantity} sold for ${inr(best.sales)}.`, p ? `data-prodopen="${esc(p.id)}"` : "", p ? "View" : ""); }

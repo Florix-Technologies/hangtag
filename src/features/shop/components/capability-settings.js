@@ -19,7 +19,7 @@ function capRow(c, caps, edit){
 export function capabilitiesHTML(){
   const type = shopType(), caps = shopCaps(), edit = can("manage_settings");
   return `<form id="capsForm" class="authform" novalidate>
-    <p class="note secsub">Switch on what your shop uses and Hangtag shows the screens and fields for it; the rest stays out of the way. The recommended set for ${esc(businessLabel(type))} was switched on when the shop was set up. Who may do what is set in Team &amp; Devices → Roles &amp; permissions.</p>
+    <p class="note secsub">Switch on what your shop uses and Hangtag shows the screens and fields for it; the rest stays out of the way. The recommended set for ${esc(businessLabel(type))} was switched on when the shop was set up. Who may do what is set in This device → Roles &amp; permissions.</p>
     ${capSections(type, caps).map(g => `<details class="capgrp" data-capgrp="${esc(g.key)}"${g.open ? " open" : ""}><summary>${esc(g.label)}</summary>${g.caps.map(c => capRow(c, caps, edit)).join("")}</details>`).join("")}
     <p id="capsErr" class="autherr" role="alert" hidden></p>
     ${edit ? `<div class="formacts"><button class="btn text" type="button" data-capsrec>Use the recommended set</button><span class="fa-note"></span><button class="btn" type="reset">Cancel</button><button class="btn primary" type="submit">Save features</button></div>` : ""}</form>`;

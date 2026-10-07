@@ -10,6 +10,7 @@ import { roleSuggestionsFor } from '../../../domain/shop/capabilities.js';
 import { checkNewMember, cleanMemberName, cleanUsername, newPasswordError, shopCode } from '../../../domain/shop/staff.js';
 import { isMember } from '../services/access.js';
 import { teamService } from '../services/team.js';
+import { rememberTeam } from '../services/team-roster.js';
 import { OWNER_ONLY_TEXT, addMember, changeMember, phoneSignInCode, removeMember, removePhone, resetMemberAccess, revokePhone, saveRolePermissions } from '../use-cases/manage-team.js';
 import { toast } from '../../../shared/components/toast.js';
 import { ICON } from '../../../shared/constants/icons.js';
@@ -43,6 +44,7 @@ export async function loadTeam(){
     const [members, devices, roles] = await Promise.all([team.members(), team.devices(), team.roles()]);
     if(store.team !== T) return;
     T.members = members.filter(m => m.userId !== store.authUser.id); T.devices = devices;
+    rememberTeam(T.members);   // Home's "who sold what" knows the names too
     T.overrides = {}; roles.forEach(r => { T.overrides[r.role] = r.permissions; });
     T.draft = null;
   }catch(e){ if(store.team === T) T.err = userMessage(e, "The team couldn't be loaded. Try again."); }
@@ -109,7 +111,7 @@ export function renderTeam(first){
       + (T.members.length ? `<div class="tmlist">${T.members.map(m => memberHTML(m, T)).join("")}</div>` : T.err ? "" : `<p class="note">No team members yet. Add the people who sell in your shop: each gets their own sign-in, and you choose what they may do.</p>`);
   const a = document.activeElement, keepAdd = a && a.closest && a.closest("#teamAddForm") ? a.name : null;
   host.innerHTML = `<div class="scrim" data-team-scrim><div class="sheet settings teamsheet" role="dialog" aria-modal="true" aria-labelledby="teamTitle">
-    <div class="sh-head"><button class="iconbtn" type="button" data-team="back" aria-label="Back to settings">←</button><div style="flex:1;min-width:0"><h3 id="teamTitle" style="margin:0">${T.view === "roles" ? "Roles &amp; permissions" : "Team &amp; devices"}</h3>
+    <div class="sh-head"><button class="iconbtn" type="button" data-team="back" aria-label="Back">←</button><div style="flex:1;min-width:0"><h3 id="teamTitle" style="margin:0">${T.view === "roles" ? "Roles &amp; permissions" : "Team"}</h3>
       <p class="note" style="margin:2px 0 0">Shop code for staff: <b data-shopcode>${esc(code)}</b></p></div><button class="iconbtn" type="button" data-team="close" aria-label="Close">${ICON.x}</button></div>
     <div class="seg teamseg" role="group" aria-label="Show"><button type="button" data-team="view:members" aria-pressed="${T.view === "members"}">People &amp; phones</button><button type="button" data-team="view:roles" aria-pressed="${T.view === "roles"}">Roles &amp; permissions</button></div>
     ${body}</div></div>`;
@@ -212,7 +214,7 @@ function permToggle(el){
 }
 
 /* Registered once at start-up (app/main.js). */
-export function installTeamEvents(openSettings){
+export function installTeamEvents(){
   document.addEventListener("click", e => {
     const t = e.target; if(!t.closest) return;
     if(t.matches("[data-team-scrim]")){ closeTeam(); return; }
@@ -220,7 +222,7 @@ export function installTeamEvents(openSettings){
     const k = b.dataset.team;
     if(k === "open" || k === "roles"){ openTeam(k === "roles" ? "roles" : "members"); return; }
     if(k === "close"){ closeTeam(); return; }
-    if(k === "back"){ closeTeam(); openSettings(); return; }
+    if(k === "back"){ if(store.team && store.team.view === "roles") openTeam("members"); else closeTeam(); return; }   // back where you came from (More → Team)
     teamAction(k);
   });
   document.addEventListener("change", e => {

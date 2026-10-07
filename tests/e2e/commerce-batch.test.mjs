@@ -94,6 +94,11 @@ const over = await run(`const r=receivePO(${JSON.stringify(PO)},{[${JSON.stringi
 check('receiving 7 more (6 to come) asks first: did the supplier send extra?', over && over.remaining === 6 && over.q === 7, over);
 
 console.log('--- a gift voucher pays part of a bill ---');
+await run('closeModal();setTab("home");renderAll();document.querySelector("[data-global=quick]").click()'); await sleep(200);
+await P.click('#quickActions [data-gvnew]'); await sleep(250);
+check('selling a voucher starts from New (not Settings): New → Gift voucher opens it, with All vouchers beside it', /Sell a gift voucher/.test(await text('#modalHost') || '') && !!(await P.$('#modalHost [data-gvlist]'))
+  && !(await run('openSettings("sales");return !!document.querySelector("#v-settings [data-gvnew],#v-settings [data-gvlist]")')));
+await run('closeModal();setTab("sell");renderAll()');
 const GV = await run(`const r=await issueVoucher({amount:"300",method:"cash"});return r.error?r:r.voucher`);
 check('a ₹300 voucher is sold (code from the database)', GV && /^GV-/.test(GV.code) && GV.amount === 300, GV);
 await run(`closeSheets();cart.length=0;cartCust=null;addOne(${JSON.stringify(EAR)});setTab("sell");renderAll()`); await sleep(150);

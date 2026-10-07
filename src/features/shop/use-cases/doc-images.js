@@ -1,4 +1,4 @@
-// The authorised signature and the company stamp printed on A4 documents (Settings → Billing & Documents → Templates):
+// The authorised signature and the company stamp printed on A4 documents (Settings → Bills & Documents → Templates):
 // a picture shrunk to a small size (white behind any transparency), kept on this device and uploaded (hangtag_meta
 // "doc_signature" / "doc_stamp", private to the shop), like the receipt logo (use-cases/receipt-logo.js). Whether each is
 // printed is a document setting (docSignImg / docStampImg, domain/documents/doc-settings.js).

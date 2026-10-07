@@ -2,18 +2,21 @@
 // Home → Needs attention items. One source: Home shows these (a rule set to Off shows nothing), and the automation log
 // notes each rule's finding once a day (automation.js runAutomation). Worked out afresh from the calculations the app uses
 // everywhere (stock levels, batches, the bills still owed on, the UPI payments checked by hand, orders, the cash book,
-// sales); nothing is stored and nothing is changed: a finding only links to where a person acts.
+// sales, the upload queue and the backup log); nothing is stored and nothing is changed: a finding only links to where a
+// person acts. The shop's own rules set to "Tell me" (services/custom-rules.js) are found here too, as rule "custom".
 //   [{ id (the Home item), rule, tone (bad | warn | info), title, sub, attr (where it opens), cta, subject (for the log) }]
 import { store } from '../../../shared/state/store.js';
 import { inr } from '../../../shared/formatting/money.js';
-import { addDays, dayKey, fmtDate } from '../../../shared/formatting/dates.js';
+import { addDays, agoText, dayKey, dayLab, fmtDate } from '../../../shared/formatting/dates.js';
 import { esc } from '../../../shared/dom.js';
 import { automationOf, WATCH_RULES } from '../../../domain/automation/rules.js';
 import { isUnverified, unverifiedPayments } from '../../../domain/sales/payments.js';
 import { D } from '../../inventory/services/ledger.js';
 import { expiryAlerts, stockAlerts } from '../../inventory/services/alerts.js';
 import { expiryDays } from '../../inventory/services/tracking.js';
-import { periodData, kstats } from '../../reports/services/report-data.js';
+import { periodData } from '../../reports/services/report-data.js';
+import { receiptStatusOf } from '../../delivery/services/receipt-status.js';
+import { sameTimeDays } from '../../reports/services/business-today.js';
 import { createReadOnlyBusinessQuery } from '../../assistant/services/business-query.js';
 import { closeOf } from '../../finance/use-cases/cash-moves.js';
 import { can, canAny } from '../../shop/services/access.js';
@@ -21,8 +24,10 @@ import { hasCap } from '../../shop/services/shop-caps.js';
 import { moduleShown } from '../../shop/services/modules.js';
 import { shopRegion } from '../../shop/services/region.js';
 import { logger } from '../../../shared/logging/logger.js';
+import { lastBackupAt } from '../../backup/services/backup-file.js';
+import { customFindings } from './custom-rules.js';
 
-const DAY = 864e5;
+const DAY = 864e5, HOUR = 36e5;
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + "s"}`;
 export const watchSettings = () => automationOf(store.settings).watch;
 /* May this shop / person see the rule's findings? (its permissions, features and tax regime) */
@@ -32,9 +37,10 @@ export function watchUsable(r){
   if(r.tax && shopRegion().tax !== r.tax) return false;
   return true;
 }
-const clockOf = (k, now) => { const d = new Date(now), x = new Date(k + "T00:00:00"); x.setHours(d.getHours(), d.getMinutes(), d.getSeconds(), 0); return +x; };
-/* Sales of a day up to a time of that day */
-function salesUpTo(k, until){ const x = periodData(k, k, ""); return kstats(x.live.filter(s => s.t <= until), x.rets.filter(r => r.t <= until)); }
+
+/* Sales orders still open after the late-orders setting (Settings → Automation → Watch): [order] — Home's Orders card too */
+export const lateOrders = (now = Date.now(), W = watchSettings()) => Object.values(store.orders || {})
+  .filter(o => o && o.kind === "sales" && ["draft", "confirmed", "partial"].includes(o.status) && +o.t > 0 && now - o.t >= W.lateDays * DAY);
 
 const FINDERS = {
   stock(){
@@ -64,7 +70,7 @@ const FINDERS = {
   },
   late(now, W){
     if(!(moduleShown("orders") && canAny(["create_sale", "create_order"]))) return [];
-    const late = Object.values(store.orders || {}).filter(o => o && o.kind === "sales" && ["draft", "confirmed", "partial"].includes(o.status) && +o.t > 0 && now - o.t >= W.lateDays * DAY);
+    const late = lateOrders(now, W);
     if(!late.length) return [];
     const oldest = Math.min(...late.map(o => o.t)), online = late.filter(o => o.source === "customer").length, value = Math.round(late.reduce((a, o) => a + (+o.total || 0), 0) * 100) / 100;
     return [{ id: "late", tone: "bad", title: `${plural(late.length, "order")} late`, sub: `Open more than ${plural(W.lateDays, "day")} · the oldest ${Math.floor((now - oldest) / DAY)} days${online ? ` · ${online} from your online store` : ""}`,
@@ -72,13 +78,13 @@ const FINDERS = {
   },
   unusual(now){
     if(!(moduleShown("report") && can("view_reports"))) return [];
-    const k = dayKey(now), hour = new Date(now).getHours();
-    if(hour < 11) return [];   // too early in the day to tell
-    const past = [7, 14, 21, 28].map(n => addDays(k, -n)).map(d => salesUpTo(d, clockOf(d, now)));
+    if(new Date(now).getHours() < 11) return [];   // too early in the day to tell
+    // the same weekday of the last four weeks, each up to this time (Business today's comparison days)
+    const S = sameTimeDays(now), past = S.weekdays;
     if(past.some(p => !(p.bills > 0))) return [];   // four full weeks of this weekday with sales, or nothing is said
     const usual = past.reduce((a, p) => a + p.total, 0) / past.length, usualBills = past.reduce((a, p) => a + p.bills, 0) / past.length;
     if(usualBills < 3 || !(usual > 0)) return [];
-    const today = salesUpTo(k, now), ratio = today.total / usual, day = fmtDate(now, { weekday: "long" });
+    const today = S.today, ratio = today.total / usual, day = S.weekday;
     if(ratio < 0.5) return [{ id: "unusual", tone: "warn", title: "Sales slower than usual", sub: `${inr(today.total)} so far · a usual ${day} has ${inr(usual)} by now`, attr: 'data-tab="report"', cta: "See sales" }];
     if(ratio > 2) return [{ id: "unusual", tone: "info", title: "Sales busier than usual", sub: `${inr(today.total)} so far · a usual ${day} has ${inr(usual)} by now`, attr: 'data-tab="report"', cta: "See sales" }];
     return [];
@@ -93,10 +99,11 @@ const FINDERS = {
   },
   receipts(){
     if(!can("create_sale")) return [];
-    const failed = [...new Set((store.deliveryQueue || []).filter(j => j.status === "failed").map(j => j.saleId))].filter(id => D().saleById[id]);
+    const ids = new Set([...(store.deliveryQueue || []).map(j => j.saleId), ...Object.keys(store.deliveries || {})]);
+    const failed = [...ids].filter(id => { const s = D().saleById[id]; return s && !s.void && receiptStatusOf(id).state === "failed"; });
     if(!failed.length) return [];
-    return [{ id: "receipts", tone: "warn", title: `${plural(failed.length, "receipt")} not sent`, sub: "From this device · open the bill to send again",
-      attr: failed.length === 1 ? `data-billview="${esc(failed[0])}"` : 'data-tab="bills"', cta: "Send" }];
+    return [{ id: "receipts", tone: "warn", title: `${plural(failed.length, "receipt")} not sent`, sub: failed.length === 1 ? "The customer didn't get it · open the bill to send it again" : "The customers didn't get them · send them again from Bills",
+      attr: failed.length === 1 ? `data-billview="${esc(failed[0])}"` : 'data-tab="bills" data-billstatus="unsent"', cta: "Send" }];
   },
   dayclose(now, W){
     if(!can("create_sale") || new Date(now).getHours() < W.closeHour) return [];
@@ -118,6 +125,21 @@ const FINDERS = {
     return [{ id: "gst", tone: d.getDate() >= 9 ? "warn" : "info", title: `Prepare GST for ${name}`, sub: `GSTR-1 is due on the 11th · check and export the month`,
       attr: `data-act="gstview" data-gstmonth="${month}"`, cta: "Prepare", subject: month }];
   },
+  // the morning briefing is Home's own card (this rule switches it); it adds nothing to Needs attention
+  briefing(){ return []; },
+  backup(now, W){
+    if(!can("manage_settings")) return [];
+    const out = [], q = (store.sbOfflineQueue || []).length, refused = (store.syncReview || []).length;
+    if(refused) out.push({ id: "syncreview", tone: "bad", title: `${plural(refused, "change")} not saved in the cloud`, sub: "The cloud refused them · look at each in the sync review", attr: 'data-act="syncpanel"', cta: "Review", subject: "review" });
+    else if(q && store.lastSyncAt && now - store.lastSyncAt > 6 * HOUR) out.push({ id: "unsynced", tone: "warn", title: `${plural(q, "change")} not in the cloud yet`,
+      sub: `This device was last fully saved ${agoText(store.lastSyncAt)} · connect it to the internet`, attr: 'data-act="syncpanel"', cta: "Check", subject: "queue" });
+    // a backup file: once the shop has had bills for the days set, and none downloaded on this device since
+    const sales = D().sales, first = sales.length ? sales[0].t : 0, last = lastBackupAt();
+    if(first && now - first > W.backupDays * DAY && now - (last || 0) > W.backupDays * DAY)
+      out.push({ id: "backupfile", tone: "info", title: "Download a backup file", sub: last ? `The last one on this device was on ${dayLab(dayKey(last))} · the cloud keeps a copy too` : "None on this device yet · the cloud keeps a copy too",
+        attr: 'data-act="backup"', cta: "Download", subject: "file" });
+    return out;
+  },
 };
 
 /* What the watch rules set to Notify find now, for this person: [finding] (each with its rule) */
@@ -128,5 +150,6 @@ export function watchFindings(now = Date.now()){
     try{ FINDERS[r.key](now, W).forEach(f => out.push({ ...f, rule: r.key, subject: f.subject || r.key })); }
     catch(e){ logger.event("automation", "rule-failed", { op: r.key, code: e && e.code }, "warn"); }   // finds nothing this time; the next run tries again
   });
+  customFindings(now).filter(f => f.action === "notify").forEach(f => out.push(f));
   return out;
 }

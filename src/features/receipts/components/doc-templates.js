@@ -1,4 +1,4 @@
-// Settings → Billing & Documents → Templates: the look of every A4 document (tax invoice, bill, quotation, sales order,
+// Settings → Bills & Documents → Templates: the look of every A4 document (tax invoice, bill, quotation, sales order,
 // delivery challan, credit note, purchase order) — Standard, Classic, Modern or Compact, an accent colour, GST details shown
 // or not, terms, a signature line, bank or UPI details, and the authorised signature and company stamp (pictures: upload,
 // replace, remove, print or not). The preview beside the choices is the real document — the latest bill (or sample lines)

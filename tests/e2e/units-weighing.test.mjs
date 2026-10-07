@@ -131,7 +131,7 @@ check('renumbered to the next number of this device\'s own series (INV-000002) a
   && (await q(`SELECT bill_no FROM public.hangtag_sales WHERE id = $1`, [DUP]))[0]?.bill_no === 'INV-000002' && await A.run('return deviceTill()===""'), await q(`SELECT bill_no FROM public.hangtag_sales WHERE id = $1`, [DUP]));
 await A.run('closeModal()');
 
-console.log('--- Settings → Team & Devices: the weighing scale on this device ---');
+console.log('--- Settings → This device: the weighing scale on this device ---');
 await A.run('openSettings("devices")'); await sleep(300);
 check('the settings show this device\'s weighing scale', await A.vis('#scaleSetup') && /Weighing scale/.test(await A.text('#scaleSetup')));
 await A.P.select('#scaleForm [name="baud"]', '4800');

@@ -1,5 +1,5 @@
 // What every A4 document can do: print (the browser's dialog, which also saves as PDF), download its PDF, share the PDF
-// from this phone, and show a preview — in the shop's template (Settings → Billing & Documents → Templates).
+// from this phone, and show a preview — in the shop's template (Settings → Bills & Documents → Templates).
 import { store } from '../../../shared/state/store.js';
 import { use } from '../../../shared/di/services.js';
 import { toast } from '../../../shared/components/toast.js';

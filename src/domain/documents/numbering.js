@@ -92,7 +92,7 @@ function freeTill(used){
   return [...TILL_LETTERS].find(l => !taken.has(l)) || TILL_LETTERS[TILL_LETTERS.length - 1];
 }
 
-/* Billing & Documents → Bill numbering, as typed → { config, preview, length } or { error, field }.
+/* Bills & Documents → Bill numbering, as typed → { config, preview, length } or { error, field }.
    Every valid configuration must fit both the main series and a second till's series, so a later device cannot create an
    invoice that only discovers the GST/e-invoice limit at export time. */
 export function checkNumberingSettings(input, { t = Date.now(), till = "" } = {}){

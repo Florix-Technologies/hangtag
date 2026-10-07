@@ -9,6 +9,7 @@
 // question) and, from a draft tool, a proposal that is saved only when the person confirms it. An optional provider
 // (server-side only, never a key in this app) may answer what the local parser doesn't, through answerReadOnly().
 import { agentTool } from '../../../domain/agent/agent-tools.js';
+import { REF_LABELS } from '../../../domain/reports/business-today.js';
 import { dayLab } from '../../../shared/formatting/dates.js';
 import { currencyMarkSource, inr, numberText } from '../../../shared/formatting/money.js';
 
@@ -34,7 +35,9 @@ export function parseBusinessQuestion(question){
   const text = lower(question);
   if(!text) return null;
   const period = askedPeriod(text);
-  if(has(text, /^(hi+|hello+|hey+|hiya|namaste|namaskar|good (morning|afternoon|evening|day)|morning|evening|yo|hola)\b/) && text.split(' ').length <= 5) return { kind: 'greeting' };
+  // "good morning" is a greeting; "morning briefing" / "morning summary" asks for something
+  if(has(text, /^(hi+|hello+|hey+|hiya|namaste|namaskar|good (morning|afternoon|evening|day)|morning|evening|yo|hola)\b/) && text.split(' ').length <= 5
+    && !has(text, /\b(briefing|brief|summary|report|update|sales?|stock|dues?)\b/)) return { kind: 'greeting' };
   if(has(text, /^(thanks|thank you|thx|ty|ok thanks|great thanks|cool|nice)\b/)) return { kind: 'thanks' };
   if(has(text, /\bhelp\b|what can you do|what can i ask|how (do|does) (this|it) work|what do you know|commands|^menu$|options/)) return { kind: 'help' };
   const tool = toolIntent(text); if(tool) return tool;
@@ -67,10 +70,20 @@ export function parseBusinessQuestion(question){
 function toolIntent(text){
   const t = (tool, args = {}, open = false) => ({ kind: 'tool', tool, args, open });
   const after = re => { const m = re.exec(text); return m ? m[m.length - 1].trim() : ''; };
+  // the morning briefing: "my briefing", "how was yesterday", "what should I do first"
+  if(has(text, /\b(briefing|brief me|morning (summary|report|update)|daily (summary|report)|how was yesterday|summary of yesterday|yesterday's summary|what should i do (first|today)|start (my|the) day)\b/)) return t('get_daily_briefing');
+  // a why-question about today's figures: Business today, explained
+  const fig = businessFigure(text);
+  if(fig) return t('get_business_today', { figure: fig });
   // a bill by its number: "INV-000127", "open bill 127", "show invoice inv-b-000045"
   const billNo = after(/\b(?:open|show|find|view|see)\s+(?:the\s+)?(?:bill|invoice|receipt)\s*(?:no|number|#)?\s*([a-z0-9#-]*\d[a-z0-9-]*)\b/) || after(/\b((?!(?:po|pq|so|dc|cn)-)[a-z]{2,5}-(?:[a-z]-)?\d{2,})\b/);
   if(billNo) return t('open_bill', { bill_no: billNo.replace(/^#/, '') }, true);
   if(has(text, /\b(recent|latest|last few|last \d+|today's)\s+(bills?|invoices?)\b|\bbills? (made )?today\b|^bills?$/)) return t('get_recent_bills', { limit: 5 });
+  // what a customer's bills say: "tell me about Riya", "how is Riya doing", "what does Riya buy", "Riya's history"
+  const about = after(/^tell me about\s+(?:the\s+)?(?:customer\s+)?(.+)$/) || after(/^how(?: is|'s)\s+(.+?)\s+doing$/) || after(/^what does\s+(.+?)\s+(?:usually\s+)?buy$/)
+    || after(/^(.+?)'s\s+(?:history|insights?|profile|purchases|buying)$/);
+  if(about && !askedPeriod(about, '') && !/^(today|business|sales|stock|profit|gst|cash|upi|card|payments?|dues?|orders?|returns?|expenses?|banks?|inventory|reorder|it|things|(my|the|this) (shop|business|store))$/.test(about))
+    return t('get_customer_insight', { name: about });
   const cust = after(/\b(?:open|show|find)\s+(?:the\s+)?customer\s+(.+)$/) || after(/^(?:open|show)\s+(.+?)(?:'s)?\s+(?:account|khata|ledger)$/) || after(/^(.+?)'s\s+(?:account|khata|ledger)$/);
   if(cust) return t('open_customer', { name: cust }, true);
   const prod = after(/\b(?:open|show|find)\s+(?:the\s+)?(?:product|item)\s+(.+)$/);
@@ -93,6 +106,21 @@ function toolIntent(text){
   if(has(text, /\b(business profile|shop (details|profile|info)|(my|the) (shop|business)('s)? (details|info|profile)|about (my|the) (shop|business)|gstin)\b/)) return t('get_business_profile');
   return null;
 }
+/* "Why are sales down?", "why is cash short", "what's unusual today", "explain today's margin": which of Business today's
+   figures the question is about (all: whatever is out of the ordinary), or null when it isn't such a question */
+function businessFigure(text){
+  const asks = has(text, /\b(why|explain\w*|reasons?)\b/), today = has(text, /\b(unusual|out of the ordinary|business today|how (is|was) (the )?business|what'?s (wrong|different|going on))\b/);
+  if(!asks && !today) return null;
+  const fig = has(text, /\b(reconcil\w*|mismatch\w*|unmatched|drawer|day close|closing)\b|\bcash\b.*\b(short|over|missing|less|more)\b|\b(short|missing)\b.*\bcash\b/) ? 'reconciliation'
+    : has(text, /\b(margin|profit|profits)\b/) ? 'margin'
+    : has(text, /\b(average|avg|basket|bill size|bill value)\b/) ? 'average_bill'
+    : has(text, /\b(upi|card|cash|payments?|payment mix)\b/) ? 'payments'
+    : has(text, /\b(owe|owed|owes|dues?|receivables?|outstanding|udhaa?r|credit)\b/) ? 'receivables'
+    : has(text, /\b(stock|inventory)\b/) ? 'stock'
+    : has(text, /\b(sales?|sold|sell\w*|revenue|turnover|takings|bikri|bills?|slow|busy)\b/) ? 'sales' : null;
+  if(fig) return fig;
+  return today || has(text, /\btoday\b/) ? 'all' : null;
+}
 /* "and yesterday?", "what about this month" — only a period: the previous question again for that period */
 export function followUpIntent(question, previous){
   const text = lower(question);
@@ -110,6 +138,9 @@ const HELP_ROWS = [
   { label: 'Stock', value: '“What should I reorder?” · “Low stock” · “Dead stock” · “Stock value”' },
   { label: 'Orders and purchases', value: '“Open orders” · “Purchase orders to receive”' },
   { label: 'Money', value: '“Expenses this week” · “GST this month” · “Bank balances”' },
+  { label: 'Why', value: '“Why are sales down today?” · “Why is cash short?” · “What\'s unusual today?”' },
+  { label: 'Customers', value: '“Tell me about Riya” · “What does Riya buy?”' },
+  { label: 'Briefing', value: '“My morning briefing” · “How was yesterday?” · “What should I do first?”' },
   { label: 'Open and draft', value: '“Open bill 127” · “Open customer Riya” · “Recent bills” · “Draft a purchase order”' },
 ];
 const SUGGEST = 'Try “How much did I sell today?”, “What should I reorder?” or “Who owes me money?”.';
@@ -139,7 +170,7 @@ function toolAnswer(intent, host){
   const def = agentTool(intent.tool), title = def ? def.title : 'Hangtag Agent';
   if(!host) return unavailable();
   const r = host.callTool(intent.tool, intent.args), x = r.structuredContent || {}, text = (r.content[0] || {}).text || '';
-  const out = { supported: true, title, text, rows: [], actions: [], proposal: null, toolsUsed: [intent.tool] };
+  const out = { supported: true, title, text, rows: [], actions: [], proposal: null, toolsUsed: [intent.tool], refused: x.refused || [] };
   if(r.isError) return out;
   const tool = intent.tool;
   if(tool === 'get_recent_bills'){
@@ -151,6 +182,28 @@ function toolAnswer(intent, host){
   }else if(tool === 'get_payment_reconciliation'){
     out.rows = x.unverified.bills.map(b => ({ label: b.no, value: `${inr(b.amount)} UPI, checked by hand` }));
     if(may(host, 'open_report')) out.actions = [openAct('reconcile', '30d', 'Open Reconciliation')];
+  }else if(tool === 'get_business_today'){
+    const figs = x.figures || [];
+    out.title = figs.length === 1 ? figs[0].label + (figs[0].unusual ? ': why it is out of the ordinary' : ': how today looks') : 'Business today';
+    if(figs.length) out.text = intent.args.figure === 'all' && x.unusual && x.unusual.length ? x.summary || text : figs.map(f => f.headline).join(' ');
+    out.rows = figs.flatMap(f => [...f.reasons.map(r => ({ label: figs.length > 1 ? f.label : 'Why', value: r.text })), ...(f.check ? [{ label: 'Worth checking', value: f.check }] : [])]);
+    const tools = { bill: 'open_bill', customer: 'open_customer', product: 'open_product', report: 'open_report', reconcile: 'open_report', cashbook: 'open_report', bankbook: 'open_report', reorder: 'draft_reorder' }, seen = new Set();
+    figs.flatMap(f => f.reasons).map(r => r.ref).filter(Boolean).forEach(ref => { const k = ref.target + '|' + (ref.id || ''); if(seen.has(k) || out.actions.length >= 3) return; seen.add(k);
+      if(!tools[ref.target] || may(host, tools[ref.target])) out.actions.push(openAct(ref.target, ref.id || '', REF_LABELS[ref.target] || 'Open')); });
+  }else if(tool === 'get_daily_briefing' && x.first){
+    out.title = 'Morning briefing';
+    out.text = (x.quiet ? 'All clear: ' : 'First: ') + x.first.text;
+    out.rows = (x.sections || []).flatMap(s => s.lines.map(l => ({ label: s.title, value: l.text })));
+    const tools = { bill: 'open_bill', customer: 'open_customer', product: 'open_product', report: 'open_report', reconcile: 'open_report', cashbook: 'open_report', bankbook: 'open_report', reorder: 'draft_reorder' }, seen = new Set();
+    [x.first.ref, ...(x.sections || []).flatMap(s => s.lines.map(l => l.ref))].filter(Boolean).forEach(ref => { const k = ref.target + '|' + (ref.id || ''); if(seen.has(k) || out.actions.length >= 3) return; seen.add(k);
+      if(!tools[ref.target] || may(host, tools[ref.target])) out.actions.push(openAct(ref.target, ref.id || '', REF_LABELS[ref.target] || 'Open')); });
+  }else if(tool === 'get_customer_insight' && x.customer){
+    out.title = x.customer.name;
+    if(x.summary && x.summary.bills){
+      out.text = (r.content[0] || {}).text.split('. ').slice(0, 2).join('. ').replace(/\.?$/, '.');
+      out.rows = [...(x.topProducts || []).slice(0, 3).map(p => ({ label: 'Buys', value: `${p.name} · ${p.qty} on ${plural(p.bills, 'bill')}` })), ...(x.insights || []).map(s => ({ label: 'Noticed', value: s }))];
+    }
+    if(x.action && may(host, 'open_customer')) out.actions.push(x.action);
   }else if(tool === 'get_business_profile'){
     out.rows = [{ label: 'Business', value: x.type }, ...(x.city || x.state ? [{ label: 'Place', value: [x.city, x.state].filter(Boolean).join(', ') }] : []), { label: 'GSTIN', value: x.gstin || 'Not registered' }, ...(x.features.length ? [{ label: 'Uses', value: x.features.join(', ') }] : [])];
   }else if(tool === 'draft_reorder' && x.lines){
@@ -230,7 +283,7 @@ function localAnswer(intent, query){
   }
   if(k === 'gst'){
     const x = query.gst(intent.period);
-    return { supported: true, title: `GST ${x.label}`, text: x.gst ? `${inr(x.gst)} of GST on ${inr(x.taxable)} of net sales.` : `No GST on bills ${x.label}. Switch GST on in Settings → Billing & Documents if your bills should show it.`, rows: x.gst ? [{ label: 'CGST', value: inr(x.cgst) }, { label: 'SGST', value: inr(x.sgst) }, { label: 'IGST', value: inr(x.igst) }] : [] };
+    return { supported: true, title: `GST ${x.label}`, text: x.gst ? `${inr(x.gst)} of GST on ${inr(x.taxable)} of net sales.` : `No GST on bills ${x.label}. Switch GST on in Settings → Bills & Documents if your bills should show it.`, rows: x.gst ? [{ label: 'CGST', value: inr(x.cgst) }, { label: 'SGST', value: inr(x.sgst) }, { label: 'IGST', value: inr(x.igst) }] : [] };
   }
   if(k === 'banks'){
     const x = query.banks();
@@ -262,7 +315,8 @@ export function createBusinessAssistant({ query, provider = null, tools = null }
       if(provider && typeof provider.available === 'function' && provider.available() && typeof provider.answerReadOnly === 'function'){
         const answer = await provider.answerReadOnly(clean(question), query);
         if(answer && answer.text) return Object.freeze({ supported: true, title: clean(answer.title) || 'Hangtag Agent', text: clean(answer.text), rows: Array.isArray(answer.rows) ? answer.rows : [],
-          actions: Array.isArray(answer.actions) ? answer.actions : [], proposal: answer.proposal || null, toolsUsed: Array.isArray(answer.toolsUsed) ? answer.toolsUsed : [], source: 'provider' });
+          actions: Array.isArray(answer.actions) ? answer.actions : [], proposal: answer.proposal || null, toolsUsed: Array.isArray(answer.toolsUsed) ? answer.toolsUsed : [],
+          refused: Array.isArray(answer.refused) ? answer.refused : [], source: 'provider' });
       }
       return Object.freeze({ ...unavailable(), source: 'unavailable' });
     },

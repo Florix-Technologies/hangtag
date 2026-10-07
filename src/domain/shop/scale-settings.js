@@ -1,4 +1,4 @@
-// The weighing scale of this device (Settings → Team & Devices): how to talk to a scale on a cable. Kept per device, not per shop:
+// The weighing scale of this device (Settings → This device): how to talk to a scale on a cable. Kept per device, not per shop:
 // each counter has its own scale. Pure.
 
 export const BAUD_RATES=[1200,2400,4800,9600,19200,38400,57600,115200];

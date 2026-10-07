@@ -1,4 +1,4 @@
-// Documents and branding, end to end in Chrome: Settings → Billing & Documents → Templates offers Standard, Classic,
+// Documents and branding, end to end in Chrome: Settings → Bills & Documents → Templates offers Standard, Classic,
 // Modern and Compact with a live preview of the real document (it follows the form before saving); the authorised
 // signature and company stamp are uploaded, previewed, replaced, removed and switched on or off for printing; they reach
 // the cloud (hangtag_meta, private to the shop); the bill's A4 view and its PDF carry them; and a document without them

@@ -30,6 +30,26 @@ export async function loadDeliveryHistory(sid){
   }catch(e){ logger.warn("Delivery history:",e); }
   return deliveriesOf(sid);
 }
+/* What was sent from every bill in the last two days — the server's record, "delivered" once the provider says so — at
+   most once a minute (force: now). This device's own notes the server doesn't keep (WhatsApp opened here, a send still
+   going) stay. → true when a bill's record changed */
+let recentAt = 0;
+export async function loadRecentDeliveries(force){
+  if(!online() || (!force && Date.now() - recentAt < 60e3)) return false;
+  recentAt = Date.now();
+  try{
+    const rows = await messageDelivery().recent(Date.now() - 2 * 864e5), by = {};
+    rows.forEach(r => { if(r.saleId) (by[r.saleId] = by[r.saleId] || []).push(r); });
+    let changed = false;
+    Object.entries(by).forEach(([sid, list]) => {
+      // this device's copy of a send the server now records (the same provider message) gives way to the server's
+      const known = new Set(list.map(r => r.providerId).filter(Boolean));
+      const next = [...deliveriesOf(sid).filter(e => !e.id && !(e.providerId && known.has(e.providerId))), ...list];
+      if(JSON.stringify(next) !== JSON.stringify(deliveriesOf(sid))){ store.deliveries[sid] = next; changed = true; }
+    });
+    return changed;
+  }catch(e){ logger.warn("Recent deliveries:", e); return false; }
+}
 /* → { ok: true, to } once sent; { error, code, field } otherwise (nothing is claimed as sent) */
 export async function sendInvoice(sid,channel){
   const s=D().saleById[sid]; if(!s) return {error:"That bill isn't on this device."};
@@ -65,7 +85,7 @@ export async function refreshDeliveryStatus(sid){
 export async function invoiceLink(sid){
   if(!online()) return {error:"You're offline. Invoice links need the internet."};
   if(store.sbOfflineQueue.some(q=>q.type==="sale"&&q.sale&&q.sale.id===sid)) return {error:"This bill is still uploading. Try again in a moment."};
-  try{ const r=await messageDelivery().link(sid); return r&&r.url?{url:r.url}:{error:"Invoice links aren't set up yet. The shop's owner can open Settings → Billing & Documents once on this app to set the invoice page."}; }
+  try{ const r=await messageDelivery().link(sid); return r&&r.url?{url:r.url}:{error:"Invoice links aren't set up yet. The shop's owner can open Settings → Bills & Documents once on this app to set the invoice page."}; }
   catch(e){ return {error:userMessage(e,"Couldn't make the link.")}; }
 }
 /* Stops every invoice link of the bill from working */

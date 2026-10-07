@@ -14,6 +14,7 @@ import { lineLabel } from '../../../domain/catalog/options.js';
 import { PAY_LABELS } from '../../../domain/sales/payments.js';
 import { poProgress } from '../../../domain/inventory/purchase-orders.js';
 import { invoiceFor } from './receipt-model.js';
+import { billContent, billRows, lineSub } from '../../../domain/documents/bill-content.js';
 import { orderTotals } from '../../orders/use-cases/orders.js';
 import { customerRepository } from '../../customers/repositories/customer-repository.js';
 import { purchasesList, supplierById } from '../../inventory/services/purchase-state.js';
@@ -26,37 +27,30 @@ const pct = r => r == null ? "—" : Math.round(r * 100) / 100 + "%";
 const settings = () => docSettingsOf(store.settings);
 function seller(){ const S = sellerOf(store.profile || {}); return { name: S.name, lines: [S.address, S.phone && "Phone " + S.phone, S.gstin && "GSTIN " + S.gstin] }; }
 /* What every document carries: the shop, its logo, terms, bank details, the signature line — and the authorised signature
-   and company stamp pictures when the shop has them and prints them (Settings → Billing & Documents → Templates) */
+   and company stamp pictures when the shop has them and prints them (Settings → Bills & Documents → Templates) */
 const base = () => { const D = settings(), im = store.docImages || {};
   return { seller: seller(), logo: store.logo || "", terms: D.terms, bank: D.bank, signature: D.signature, signImg: D.signImg && im.signature || "", stampImg: D.stampImg && im.stamp || "",
     footer: store.settings && store.settings.footer || "" }; };
 
 /* ---------- a bill: Tax Invoice (with GST) or Bill ---------- */
+/* The bill's one document (domain/documents/bill-content.js) laid out on A4: its rows, totals, payments and notes are the
+   document's — the same the 80 mm receipt, the thermal slip and the WhatsApp text show */
 export function invoiceModel(s){
-  const I = invoiceFor(s), Dset = settings(), T = I.totals, taxed = T.tax > 0, inter = I.gstMode === "inter", show = taxed && Dset.showGst, perLine = show && I.lineTax, hsn = I.lines.some(l => l.hsn);
+  const I = invoiceFor(s), Dset = settings(), B = billContent(I, { showGst: Dset.showGst }), inter = B.gstMode === "inter", show = B.kind === "invoice" && Dset.showGst,
+    perLine = show && B.lineTax, hsn = B.lines.some(l => l.hsn);
   const columns = ["#", "Item", ...(hsn ? ["HSN"] : []), "Qty", "Rate", "Discount", ...(perLine ? ["Taxable", "GST %", ...(inter ? ["IGST"] : ["CGST", "SGST"])] : []), "Amount"];
-  const rows = I.lines.map(l => [String(l.sl), { t: l.name, sub: [l.variant, l.sku, l.serials && "SN " + l.serials, l.batch && "Batch " + l.batch].filter(Boolean).join(" · ") }, ...(hsn ? [l.hsn || "—"] : []),
+  const rows = B.lines.map(l => [String(l.sl), { t: l.name, sub: lineSub(l) }, ...(hsn ? [l.hsn || "—"] : []),
     l.qtyText, inrx(l.rate) + (l.unit ? "/" + l.unit : ""), l.discount ? "−" + inrx(l.discount) : "—",
     ...(perLine ? [inrx(l.taxable), pct(l.gstRate), ...(inter ? [inrx(l.igst)] : [inrx(l.cgst), inrx(l.sgst)])] : []), inrx(l.total != null ? l.total : l.gross)]);
-  const totals = [["Subtotal", inrx(T.subtotal)]];
-  if(T.itemDiscount) totals.push(["Item discounts", "−" + inrx(T.itemDiscount)]);
-  if(T.billDiscount) totals.push(["Bill discount" + (T.billDiscountLabel ? " " + T.billDiscountLabel : ""), "−" + inrx(T.billDiscount)]);
-  if(show && !I.inclusive){ totals.push(["Taxable amount", inrx(T.taxable)]); if(inter) totals.push(["IGST", inrx(T.igst)]); else totals.push(["CGST", inrx(T.cgst)], ["SGST", inrx(T.sgst)]); }
-  if(T.roundOff) totals.push(["Round off", (T.roundOff > 0 ? "+" : "") + inrx(T.roundOff)]);
-  totals.push(["Total", inr(T.total), true]);
-  if(show && I.inclusive) totals.push(["Includes GST", inrx(T.tax)]);
-  if(T.credit) totals.push(["Exchange credit", "−" + inr(T.credit)], ["Amount due", inr(T.due)]);
-  // A split payment must show where every part landed. A generic "Paid" line loses useful reconciliation detail.
-  I.payments.forEach(p => totals.push(["Paid by " + p.label, inrx(p.amount)]));
-  if(I.balance > 0) totals.push(["Balance due", inr(I.balance)]);
-  const b = I.buyer;
-  return Object.assign(base(), { kind: taxed ? "invoice" : "bill", title: taxed ? "Tax Invoice" : "Bill", number: I.number,
-    meta: [[taxed ? "Invoice no." : "Bill no.", I.number], ["Date", dtLong(I.t)], ["Place of supply", I.placeOfSupply && I.gstMode !== "none" ? `${I.placeOfSupply.name} (${I.placeOfSupply.code})` : ""]],
+  // the document's money rows in its order: totals, each payment (with its reference), the balance due, change and returns
+  const totals = billRows(B).map(x => [x.label + (x.note ? ` (${x.note})` : ""), x.amount == null ? "" : (x.sign || "") + inrx(x.amount), x.grand]);
+  const b = B.buyer;
+  return Object.assign(base(), { kind: B.kind, title: B.title, number: B.number,
+    meta: [[B.numberLabel, B.number], ["Date", dtLong(B.t)], ["Place of supply", B.placeOfSupply ? `${B.placeOfSupply.name} (${B.placeOfSupply.code})` : ""]],
     parties: [{ label: "Bill to", name: b ? b.name : "Walk-in customer", lines: b ? [b.phone, b.email, b.gstin && "GSTIN " + b.gstin, b.business ? "Business customer" : ""] : [] }],
     columns, left: hsn ? 3 : 2, rows, totals,
-    tax: show && I.taxSummary.length ? { head: ["GST rate", "Taxable", ...(inter ? ["IGST"] : ["CGST", "SGST"]), "Total GST"], rows: I.taxSummary.map(r => [pct(r.rate), inrx(r.taxable), ...(inter ? [inrx(r.igst)] : [inrx(r.cgst), inrx(r.sgst)]), inrx(r.tax)]) } : null,
-    words: I.amountInWords, footer: I.footer, cancelled: I.status === "cancelled" ? (taxed ? "not a valid invoice" : "not a valid bill") : false,
-    notice: (taxed ? (I.inclusive ? "Prices include GST. " : "GST is added to the prices. ") : "") + (taxed ? "Computer-generated invoice." : "Computer-generated bill.") });
+    tax: show && B.taxSummary.length ? { head: ["GST rate", "Taxable", ...(inter ? ["IGST"] : ["CGST", "SGST"]), "Total GST"], rows: B.taxSummary.map(r => [pct(r.rate), inrx(r.taxable), ...(inter ? [inrx(r.igst)] : [inrx(r.cgst), inrx(r.sgst)]), inrx(r.tax)]) } : null,
+    words: B.words, footer: B.footer, cancelled: B.cancelled, notice: B.notice });
 }
 
 /* ---------- quotations, sales orders and delivery challans ---------- */

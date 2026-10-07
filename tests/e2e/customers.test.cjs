@@ -127,7 +127,7 @@ let fails = 0; const check = (n, ok, i) => { if (!ok) fails++; console.log((ok ?
     group: e.closest('.navgrp')?.querySelector('h4')?.textContent.trim() || '',
     h: Math.round(e.getBoundingClientRect().height),
   }));
-  check('phone: Customers is discoverable in its grouped More destination', customerGroup.label === 'Customers' && customerGroup.group === 'Customers' && customerGroup.h >= 44, customerGroup);
+  check('phone: Customers is the first item in More, a plain row with no extra heading', customerGroup.label === 'Customers' && customerGroup.group === '' && customerGroup.h >= 44, customerGroup);
   await p.tap('.navsheet [data-tab="customers"]'); await sleep(300);
   check('phone: More opens the Customers page', await run('return prefs.tab==="customers"') && await p.$eval('#v-customers', (e) => !e.hidden));
   check('phone: the page fits the width', await p.evaluate(() => document.documentElement.scrollWidth - window.innerWidth) <= 1);

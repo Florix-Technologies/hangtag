@@ -99,7 +99,7 @@ for (const o of [A, B]) {
 console.log('=== the schema runs twice; the report ===');
 {
   const rep = await report(db);
-  check('migration report: 64 rows (50-55: serials and batches), all ok on an empty shop', rep.length === 64 && rep.every((r) => r.ok) && rep.filter((r) => /^(Serial|Stock records with serial|Bill lines with serial|Batches never|Bill lines taking from batches)/.test(r.check_name)).length === 6, rep.filter((r) => !r.ok));
+  check('migration report: 65 rows (50-55: serials and batches), all ok on an empty shop', rep.length === 65 && rep.every((r) => r.ok) && rep.filter((r) => /^(Serial|Stock records with serial|Bill lines with serial|Batches never|Bill lines taking from batches)/.test(r.check_name)).length === 6, rep.filter((r) => !r.ok));
   const cols = (await db.query(`SELECT table_name || '.' || column_name AS c FROM information_schema.columns WHERE table_schema = 'public'
       AND column_name IN ('serials', 'batches', 'batch_no', 'expiry', 'tracks_expiry') AND table_name IN ('hangtag_stock_moves', 'hangtag_sale_items', 'hangtag_return_items', 'hangtag_products') ORDER BY 1`)).rows.map((r) => r.c);
   check('stock records, bill lines and return lines carry serials / batches; products tracks_expiry', cols.length === 8, cols);
@@ -206,7 +206,7 @@ r = await savePurchase(db, B, purchase('pb1', [{ p: 'ph', v: 'ph:', n: 'Phone', 
 check('shop B may have its own SN002 (unique within a shop)', !r.err && (await serial(B, 'SN002')).status === 'IN_STOCK', r);
 {
   const rep = await report(db);
-  check('the report is all ok with serials sold, returned, written off and batches used', rep.length === 64 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
+  check('the report is all ok with serials sold, returned, written off and batches used', rep.length === 65 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
 }
 await db.exec(NEW);
 check('the schema runs again with all of it there', (await report(db)).every((x) => x.ok));

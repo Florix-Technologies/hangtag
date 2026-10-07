@@ -8,6 +8,10 @@
 import { poFromReorder, poList } from '../../inventory/use-cases/purchase-orders.js';
 import { logAutomation } from '../../automation/services/automation.js';
 import { inr } from '../../../shared/formatting/money.js';
+import { signedInAs } from '../../shop/services/access.js';
+import { store } from '../../../shared/state/store.js';
+
+const approver = () => signedInAs() || (store.authUser && store.authUser.email) || "The person on this device";
 
 const MAX_LINES = 200;
 const lines = n => `${n} line${n === 1 ? "" : "s"}`;
@@ -39,7 +43,7 @@ export function confirmAgentProposal(proposal, ctx = {}){
     }
     logAutomation({ rule: "agent", action: "approved", key: `agent:po:${r.po.id}`, text: `Draft purchase order ${r.po.no} for ${who} saved from the Agent's proposal. Not sent.`, why, tool,
       before, after: `Draft ${r.po.no} for ${who}: ${lines(items.length)}${proposal.total ? `, about ${inr(proposal.total)}` : ""}`,
-      outcome: "Saved as a draft after the person tapped Save (not sent to the supplier)" });
+      approvedBy: approver(), outcome: "Saved as a draft after the person tapped Save (not sent to the supplier)" });
     return r;
   }
   logAutomation({ rule: "agent", action: "failed", key: `agent:kind:${Date.now()}`, text: "The Agent proposed something it can't save.", why, tool, before: "Nothing", after: "Nothing saved",
@@ -51,6 +55,6 @@ export function dismissAgentProposal(proposal, ctx = {}){
   if(!proposal) return { ok: true };
   const who = proposal.supplier || "the supplier";
   logAutomation({ rule: "agent", action: "dismissed", key: `agent:dismissed:${Date.now()}`, text: proposal.kind === "purchase_order" ? `Draft purchase order for ${who} not saved.` : "The Agent's proposal was not saved.",
-    why: String((ctx && ctx.question) || "").slice(0, 200), tool: toolOf(proposal, ctx), before: "Nothing", after: "Nothing saved", outcome: "Dismissed by the person (Not now)" });
+    why: String((ctx && ctx.question) || "").slice(0, 200), tool: toolOf(proposal, ctx), before: "Nothing", after: "Nothing saved", approvedBy: "Not approved (Not now)", outcome: "Dismissed by the person (Not now)" });
   return { ok: true };
 }

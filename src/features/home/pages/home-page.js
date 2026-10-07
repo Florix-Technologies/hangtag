@@ -1,20 +1,30 @@
-// Home: the day at a glance, compact and operational (services/home-signals.js works out every figure from the shop's
-// own records). Quick actions by role beside the shop's name; then Today (sales, bills, average bill and, for those who
-// see reports, gross profit when cost prices allow), Needs attention (only what this person can act on, each with where
-// to act), the Hangtag Agent's insights, recent bills and the last 7 days. By role:
-//   owner:   everything, with cash / UPI / card taken today
-//   manager: everything but the money split
+// Home: the day at a glance, compact and operational (services/home-signals.js and reports/services/business-today.js
+// work out every figure from the shop's own records). Quick actions by role beside the shop's name; then Business today
+// (sales against a usual <weekday> by this time, bills, average bill and, for those who see reports, gross profit when cost
+// prices allow, what customers owe and the stock's value — each opening why it is what it is), Needs attention (only what
+// this person can act on, each with where to act), the Hangtag Agent's insights, recent bills and the last 7 days. By role:
+//   owner:   everything, with cash / UPI / card taken today and reconciliation
+//   manager: everything but the money split and reconciliation
 //   cashier: today, what needs them (held bills, orders, receipts not sent), recent bills, customers
 //   server / kitchen: today and their tables or the kitchen queue (quick actions)
 // An action shows only when its module is shown in this shop (services/modules.js); the actions still check the role.
 // The greeting (#welcome) sits above, once a day.
 import { store } from '../../../shared/state/store.js';
 import { syncSummary } from '../../sync/components/sync-status.js';
-import { can, canAny, currentRole } from '../../shop/services/access.js';
+import { can, canAny, currentPerms, currentRole } from '../../shop/services/access.js';
+import { businessScope, homeSections } from '../../../domain/shop/role-workspace.js';
+import { setTab } from '../../../shared/ui/render.js';
+import { heldHTML, opsRowHTML, ownerRowHTML, shiftHTML, tablesHTML } from '../components/role-sections.js';
+import { briefingHTML, briefingText } from '../components/briefing-card.js';
+import { watchSettings } from '../../automation/services/watchers.js';
+import { savePrefs } from '../../../shared/state/persistence.js';
 import { moduleShown } from '../../shop/services/modules.js';
-import { orderMobileActions } from '../../../domain/shop/mobile-workflow.js';
+import { homeActions } from '../../shop/services/quick-actions.js';
 import { shopTypeLabel } from '../../shop/services/shop-caps.js';
-import { agentInsights, attentionItems, recentBills, salesTrend, stockAlerts, todayFigures } from '../services/home-signals.js';
+import { agentInsights, attentionItems, recentBills, salesTrend, stockAlerts } from '../services/home-signals.js';
+import { businessTodayView } from '../../reports/services/business-today.js';
+import { REF_LABELS } from '../../../domain/reports/business-today.js';
+import { salesByChannel } from '../../commerce/services/channels.js';
 import { subscriptionBannerHTML } from '../../billing/components/plans-billing.js';
 import { billChips } from '../../bills/services/bill-status.js';
 import { NAV_ICONS } from '../../../shared/constants/nav-icons.js';
@@ -23,38 +33,70 @@ import { $, esc } from '../../../shared/dom.js';
 import { agoText, dayKey, dayLab, dayLong, fmtDate, hhmm } from '../../../shared/formatting/dates.js';
 import { inr, inrShort } from '../../../shared/formatting/money.js';
 
-/* Quick actions by role (domain/shop/mobile-workflow.js orders them): the few that start the day's work */
-const ACTIONS = [
-  { id:"sale", label:"Quick sell", attr:'data-tab="sell"', module:"sell", perms:["create_sale"], icon:"sell" },
-  { id:"scan", label:"Scan to sell", attr:'data-act="scan"', module:"sell", perms:["create_sale"], icon:"tracking" },
-  { id:"stock", label:"Quick receive", attr:'data-act="stockin"', module:"stock", perms:["manage_inventory"], icon:"purchases" },
-  { id:"reorder", label:"Smart reorder", attr:'data-tab="stock" data-subview="stock:smart"', module:"stock", perms:["manage_inventory", "view_reports"], icon:"smart" },
-  { id:"orders", label:"Orders", attr:'data-tab="orders"', module:"orders", perms:["create_sale", "create_order"], icon:"orders" },
-  { id:"customers", label:"Customers", attr:'data-tab="customers"', module:"customers", perms:["create_sale", "collect_credit", "create_order"], icon:"customers" },
-  { id:"tables", label:"Tables", attr:'data-tab="tables"', module:"tables", perms:["manage_tables", "create_order"], icon:"tables" },
-  { id:"kitchen", label:"Kitchen queue", attr:'data-tab="kitchen"', module:"kitchen", perms:["manage_kitchen"], icon:"kitchen" },
-];
-const ROLE_ACTIONS = { owner: ["sale", "scan", "stock", "tables"], manager: ["stock", "reorder", "tables"], cashier: ["sale", "scan", "tables"], server: ["tables"], kitchen: ["kitchen"] };
-/* The quick actions this person has in this shop: [{ label, attr, icon }] (a restaurant's tables take the place of scanning) */
-export const homeActions = () => { const want = ROLE_ACTIONS[currentRole()] || ROLE_ACTIONS.owner, tables = moduleShown("tables");
-  return orderMobileActions(currentRole(), ACTIONS.filter(a => moduleShown(a.module) && (!a.perms.length || canAny(a.perms)) && !(a.id === "scan" && tables))).filter(a => want.includes(a.id)); };
-
 export { stockAlerts };
 const card = (title, link, body, cls = "", aria = "") => `<section class="card hcard${cls ? " " + cls : ""}"${aria ? ` aria-label="${esc(aria)}"` : ""}><div class="card-h"><h3>${title}</h3>${link || ""}</div>${body}</section>`;
 const linkTo = (attr, label) => `<button class="link xs" type="button" ${attr}>${esc(label)} ${UI_ICON.chevron}</button>`;
-const kpi = (label, value, sub, tone) => `<div class="hkpi${tone ? " " + tone : ""}"><span>${esc(label)}</span><b>${value}</b><small>${sub || "&nbsp;"}</small></div>`;
 
-/* Today: sales, bills, average bill and (for those who see reports) gross profit when cost prices allow; cash / UPI / card for the owner */
-function todayHTML(withMoney){
-  const T = todayFigures(), d = T.vsYesterday;
-  let k = kpi("Sales", inr(T.sales), d == null ? (T.bills ? "after returns" : "no bills yet") : d === 0 ? "same as this time yesterday" : `${d > 0 ? "▲" : "▼"} ${Math.abs(d)}% vs this time yesterday`, d == null || d === 0 ? "" : d > 0 ? "up" : "down")
-    + kpi("Bills", String(T.bills), T.pieces ? T.pieces + (T.pieces === 1 ? " piece" : " pieces") : "")
-    + kpi("Average bill", T.bills ? inr(T.avg) : "—", "per bill");
-  if(T.profit) k += T.profit.shown ? kpi("Gross profit", inr(T.profit.value), T.profit.margin == null ? "sales less cost" : `${T.profit.margin}% margin${T.profit.complete ? "" : ` · cost known on ${Math.round(T.profit.coverage * 100)}% of sales`}`)
-    : kpi("Gross profit", "—", `cost prices missing on ${100 - Math.round(T.profit.coverage * 100)}% of sales`, "muted");
-  const chan = T.channels.length > 1 ? `<p class="hchan">${T.channels.map(c => `<span data-channel="${esc(c.key)}">${esc(c.label)} <b>${inr(c.sales)}</b></span>`).join("")}</p>` : "";
-  const money = withMoney && T.money ? `<div class="hmoney"><span class="pm cash">Cash <b>${inr(T.money.cash)}</b></span><span class="pm upi">UPI <b>${inr(T.money.upi)}</b></span><span class="pm card">Card <b>${inr(T.money.card)}</b></span></div>` : "";
-  return card("Today", moduleShown("report") ? linkTo('data-tab="report"', "Reports") : "", `<div class="hkpis">${k}</div>${chan}${money}`, "htoday", "Today");
+/* Business today (reports/services/business-today.js): the day's figures against a usual <weekday> by this time, each a
+   button that opens WHY it is what it is — an unusual figure is marked, and the worst of them opens by itself. What it
+   shows is the role's (role-workspace.js businessScope): the owner sales, gross profit (when cost prices cover enough of
+   the sales), what customers owe, the stock's value, cash / UPI / card and reconciliation; a manager sales, what customers
+   owe and the stock; anyone else who sells plain sales, bills and the average bill. */
+const MONEY_KEYS = ["cash", "upi", "card", "reconciliation"];
+const ASK = { sales: x => x.change < 0 ? "Why are sales down today?" : x.change > 0 ? "Why are sales up today?" : "Explain today's sales", bills: () => "Explain today's sales",
+  avgBill: () => "Why is the average bill different today?", profit: () => "Explain today's margin", cash: () => "Explain today's payments", upi: () => "Explain today's payments",
+  card: () => "Explain today's payments", receivables: () => "Explain what customers owe", stock: () => "Explain the stock value", reconciliation: () => "Why doesn't the money reconcile?" };
+const figureValue = x => x.display != null ? esc(x.display) : x.value == null ? "—" : x.key === "bills" ? esc(String(x.value)) : inr(x.value);
+/* The figure whose reasons show: the one tapped; untouched, the most pressing unusual one; "" when closed */
+const openFigure = V => { const w = store.homeWhy; return w === undefined ? (V.unusual[0] || "") : V.figures.some(x => x.key === w) ? w : ""; };
+function whyHTML(V, key){
+  const byKey = Object.fromEntries(V.figures.map(x => [x.key, x])), base = byKey[key] && byKey[key].opens ? byKey[byKey[key].opens] : byKey[key];
+  if(!base) return "";
+  const x = byKey[key].opens ? { ...base, headline: byKey[key].headline + " " + base.headline } : base;
+  const rs = x.reasons.map(r => `<li><span>${esc(r.text)}</span>${r.ref ? `<button type="button" class="link xs" data-agentopen="${esc(r.ref.target)}|${esc(r.ref.id || "")}">${esc(REF_LABELS[r.ref.target] || "Open")} ${UI_ICON.chevron}</button>` : ""}</li>`).join("");
+  const ask = moduleShown("assistant") ? `<button type="button" class="btn sm" data-tab="assistant" data-ask-question="${esc((ASK[key] || ASK.sales)(byKey[key]))}">${NAV_ICONS.assistant || ""}<span>Ask the Agent</span></button>` : "";
+  return `<div class="bt-why${x.unusual ? " " + esc(x.tone || "warn") : ""}" id="btWhy" role="region" aria-label="${esc(byKey[key].label)}: why" aria-live="polite">
+    <p class="bt-h">${esc(x.headline)}</p>${rs ? `<ul class="bt-rs">${rs}</ul>` : ""}${x.check ? `<p class="bt-check"><b>Worth checking:</b> ${esc(x.check)}</p>` : ""}
+    <div class="bt-acts">${ask}<button type="button" class="link xs" data-bt="">Close</button></div></div>`;
+}
+function todayHTML(role){
+  const reports = can("view_reports"), V = businessTodayView(Date.now(), businessScope(role, currentPerms()));
+  const open = reports ? openFigure(V) : "";
+  const tile = x => {
+    const inner = `<span>${esc(x.label)}</span><b>${figureValue(x)}</b><small>${esc(x.sub) || "&nbsp;"}</small>${x.unusual ? `<em class="bt-flag">${x.tone === "bad" ? "Check" : "Why?"}</em>` : ""}`;
+    const cls = `hkpi bt-${esc(x.key)}${x.tone ? " " + esc(x.tone) : ""}${x.unusual ? " unusual" : ""}`;
+    return reports ? `<button type="button" class="${cls}${open === x.key ? " on" : ""}" data-bt="${esc(x.key)}" aria-expanded="${open === x.key}" aria-controls="btWhy">${inner}</button>` : `<div class="${cls}">${inner}</div>`;
+  };
+  const main = V.figures.filter(x => !MONEY_KEYS.includes(x.key)), money = V.figures.filter(x => MONEY_KEYS.includes(x.key));
+  let channels = [];
+  try{ channels = salesByChannel(dayKey(Date.now()), dayKey(Date.now()), ""); }catch{ channels = []; }
+  const chan = channels.length > 1 ? `<p class="hchan">${channels.map(c => `<span data-channel="${esc(c.key)}">${esc(c.label)} <b>${inr(c.sales)}</b></span>`).join("")}</p>` : "";
+  const body = `${V.comparison ? `<p class="bt-basis">Compared with ${esc(V.comparison.label)}${V.comparison.kind === "usual" ? ` (the last ${V.comparison.days} ${esc(fmtDate(Date.now(), { weekday: "long" }))}s)` : ""}.</p>` : ""}
+    <div class="hkpis">${main.map(tile).join("")}</div>${chan}
+    ${money.length ? `<h4 class="bt-sub">Money today</h4><div class="hkpis bt-money">${money.map(tile).join("")}</div>` : ""}${open ? whyHTML(V, open) : ""}`;
+  return card(reports ? "Business today" : "Today", moduleShown("report") ? linkTo('data-tab="report"', "Reports") : "", body, "htoday", reports ? "Business today" : "Today");
+}
+/* A figure tapped: its reasons open (tapped again, or Close: they close) */
+let installed = false;
+export function installHomeEvents(){
+  if(installed) return; installed = true;
+  document.addEventListener("click", e => {
+    // the morning briefing: shared as text (the share sheet, else WhatsApp), or hidden until tomorrow
+    const br = e.target && e.target.closest ? e.target.closest("[data-brief]") : null;
+    if(br){
+      if(br.dataset.brief === "hide"){ store.prefs.briefingHidden = dayKey(Date.now()); savePrefs(); renderHome(); return; }
+      const text = briefingText(Date.now());
+      if(navigator.share) navigator.share({ text }).catch(() => {}); else window.open("https://wa.me/?text=" + encodeURIComponent(text), "_blank", "noopener");
+      return;
+    }
+    const tb = e.target && e.target.closest ? e.target.closest("[data-hometable]") : null;
+    if(tb){ store.tableView = Object.assign({ mode: "floor", edit: null }, store.tableView, { sel: tb.dataset.hometable }); setTab("tables"); return; }
+    const b = e.target && e.target.closest ? e.target.closest("[data-bt]") : null; if(!b) return;
+    const key = b.dataset.bt, on = document.querySelector("#homeBody [data-bt][aria-expanded=\"true\"]"), openNow = on ? on.dataset.bt : "";
+    store.homeWhy = !key || openNow === key ? "" : key;
+    renderHome();
+    if(store.homeWhy){ const w = $("#btWhy"); if(w && w.getBoundingClientRect().bottom > innerHeight) w.scrollIntoView({ block: "nearest" }); }
+  });
 }
 /* What needs someone, worst first, each with where to act on it */
 function attentionHTML(){
@@ -99,10 +141,13 @@ export function homeHTML(){
   let h = `<div class="viewhead hhead"><div><div class="eyebrow">${esc(fmtDate(now, { weekday: "long", day: "numeric", month: "long" }))}</div>
     <h2 class="vt">${esc(p.shop_name || "Your shop")}</h2><p>${esc(shopTypeLabel())}</p></div>${acts.length ? `<div class="qa" role="group" aria-label="Quick actions">${acts.map((a, i) => `<button type="button" class="btn ${i === 0 ? "primary" : ""} qa-b" ${a.attr}>${NAV_ICONS[a.icon] || ""}<span>${esc(a.label)}</span></button>`).join("")}</div>` : ""}</div>`;
   h += subscriptionBannerHTML();   // the free trial's days left, or a paid plan ending within a week (owner and managers)
-  const sells = canAny(["create_sale", "view_reports"]), reports = can("view_reports");
-  const today = sells ? todayHTML(role === "owner") : "";
-  if(reports) h += `<div class="homegrid wide">${today}<div class="hcol">${attentionHTML()}${sells ? billsHTML() : ""}</div><div class="hcol">${insightsHTML()}${trendHTML()}</div></div>`;
-  else h += `<div class="homegrid">${today}${attentionHTML()}${sells && role === "cashier" ? billsHTML() : ""}${role === "cashier" && moduleShown("customers") ? customersHTML() : ""}</div>`;
+  // what this role's day is about (domain/shop/role-workspace.js): full-width sections first, then two columns
+  const SEC = homeSections(role, currentPerms()), has = k => SEC.includes(k), sells = canAny(["create_sale", "view_reports"]), reports = can("view_reports");
+  const top = [has("briefing") && can("view_reports") && watchSettings().briefing === "notify" ? briefingHTML(now) : "", has("business") && sells ? todayHTML(role) : "", has("shift") ? shiftHTML(now) : "", has("tables") ? tablesHTML() : "",
+    has("owner") ? ownerRowHTML(now, () => { if(store.prefs.tab === "home") renderHome(); }) : "", has("ops") ? opsRowHTML(now) : ""].join("");
+  const left = [has("held") ? heldHTML(now) : "", has("attention") ? attentionHTML() : "", has("bills") && sells ? billsHTML() : ""].join("");
+  const right = [has("agent") && reports ? insightsHTML() : "", has("trend") && reports ? trendHTML() : "", has("customers") && moduleShown("customers") ? customersHTML() : ""].join("");
+  h += `<div class="homegrid wide">${top}<div class="hcol">${left}</div>${right ? `<div class="hcol">${right}</div>` : ""}</div>`;
   // the line takes the state's tone only: the header's sync chip (class "sync") hides its words on a phone
   const S = syncSummary();
   h += `<p class="hsync ${esc(S.cls.replace(/\bsync\b/, "").trim())}"><i></i><span><b>Sync:</b> ${esc(S.txt)}${store.lastSyncAt ? ` · last fully synced ${esc(agoText(store.lastSyncAt))}` : ""}</span><button class="link xs" type="button" data-act="syncpanel">Details</button></p>`;

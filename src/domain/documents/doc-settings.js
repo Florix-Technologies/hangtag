@@ -1,4 +1,4 @@
-// The shop's document templates (Settings → Billing & Documents → Templates): one look for every A4 document — tax invoice,
+// The shop's document templates (Settings → Bills & Documents → Templates): one look for every A4 document — tax invoice,
 // bill, quotation, sales order, delivery challan, credit note, purchase order. A template (Standard, Classic, Modern,
 // Compact), an accent colour, whether GST details are shown, terms, a signature line, the bank or UPI details to print, and
 // whether the authorised signature and the company stamp (pictures, uploaded in the same place) are printed. The templates

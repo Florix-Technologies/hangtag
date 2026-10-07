@@ -224,6 +224,7 @@
  *   Resolves only when the provider accepted the message and returned its id. Otherwise throws an AppError:
  *   NOT_CONFIGURED (no provider), VALIDATION (no contact, cancelled, too many), DELIVERY (the provider refused), NETWORK.
  * @property {(saleId: string) => Promise<Object[]>} history  What was sent from a bill (hangtag_deliveries), newest first.
+ * @property {(since: number) => Promise<Object[]>} recent  What was sent from any bill since a time (ms), newest first, at most 500.
  * @property {(saleId: string) => Promise<Object>} refresh  Asks the providers whether the bill's messages were delivered.
  * @property {(saleId: string) => Promise<{url: string}>} link  The bill's secure invoice link (made once, 12 months).
  * @property {(saleId: string) => Promise<void>} revokeLinks  Stops the bill's invoice links working.
@@ -299,7 +300,7 @@
 /**
  * "weightScale": a weighing scale on this device. Implementation: infrastructure/hardware/weight-scale.js — a scale on a
  * cable through Web Serial (any scale that prints "a number and a unit"; baud rate, bare-number unit and an optional
- * request command from Settings → Team & Devices, store.scale), else the manual provider (the weight is typed). Reach it through
+ * request command from Settings → This device, store.scale), else the manual provider (the weight is typed). Reach it through
  * features/hardware/services/scale.js. Nothing here throws: failures come back as { error } with a message a person can
  * act on, and typing the weight is always possible.
  * @typedef {Object} WeightScalePort

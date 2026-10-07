@@ -14,7 +14,7 @@ import { openCashForm } from '../../finance/components/cash-form.js';
 
 /* Registered once at start-up (app/main.js). */
 export function installAccountMenuEvents(){
-  installTeamEvents(() => openSettings("devices"));   // Settings → Team & Devices: the team and roles screens (back leads there)
+  installTeamEvents();   // More → Team: the team and roles screens
   installSettingsEvents();           // Settings: the section bar, Capabilities
   aEl("acctBtn").addEventListener("click", e => { e.stopPropagation(); if(aEl("acctMenu").hidden) openAcctMenu(); else closeAcctMenu(); });
   aEl("acctMenu").addEventListener("click", e => {

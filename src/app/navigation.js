@@ -37,7 +37,7 @@ import { subscriptionLocked } from '../features/billing/services/subscription.js
 /* The phone's tab bar for the person signed in: { bar: [module ids], allowed: [module ids a phone shows this role] } */
 export function phoneNav(){
   const list = shownModules(), ids = mobileModulesFor(currentRole(), list, currentPerms()).map(d => d.id);
-  return { bar: phoneBarFor(currentRole(), list.some(d => d.id === "tables"), ids), allowed: ids };
+  return { bar: phoneBarFor(currentRole(), ids), allowed: ids };
 }
 const iconOf = it => NAV_ICONS[it.sub && it.sub !== "levels" ? it.sub : it.tab] || NAV_ICONS[it.tab] || NAV_ICONS.dot;
 /* A destination's button: a module ([data-tab]) or a part of one ([data-navsub]; Stock's own part carries both) */
@@ -53,7 +53,7 @@ function drawNav(){
   bar.forEach(tab=>{ if(!byTab.has(tab)){ const d=moduleDef(tab); if(d) byTab.set(tab,{tab,id:tab,label:d.label,area:tab}); } });
   const h=[...byTab.values()].map(it=>{
     const pb=bar.indexOf(it.tab), label=it.tab==="report"?"Reports":it.label;
-    return `<button type="button" class="navi${pb>=0?" pb":""}" ${destAttrs(it)} data-dest="${esc(it.id)}" data-area="${esc(it.area)}"${pb>=0?` style="--pbo:${pb}"`:""}>${iconOf(it)}<span>${esc(label)}</span></button>`;
+    return `<button type="button" class="navi${pb>=0?" pb":""}" ${destAttrs(it)} data-dest="${esc(it.id)}" data-area="${esc(it.area)}" data-navtab="${esc(it.tab)}"${pb>=0?` style="--pbo:${pb}"`:""}>${iconOf(it)}<span>${esc(label)}</span></button>`;
   }).join("");
   nav.innerHTML = h + `<button type="button" class="navmore" data-navmore aria-haspopup="dialog">${NAV_ICONS.more}<span>More</span></button>`;
 }
@@ -79,14 +79,17 @@ export function renderNav(){
   const where = none ? { area: "", id: "" } : navWhere(), { bar } = phoneNav(), wide = window.innerWidth >= 1000;
   // the places the bar shows at this width: every workspace on a desktop, the tab-bar places on a phone
   const barAreas = new Set($$(wide ? ".nav .navi" : ".nav .navi.pb").map(b => b.dataset.area));
+  let lit = false;
   $$(".nav .navi").forEach(b => {
-    const on = b.dataset.dest === where.id || b.dataset.area === where.area;
+    // a workspace's button, or the button of its area (a server's Tables, Orders and Kitchen are each their own place)
+    const on = !none && (b.dataset.dest === where.id || b.dataset.area === where.area || b.dataset.navtab === store.prefs.tab);
+    if(on && (wide || b.classList.contains("pb"))) lit = true;
     if(on) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
     // a tab-bar place stands for its whole area (Stock is lit on Products too)
     b.classList.toggle("areaon", b.classList.contains("pb") && b.dataset.area === where.area);
   });
   const more = $(".nav [data-navmore]");
-  if(more){ if(where.area && !barAreas.has(where.area) && (wide || !bar.includes(store.prefs.tab))) more.setAttribute("aria-current", "page"); else more.removeAttribute("aria-current"); }
+  if(more){ if(where.area && !lit && !barAreas.has(where.area) && (wide || !bar.includes(store.prefs.tab))) more.setAttribute("aria-current", "page"); else more.removeAttribute("aria-current"); }
   registeredModules().forEach(id => { if(moduleDef(id).view === false) return; const s = sectionOf(id); if(s) s.hidden = none || id !== store.prefs.tab; });
   $("#v-none").hidden = !none;
   $("#billBar").hidden = none || store.prefs.tab !== "sell";
@@ -131,7 +134,7 @@ export function openNavMore(){
   const groups = moreGroups(bar, window.innerWidth < 1000 ? phone.allowed : null).map(g => ({ ...g, items: g.items.filter(it => !inHeader.has(it.tab)) })).filter(g => g.items.length);
   $("#modalHost").innerHTML = `<div class="scrim" data-modal-scrim><div class="sheet navsheet" role="dialog" aria-modal="true" aria-labelledby="navMoreT">
     <div class="sh-head"><h3 id="navMoreT" style="margin:0;flex:1">More</h3><button class="iconbtn" type="button" data-modal-close aria-label="Close">${ICON.x}</button></div>
-    ${groups.map(g => `<div class="navgrp">${g.label ? `<h4>${esc(g.label)}</h4>` : ""}<div class="navlist">${g.items.map(it =>
+    ${groups.map(g => `<div class="navgrp">${g.label && g.items.length > 1 ? `<h4>${esc(g.label)}</h4>` : ""}<div class="navlist">${g.items.map(it =>
       `<button type="button" class="navitem" ${destAttrs(it)}${it.id === where.id ? ' aria-current="page"' : ""}>${iconOf(it)}<span>${esc(it.label)}</span></button>`).join("")}</div></div>`).join("")}</div></div>`;
 }
 

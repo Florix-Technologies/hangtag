@@ -57,7 +57,7 @@ export function fillDetails(saleId, values){
   const s = D().saleById[saleId]; if(!s) return { error: "That bill isn't on this device." };
   const v = values || {}, has = k => v[k] != null && String(v[k]).trim() !== "";
   if(["seller_pin", "seller_name"].some(has)){
-    if(!can("manage_settings")) return { error: "Ask the owner to add the shop's GST details (Settings → Billing & Documents → E-invoice and e-way bill)." };
+    if(!can("manage_settings")) return { error: "Ask the owner to add the shop's GST details (Settings → Bills & Documents → E-invoice and e-way bill)." };
     if(has("seller_pin") && !/^[1-9][0-9]{5}$/.test(String(v.seller_pin).trim())) return { error: "A PIN code has 6 digits." };
     store.settings = { ...store.settings, einv: { ...(store.settings.einv || {}), ...(has("seller_pin") ? { pin: String(v.seller_pin).trim() } : {}), ...(has("seller_name") ? { legalName: String(v.seller_name).trim().slice(0, 100) } : {}) } };
     saveSettings(); enqueue({ type: "settings" });
@@ -94,7 +94,7 @@ export async function exportJSON(saleId, what){
   const ok = await use("files").saveFile(name, JSON.stringify(what === "eway" ? { version: "1.0.0621", billLists: [payload] } : [payload], null, 2), "application/json");
   return ok ? { ok: true, name } : { error: "The file couldn't be saved." };
 }
-/* Settings → Billing & Documents → E-invoice and e-way bill: { einvOn, b2bOnly, legalName, pin, ewayOn, threshold } */
+/* Settings → Bills & Documents → E-invoice and e-way bill: { einvOn, b2bOnly, legalName, pin, ewayOn, threshold } */
 export function saveGstSettings(x){
   const no = denied("manage_settings", "change GST settings"); if(no) return no;
   const pin = String(x.pin || "").trim();

@@ -69,7 +69,7 @@ export const saleItemRows = s => (s.items||[]).map((i,k)=>{ const d = normalizeD
   serials:snRow(i.sn), batches:btRow(i.bt), ...(i.kit ? { kit:{ v:i.kit.v, p:i.kit.p, name:String(i.kit.name||"").slice(0,120), n:+i.kit.n||0 } } : {}) }; });
 /* A bill's payments (one row per method; bills from before split payments have one) */
 export const paymentRows = s => paymentsOf(s).map(p => ({ id:p.id, sale_id:s.id, method:p.method, amount:p.amount,
-  tendered:p.method==="cash" ? (p.received==null ? p.amount : p.received) : null, change_given:p.change||0, reference:p.ref||null, t:s.t, device_id:s.dev||store.dev,
+  tendered:p.method==="cash" ? (p.received==null ? Math.round((p.amount+(p.change||0))*100)/100 : p.received) : null, change_given:p.change||0, reference:p.ref||null, t:s.t, device_id:s.dev||store.dev,
   verification:p.verification||"recorded", via:p.method==="cash" ? null : p.via||null, intent_id:p.intent||null, provider_payment_id:p.providerRef||null,
   card_last4:p.method==="card" && p.last4 ? p.last4 : null, ...(p.providerFee==null?{}:{provider_fee:p.providerFee}) }));
 export const rowToPayment = r => Object.assign({ id:r.id, method:r.method, amount:+r.amount },
@@ -102,7 +102,7 @@ export const returnRow = r => ({ id:r.id, sale_id:r.sale, t:r.t, kind:r.kind||"r
 export const returnItemRows = r => r.items.map((i,k)=>({ return_id:r.id, line_no:k, sale_id:r.sale, sale_line_no:i.ln, variant_id:i.v||null, product_id:i.p, product_name:i.n,
   color:i.c||"", size:i.s==null?"":i.s, variant_label:i.vl||null, options:ovToRow(i.ov), sku:i.sku||null, quantity:i.q, unit_price:i.price, value:i.value||0, cost_price:i.cost==null?null:i.cost,
   restock:i.restock!==false, taxable_value:i.tx==null?null:i.tx, gst_rate:i.gst==null?null:i.gst, cgst_amount:i.cgst||0, sgst_amount:i.sgst||0, igst_amount:i.igst||0, hsn:i.hsn||null,
-  serials:snRow(i.sn), batches:btRow(i.bt) }));
+  serials:snRow(i.sn), batches:btRow(i.bt), reason:i.reason||null }));
 /* One return for RPC hangtag_save_return */
 export const returnArgs = r => ({ p_return:returnRow(r), p_items:returnItemRows(r) });
 export const custRow = c => Object.assign({ id:c.id, name:c.name, phone:c.phone||null, email:c.email||null, gstin:c.gstin||null, customer_type:c.type==='business'?'business':'individual', created_at:new Date(c.t||Date.now()).toISOString(), updated_at:new Date().toISOString() },
@@ -125,7 +125,7 @@ export const rowToVariant = v => ({ id:v.id, o:Array.isArray(v.option_values)?v.
   price:v.price==null?null:v.price, cost:v.cost_price==null?null:v.cost_price, active:v.active!==false });
 export const rowToReturnItem = i => Object.assign({ ln:i.sale_line_no, v:i.variant_id||undefined, p:i.product_id, n:i.product_name,
   c:i.color||"", s:i.size, vl:i.variant_label||"", ov:rowToOv(i.options), sku:i.sku||"", q:roundQty(i.quantity), price:numOr0(i.unit_price), value:numOr0(i.value), cost:i.cost_price==null?null:i.cost_price },
-  i.restock===false ? { restock:false } : {}, i.unit && i.unit !== "pcs" ? { u:i.unit } : {}, rowSnBt(i),
+  i.restock===false ? { restock:false } : {}, i.reason ? { reason:i.reason } : {}, i.unit && i.unit !== "pcs" ? { u:i.unit } : {}, rowSnBt(i),
   // the GST reversed on the line (returns saved since credit notes)
   i.taxable_value!=null ? { tx:num(i.taxable_value), gst:numOr0(i.gst_rate), cgst:numOr0(i.cgst_amount), sgst:numOr0(i.sgst_amount), igst:numOr0(i.igst_amount), hsn:i.hsn||"" } : {});
 export const rowToReturn = (r, items) => Object.assign({ id:r.id, sale:r.sale_id, t:Number(r.t), kind:r.kind||"return", ex:r.exchange_id||null, refund:numOr0(r.refund_amount),

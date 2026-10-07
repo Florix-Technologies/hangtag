@@ -2,11 +2,11 @@
 // (Thermal printers: features/printing. Sending through a provider: features/delivery.)
 import { printDocument } from '../components/doc-actions.js';
 import { invoiceModel } from './doc-models.js';
-import { gstLines } from '../../../domain/invoices/invoice.js';
+import { billContent, billRows } from '../../../domain/documents/bill-content.js';
 import { store } from '../../../shared/state/store.js';
 import { D } from '../../inventory/services/ledger.js';
 import { RECEIPT_CSS, receiptHTML } from '../components/receipt-view.js';
-import { invoiceFor, payLines, receiptText } from './receipt-model.js';
+import { invoiceFor, receiptText } from './receipt-model.js';
 import { toast } from '../../../shared/components/toast.js';
 import { use } from '../../../shared/di/services.js';
 import { esc } from '../../../shared/dom.js';
@@ -54,13 +54,9 @@ export async function receiptPNG(s){
   I.lines.forEach(l=>{wrap(l.name,W-2*P-150).forEach((ln,i)=>i===0?pair(ln,inrx(l.gross),{bold:true,size:21}):text(ln,{bold:true,size:21}));
     text(`${l.variant?l.variant+" · ":""}${l.qtyText||l.qty} × ${inr(l.rate)}${l.unit?"/"+l.unit:""}`,{size:18,color:"#444"}); if(l.discount) pair("Discount"+(l.discountLabel?" "+l.discountLabel:""),"−"+inrx(l.discount),{size:18,color:"#444"})});
   rule();
-  const G=gstLines(I);
-  pair("Subtotal",inrx(T.subtotal)); if(T.discount) pair("Discount","−"+inrx(T.discount)); if(G.length&&!I.inclusive){ pair("Taxable amount",inrx(T.taxable)); G.forEach(g=>pair(g.label,inrx(g.amount))); }
-  if(T.roundOff) pair("Round off",(T.roundOff>0?"+":"")+inrx(T.roundOff));
-  pair("Total",inr(T.total),{bold:true,size:28}); if(G.length&&I.inclusive) G.forEach(g=>pair("Includes "+g.label,inrx(g.amount),{size:18}));
-  if(T.credit){ pair("Exchange credit","−"+inr(T.credit)); pair("Amount due",inr(T.due),{bold:true}); }
-  payLines(I).forEach(p=>pair("Paid by "+p.label,inrx(p.amount)));
-  if(I.change) pair("Change",inrx(I.change));
+  // the money rows: the bill's one document (domain/documents/bill-content.js), as on every other output
+  const B=billContent(I);
+  billRows(B).forEach(x=>pair(x.label,x.amount==null?"":(x.sign||"")+inrx(x.amount),x.key==="total"?{bold:true,size:28}:x.grand?{bold:true}:x.small?{size:18}:{}));
   if(I.footer){y+=6;wrap(I.footer,W-2*P).forEach(l=>text(l,{align:"c",size:19}))}
   c.width=W; c.height=y+P;
   x.fillStyle="#fff"; x.fillRect(0,0,W,c.height);

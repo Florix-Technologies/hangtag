@@ -79,7 +79,7 @@ const USER=(extra)=>`({user:Object.assign({id:'u1',email:'raj@example.com',creat
     // settings
     await A.click('#acctBtn');await A.click('[data-am="settings"]');await sleep(200);
     check('settings open with your details filled in',(await A.$eval('#ps_shop_name',e=>e.value))==='Raj Boutique'&&(await A.$eval('#ps_gstin',e=>e.value))==='27ABCDE1234F1Z5');
-    // your account (email, how you sign in) is under Team & Devices
+    // your account (email, how you sign in) is under This device
     await A.click('.setlist [data-setgo="devices"]');await sleep(150);
     check('settings: account info (email, method, member since)',(await txt(A,'#kvEmail'))==='raj@example.com'&&(await txt(A,'#kvMethod'))==='Google'&&(await txt(A,'#kvSince'))==='15 January 2026',[await txt(A,'#kvMethod'),await txt(A,'#kvSince')]);
     await A.screenshot({path:SHOT+'e7-settings.png',fullPage:false});

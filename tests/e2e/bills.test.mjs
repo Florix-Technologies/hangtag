@@ -143,7 +143,7 @@ await A.click('#commandResults [data-commandsupplier]'); await sleep(350);
 check('...and opens it in Stock → Suppliers', await run('return prefs.tab==="stock"&&currentSubview("stock").id==="suppliers"&&!!supplierView&&!!supplierView.id') && /Ravi Textiles/.test(await text('#v-stock') || ''));
 await A.click('#globalActions [data-global="search"]'); await sleep(200);
 await type('#commandSearch', 'printer');
-check('finds a setting, the named one first (Receipt printer on this device, in Team & Devices)', /Receipt printer on this device/.test(await text('#commandResults [data-commandsetting]') || ''));
+check('finds a setting, the named one first (Receipt printer on this device, in This device)', /Receipt printer on this device/.test(await text('#commandResults [data-commandsetting]') || ''));
 await A.click('#commandResults [data-commandsetting^="devices|"]'); await sleep(350);
 check('...and opens its section of Settings', await run('return prefs.tab==="settings"') && await vis('#set-devices #printerForm'));
 await run('setTab("bills");renderAll()'); await sleep(200);

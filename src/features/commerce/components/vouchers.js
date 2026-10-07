@@ -16,7 +16,8 @@ const V = () => store.bizView || {};
 const TONE = { active: "ok", fully_redeemed: "muted", expired: "warn", cancelled: "bad" };
 const qr = text => { try{ return use("qrCodeService").render(text, { unit: "px", size: 180, margin: 2 }); }catch{ return ""; } };
 /* Under an empty bill: sell a voucher (shops that use them) */
-export const voucherSellHTML = () => usesVouchers() && can("create_sale") ? `<button type="button" class="link xs" data-gvnew>Sell a gift voucher</button>` : "";
+/* The empty bill: sell a gift voucher, or look one up (its balance, cancel it) */
+export const voucherSellHTML = () => usesVouchers() && can("create_sale") ? `<span class="gvlinks"><button type="button" class="link xs" data-gvnew>Sell a gift voucher</button><button type="button" class="link xs" data-gvlist>Gift vouchers</button></span>` : "";
 export function openVoucherIssue(){
   const c = store.cartCust;
   store.bizView = { kind: "gvnew", amount: "", method: "cash", custId: c && c.id || "", custName: c && c.name || "", expires: "", busy: false, err: "" };
@@ -35,7 +36,7 @@ function renderVoucherIssue(){
       <div class="seg" role="group" aria-label="Paid by">${["cash", "upi", "card"].map(m => `<button type="button" data-gvmethod="${m}" aria-pressed="${F.method === m}">${m === "upi" ? "UPI" : m[0].toUpperCase() + m.slice(1)}</button>`).join("")}</div>
       ${F.custName ? `<p class="note">For <b>${esc(F.custName)}</b> (the customer on the bill)</p>` : `<p class="note">For anyone (add a customer to the bill first to name it for them).</p>`}
       <details><summary>Use by a date</summary><label class="f">Last day<input data-gvf="expires" type="date" value="${esc(F.expires)}"></label></details>`,
-    foot: `<button type="button" class="btn sm" data-biz="close">Cancel</button><button type="button" class="btn sm primary" data-gvissue${F.busy ? " disabled" : ""}>${F.busy ? "Issuing…" : "Issue"}</button>` });
+    foot: `<button type="button" class="btn sm text" data-gvlist>All vouchers</button><button type="button" class="btn sm" data-biz="close">Cancel</button><button type="button" class="btn sm primary" data-gvissue${F.busy ? " disabled" : ""}>${F.busy ? "Issuing…" : "Issue"}</button>` });
 }
 export function openVoucherList(){
   store.bizView = { kind: "gvlist", err: "" };
@@ -85,10 +86,4 @@ export function vouchersClick(t){
 export function vouchersInput(t){
   const F = V(); if(F.kind !== "gvnew" || !t.matches("[data-gvf]")) return false;
   F[t.dataset.gvf] = t.value; return true;
-}
-export function vouchersSettingsHTML(){
-  if(!usesVouchers()) return "";
-  const active = voucherList().filter(v => voucherStatus(v) === "active");
-  return `<div class="setpart"><h5 class="subh">Gift vouchers</h5><p class="note" style="margin:0">${active.length ? `${active.length} active · ${inrx(active.reduce((a, v) => a + v.balance, 0))} still to spend` : "Sell a voucher; customers pay with it later."}</p>
-    <div class="setactions"><button type="button" class="btn sm" data-gvlist>Open vouchers</button>${can("create_sale") ? `<button type="button" class="btn sm" data-gvnew>Sell a voucher</button>` : ""}</div></div>`;
 }

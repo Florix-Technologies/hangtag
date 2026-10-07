@@ -48,3 +48,35 @@ export function nextAttemptAt(job,now){
   const at=now+RETRY_DELAYS[Math.min(Math.max(0,(job.attempts||1)-1),RETRY_DELAYS.length-1)];
   return at-(job.first==null?now:job.first)>RETRY_WINDOW?null:at;
 }
+
+/* ---------- where a bill's receipt is: Queued, Sent, Delivered or Failed ---------- */
+export const RECEIPT_STATES=Object.freeze({queued:"Queued",sent:"Sent",delivered:"Delivered",failed:"Failed"});
+const RANK={failed:1,queued:2,sent:3,delivered:4};
+/* A record's status (an automatic send on this device, or the server's record of a send) as one of the four, or null when
+   it says nothing about the customer getting it (WhatsApp opened on this device, a send skipped for a cancelled bill) */
+export function receiptStateOf(status){
+  if(status==="delivered"||status==="read") return "delivered";
+  if(status==="sent") return "sent";
+  if(status==="failed") return "failed";
+  if(status==="queued"||status==="sending"||status==="pending") return "queued";
+  return null;
+}
+/* jobs: this device's automatic sends of the bill ({ channel, status, wait, to, error, attempts, t, after }); history: the
+   server's records and this device's manual sends ({ channel, status, to, error, t }) → { channels: [{ channel, state, to,
+   error, at, wait }] (one per channel: its latest record, the server's when it is as new or newer), state: the bill's — the
+   best any channel reached (delivered, then sent, queued, failed: a WhatsApp that failed with the SMS sent is "sent"), or ""
+   when nothing was sent or queued } */
+export function receiptStatus({jobs=[],history=[]}={}){
+  const latest=(list,ch)=>(list||[]).filter(r=>r&&r.channel===ch&&receiptStateOf(r.status)).sort((a,b)=>(+b.t||0)-(+a.t||0))[0]||null;
+  const channels=[];
+  CHANNELS.forEach(ch=>{
+    const s=latest(history,ch), j=latest(jobs,ch);
+    // the server's record of a send is the outcome (it also hears "delivered" from the provider) — unless this device
+    // queued the channel again after it (a retry)
+    const use=s&&(!j||(+s.t||0)>=(+(j.first||j.t)||0))?s:j;
+    if(!use) return;
+    channels.push({channel:ch,state:receiptStateOf(use.status),to:use.to||"",error:use.error||"",at:+use.t||0,...(use===j&&j.wait?{wait:j.wait}:{})});
+  });
+  const best=channels.reduce((b,c)=>!b||RANK[c.state]>RANK[b]?c.state:b,"");
+  return {channels,state:best};
+}

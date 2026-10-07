@@ -22,7 +22,7 @@
 // Deploy with JWT verification on (the default).
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { planGate } from "../_shared/plan-gate.js";
-import { CHANNEL_LABELS, ITEM_COLUMNS, MAX_PER_HOUR, ORDER_COLUMNS, ORDER_ITEM_COLUMNS, PAYMENT_COLUMNS, PROFILE_COLUMNS, QUOTE_PERMISSION, SALE_COLUMNS, SEND_PERMISSION,
+import { CHANNEL_LABELS, ITEM_COLUMNS, RETURN_COLUMNS, MAX_PER_HOUR, ORDER_COLUMNS, ORDER_ITEM_COLUMNS, PAYMENT_COLUMNS, PROFILE_COLUMNS, QUOTE_PERMISSION, SALE_COLUMNS, SEND_PERMISSION,
   allowedToSend, billMessage, configuredChannels, deliveryOutcome, fromName, linkRow, linkUrl, liveLink, newToken, providerConfig, providerStatus, quoteMessage,
   receiptBase, recipientFor, requestedReceiptBase, reservationRow, validateRequest } from "./core.js";
 import { deliver } from "./providers/index.js";
@@ -189,10 +189,11 @@ Deno.serve(async (req) => {
   if (!cfg) return reply(503, { ok: false, error: "not_configured", message: `Sending by ${CHANNEL_LABELS[r.channel]} isn't set up for this shop yet.` });
 
   // the message, written from the saved bill
-  const [items, payments, profile] = await Promise.all([
+  const [items, payments, profile, rets] = await Promise.all([
     db.from("hangtag_sale_items").select(ITEM_COLUMNS).eq("sale_id", sale.id).order("line_no").limit(500),
     db.from("hangtag_payments").select(PAYMENT_COLUMNS).eq("sale_id", sale.id).order("id"),
     db.from("hangtag_profiles").select(PROFILE_COLUMNS).eq("id", shop).maybeSingle(),
+    db.from("hangtag_returns").select(RETURN_COLUMNS).eq("sale_id", sale.id).limit(100),
   ]);
   if (items.error || payments.error || profile.error) { console.error("send-receipt: couldn't read the bill:", (items.error || payments.error || profile.error)!.message); return unavailable(); }
   // sent by itself when the bill completed: once per bill and channel — a repeat gets the first attempt's answer
@@ -204,7 +205,7 @@ Deno.serve(async (req) => {
     if (p) return reply(409, { ok: false, error: "busy", message: "This receipt is being sent already." });
   }
   const link = r.channel === "email" ? null : await billLink(sale.id);
-  const message = billMessage(r.channel, { sale, items: items.data || [], payments: payments.data || [], shop: profile.data || {}, customer, region, link: link && link.url || "",
+  const message = billMessage(r.channel, { sale, items: items.data || [], payments: payments.data || [], returns: rets.data || [], shop: profile.data || {}, customer, region, link: link && link.url || "",
     linkParam: String(Deno.env.get("WHATSAPP_LINK_PARAM") || "").toLowerCase() === "on" });
 
   return await sendLogged({ saleId: sale.id, auto: r.auto }, to, cfg, message, profile.data && profile.data.shop_name);

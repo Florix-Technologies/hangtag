@@ -10,6 +10,8 @@
 // Every argument is bounded; a tool never takes a shop, owner or user id (the shop is always the signed-in one).
 
 export const AGENT_PERIODS = Object.freeze(["today", "yesterday", "7d", "month", "lastmonth", "30d"]);
+/* The figures get_business_today can explain (all: whatever is out of the ordinary today) */
+export const BUSINESS_FIGURES = Object.freeze(["all", "sales", "average_bill", "margin", "payments", "receivables", "stock", "reconciliation"]);
 const period = (dflt, what) => ({ type: "string", enum: AGENT_PERIODS, default: dflt, description: `${what}: today, yesterday, 7d (the last 7 days), month (this month so far), lastmonth or 30d (the last 30 days).` });
 const limit = (dflt, max, what) => ({ type: "integer", minimum: 1, maximum: max, default: dflt, description: `How many ${what} to return (at most ${max}).` });
 const NONE = Object.freeze({ type: "object", properties: {}, additionalProperties: false });
@@ -22,7 +24,7 @@ const T = (name, kind, title, description, inputSchema, access) => Object.freeze
 
 export const AGENT_TOOLS = Object.freeze([
   // ---------- read ----------
-  T("get_today_sales", "read", "Today's sales", "Today's sales after returns, number of bills, average bill and pieces sold, the change against this time yesterday, money taken by cash, UPI and card, and sales by channel (counter, online store, sales orders, dine-in, events).",
+  T("get_today_sales", "read", "Today's sales", "Today's sales after returns, number of bills, average bill and pieces sold, the change against a usual day of the week by this time (else the same day last week, else yesterday), money taken by cash, UPI and card, and sales by channel (counter, online store, sales orders, dine-in, events).",
     NONE, { perms: ["view_reports"] }),
   T("get_sales_trend", "read", "Sales trend", "Sales and bills for each of the last N days (oldest first), their total, and the total of the N days before.",
     { type: "object", properties: { days: { type: "integer", minimum: 2, maximum: 90, default: 7, description: "How many days, ending today (2 to 90)." } }, additionalProperties: false }, { perms: ["view_reports"] }),
@@ -43,6 +45,12 @@ export const AGENT_TOOLS = Object.freeze([
   T("get_gst_summary", "read", "GST", "GST on the bills of a period (less credit notes): CGST, SGST, IGST and the taxable value.",
     { type: "object", properties: { period: period("month", "The period") }, additionalProperties: false }, { perms: ["view_reports"] }),
   T("get_business_profile", "read", "Business profile", "The shop's name, type of business, city and state, whether it is GST registered, and the features it uses.",
+    NONE, { perms: ["view_reports"] }),
+  T("get_business_today", "read", "Business today, explained", "Today's business against a usual day of the week by this time — sales, bills, average bill, gross profit (only when cost prices cover enough of the sales), cash, UPI and card, what customers owe, stock value and whether the money reconciles — and WHY any figure is out of the ordinary, each reason from the shop's records (fewer or smaller bills, products selling less, returns, discounts, sales below cost, a cash close that didn't match and the entry of exactly that amount, UPI to verify, money not on a bill, old dues, stock not selling).",
+    { type: "object", properties: { figure: { type: "string", enum: BUSINESS_FIGURES, default: "all", description: "Which figure to explain: all (whatever is out of the ordinary today), sales, average_bill, margin, payments, receivables, stock or reconciliation." } }, additionalProperties: false }, { perms: ["view_reports"] }),
+  T("get_customer_insight", "read", "Customer insight", "One customer's history from the shop's own bills: total purchases, bills and the average bill, what they owe and since when, the last purchase, what they buy most, how they pay (and how long they usually take to pay what they take on account), and plain observations — how often they come, favourites, the size they usually take, what they buy together, returns.",
+    { type: "object", properties: { name: { type: "string", minLength: 1, maxLength: 80, description: "The customer's name, part of it, or phone number." } }, required: ["name"], additionalProperties: false }, { perms: ["view_reports", "collect_credit", "create_sale"] }),
+  T("get_daily_briefing", "read", "Morning briefing", "The owner's morning briefing from the shop's records: the one thing to do first, yesterday's sales against a usual day of the week and why, the last 7 days, products sold out or running out, payments overdue, purchase orders expected, and whether the money reconciled.",
     NONE, { perms: ["view_reports"] }),
   // ---------- open (shows something; changes nothing) ----------
   T("open_bill", "open", "Open a bill", "Finds a bill by its number (e.g. INV-000127, or just 127) and offers to open it.",

@@ -1,5 +1,5 @@
 // The weight dialog: adding a product sold by the kg or litre asks for its weight. Type it, or "Read scale" when a scale is
-// connected (Settings → Team & Devices); typing always works. The amount is shown before it goes on the bill.
+// connected (Settings → This device); typing always works. The amount is shown before it goes on the bill.
 import { store } from '../../../shared/state/store.js';
 import { vLabel, vPrice } from '../../../domain/catalog/variants.js';
 import { fmtQty, perUnit, qtyText, roundQty, unitOf } from '../../../domain/catalog/units.js';

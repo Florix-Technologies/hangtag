@@ -100,8 +100,9 @@ check('the database posted a transaction per payment, one cash book and one bank
   && JSON.stringify((await q(`SELECT id, num_nonnulls(amount_in) a, amount_in, cash_received, change_given FROM public.hangtag_cash_book WHERE sale_id='${s1.id}'`)).map((c) => [c.id, num(c.amount_in), num(c.cash_received), num(c.change_given)])) === JSON.stringify([['cb:ft:' + s1.id + ':cash', 1000, 1200, 200]])
   && (await q(`SELECT reference FROM public.hangtag_bank_book WHERE sale_id='${s1.id}'`))[0].reference === '412345678901');
 const rt = await run(A, `return receiptText(D().saleById[${JSON.stringify(s1.id)}])`);
-check('receipt: discount, CGST, SGST, round off, total, the split and the change', /Discount: −₹249\.80/.test(rt) && /CGST 2\.5%: ₹56\.21/.test(rt) && /SGST 2\.5%: ₹56\.21/.test(rt) && /Round off: \+₹0\.38/.test(rt)
-  && /\*Total: ₹2,361\*/.test(rt) && /Paid: Cash ₹1,000 \+ UPI ₹1,361/.test(rt) && /Change: ₹200/.test(rt), rt);
+// the text has the printed receipt's rows, in its words and order (src/domain/documents/bill-content.js)
+check('receipt: item and bill discounts, CGST, SGST, round off, total, each part of the split and the change', /Item discounts: −₹199\.80/.test(rt) && /Bill discount: −₹50/.test(rt) && /CGST 2\.5%: ₹56\.21/.test(rt) && /SGST 2\.5%: ₹56\.21/.test(rt) && /Round off: \+₹0\.38/.test(rt)
+  && /\*Total: ₹2,361\*/.test(rt) && /Paid by Cash: ₹1,000 \(received ₹1,200 · change ₹200\)/.test(rt) && /Paid by UPI: ₹1,361 \(ref \d+ · unverified\)/.test(rt) && /Change given: ₹200/.test(rt), rt);
 
 // ---------- 2. a business customer from Karnataka: IGST, card with its reference ----------
 await sleep(700);
@@ -203,7 +204,7 @@ check('device 2 connects', await until(B, 'sbStatus==="connected"&&D().sales.len
 const txA = await run(A, 'return shopTransactions().map(x=>[x.id,x.amount,x.status].join(":")).sort().join()');
 const txB = await run(B, 'return shopTransactions().map(x=>[x.id,x.amount,x.status].join(":")).sort().join()');
 check('device 2 derives the same financial transactions (split payments, refunds, statuses)', txA === txB && txA.length > 0, { txA, txB });
-const rtB = await run(B, `return receiptText(D().saleById[${JSON.stringify(s1.id)}])`);
-check('device 2 prints the same receipt (discounts, GST split, round off, payments)', rtB === rt, rtB);
+const rtA = await run(A, `return receiptText(D().saleById[${JSON.stringify(s1.id)}])`), rtB = await run(B, `return receiptText(D().saleById[${JSON.stringify(s1.id)}])`);
+check('device 2 prints the same receipt (discounts, GST split, round off, payments, the return since)', rtB === rtA && /Returned items: ₹/.test(rtB), { rtA, rtB });
 await browser.close();
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED'); process.exit(fails ? 1 : 0);

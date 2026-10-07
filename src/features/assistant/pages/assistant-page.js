@@ -11,7 +11,7 @@ import { setTab, renderAll } from '../../../shared/ui/render.js';
 import { toast } from '../../../shared/components/toast.js';
 import { inr } from '../../../shared/formatting/money.js';
 import { agentTool } from '../../../domain/agent/agent-tools.js';
-import { can, refuse } from '../../shop/services/access.js';
+import { can, currentRole, refuse } from '../../shop/services/access.js';
 import { chooseSubview } from '../../shop/services/modules.js';
 import { createReadOnlyBusinessQuery } from '../services/business-query.js';
 import { createBusinessAssistant } from '../services/business-assistant.js';
@@ -22,18 +22,20 @@ import { inventoryIntelligence } from '../../inventory/services/inventory-intell
 import { openBillView } from '../../receipts/components/bill-view.js';
 import { openProductView } from '../../products/components/product-view.js';
 import { openCustHistory } from '../../customers/components/customer-picker.js';
+import { openSettings } from '../../shop/components/settings-page.js';
+import { answerAudit } from '../../../domain/agent/governance.js';
+import { logAutomation } from '../../automation/services/automation.js';
+import { logger } from '../../../shared/logging/logger.js';
+import { endTrace, startTrace, traceStep } from '../../../shared/logging/diagnostics.js';
 
-const SUGGESTIONS = [
-  'How much did I sell today?',
-  'What should I reorder?',
-  'Who owes me money?',
-  'Recent bills',
-  'Sales trend',
-  'UPI to verify',
-  'Profit this month',
-  'Draft a purchase order',
-  'What can you do?',
-];
+/* The questions offered first, by what the role's day is about (domain/shop/role-workspace.js ROLE_FOCUS): the owner's
+   money, profit, GST and bank; a manager's sales, stock, orders and purchases; anyone else the everyday ones */
+const SUGGESTIONS = {
+  owner: ['Morning briefing', 'What’s unusual today?', 'Profit this month', 'GST this month', 'Cash in hand', 'Bank balances', 'Who owes me money?', 'What should I reorder?', 'UPI to verify', 'What can you do?'],
+  manager: ['What’s unusual today?', 'How much did I sell today?', 'What should I reorder?', 'Low stock', 'Open orders', 'Purchase orders to receive', 'Who owes me money?', 'Draft a purchase order', 'What can you do?'],
+  other: ['How much did I sell today?', 'What should I reorder?', 'Who owes me money?', 'Recent bills', 'Sales trend', 'UPI to verify', 'Profit this month', 'Draft a purchase order', 'What can you do?'],
+};
+const suggestions = () => SUGGESTIONS[currentRole()] || SUGGESTIONS.other;
 
 let state = { busy: false, question: '', answer: null, saved: null }, requestVersion = 0;
 let inventorySource = kind => {
@@ -79,7 +81,7 @@ export function renderAssistantPage(){
   if(!can('view_reports')){ host.innerHTML = '<div class="empty"><b>The Hangtag Agent is unavailable</b><p>Your role cannot view business reports.</p></div>'; return; }
   host.innerHTML = `<div class="viewhead"><div><div class="eyebrow">Your shop&rsquo;s assistant</div><h2 class="vt">Hangtag Agent</h2><p>Answers from your sales, payments, customers and stock. It can open what you ask for and draft reorders — you confirm anything it would save.</p></div></div>
     <div class="ask-shell"><form id="askForm" class="card ask-form"><label class="f"><span class="lab">What would you like to know or do?</span><textarea id="askQuestion" rows="3" maxlength="240" placeholder="e.g. What should I reorder?">${esc(state.question)}</textarea></label><button class="btn primary" type="submit"${state.busy ? ' disabled' : ''}>${state.busy ? 'Checking…' : 'Ask'}</button></form>
-    <div class="ask-chips" role="group" aria-label="Suggested questions">${SUGGESTIONS.map(q => `<button type="button" class="chipbtn" data-ask-question="${esc(q)}">${esc(q)}</button>`).join('')}</div>${answerHTML(state.answer)}</div>`;
+    <div class="ask-chips" role="group" aria-label="Suggested questions">${suggestions().map(q => `<button type="button" class="chipbtn" data-ask-question="${esc(q)}">${esc(q)}</button>`).join('')}</div>${answerHTML(state.answer)}</div>`;
 }
 
 /* Shows what an action points at (nothing is changed) */
@@ -87,30 +89,56 @@ export function performAgentAction(target, id){
   if(target === 'bill') return openBillView(id);
   if(target === 'product') return openProductView(id);
   if(target === 'customer') return openCustHistory(id);
-  if(target === 'report' || target === 'reconcile'){
-    store.prefs.period = id || 'today'; store.showAllBills = false; savePrefs(); setTab('report');
-    const c = target === 'reconcile' && document.getElementById('reconcileCard'); if(c) c.scrollIntoView({ block: 'start' });
+  // Reports for a period, at one of its cards: reconciliation, the cash book (last 7 days) or the bank book (last 30)
+  const card = { reconcile: 'reconcileCard', cashbook: 'cashBook', bankbook: 'bankBook' }[target];
+  if(target === 'report' || card){
+    store.prefs.period = id || (target === 'cashbook' ? '7d' : target === 'report' ? 'today' : '30d'); store.showAllBills = false; savePrefs(); setTab('report');
+    const c = card && document.getElementById(card); if(c) c.scrollIntoView({ block: 'start' });
     return;
   }
+  if(target === 'customers' || target === 'bills') return setTab(target);
+  if(target === 'banks') return openSettings('payments');
   if(target === 'reorder'){ chooseSubview('stock', 'smart'); setTab('stock'); renderAll(); }
+  if(target === 'pos'){ chooseSubview('stock', 'pos'); setTab('stock'); renderAll(); }
+  if(target === 'stock'){ chooseSubview('stock', 'levels'); setTab('stock'); renderAll(); }
 }
 
+/* Every answer that read the shop's records is in Activity (governance.js answerAudit): who asked, why, the tools, before and
+   after (nothing changes by answering), the outcome — a greeting or a question it couldn't answer isn't */
+const READ_KINDS = new Set(['greeting', 'thanks', 'help']);
+function auditAnswer(question, answer){
+  if(!answer || answer.source === 'unavailable' || answer.supported === false) return;
+  const intent = answer.intent || null; if(intent && READ_KINDS.has(intent.kind)) return;
+  const tools = answer.toolsUsed && answer.toolsUsed.length ? answer.toolsUsed : intent ? ['read: ' + intent.kind] : [];
+  if(!tools.length) return;
+  try{ logAutomation({ ...answerAudit({ question, tools, proposal: answer.proposal, refused: answer.refused }), key: 'agent:answer:' + Date.now() }); }
+  catch(e){ logger.event('agent', 'audit-failed', { op: 'answer', code: e && e.code }, 'warn'); }
+}
 async function ask(question){
   if(refuse('view_reports', 'ask questions about business data')) return;
   const q = String(question || '').trim(); if(!q) return;
   const version = ++requestVersion;
   state = { busy: true, question: q, answer: null, saved: null }; renderAssistantPage();
+  // the question's chain (Settings → Diagnostics → Agent chain): request → tools → result → action → approval → outcome
+  const trace = startTrace("ask"), t0 = Date.now();
+  traceStep(trace, "request", { op: "question" });
   let answer;
   try{ answer = await assistant().ask(q); }
   catch{ answer = { source: 'unavailable', title: 'Could not answer that', text: 'The shop’s data or the AI service couldn’t be reached. Try again in a moment.', rows: [] }; }
+  endTrace(trace);
+  traceStep(trace, "outcome", { op: !answer || answer.source === 'unavailable' ? 'unavailable' : answer.supported === false ? 'not-understood' : answer.proposal ? 'proposal-shown' : 'answered',
+    ok: !!answer && answer.source !== 'unavailable', ms: Date.now() - t0, count: answer && answer.rows ? answer.rows.length : 0 });
   if(version !== requestVersion) return;
+  answer = answer ? { ...answer, trace } : answer;
   state = { busy: false, question: q, answer, saved: null }; renderAssistantPage();
+  auditAnswer(q, answer);
   // "open bill 127": the person asked to see it, so it opens at once (the button stays to open it again)
-  if(answer && answer.autoOpen && answer.actions && answer.actions[0] && answer.actions[0].kind === 'open') performAgentAction(answer.actions[0].target, answer.actions[0].id);
+  if(answer && answer.autoOpen && answer.actions && answer.actions[0] && answer.actions[0].kind === 'open'){ traceStep(trace, "action", { op: answer.actions[0].target }); performAgentAction(answer.actions[0].target, answer.actions[0].id); }
 }
 function confirmProposal(){
   const p = state.answer && state.answer.proposal; if(!p || state.saved) return;
-  const r = confirmAgentProposal(p, { question: state.question, tool: p.kind === "purchase_order" ? "draft_purchase_order" : "" });
+  const r = confirmAgentProposal(p, { question: state.question, tool: p.kind === "purchase_order" ? "draft_purchase_order" : "" }), trace = state.answer.trace;
+  traceStep(trace, "approval", { op: "approved" }); traceStep(trace, "outcome", { op: r.error ? "refused" : "saved", ok: !r.error });
   if(r.error){ toast(r.error); return; }
   state = { ...state, saved: { id: r.po.id, no: r.po.no } }; renderAssistantPage();
   toast(`Draft purchase order ${r.po.no} saved. It isn't sent yet.`);
@@ -124,9 +152,9 @@ export function installAssistantEvents(){
     const b = t.closest('[data-ask-question]');
     if(b){ event.preventDefault(); ask(b.dataset.askQuestion); return; }
     const o = t.closest('[data-agentopen]');
-    if(o){ event.preventDefault(); const [target, id] = o.dataset.agentopen.split('|'); performAgentAction(target, id); return; }
+    if(o){ event.preventDefault(); const [target, id] = o.dataset.agentopen.split('|'); if(state.answer) traceStep(state.answer.trace, "action", { op: target }); performAgentAction(target, id); return; }
     if(t.closest('[data-agentconfirm]')){ event.preventDefault(); confirmProposal(); return; }
-    if(t.closest('[data-agentdismiss]') && state.answer){ event.preventDefault(); dismissAgentProposal(state.answer.proposal, { question: state.question }); state = { ...state, answer: { ...state.answer, proposal: null } }; renderAssistantPage(); }
+    if(t.closest('[data-agentdismiss]') && state.answer){ event.preventDefault(); dismissAgentProposal(state.answer.proposal, { question: state.question }); traceStep(state.answer.trace, "approval", { op: "dismissed" }); traceStep(state.answer.trace, "outcome", { op: "dismissed" }); state = { ...state, answer: { ...state.answer, proposal: null } }; renderAssistantPage(); }
   });
   document.addEventListener('submit', event => {
     if(!event.target || event.target.id !== 'askForm') return;

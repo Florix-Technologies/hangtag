@@ -29,7 +29,6 @@ const SECTION_FEATURES = {
   sales: ["uses_quotations", "uses_sales_orders", "uses_price_lists", "uses_vouchers"],
   purchasing: ["uses_purchase_orders"],
   billing: ["uses_einvoice", "uses_eway"],
-  storefront: ["uses_mobile_store"],
   restaurant: ["uses_tables", "uses_table_qr", "uses_customer_ordering", "uses_server_ordering", "uses_kitchen"],
 };
 function featuresLine(key){
@@ -38,9 +37,6 @@ function featuresLine(key){
   return `<div class="setfeat"><span>${on.length ? `<b>On:</b> ${esc(on.join(", "))}` : "No features on here yet."}${off.length ? `<br><span class="note">Off: ${esc(off.join(", "))}</span>` : ""}</span>${can("manage_settings") ? `<button type="button" class="btn sm" data-setgo="business" data-setfocus="featuresBlk">Change features</button>` : ""}</div>`;
 }
 const block = (title, inner, id) => inner ? `<div class="setblk"${id ? ` id="${id}"` : ""}>${title ? `<h5>${esc(title)}</h5>` : ""}${inner}</div>` : "";
-const teamHTML = () => store.authUser ? `<div class="setblk" id="teamSec"><h5>Team</h5><p class="note" style="margin:0">People who sell in your shop, each with their own sign-in and role. Their phones join with a QR code you show here. Shop code for staff: <b>${esc(shopCode(store.authUser.id))}</b></p>
-  <div class="btnrow" style="margin-top:12px"><button class="btn primary" type="button" data-team="open">Team &amp; devices</button><button class="btn" type="button" data-team="roles">Roles &amp; permissions</button></div></div>`
-  : '<div class="setblk"><h5>Team</h5><p class="note" style="margin:0">Sign in to manage your team.</p></div>';
 function youHTML(){
   if(isMember()){
     const a = store.access || {};
@@ -63,13 +59,12 @@ function sectionBody(key){
     case "payments": return paymentsFormHTML() + settingsPartsHTML("payments") + expenseCatsHTML();
     case "billing": return receiptFormHTML() + settingsPartsHTML("billing") + receiptSetupHTML() + taxFormsHTML() + autoSendFormHTML() + featuresLine("billing");
     case "inventory": return (can("manage_settings") ? stockAlertHTML() : "") + settingsPartsHTML("inventory") + featuresLine("inventory");
-    case "sales": { const parts = settingsPartsHTML("sales"); return parts ? parts + featuresLine("sales") : featuresLine("sales"); }
+    case "sales": { const parts = settingsPartsHTML("sales"); return parts ? parts + featuresLine("sales") : ""; }
     case "purchasing": return reorderFormHTML() + settingsPartsHTML("purchasing") + featuresLine("purchasing");
     case "automation": return settingsPartsHTML("automation");
     case "plans": return settingsPartsHTML("plans");
-    case "storefront": { const parts = settingsPartsHTML("storefront"); return parts ? parts + featuresLine("storefront") : ""; }
     case "restaurant": return settingsPartsHTML("restaurant") + featuresLine("restaurant");
-    case "devices": return (member ? "" : teamHTML()) + printerSetupHTML() + settingsPartsHTML("devices") + youHTML();
+    case "devices": return printerSetupHTML() + settingsPartsHTML("devices") + youHTML();   // the team: More → Team
     case "integrations": return settingsPartsHTML("integrations");
     case "advanced": return block("Your data", `<p class="note" style="margin:0 0 12px">Your products, stock and bills are private to this account. Download everything — products, variants, stock history, bills, returns, customers, photos and settings — as one file, any time. Restoring checks the file and shows you what it will add before anything changes.</p>
       <div class="btnrow"><button class="btn" type="button" data-settings-act="backup">${UI_ICON.download} Download backup</button><label class="btn" for="restoreIn">Restore from backup</label><input id="restoreIn" class="sr" type="file" accept="application/json,.json" data-restore><button class="btn" type="button" data-settings-act="export">Export sales (CSV)</button></div>`, "dataBlk") + settingsPartsHTML("advanced");
@@ -126,9 +121,9 @@ export function renderSettingsPage(force){
       <div class="sethead"><button type="button" class="btn text sm setback" data-setback>${UI_ICON.back} Settings</button><h3 id="setT">${esc(cur.s.label)}</h3><p>${esc(cur.s.sub)}</p></div>
       ${cur.body}</section>` : `<section class="setmain"><p class="note">Nothing to set here for your role.</p></section>`}</div>`;
   if(cur && (key === "payments" || key === "billing") && can("manage_settings")) refreshPaymentsForm();
-  fitDocFrames(host);   // a document preview in a section (Billing & Documents → Templates) scaled to its width
+  fitDocFrames(host);   // a document preview in a section (Bills & Documents → Templates) scaled to its width
 }
-/* Open Settings (on a section: "business", "payments", "billing", "inventory", "sales", "purchasing", "storefront",
+/* Open Settings (on a section: "business", "payments", "billing", "inventory", "sales", "purchasing",
    "restaurant", "devices", "integrations", "advanced"; a block to scroll to) */
 let backTab = "";
 export function openSettings(section, focus){

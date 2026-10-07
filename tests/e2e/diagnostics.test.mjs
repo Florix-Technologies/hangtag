@@ -58,14 +58,31 @@ await run('window.__saved=null;const f=use("files");override({files:{...f,saveFi
 await A.click('#diagBlk [data-diag="download"]'); await sleep(300);
 const saved = await run('return window.__saved');
 const rep = saved && JSON.parse(saved.d);
-check('Download report: a JSON file with the health, the last 24 h counts and the cleaned history only', saved && /^hangtag-diagnostics-\d{4}-\d{2}-\d{2}\.json$/.test(saved.n) && rep.schema === 2 && rep.health.cloud === 'connected' && rep.diagnostics.length === 3
+const lat = await A.$$eval('#diagBlk .diag-lat [data-lat-op]', (l) => l.map((x) => ({ op: x.dataset.latOp, calls: +x.children[1].textContent })));
+check('server calls: every call this device made, timed by operation (calls, failed, average, most within, slowest)', lat.length > 0 && lat.every((o) => /^(rpc|table|fn|auth):|^storage$|^other$/.test(o.op) && o.calls > 0)
+  && /Server calls · last 24 hours/.test(blk || '') && /typical/.test(blk || ''), lat);
+check('Download report: a JSON file with the health, the last 24 h counts, the server-call timings and the cleaned history only', saved && /^hangtag-diagnostics-\d{4}-\d{2}-\d{2}\.json$/.test(saved.n) && rep.schema === 3 && rep.health.cloud === 'connected' && rep.diagnostics.length === 3
+  && rep.latency.calls > 0 && rep.latency.ops.every((o) => !/[?=]/.test(o.op)) && Array.isArray(rep.agentChains)
   && Object.values(rep.last24h || {}).every((n) => Number.isInteger(n)) && !/Riya|98765|riya@|INV-000123|abc123secret|ownerdiag@example\.com|aaaaaaaa-0000/.test(saved.d), saved && saved.n);
 check('the panel counts the last 24 hours by category (API, sync, payments, email, WhatsApp, SMS, printer, Agent, automation, database) and says nothing is sent by itself',
   (await A.$$eval('#diagBlk [data-diag-cat]', (l) => l.map((x) => x.dataset.diagCat))).join() === 'api,sync,payment,email,whatsapp,sms,printer,agent,automation,database' && /Never sent anywhere by itself/.test(await text('#diagBlk') || ''));
 await A.click('#diagBlk [data-diag="clear"]'); await sleep(300);
 check('Clear asks first, on the button itself (no browser pop-up): nothing is cleared by one tap', await run('return getDiagnostics().length') === 3 && /Tap again to clear/.test(await text('#diagBlk [data-diag="clear"]') || ''));
 await A.click('#diagBlk [data-diag="clear"]'); await sleep(300);
-check('…the second tap empties the history', await run('return getDiagnostics().length') === 0 && /No technical problems recorded/.test(await text('#diagBlk') || ''));
+check('…the second tap empties the history and the timings', await run('return getDiagnostics().length') === 0 && /No technical problems recorded/.test(await text('#diagBlk') || '')
+  && await run('return getTraces().length===0&&latencySummary().calls<5') && /no questions yet on this device/.test(await text('#diagBlk') || ''));
+
+console.log('--- the Agent chain ---');
+// a question the Agent answers with a tool: its chain (request → tool → result → outcome) is noted, as codes only
+await run('closeModal();setTab("assistant");renderAll()'); await sleep(300);
+await A.$eval('#askQuestion', (e) => { e.value = 'Morning briefing'; });
+await A.click('#askForm button[type="submit"]');
+await until('!document.querySelector("#askForm button[type=submit]").disabled&&!!document.querySelector("#v-assistant .ask-answer")');
+await run('openSettings("advanced")'); await sleep(400);
+const chain = await text('#diagBlk .diag-chains li:first-child');
+check('the question\'s chain: asked → tool get_daily_briefing → its result → answered — without the question\'s words', /asked question/.test(chain || '') && /tool get_daily_briefing/.test(chain || '') && /result get_daily_briefing · \d+ rows?/.test(chain || '')
+  && /answered/.test(chain || '') && !/Morning briefing/.test(chain || ''), chain);
+check('…in the report too', await run('return diagnosticsReport({}).agentChains[0].steps.map(s=>s.step).join()') === 'request,tool,result,outcome');
 
 console.log('--- phone ---');
 await A.setViewport({ width: 360, height: 780 }); await sleep(400);

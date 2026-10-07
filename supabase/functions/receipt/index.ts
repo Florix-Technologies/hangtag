@@ -6,7 +6,7 @@
 // Views are counted on the link. The figures come from the saved bill (send-receipt/core.js billView): nothing is
 // recalculated here.
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { ITEM_COLUMNS, PAYMENT_COLUMNS, PROFILE_COLUMNS, SALE_COLUMNS, billView, liveLink } from "../send-receipt/core.js";
+import { ITEM_COLUMNS, PAYMENT_COLUMNS, PROFILE_COLUMNS, RETURN_COLUMNS, SALE_COLUMNS, billView, liveLink } from "../send-receipt/core.js";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -29,17 +29,21 @@ Deno.serve(async (req) => {
   const own = (t: string) => admin.from(t).select("*").eq("owner_id", link.owner_id);
   const { data: sale } = await admin.from("hangtag_sales").select(SALE_COLUMNS).eq("owner_id", link.owner_id).eq("id", link.sale_id).maybeSingle();
   if (!sale) return gone();
-  const [items, payments, profile, customer, logo] = await Promise.all([
+  const [items, payments, profile, customer, logo, rets, settings] = await Promise.all([
     admin.from("hangtag_sale_items").select(ITEM_COLUMNS).eq("owner_id", link.owner_id).eq("sale_id", sale.id).order("line_no").limit(500),
     admin.from("hangtag_payments").select(PAYMENT_COLUMNS).eq("owner_id", link.owner_id).eq("sale_id", sale.id).order("id"),
     admin.from("hangtag_profiles").select(PROFILE_COLUMNS).eq("id", link.owner_id).maybeSingle(),
     sale.customer_id ? admin.from("hangtag_customers").select("name").eq("owner_id", link.owner_id).eq("id", sale.customer_id).maybeSingle() : Promise.resolve({ data: null }),
     own("hangtag_meta").eq("key", "logo").maybeSingle(),
+    admin.from("hangtag_returns").select(RETURN_COLUMNS).eq("owner_id", link.owner_id).eq("sale_id", sale.id).limit(100),
+    own("hangtag_meta").eq("key", "settings").maybeSingle(),
   ]);
   if (items.error || payments.error) { console.error("receipt: couldn't read the bill:", (items.error || payments.error)!.message); return reply(503, { ok: false, error: "unavailable" }); }
   await admin.from("hangtag_invoice_links").update({ views: (link.views || 0) + 1, last_viewed_at: new Date().toISOString() }).eq("token", token);
   const data = (logo as { data?: { value?: { data?: string } } }).data;
   const logoUrl = data && data.value && typeof data.value.data === "string" && /^data:image\/(png|jpeg|webp);base64,/.test(data.value.data) ? data.value.data : null;
-  return reply(200, { ok: true, bill: billView({ sale, items: items.data || [], payments: payments.data || [], shop: profile.data || {}, customer: customer.data }),
+  // the shop's region (settings.region): the invoice in its currency and time zone, as its messages are (India when not set)
+  const sv = (settings as { data?: { value?: { region?: unknown } } }).data, region = sv && sv.value && typeof sv.value.region === "string" ? sv.value.region : "IN";
+  return reply(200, { ok: true, bill: billView({ sale, items: items.data || [], payments: payments.data || [], returns: (rets as { data?: unknown[] }).data || [], shop: profile.data || {}, customer: customer.data, region }),
     cancelled: !!sale.is_void, logo: logoUrl, expiresAt: link.expires_at });
 });

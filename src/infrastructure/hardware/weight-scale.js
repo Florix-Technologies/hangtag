@@ -104,7 +104,7 @@ export function createSerialScale({serial,getSettings}){
     },
     /* the next reading (a fresh one: sent after this call, or within the last second) → { value, unit, stable } or { error } */
     async read({timeoutMs=3000}={}){
-      if(!port) return {error:"No scale is connected. Connect it in Settings → Team & Devices, or type the weight."};
+      if(!port) return {error:"No scale is connected. Connect it in Settings → This device, or type the weight."};
       const s=settings();
       if(s.request&&port.writable){ const w=port.writable.getWriter(); try{ await w.write(new TextEncoder().encode(s.request+"\r\n")); }catch{ /* some scales only stream */ }finally{ w.releaseLock(); } }
       const fresh=latest&&Date.now()-latest.at<1000&&latest.stable?latest:null;

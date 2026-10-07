@@ -36,12 +36,13 @@ export function saveExpenseCats(list){
   store.settings=Object.assign({},store.settings,{expenseCats:r.cats}); saveSettings(); enqueue({type:"settings"}); upload();
   return {ok:true};
 }
-/* The cash book of one day, for the shop ("shop") or one device (its id) */
-export function dayCash(day,scope="shop"){
+/* The money entries of the shop ("shop") or of one device (its id): what its cash book and day close are made of */
+export function scopeTransactions(scope="shop"){
   const d=D(), mine=x=>scope==="shop"||(x&&x.dev===scope);
-  const tx=financialTransactions(d.sales.filter(mine),d.rets.filter(mine),cashRepository().moves().filter(mine),collectionsForBooks(mine));
-  return cashBook(tx,dayBounds(day,day));
+  return financialTransactions(d.sales.filter(mine),d.rets.filter(mine),cashRepository().moves().filter(mine),collectionsForBooks(mine));
 }
+/* The cash book of one day, for the shop ("shop") or one device (its id) */
+export const dayCash=(day,scope="shop")=>cashBook(scopeTransactions(scope),dayBounds(day,day));
 export const closeId=(day,scope)=>`dc:${day}:${scope||"shop"}`;
 export const closeOf=(day,scope)=>(store.dayCloses||{})[closeId(day,scope)]||null;
 /* The close of a day as it stands: { close, expectedNow, changed } (changed: entries arrived after the day was closed) */

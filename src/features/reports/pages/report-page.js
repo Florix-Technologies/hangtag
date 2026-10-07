@@ -23,6 +23,7 @@ import { dayKey, dayLong, hhmm } from '../../../shared/formatting/dates.js';
 import { inr, inrShort, inrx } from '../../../shared/formatting/money.js';
 import { initials } from '../../../shared/utils/text.js';
 import { qtyText, roundQty } from '../../../domain/catalog/units.js';
+import { returnsByReason } from '../../../domain/returns/return-reasons.js';
 
 export const showTable={time:false,size:false};
 export function drawTime(TS){
@@ -91,6 +92,17 @@ export function lowStockHTML(){
   if(!rows.length)return `<p class="okline">${ICON.ok}Nothing is running low.</p>`;
   return `<div class="alerts">${rows.slice(0,10).map(a=>`<button class="al ${a.lv}" data-stockin="${esc(a.p.id)}">${a.lv==="out"?ICON.out:ICON.warn}<b>${esc(a.p.name)}</b>${vLabel(a.v)?`<span class="szl">${esc(vLabel(a.v))}</span>`:""}<span class="st">${a.lv==="out"?"sold out":a.n+" left"}</span></button>`).join("")}${rows.length>10?`<button class="al" data-tab="stock">+${rows.length-10} more on Stock</button>`:""}</div>`;
 }
+/* After-sales: why things came back in the period (each line's reason), what came back most, and what went back on the
+   shelf or stayed off it (domain/returns/return-reasons.js) */
+export function returnsHTML(rets){
+  const X=returnsByReason(rets); if(!X.count) return "";
+  const max=Math.max(1,...X.reasons.map(r=>r.pieces));
+  const reasons=X.reasons.map(r=>`<div class="rr-row"><span class="rr-n">${esc(r.reason)}</span><span class="rr-bar"><i style="width:${Math.max(4,Math.round(r.pieces/max*100))}%"></i></span><b class="rr-q">${esc(qtyText(r.pieces))}</b><span class="rr-v">${inr(r.value)}</span></div>`).join("");
+  const top=X.products.slice(0,3).map(p=>`<li>${p.id?`<button type="button" class="link xs" data-prodopen="${esc(p.id)}">${esc(p.name)}</button>`:esc(p.name)} — ${esc(qtyText(p.pieces))} back, mostly “${esc(p.top)}”</li>`).join("");
+  return `<div class="card span-5" id="returnsCard"><div class="card-h"><h3>Returns</h3><span class="note">${X.count} return${X.count===1?"":"s"} · ${esc(qtyText(X.pieces))} piece${X.pieces===1?"":"s"} · ${inr(X.value)}</span></div>
+    <div class="rr">${reasons}</div>${top?`<h4 class="subh">Came back most</h4><ul class="rr-top">${top}</ul>`:""}
+    <p class="note">Back on the shelf: ${esc(qtyText(X.shelf.pieces))} (${inr(X.shelf.value)}) · kept off, damaged: ${esc(qtyText(X.off.pieces))} (${inr(X.off.value)})</p></div>`;
+}
 export function custTopHTML(live,rets){
   const m={};live.forEach(s=>{if(!s.cust||!s.cust.id)return;const o=m[s.cust.id]||(m[s.cust.id]={id:s.cust.id,n:s.cust.name,b:0,a:0});o.b+=(s.kind||"sale")!=="exchange"?1:0;o.a+=s.total});
   rets.forEach(r=>{const s=D().saleById[r.sale];if(s&&s.cust&&m[s.cust.id])m[s.cust.id].a-=r.value||0});
@@ -132,8 +144,8 @@ export function renderReport(){
     <div class="card span-8"><div class="card-h"><h3>${TS.title}</h3><button class="btn xs" data-table="time" aria-pressed="${showTable.time}">${showTable.time?"Show chart":"Show table"}</button></div><div id="chTime" class="chart"></div></div>
     <div class="card span-4"><div class="card-h"><h3>How customers paid</h3></div>${payHTML(live,rets,R)}</div>
     ${channelCardHTML(R)}
-    <div class="card span-6"><div class="card-h"><h3>Cash book</h3><span class="note">Cash in and out, with the balance</span></div>${cashCardHTML(R)}</div>
-    <div class="card span-6"><div class="card-h"><h3>Bank book</h3><span class="note">UPI and card payments</span></div>${bankCardHTML(R)}</div>
+    <div class="card span-6" id="cashBook"><div class="card-h"><h3>Cash book</h3><span class="note">Cash in and out, with the balance</span></div>${cashCardHTML(R)}</div>
+    <div class="card span-6" id="bankBook"><div class="card-h"><h3>Bank book</h3><span class="note">UPI and card payments</span></div>${bankCardHTML(R)}</div>
     <div class="card span-12" id="reconcileCard"><div class="card-h"><h3>Reconciliation</h3><span class="note">UPI to verify and money received that isn't on a bill</span></div>${reconcileCardHTML(R)}</div>
     <div class="card span-7"><div class="card-h"><div><h3>Summary</h3><span class="note">What each figure means is next to it</span></div><button class="btn xs" data-act="sumcsv">Download summary CSV</button></div>${summaryHTML(K,PS)}</div>
     <div class="card span-5"><div class="card-h"><h3>GST</h3><span class="note">Invoices less credit notes</span></div>${gstCardHTML(R)}</div>
@@ -145,6 +157,7 @@ export function renderReport(){
     <div class="card span-5"><div class="card-h"><h3>Not selling</h3><span class="note">In stock, nothing sold in this period</span></div>${slowHTML(lines,R)}</div>
     <div class="card span-7"><div class="card-h"><h3>Running low now</h3><span class="note">Tap to add stock</span></div>${lowStockHTML()}</div>
     <div class="card span-5"><div class="card-h"><h3>Top customers</h3></div>${custTopHTML(live,rets)}</div>
+    ${returnsHTML(rets)}
     <div class="card span-12"><div class="card-h"><h3>Product × size</h3><span class="note">Pieces sold · darker = more</span></div>${heatHTML(lines)}</div>
     ${evCard}
     <div class="card span-12"><div class="card-h"><div><h3>Bills</h3><span class="note">Open a bill to print, share, return, exchange or cancel it</span></div><button class="btn xs" data-act="export">Download CSV</button></div>${billsHTML(all,R)}</div>

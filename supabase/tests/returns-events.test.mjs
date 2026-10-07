@@ -71,7 +71,7 @@ console.log('=== upgrade: existing returns keep their values, now with paise ===
   const r1 = (await rows(db, A, `SELECT refund_amount, value, round_off, credit_no FROM public.hangtag_returns WHERE id = 'r1'`))[0];
   check('an existing return keeps its value and refund', num(r1.refund_amount) === 500 && num(r1.value) === 500 && num(r1.round_off) === 0 && r1.credit_no === null, r1);
   const rep = await report(db);
-  check('migration report: 64 rows, all ok (incl. returns never exceed bought, return values, event bills, verified payments, receipts once, cash reversals, team members and devices, business types and capabilities)', rep.length === 64 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
+  check('migration report: 65 rows, all ok (incl. returns never exceed bought, return values, event bills, verified payments, receipts once, cash reversals, team members and devices, business types and capabilities)', rep.length === 65 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
   await db.close();
 }
 
@@ -82,6 +82,7 @@ await db.exec(NEW);
 const s1 = bill('s1', [{ q: 3, price: 339, rate: 12 }], { billDisc: { type: 'percent', value: 10 } });
 check('the bill as saved', !(await saveBills(db, A, [s1])).err && s1.roundOff !== 0, s1);
 const r1 = ret('r1', s1, { 0: 1 });
+r1.items[0].reason = 'Wrong size';   // each line keeps why it came back (section 3u)
 let r = await saveRet(db, A, r1);
 check('a partial return is saved with its line, all in one step', !r.err && r.r.rows[0].r.lines === 1, r.err);
 const row = (await rows(db, A, `SELECT * FROM public.hangtag_returns WHERE id = 'r1'`))[0];
@@ -90,6 +91,9 @@ const it = (await rows(db, A, `SELECT * FROM public.hangtag_return_items WHERE r
 check('the line keeps the GST reversed (taxable, rate, CGST, SGST), the HSN and "back on the shelf"', num(it.taxable_value) === r1.items[0].tx && num(it.cgst_amount) === r1.items[0].cgst && num(it.gst_rate) === 12 && it.hsn === '6109' && it.restock === true);
 const back = rowToReturn(row, [rowToReturnItem(it)]);
 check('read back, it is the same return the app made', back.value === r1.value && back.refund === r1.refund && back.no === r1.no && back.items[0].tx === r1.items[0].tx);
+check('the line keeps its own reason (section 3u), and it comes back with it', it.reason === 'Wrong size' && back.items[0].reason === 'Wrong size', it.reason);
+{ const long = (await tryAs(db, A, `UPDATE public.hangtag_return_items SET reason = repeat('x', 61) WHERE return_id = 'r1'`));
+  check('...a reason longer than 60 characters is refused', !!long.err, long.err); }
 r = await saveRet(db, A, r1);
 check('saving it again (a retry) changes nothing: one return, one line, one refund posted', !r.err && await n(db, A, 'hangtag_returns') === 1 && await n(db, A, 'hangtag_return_items') === 1 && await n(db, A, 'hangtag_fin_txns', `WHERE return_id = 'r1'`) === 1);
 const cb = (await rows(db, A, `SELECT id, amount_out FROM public.hangtag_cash_book WHERE entry_type = 'cash_refund'`))[0];

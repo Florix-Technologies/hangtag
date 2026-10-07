@@ -9,8 +9,8 @@
 
 export const ALLOWED_TOOLS = Object.freeze(["get_today_sales", "get_sales_trend", "get_low_stock", "get_reorder_candidates", "get_customer_dues",
   "get_recent_bills", "get_payment_reconciliation", "get_order_status", "get_profit_summary", "get_gst_summary", "get_business_profile",
-  "open_bill", "open_product", "open_customer", "open_report", "draft_reorder", "draft_purchase_order"]);
-export const LIMITS = Object.freeze({ question: 400, turns: 12, calls: 6, tools: 20, description: 600, schema: 3000, result: 6000, maxTokens: 1024 });
+  "get_business_today", "get_customer_insight", "get_daily_briefing", "open_bill", "open_product", "open_customer", "open_report", "draft_reorder", "draft_purchase_order"]);
+export const LIMITS = Object.freeze({ question: 400, turns: 12, calls: 6, tools: 30, description: 600, schema: 3000, result: 6000, maxTokens: 1024 });
 export const DEFAULT_MODEL = "claude-opus-5-5";
 const str = (v) => (v == null ? "" : String(v));
 const fail = (status, error, message) => ({ ok: false, status, error, message });

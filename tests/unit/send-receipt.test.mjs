@@ -58,7 +58,7 @@ check('phone and email rules', mobileE164('09845012345') === '+919845012345' && 
 check('shop name made safe for the From line', fromName('Aura "Threads" <x>\r\nBcc: y') === 'Aura Threads xBcc: y' && fromName('') === 'Hangtag');
 
 // ---------- the message, written from the saved bill rows ----------
-const saleRow = { id: 's1', bill_no: 'INV-260928-004', timestamp: Date.parse('2026-09-28T06:30:00Z'), subtotal: 2498, discount: 249.8, total: 2518, credit: 0, tax_amount: 269.8,
+const saleRow = { id: 's1', bill_no: 'INV-260928-004', timestamp: Date.parse('2026-09-28T06:30:00Z'), subtotal: 2498, discount: 249.8, item_discount: 199.8, bill_discount: 50, total: 2518, credit: 0, tax_amount: 269.8,
   tax_inclusive: false, gst_mode: 'inter', cgst_amount: 0, sgst_amount: 0, igst_amount: 269.8, round_off: 0, payment_method: 'split', is_void: false, customer_id: 'c1', customer_name: 'Blr Traders' };
 const itemRows = [{ line_no: 1, product_name: 'Cap', variant_label: null, color: '', size: '', quantity: 1, unit_price: 500, discount_amount: 0 },
   { line_no: 0, product_name: 'Kurta – Blue', variant_label: 'M', quantity: 2, unit_price: 999, discount_amount: 199.8 }];
@@ -75,8 +75,9 @@ check('the server\'s receipt of a bill left partly on account: what was paid, th
 const VD = billView({ ...bill, sale: { ...saleRow, due_amount: 2518, payment_method: 'due' }, payments: [] });
 check('...and of a bill all on account: no payment invented from the bill\'s method, only the balance due', !VD.rows.some(([l]) => /^Paid by/.test(l)) && VD.rows.some(([l]) => /Balance due/.test(l)) && VD.paid === '₹2,518 on your account', [VD.rows, VD.paid]);
 check('the bill as saved: lines in order, discounts, IGST, total, each payment and the change (nothing recalculated)', eq(V.lines.map((l) => [l.name, l.detail, l.qty, l.gross, l.discount]), [['Kurta – Blue', 'M', 2, 1998, 199.8], ['Cap', '', 1, 500, 0]])
-  && eq(V.rows.map(([l, v]) => l + ' ' + v), ['Subtotal ₹2,498', 'Discount −₹249.80', 'IGST ₹269.80', 'Total ₹2,518', 'Paid by Cash ₹1,000', 'Paid by UPI (ref UTR998877) ₹1,518', 'Change given ₹500'])
-  && V.title === 'Tax invoice' && V.number === 'INV-260928-004' && V.shop === 'Aura Threads' && V.contact.includes('GSTIN 27ABCDE1234F1Z5') && /28 Sept? 2026/.test(V.date));
+  && eq(V.rows.map(([l, v]) => l + ' ' + v), ['Subtotal ₹2,498', 'Item discounts −₹199.80', 'Bill discount −₹50', 'Taxable amount ₹2,248.20', 'IGST ₹269.80', 'Total ₹2,518',
+    'Paid by Cash (received ₹1,500 · change ₹500) ₹1,000', 'Paid by UPI (ref UTR998877) ₹1,518', 'Change given ₹500'])
+  && V.title === 'Tax Invoice' && V.number === 'INV-260928-004' && V.shop === 'Aura Threads' && V.contact.includes('GSTIN 27ABCDE1234F1Z5') && /28 Sept? 2026/.test(V.date));
 const em = billMessage('email', bill);
 check('email: subject with the bill, shop and total; HTML and text with the items, GST and payments', em.subject === 'Your bill INV-260928-004 from Aura Threads — ₹2,518' && /Kurta – Blue/.test(em.html) && /IGST/.test(em.html)
   && /Paid by UPI \(ref UTR998877\)/.test(em.html) && /Hello Blr Traders/.test(em.text) && /Total: ₹2,518/.test(em.text));
@@ -86,11 +87,15 @@ const sms = billMessage('sms', bill).text;
 check('SMS: one short confirmation with the bill, total and how it was paid', sms.length <= LIMITS.sms && sms === 'Aura Threads: Bill INV-260928-004 for ₹2,518, paid by Cash ₹1,000 + UPI ₹1,518. Thank you for shopping with us!');
 const waMsg = billMessage('whatsapp', bill);
 check('WhatsApp: the template values {{1}} customer {{2}} shop {{3}} bill {{4}} amount, and the bill as text', eq(waMsg.params, ['Blr Traders', 'Aura Threads', 'INV-260928-004', '₹2,518']) && /\*Aura Threads\*/.test(waMsg.text) && waMsg.text.length <= LIMITS.whatsapp);
-const legacySale = { ...saleRow, gst_mode: null, igst_amount: null, tax_amount: 48, tax_inclusive: true, subtotal: 1050, discount: 50, total: 1000, payment_method: 'card' };
-check('a bill from before split payments / GST split: its one payment and GST as saved', eq(billView({ ...bill, sale: legacySale, payments: [] }).rows.map(([l, v]) => l + ' ' + v), ['Subtotal ₹1,050', 'Discount −₹50', 'GST (included) ₹48', 'Total ₹1,000', 'Paid by Card ₹1,000']));
+// saved before split payments, discounts and the GST split: the database's defaults (0) in the newer columns
+const legacySale = { ...saleRow, gst_mode: null, igst_amount: null, tax_amount: 48, tax_inclusive: true, subtotal: 1050, discount: 50, item_discount: 0, bill_discount: 0, total: 1000, payment_method: 'card' };
+check('a bill from before split payments / GST split: its one payment, its discount and GST as saved', eq(billView({ ...bill, sale: legacySale, payments: [] }).rows.map(([l, v]) => l + ' ' + v),
+  ['Subtotal ₹1,050', 'Bill discount −₹50', 'Total ₹1,000', 'Taxable amount ₹952', 'Includes GST ₹48', 'Paid by Card ₹1,000']), billView({ ...bill, sale: legacySale, payments: [] }).rows);
 check('nothing to pay (100% discount) is not called exchange credit; a covered exchange is', /nothing to pay/.test(billMessage('sms', { ...bill, sale: { ...saleRow, total: 0 }, payments: [] }).text)
   && /covered by your exchange credit/.test(billMessage('sms', { ...bill, sale: { ...saleRow, credit: 2518 }, payments: [] }).text)
-  && eq(billView({ ...bill, sale: { ...saleRow, credit: 518 }, payments: [{ method: 'upi', amount: 2000, status: 'completed' }] }).rows.slice(4, 7).map(([l]) => l), ['Exchange credit', 'Amount paid', 'Paid by UPI']));
+  && (() => { const r = billView({ ...bill, sale: { ...saleRow, credit: 518 }, payments: [{ method: 'upi', amount: 2000, status: 'completed' }] }).rows.map(([l]) => l), i = r.indexOf('Exchange credit');
+    return i > 0 && eq(r.slice(i, i + 3), ['Exchange credit', 'Amount due', 'Paid by UPI']); })()
+  && billView({ ...bill, sale: { ...saleRow, total: 0 }, payments: [] }).rows.some(([l, v]) => l === 'Nothing to pay' && v === ''));
 check('cancelled payments are left out; a huge bill lists the first 200 items and says how many more', billView({ ...bill, payments: [{ ...payRows[0], status: 'cancelled' }, payRows[1]] }).rows.filter(([l]) => /^Paid by/.test(l)).length === 1
   && (() => { const big = billView({ ...bill, items: Array.from({ length: 230 }, (_, k) => ({ ...itemRows[1], line_no: k })) }); return big.lines.length === 200 && big.more === 30 && /… and 30 more items/.test(billMessage('email', { ...bill, items: Array.from({ length: 230 }, (_, k) => ({ ...itemRows[1], line_no: k })) }).text); })());
 

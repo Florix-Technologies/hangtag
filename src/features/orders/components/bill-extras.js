@@ -32,7 +32,7 @@ export function billQuoteHTML(empty){
 export function holdAction(){
   const r = holdCart();
   if(r.error){ toast(r.error); return; }
-  renderAll(); toast(`Bill held as “${r.held.name}”. Recall it from Orders → Held bills.`);
+  renderAll(); toast(`Bill held as “${r.held.name}”. Recall it from Sell → Held bills.`);
 }
 export function openHeldList(){ chooseSubview("orders", "held"); setTab("orders"); }
 export function detachAction(){ detachCartOrder(); renderAll(); toast("The bill no longer comes from the order."); }

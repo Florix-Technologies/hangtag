@@ -143,7 +143,7 @@ console.log('=== capabilities and shops ===');
   r = await imp(null, { id: 'anon1' }, [mv('anon1:0', 'cloth:', 'cloth', 1)]);
   check('signed out: nothing', !!r.err, r);
   const rep = await report(db);
-  check('the migration report: every row ok (incl. bill originals in the shop\'s own folder)', rep.length === 64 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
+  check('the migration report: every row ok (incl. bill originals in the shop\'s own folder)', rep.length === 65 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');

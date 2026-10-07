@@ -57,11 +57,11 @@ await run('await flushSbQueue()');
 console.log('--- Settings → Automation ---');
 await run('openSettings("automation")'); await sleep(400);
 const pol = await A.$$eval('#autoForm [data-autogroup="act"] input[type=radio]:checked', (l) => Object.fromEntries(l.map((x) => [x.name, x.value])));
-check('Act: three rules with their defaults: ask before drafting or reminding, check UPI automatically, reminders after 7 days', JSON.stringify(pol) === JSON.stringify({ reorder: 'ask', dues: 'ask', upi: 'auto' })
+check('Act: four rules with their defaults: ask before drafting or reminding, check UPI and send failed receipts again automatically, reminders after 7 days', JSON.stringify(pol) === JSON.stringify({ reorder: 'ask', dues: 'ask', upi: 'auto', resend: 'auto' })
   && (await A.$eval('#autoForm [name="dueDays"]', (e) => e.value)) === '7', pol);
 const wpol = await A.$$eval('#autoForm [data-autogroup="watch"] input[type=radio]:checked', (l) => Object.fromEntries(l.map((x) => [x.name, x.value])));
-check('Watch: nine rules, Off or Notify me — every one notifies but unusual sales; late after 3 days, the closing reminder from 21:00',
-  JSON.stringify(wpol) === JSON.stringify({ w_stock: 'notify', w_overdue: 'notify', w_mismatch: 'notify', w_late: 'notify', w_unusual: 'off', w_expiry: 'notify', w_receipts: 'notify', w_dayclose: 'notify', w_gst: 'notify' })
+check('Watch: eleven rules, Off or Notify me — every one notifies but unusual sales; late after 3 days, the closing reminder from 21:00',
+  JSON.stringify(wpol) === JSON.stringify({ w_stock: 'notify', w_overdue: 'notify', w_mismatch: 'notify', w_late: 'notify', w_unusual: 'off', w_expiry: 'notify', w_receipts: 'notify', w_dayclose: 'notify', w_gst: 'notify', w_briefing: 'notify', w_backup: 'notify' })
   && (await A.$eval('#autoForm [name="lateDays"]', (e) => e.value)) === '3' && (await A.$eval('#autoForm [name="closeHour"]', (e) => e.value)) === '21'
   && !(await A.$('#autoForm [data-autogroup="watch"] input[value="auto"]')) && /Watching never changes anything/.test(await text('#autoForm [data-autogroup="watch"]') || ''), wpol);
 check('...expiring stock says which feature it needs (this shop has no batches or expiry dates yet); sales orders are on, so late orders says nothing',/Switch on expiry dates or batches for this shop/.test(await text('#autoForm [data-watchrule="expiry"]') || '')

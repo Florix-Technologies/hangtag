@@ -45,7 +45,7 @@ let K = await kpis();
 check('Today: ₹0 and no bills yet, average bill and gross profit shown honestly', K.Sales && K.Sales.v === '₹0' && /no bills yet/.test(K.Sales.s) && K.Bills.v === '0' && K['Average bill'].v === '—' && K['Gross profit'] && K['Gross profit'].v === '₹0', K);
 check('Needs attention: all clear', /All clear/.test(await text('#homeBody .hattn') || '') && (await attn()).length === 0);
 check('the Hangtag Agent: nothing unusual (no figures invented)', /Nothing unusual/.test(await text('#homeBody .hagent') || '') && /never changes anything/.test(await text('#homeBody .hagent') || ''));
-check('the owner\'s quick actions: Quick sell, Scan to sell, Quick receive', JSON.stringify(await qa()) === '["Quick sell","Scan to sell","Quick receive"]', await qa());
+check('the owner\'s quick actions: New sale, Scan to sell, Receive stock (the same words as Sell and the New menu)', JSON.stringify(await qa()) === '["New sale","Scan to sell","Receive stock"]', await qa());
 check('the shop name, its type and the sync line', /Aura Threads/.test(await text('#homeBody .viewhead') || '') && /Sync:\s*\S/.test(await text('#homeBody .hsync') || '') && await vis('#homeBody .hsync span'));
 
 // two products with cost prices; a few bills: cash, part on account, UPI checked by hand, one cancelled; a held bill
@@ -68,7 +68,8 @@ K = await kpis();
 check('Today: ₹5,000 from 3 bills (the cancelled one left out), ₹1,667 a bill', K.Sales.v === '₹5,000' && K.Bills.v === '3' && /6 pieces/.test(K.Bills.s) && K['Average bill'].v === '₹1,667', K);
 check('gross profit: ₹2,100 at 42% (cost prices known for every sale)', K['Gross profit'].v === '₹2,100' && /^42% margin$/.test(K['Gross profit'].s), K['Gross profit']);
 check('the same sales figure as Reports for today', await run('const x=periodData(dayKey(Date.now()),dayKey(Date.now()),"");return kstats(x.live,x.rets).rev===5000'));
-check('cash, UPI and card taken today (owner)', /Cash ₹2,000/.test(await text('#homeBody .hmoney') || '') && /UPI ₹1,000/.test(await text('#homeBody .hmoney') || '') && /Card ₹0/.test(await text('#homeBody .hmoney') || ''), await text('#homeBody .hmoney'));
+check('cash, UPI and card taken today (owner), under Money today', K.Cash && K.Cash.v === '₹2,000' && K.UPI.v === '₹1,000' && K.Card.v === '₹0' && await vis('#homeBody .bt-money'), [K.Cash, K.UPI, K.Card]);
+check('...and reconciliation: the UPI checked by hand is one thing to check, and it opens by itself with why', K.Reconciliation && K.Reconciliation.v === '1 to check' && /1 UPI payment \(₹1,000\) checked only by hand/.test(await text('#homeBody #btWhy') || ''), [K.Reconciliation, await text('#homeBody #btWhy')]);
 
 console.log('--- needs attention ---');
 const at = await attn();
@@ -121,10 +122,14 @@ check('a sale without a cost price: profit isn\'t guessed (cost missing on 33% o
 
 console.log('--- by role ---');
 await run('window.__owner=access;access={role:"manager",perms:[...ROLE_DEFAULTS.manager],shopName:"Aura Threads"};renderAll()'); await home();
-check('manager: today with gross profit, the Agent and the 7 days, but not the cash drawer split', await vis('#homeBody .htoday') && /Gross profit/.test(await text('#homeBody .htoday') || '') && !(await vis('#homeBody .hmoney')) && await vis('#homeBody .hagent') && await vis('#homeBody .htrendc'));
+check('manager: Business today without gross profit or the money split (they stay in Reports), the Agent and the 7 days', await vis('#homeBody .htoday') && !/Gross profit/.test(await text('#homeBody .htoday') || '')
+  && /Customers owe/.test(await text('#homeBody .htoday') || '') && !(await vis('#homeBody .bt-money')) && await vis('#homeBody .hagent') && await vis('#homeBody .htrendc'));
+check('...and what a manager acts on: stock (1 sold out) — no owner cards (bank, GST, team)', /Sold out\s*1/.test(await text('#homeBody .hstk') || '') && !(await vis('#homeBody .hbank')) && !(await vis('#homeBody .hteam')), await text('#homeBody .hstk'));
 await run('access={role:"cashier",perms:[...ROLE_DEFAULTS.cashier],shopName:"Aura Threads"};renderAll()'); await home();
-check('cashier: Quick sell and Scan to sell', JSON.stringify(await qa()) === '["Quick sell","Scan to sell"]', await qa());
-check('...today without profit; no Agent, no 7 days', await vis('#homeBody .htoday') && !/Gross profit/.test(await text('#homeBody .htoday') || '') && !(await vis('#homeBody .hagent')) && !(await vis('#homeBody .htrendc')));
+check('cashier: New sale and Scan to sell', JSON.stringify(await qa()) === '["New sale","Scan to sell"]', await qa());
+check('...my shift (my sales, the cash I took, this till\'s drawer) instead of the shop\'s figures; no Agent, no 7 days', await vis('#homeBody .hshift') && /My sales\s*₹[\d,]+/.test(await text('#homeBody .hshift') || '') && /Cash I took/.test(await text('#homeBody .hshift') || '')
+  && /This till's drawer/.test(await text('#homeBody .hshift') || '') && !(await vis('#homeBody .htoday')) && !(await vis('#homeBody .hagent')) && !(await vis('#homeBody .htrendc')), await text('#homeBody .hshift'));
+check('...the held bill, to recall in one tap', /Mrs Rao/.test(await text('#homeBody .hheld') || '') && !!(await A.$('#homeBody .hheld [data-heldrecall]')), await text('#homeBody .hheld'));
 const cat = await attn();
 check('...needs attention only what a cashier can act on: held bill and dues, not UPI reconciliation', cat.includes('held') && cat.includes('dues') && !cat.includes('upi'), cat);
 check('...recent bills and customers', await vis('#homeBody .hbills') && await vis('#homeBody .hcust'));
@@ -136,7 +141,7 @@ const fit = await A.evaluate(() => ({ over: document.documentElement.scrollWidth
   order: [...document.querySelectorAll('#homeBody .hcard')].sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top).map((c) => [...c.classList].find((x) => x !== 'card' && x !== 'hcard')),
   cols: getComputedStyle(document.querySelector('#homeBody .hkpis')).gridTemplateColumns.split(' ').length }));
 check('on a phone everything fits (no sideways scrolling), today in two columns', fit.over <= 0 && !fit.wide.length && fit.cols === 2, fit);
-check('...in reading order: today, needs attention, the Agent, recent bills, the 7 days', JSON.stringify(fit.order) === '["htoday","hattn","hagent","hbills","htrendc"]', fit.order);
+check('...in reading order: the morning briefing, Business today, needs attention, bank and cash, the Agent, recent bills, the 7 days', JSON.stringify(fit.order) === '["hbrief","htoday","hattn","hbank","hagent","hbills","htrendc"]', fit.order);
 await A.setViewport({ width: 320, height: 700 }); await sleep(400); await home();
 check('...also at 320 px', await A.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth) <= 0);
 

@@ -4,7 +4,7 @@
 // request (REST, RPC, Edge Functions, sign-in): once a phone is enrolled or registered, its next request carries the key,
 // without a second client (two clients would refresh the same session against each other). No key: no header.
 
-import { recordEvent } from '../../shared/logging/diagnostics.js';
+import { recordEvent, recordLatency } from '../../shared/logging/diagnostics.js';
 
 export const DEVICE_HEADER = "x-hangtag-device";
 export const SLOW_MS = 3000;   // a call slower than this is noted (by its operation name and a duration band)
@@ -19,17 +19,19 @@ export function apiOp(url){
     return /\/storage\/v1\//.test(p) ? "storage" : "other";
   }catch{ return "other"; }
 }
-/* fetch that notes slow calls, server errors and failed connections (never the address's values, the body or the answer) */
+/* fetch that times every call (the 24-hour latency by operation) and notes slow calls, server errors and failed connections
+   (never the address's values, the body or the answer) */
 export function withTiming(fetchImpl, clock = () => (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now())){
   return async (input, init) => {
-    const t0 = clock(), url = typeof input === "string" ? input : (input && input.url) || "";
+    const t0 = clock(), url = typeof input === "string" ? input : (input && input.url) || "", op = apiOp(url);
     try{
       const res = await fetchImpl(input, init), ms = clock() - t0;
-      if(res && res.status >= 500) recordEvent("api", "server-error", { op: apiOp(url), status: res.status, ms });
-      else if(ms > SLOW_MS) recordEvent("api", "slow-call", { op: apiOp(url), status: res && res.status, ms }, "warn");
+      recordLatency(op, ms, !(res && res.status >= 500));
+      if(res && res.status >= 500) recordEvent("api", "server-error", { op, status: res.status, ms });
+      else if(ms > SLOW_MS) recordEvent("api", "slow-call", { op, status: res && res.status, ms }, "warn");
       return res;
     }catch(e){
-      if(!(e && e.name === "AbortError")) recordEvent("api", "connection-failed", { op: apiOp(url), ms: clock() - t0 }, "warn");
+      if(!(e && e.name === "AbortError")){ recordLatency(op, clock() - t0, false); recordEvent("api", "connection-failed", { op, ms: clock() - t0 }, "warn"); }
       throw e;
     }
   };

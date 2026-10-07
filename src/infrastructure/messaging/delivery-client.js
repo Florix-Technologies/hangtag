@@ -19,6 +19,7 @@ export function createDeliveryClient({ cloud }){
     revokeLinks: saleId => cloud.revokeInvoiceLinks(saleId),
     /* The bill's messages as recorded by the server, newest first */
     history: saleId => cloud.fetchDeliveries(saleId),
+    recent: since => cloud.fetchRecentDeliveries(since),
     /* A quotation by email or WhatsApp; requestId (one press of Send) makes a retry get the first answer, never a second
        message → { status, to, provider, id, again } once the provider accepted it; throws an AppError otherwise */
     async sendQuote({ channel, orderId, requestId }){

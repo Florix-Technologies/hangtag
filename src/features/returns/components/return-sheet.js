@@ -1,5 +1,7 @@
-// Return / exchange sheet: choose what comes back (and whether it can be sold again), what the customer takes instead,
-// and how money changes hands. Saving goes through the RecordReturn use case.
+// Return / exchange sheet, from a bill: what comes back (each line: how many, why, and whether it can be sold again — a
+// damaged or faulty piece stays off the shelf by default), what the customer takes instead (in an exchange, another size
+// or colour of the same product is one tap: "Swap for"), and how money changes hands (the difference). A return is not a
+// cancellation: the bill stays, with a credit note against it. Saving goes through the RecordReturn use case.
 import { canRefundThroughProvider, refundThroughProvider } from '../use-cases/provider-refund.js';
 import { queueAutoDelivery } from '../../delivery/use-cases/auto-delivery.js';
 import { lineLabel } from '../../../domain/catalog/options.js';
@@ -21,13 +23,16 @@ import { inr, inrx } from '../../../shared/formatting/money.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { decimalsOf, fmtQty, qtyText, roundQty, subQty, unitOf } from '../../../domain/catalog/units.js';
 import { can, refuse } from '../../shop/services/access.js';
+import { RETURN_REASONS, resaleableFor } from '../../../domain/returns/return-reasons.js';
+import { vLabel, variantsOf } from '../../../domain/catalog/variants.js';
+import { addToLines } from '../../sales/services/cart.js';
 import { billDueRoom } from '../../customers/services/customer-account.js';
 
-export const RETURN_REASONS=["Didn't fit","Wrong size","Didn't like it","Damaged or faulty","Other"];
+export { RETURN_REASONS };
 export function openReturn(sid,mode){
   if(refuse("perform_return","take returns"))return;
   const s=D().saleById[sid]; if(!s||s.void) return;
-  store.retState={sid, q:{}, sn:{}, nfr:{}, mode:mode==="exchange"?"exchange":"return", pay:(paymentsOf(s)[0]||{method:billDueRoom(s.id)>0&&can("collect_credit")?"due":"cash"}).method, reason:RETURN_REASONS[0], note:"", newItems:[], collect:"cash", keepDisc:true};
+  store.retState={sid, q:{}, sn:{}, nfr:{}, reasons:{}, mode:mode==="exchange"?"exchange":"return", pay:(paymentsOf(s)[0]||{method:billDueRoom(s.id)>0&&can("collect_credit")?"due":"cash"}).method, reason:RETURN_REASONS[0], note:"", newItems:[], collect:"cash", keepDisc:true};
   closeModal(); renderReturnSheet();
 }
 export function renderReturnSheet(){
@@ -42,7 +47,8 @@ export function renderReturnSheet(){
     // a line sold by serial number: the exact pieces coming back are ticked
     const sns=Array.isArray(i.sn)&&i.sn.length?i.sn.filter(x=>!returnedSerials(s,ln).has(x)):null;
     return `<div class="rt-line${max?"":" done"}"><div><b>${esc(i.n)}</b><span>${esc(lineLabel(i)||"")}${lineLabel(i)?" · ":""}bought ${esc(qtyText(i.q,i.u))}${gone?" · "+esc(qtyText(gone,i.u))+" already returned":""} · ${inrx(unitValue(s,i))} ${i.u&&i.u!=="pcs"?"per "+esc(unitOf(i.u).sym):"each"}</span>
-      ${q?`<label class="chk rt-nfr"><input type="checkbox" data-rtnfr="${ln}"${R.nfr[ln]?" checked":""}> Not for resale (damaged) — don't put back on the shelf</label>`:""}</div>
+      ${q?`<div class="rt-why"><label class="rt-reason"><span>Why</span><select data-rtreason="${ln}" aria-label="Why ${esc(i.n)} came back">${RETURN_REASONS.map(r=>`<option${r===(R.reasons[ln]||R.reason)?" selected":""}>${esc(r)}</option>`).join("")}</select></label>
+        <label class="chk rt-nfr"><input type="checkbox" data-rtnfr="${ln}"${R.nfr[ln]?" checked":""}> Not for resale (damaged) — don't put back on the shelf</label></div>${ex?swapHTML(s,i,ln,q):""}`:""}</div>
       ${!max?`<span class="note">Nothing left to return</span>`:sns?`<span class="rt-sns" role="group" aria-label="Serial numbers of ${esc(i.n)} coming back">${sns.map(x=>`<label class="chk"><input type="checkbox" data-rtsn="${ln}|${esc(x)}"${(R.sn[ln]||[]).includes(x)?" checked":""}> ${esc(x)}</label>`).join("")}</span>`:dp?`<span class="step unitq"><input type="number" inputmode="decimal" min="0" max="${esc(fmtQty(max))}" step="any" data-rtq="${ln}" value="${q?esc(fmtQty(q)):""}" placeholder="0" aria-label="Quantity of ${esc(i.n)} coming back"><span class="qu">${esc(unitOf(i.u).sym)}</span></span>`
         :`<span class="step"><button data-rtm="${ln}" aria-label="One less"${q?"":" disabled"}>−</button><b>${q}</b><button data-rtp="${ln}" aria-label="One more"${q<max?"":" disabled"}>+</button></span>`}</div>`}).join("");
   const dsc=exchangeDiscount(s), nT=billTotals(R.newItems,ex&&R.keepDisc!==false?dsc:null,exchangeCustomer(s)), X=exchangeSettlement(val,nT.total), diff=X.collect||-X.refund;
@@ -68,7 +74,6 @@ export function renderReturnSheet(){
     ${exHTML}
     ${!ex&&val?`<div class="rt-sum">${Q.tax||Q.roundOff?back:""}<div class="row tot"><span>Refund</span><span class="grand">${inrx(val)}</span></div></div>${payRow("Refund by","pay")}${provRefundHTML(R,s)}`:""}
     ${ex&&diff>0?payRow("Customer pays by","collect")+collectRefHTML(R):""}${ex&&diff<0?payRow("Refund by","pay")+provRefundHTML(R,s):""}
-    <label class="f" style="margin-top:12px">Reason<select id="rtReason">${RETURN_REASONS.map(r=>`<option${r===R.reason?" selected":""}>${r}</option>`).join("")}</select></label>
     <p id="rtErr" class="autherr" hidden></p>
     <div class="sh-foot"><span class="note">A credit note is made for the return. Stock goes back on the shelf unless marked not for resale.</span><div class="sh-acts"><button class="btn sm" data-act="closesheet">Cancel</button><button class="btn sm primary" data-act="rtsave"${val?"":" disabled"}>${label}</button></div></div>
   </div></div>`;
@@ -87,10 +92,30 @@ function collectRefHTML(R){
     `<div class="pgrid2"><label class="f"><span class="lab">${R.collect==="upi"?"UPI reference (UTR)":"Approval / transaction no."} <small>(optional)</small></span><input id="rtRef" value="${esc(R.collectRef||"")}" maxlength="40" autocomplete="off"></label>`+
     (R.collect==="card"?`<label class="f"><span class="lab">Last 4 digits <small>(optional)</small></span><input id="rtLast4" value="${esc(R.collectLast4||"")}" inputmode="numeric" maxlength="4" autocomplete="off"></label>`:"")+`</div>`;
 }
+/* An exchange for another size or colour of the same product: its other variants in stock, one tap each (the same
+   quantity as is coming back goes on the new bill) */
+function swapHTML(s,i,ln,q){
+  const d=D(), vid=d.resolve(i), rec=vid&&d.vIdx[vid]; if(!rec) return "";
+  const R=store.retState, taken=new Set(R.newItems.map(c=>c.v));
+  const other=variantsOf(rec.p).filter(v=>v.id!==vid&&v.active!==false&&!taken.has(v.id)&&exAvail(v.id)>=q).slice(0,8);
+  if(!other.length) return "";
+  return `<div class="rt-swap" role="group" aria-label="Swap ${esc(i.n)} for"><span>Swap for</span>${other.map(v=>`<button type="button" class="chipbtn" data-rtswap="${ln}|${esc(v.id)}">${esc(vLabel(v)||rec.p.name)}</button>`).join("")}</div>`;
+}
+/* The swap tapped: that variant goes on the new bill, as many as are coming back */
+export function swapReturnLine(ln,vid){
+  const R=store.retState; if(!R||R.mode!=="exchange") return;
+  const q=R.q[ln]||0; if(!(q>0)||exAvail(vid)<q){ toast("Not enough of that one in stock."); return; }
+  addToLines(R.newItems,vid,q); renderReturnSheet();
+}
+/* A line's reason chosen: a damaged or faulty piece stays off the shelf (it can still be ticked back) */
+export function setReturnReason(ln,reason){
+  const R=store.retState; if(!R) return;
+  R.reasons[ln]=reason; R.nfr[ln]=!resaleableFor(reason); renderReturnSheet();
+}
 export function saveReturn(){
   const R=store.retState; if(!R) return;
-  const reason=($("#rtReason")||{}).value||R.reason;
-  const r=recordReturn({sid:R.sid,picks:R.q,serials:R.sn,mode:R.mode,pay:R.pay,collect:R.collect==="cash"?"cash":{method:R.collect,ref:R.collectRef||"",last4:R.collectLast4||"",confirmed:!!R.collectRecv},reason,notForResale:R.nfr,newItems:R.newItems,keepDiscount:R.keepDisc!==false});
+  const reasons=Object.fromEntries(Object.keys(R.q).filter(ln=>R.q[ln]>0).map(ln=>[ln,R.reasons[ln]||R.reason]));
+  const r=recordReturn({sid:R.sid,picks:R.q,serials:R.sn,mode:R.mode,pay:R.pay,collect:R.collect==="cash"?"cash":{method:R.collect,ref:R.collectRef||"",last4:R.collectLast4||"",confirmed:!!R.collectRecv},reason:R.reason,reasons,notForResale:R.nfr,newItems:R.newItems,keepDiscount:R.keepDisc!==false});
   if(r.error){const err=$("#rtErr");if(err){err.textContent=r.error;err.hidden=false}return}
   const s=D().saleById[R.sid], viaProvider=r.refund>0&&R.provRefund!==false&&canRefundThroughProvider(s,r.ret.pay);
   store.retState=null; closeSheets(); renderAll();

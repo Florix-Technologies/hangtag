@@ -70,7 +70,7 @@ check('Copy link puts the store link on the clipboard', /^http:\/\/localhost:321
 await A.click('#v-store [data-store="qr"]'); await sleep(200);
 check('Show QR opens the QR with Download and Print', !!(await A.$('#modalHost .tqr-code svg')) && !!(await A.$('#modalHost [data-store="dl"]')) && !!(await A.$('#modalHost [data-store="print"]')));
 await run('closeModal()');
-check('the Store area is in More (not in Settings only)', await run('openNavMore(); const ok = !!document.querySelector("#modalHost [data-tab=\\"store\\"]"); closeModal(); return ok;'));
+check('the Store is a Sell task: its tab in the Sell bar, not in More', await run('openNavMore(); const inMore = !!document.querySelector("#modalHost [data-tab=\\"store\\"]"); closeModal(); setTab("sell"); renderAll(); return !inMore && !!document.querySelector("#v-sell [data-subnav=sell] [data-tab=\\"store\\"]");'));
 const storeUrl = copied;
 for (const w of [320, 375, 768, 1280]) { await A.setViewport({ width: w, height: 900 }); await sleep(200); check(`the Store area at ${w}px: no horizontal overflow`, !(await overflow(A))); }
 await A.setViewport({ width: 1280, height: 900 });

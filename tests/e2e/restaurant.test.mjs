@@ -99,6 +99,16 @@ for (const label of ['Accept', 'Start preparing', 'Ready']) {
 }
 check('T1\'s ticket moves New → Accepted → Preparing → Ready', (await run(`return orderRepository().get("${o1.id}").status`)) === 'ready');
 check('…and the floor shows T1 Ready (T2 still Preparing)', (await st()) === 'T1:ready T2:preparing', await st());
+// a server's day is tables, orders and the kitchen (domain/shop/role-workspace.js): that is its bar and its Home
+await run('window.__owner=access;access={role:"server",perms:[...ROLE_DEFAULTS.server],shopName:"Udupi Corner"};setTab("home");renderAll()'); await sleep(250);
+const serverBar = await A.$$eval('.nav .navi', (l) => l.map((b) => b.dataset.navtab));
+check('server: the bar is Home · Tables (and More) — not Stock or Customers', serverBar[0] === 'home' && serverBar.includes('tables') && !serverBar.includes('stock') && !serverBar.includes('customers') && !serverBar.includes('sell'), serverBar);
+const tnow = await text('#homeBody .htables');
+check('...Home: the tables now — T1 ready to serve first, T2 in the kitchen', /2 of 2 tables in use · 1 ready to serve/.test(tnow) && /T1\s*Ready to serve[\s\S]*T2\s*In the kitchen/.test(tnow) && !(await A.$('#homeBody .htoday')), tnow);
+await A.click(`#homeBody .htables [data-hometable="${T1.id}"]`); await sleep(250);
+check('...tapping T1 opens it on the floor', (await run('return prefs.tab')) === 'tables' && !!(await A.$(`#tablePanel[data-tpanel="${T1.id}"]`)));
+check('...and the Tables button is the one lit', await A.$eval('.nav .navi[data-navtab="tables"]', (b) => b.getAttribute('aria-current') === 'page').catch(() => false) && !(await A.$('.nav .navi[data-navtab="home"][aria-current]')));
+await run('access=window.__owner;setTab("home");renderAll()'); await sleep(200);
 await dbUntil(`SELECT status FROM public.hangtag_orders WHERE id = '${o1.id}'`, (r) => r[0] && r[0].status === 'ready');
 await run('setTab("tables");renderAll()'); await sleep(200);
 if (!(await A.$(`#tablePanel[data-tpanel="${T1.id}"]`))) { await A.click(`#v-tables [data-tbl="${T1.id}"]`); await sleep(150); }

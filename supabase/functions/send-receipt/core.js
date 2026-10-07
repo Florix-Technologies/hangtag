@@ -17,9 +17,11 @@ export const REQUEST_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 /* Messages one shop can send per hour (a runaway loop or a leaked session can't spam customers) */
 export const MAX_PER_HOUR = 60;
 /* What the function reads of a bill, its lines, its payments and the shop (with the caller's session) */
-export const SALE_COLUMNS = "id,bill_no,timestamp,subtotal,discount,total,credit,tax_amount,tax_inclusive,gst_mode,cgst_amount,sgst_amount,igst_amount,round_off,payment_method,due_amount,is_void,customer_id,customer_name";
-export const ITEM_COLUMNS = "line_no,product_name,variant_label,color,size,quantity,unit_price,discount_amount";
-export const PAYMENT_COLUMNS = "method,amount,reference,change_given,status";
+export const SALE_COLUMNS = "id,bill_no,timestamp,subtotal,discount,item_discount,bill_discount,bill_discount_type,bill_discount_value,taxable_amount,total,credit,tax_rate,tax_amount,tax_inclusive,gst_mode,cgst_amount,sgst_amount,igst_amount,round_off,payment_method,due_amount,is_void,customer_id,customer_name";
+export const ITEM_COLUMNS = "line_no,product_name,variant_label,color,size,quantity,unit_price,discount_amount,gst_rate,cgst_amount,sgst_amount,igst_amount,line_total";
+export const PAYMENT_COLUMNS = "method,amount,reference,change_given,tendered,verification,card_last4,status";
+/* A bill's returns (what came back and what was paid back), for the rows after the payments */
+export const RETURN_COLUMNS = "value,refund_amount,kind";
 export const PROFILE_COLUMNS = "shop_name,address,city,state,phone,gstin";
 
 const fail = (status, error, message) => ({ ok: false, status, error, message });
@@ -136,43 +138,78 @@ export const moneyFor = (code) => { const [mark, loc] = regionOf(code); return (
 export const rupees = moneyFor("IN");
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const oneLine = (s) => String(s ?? "").replace(/[\r\n\t]+/g, " ").trim();
-const PAY = { cash: "Cash", upi: "UPI", card: "Card" };
+const PAY = { cash: "Cash", upi: "UPI", card: "Card", voucher: "Gift voucher" };
 const dateFor = (code) => { const [, loc, timeZone] = regionOf(code); return (t) => { const d = new Date(num(t)); return isNaN(d) ? "" : d.toLocaleString(loc, { timeZone, day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }); }; };;
 
+/* The bill's money rows: [label, amount as written, bold]. The same words, signs and order as the app's one bill document
+   (src/domain/documents/bill-content.js billContent + billRows: Subtotal, Item discounts, Bill discount, the taxable amount and
+   GST — after the total, as "Includes …", when prices include it — Round off, Total, Exchange credit and Amount due, each
+   payment with how it was paid, or what settled the bill, then the balance due, the change and returns), worked out from the
+   columns the app saved: tests/unit/bill-content.test.mjs runs the same bills through both and they must agree. Bills saved
+   before GST was split keep their one "GST" row. */
+const pctText = (v) => Math.round(num(v) * 100) / 100 + "%";
+function moneyRows({ s, items, pays, rets, rupees }) {
+  const R = [], add = (label, amount, sign = "", bold = false) => R.push([label, (sign || "") + rupees(amount), bold]);
+  const incl = s.tax_inclusive !== false, tax = num(s.tax_amount), total = num(s.total), credit = num(s.credit), due = Math.max(0, r2(total - credit));
+  // bills saved before discounts were split (both 0, or missing) show their one discount as the bill discount
+  const itemD = num(s.item_discount), billD = itemD || num(s.bill_discount) ? num(s.bill_discount) : r2(num(s.discount) - itemD);
+  // GST: CGST + SGST or IGST, with the rate when the whole bill has one (the bill's lines, else its own rate)
+  let gst = [];
+  if (tax > 0) {
+    if (!s.gst_mode || s.gst_mode === "none") gst = [["GST", tax]];
+    else {
+      const L = items || [], lineTax = L.length > 0 && L.every((i) => i.line_total != null);
+      const rates = [...new Set(L.filter((i) => num(i.cgst_amount) + num(i.sgst_amount) + num(i.igst_amount) > 0).map((i) => num(i.gst_rate)))];
+      const one = lineTax ? (rates.length === 1 && rates[0] ? rates[0] : num(s.tax_rate)) : num(s.tax_rate), rate = (f) => (one ? " " + pctText(one * f) : "");
+      gst = s.gst_mode === "inter" ? [["IGST" + rate(1), s.igst_amount]] : [["CGST" + rate(0.5), s.cgst_amount], ["SGST" + rate(0.5), s.sgst_amount]];
+    }
+  }
+  const taxable = s.taxable_amount != null ? num(s.taxable_amount) : r2(total - tax - num(s.round_off));
+  add("Subtotal", s.subtotal);
+  if (itemD > 0) add("Item discounts", itemD, "−");
+  if (billD > 0) add("Bill discount" + (s.bill_discount_type === "percent" && num(s.bill_discount_value) > 0 ? " " + pctText(s.bill_discount_value) : ""), billD, "−");
+  if (gst.length && !incl) { add("Taxable amount", taxable); gst.forEach(([l, a]) => add(l, a)); }
+  if (num(s.round_off)) add("Round off", Math.abs(num(s.round_off)), num(s.round_off) > 0 ? "+" : "−");
+  add("Total", total, "", true);
+  if (gst.length && incl) { add("Taxable amount", taxable); gst.forEach(([l, a]) => add("Includes " + l, a)); }
+  if (credit) { add("Exchange credit", credit, "−"); add("Amount due", due, "", true); }
+  pays.forEach((x) => R.push(["Paid by " + x.label + (x.note ? " (" + x.note + ")" : ""), rupees(x.amount), false]));
+  const paid = r2(pays.reduce((a, x) => a + x.amount, 0)), owed = Math.max(0, r2(due - paid)), change = r2(pays.reduce((a, x) => a + x.change, 0));
+  if (!pays.length && !owed) R.push([credit ? "Covered by the exchange credit" : "Nothing to pay", "", false]);
+  // part (or all) of the bill left on the customer's account: said plainly, never "paid" for the whole bill
+  if (owed) add("Balance due (on account)", owed, "", true);
+  if (change > 0) add("Change given", change);
+  const back = r2((rets || []).reduce((a, x) => a + num(x.value), 0)), refunded = r2((rets || []).reduce((a, x) => a + num(x.refund_amount), 0));
+  if (back) add("Returned items", back);
+  if (refunded) add("Refunded", refunded);
+  return { rows: R, owed };
+}
+
 /* The bill as shown in a message: { shop, contact, number, date, title, customer, lines, more, rows, paid, total } */
-export function billView({ sale, items, payments, shop, customer, region }) {
+export function billView({ sale, items, payments, returns, shop, customer, region }) {
   const rupees = moneyFor(region), billDate = dateFor(region);
-  const s = sale || {}, p = shop || {}, incl = s.tax_inclusive !== false;
+  const s = sale || {}, p = shop || {};
   const lines = (items || []).slice().sort((a, b) => num(a.line_no) - num(b.line_no)).map((i) => ({
     name: oneLine(i.product_name), detail: oneLine(i.variant_label || [i.color, i.size].filter((x) => x != null && x !== "").join(" / ")),
     qty: num(i.quantity), rate: num(i.unit_price), gross: r2(num(i.quantity) * num(i.unit_price)), discount: num(i.discount_amount),
   }));
-  const gst = s.gst_mode
-    ? [["IGST", s.igst_amount], ["CGST", s.cgst_amount], ["SGST", s.sgst_amount]].filter(([, a]) => num(a) > 0)
-    : num(s.tax_amount) > 0 ? [["GST", s.tax_amount]] : [];
   const total = num(s.total), credit = num(s.credit), due = Math.max(0, r2(total - credit));
-  const pays = (payments || []).filter((x) => x.status !== "cancelled" && num(x.amount) > 0)
-    .map((x) => ({ label: PAY[x.method] || oneLine(x.method), amount: num(x.amount), ref: oneLine(x.reference), change: num(x.change_given) }));
-  // what was left on the customer's account (part or all of the bill): never shown as paid
-  const owed = num(s.due_amount) > 0 ? r2(num(s.due_amount)) : 0;
+  // each payment, with how it was paid: cash received and change, the reference, the card's last digits, verified or not
+  const pays = (payments || []).filter((x) => x.status !== "cancelled" && num(x.amount) > 0).map((x) => {
+    const amount = num(x.amount), change = num(x.change_given), received = x.tendered == null ? r2(amount + change) : num(x.tendered);
+    const note = [x.method === "cash" && change ? `received ${rupees(received)} · change ${rupees(change)}` : x.reference ? "ref " + oneLine(x.reference) : "",
+      x.card_last4 ? "card ••" + oneLine(x.card_last4) : "", x.verification === "verified" ? "verified" : x.verification === "unverified" ? "unverified" : ""].filter(Boolean).join(" · ");
+    return { label: PAY[x.method] || oneLine(x.method), amount, change, note };
+  });
   // bills from before split payments have no payment rows: the bill's one method paid what was due (less what is on account)
-  if (!pays.length && r2(due - owed) > 0 && s.payment_method && s.payment_method !== "due") pays.push({ label: PAY[s.payment_method] || oneLine(s.payment_method), amount: r2(due - owed), ref: "", change: 0 });
-  const rows = [["Subtotal", rupees(s.subtotal)]];
-  if (num(s.discount) > 0) rows.push(["Discount", "−" + rupees(s.discount)]);
-  gst.forEach(([l, a]) => rows.push([l + (incl ? " (included)" : ""), rupees(a)]));
-  if (num(s.round_off)) rows.push(["Round off", (num(s.round_off) > 0 ? "+" : "−") + rupees(Math.abs(num(s.round_off)))]);
-  rows.push(["Total", rupees(total), true]);
-  if (credit) { rows.push(["Exchange credit", "−" + rupees(credit)]); rows.push(["Amount paid", rupees(due), true]); }
-  pays.forEach((x) => rows.push(["Paid by " + x.label + (x.ref ? " (ref " + x.ref + ")" : ""), rupees(x.amount)]));
-  const change = r2(pays.reduce((a, x) => a + x.change, 0));
-  if (change > 0) rows.push(["Change given", rupees(change)]);
-  // part (or all) of the bill left on the customer's account: said plainly, never "paid" for the whole bill
-  if (owed) rows.push(["Balance due (on account)", rupees(owed), true]);
+  const onAcct = num(s.due_amount) > 0 ? r2(num(s.due_amount)) : 0;
+  if (!pays.length && r2(due - onAcct) > 0 && s.payment_method && s.payment_method !== "due") pays.push({ label: PAY[s.payment_method] || oneLine(s.payment_method), amount: r2(due - onAcct), change: 0, note: "" });
+  const { rows, owed } = moneyRows({ s, items, pays, rets: returns, rupees });
   const paid = (pays.length ? "paid by " + pays.map((x) => `${x.label} ${rupees(x.amount)}`).join(" + ")
     : credit ? "covered by your exchange credit" : owed ? "" : "nothing to pay") + (owed ? (pays.length ? ", " : "") + rupees(owed) + " on your account" : "");
   return {
     shop: oneLine(p.shop_name) || "Our shop", contact: [[p.address, p.city, p.state].map(oneLine).filter(Boolean).join(", "), p.phone ? "Phone " + oneLine(p.phone) : "", p.gstin ? "GSTIN " + oneLine(p.gstin).toUpperCase() : ""].filter(Boolean),
-    number: oneLine(s.bill_no || s.id), date: billDate(s.timestamp), title: gst.length ? "Tax invoice" : "Bill", customer: oneLine(customer && customer.name),
+    number: oneLine(s.bill_no || s.id), date: billDate(s.timestamp), title: num(s.tax_amount) > 0 ? "Tax Invoice" : "Bill", customer: oneLine(customer && customer.name),
     lines: lines.slice(0, LIMITS.lines), more: Math.max(0, lines.length - LIMITS.lines), rows, paid, total: rupees(total),
   };
 }
@@ -191,7 +228,7 @@ export function billMessage(channel, data) {
     return { text: t.length <= LIMITS.sms ? t : link ? head.slice(0, LIMITS.sms - tail.length - 1) + "…" + tail : t.slice(0, LIMITS.sms - 1) + "…" };
   }
   if (channel === "whatsapp") {
-    const text = [`*${B.shop}*`, `${B.title} ${B.number} · ${B.date}`, "", ...B.lines.map(lineText), ...more, "", ...B.rows.map(([l, v, b]) => (b ? `*${l}: ${v}*` : `${l}: ${v}`)), ...(link ? ["", `Invoice: ${link}`] : [])].join("\n");
+    const text = [`*${B.shop}*`, `${B.title} ${B.number} · ${B.date}`, "", ...B.lines.map(lineText), ...more, "", ...B.rows.map(([l, v, b]) => (v ? (b ? `*${l}: ${v}*` : `${l}: ${v}`) : l)), ...(link ? ["", `Invoice: ${link}`] : [])].join("\n");
     // the approved template has {{1}}..{{4}}; a template with a 5th value for the link is used when WHATSAPP_LINK_PARAM=on
     const params = [B.customer || "Customer", B.shop, B.number, B.total, ...(link && data.linkParam ? [link] : [])];
     return { text: text.slice(0, LIMITS.whatsapp), params: params.map((x) => x.slice(0, 200)) };
@@ -213,7 +250,7 @@ ${B.contact.length ? `<tr><td style="font-size:13px;color:#666;padding-top:2px">
 <tr><td style="padding-top:22px;font-size:11px;color:#999">Sent by ${esc(B.shop)} with Hangtag. Reply to this email to contact the shop.</td></tr>
 </table></td></tr></table></body></html>`;
   const text = [B.shop, ...B.contact, "", `${B.customer ? `Hello ${B.customer},\n` : ""}Thank you for shopping with us. Here is your ${B.title.toLowerCase()}.`, "",
-    `${B.title} ${B.number} · ${B.date}`, "", ...B.lines.map(lineText), ...more, "", ...B.rows.map(([l, v]) => `${l}: ${v}`)].join("\n");
+    `${B.title} ${B.number} · ${B.date}`, "", ...B.lines.map(lineText), ...more, "", ...B.rows.map(([l, v]) => (v ? `${l}: ${v}` : l))].join("\n");
   return { subject, html, text };
 }
 

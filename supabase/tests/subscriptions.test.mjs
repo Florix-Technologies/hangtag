@@ -373,7 +373,7 @@ console.log('=== the migration on a database with shops already set up ===');
   const s = (await sql(db, `SELECT * FROM public.hangtag_subscriptions WHERE owner_id = $1`, [B]))[0];
   check('an existing shop without a plan record gets a 7-day trial from when the migration runs', s && days(s.trial_started_at, s.trial_ends_at) === 7 && Math.abs(new Date(s.trial_started_at) - Date.now()) < 120000, s);
   const rep = await report(db);
-  check('migration report: 64 rows, all ok (74-77: plans, every set-up shop has a record, every business table locked, promo uses on paid payments)', rep.length === 64 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: 65 rows, all ok (74-77: plans, every set-up shop has a record, every business table locked, promo uses on paid payments)', rep.length === 65 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   const guarded = (await sql(db, `SELECT count(*)::int n FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid WHERE t.tgname = 'zz_hangtag_subscription_guard'`))[0].n;
   check('the lock is on every business table (at least 40)', guarded >= 40, guarded);
   const defs = await sql(db, `SELECT p.proname, p.prosecdef, array_to_string(p.proconfig, ',') cfg FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace

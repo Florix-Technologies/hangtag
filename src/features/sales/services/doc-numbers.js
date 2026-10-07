@@ -11,7 +11,7 @@ import { orderRepository } from '../../orders/repositories/order-repository.js';
 import { bizRepository } from '../../commerce/repositories/biz-repository.js';
 
 const TILL_KEY = "hangtag_till";
-/* A document type's numbering: bills follow Settings → Billing & Documents → Bill numbering; every other type has its own
+/* A document type's numbering: bills follow Settings → Bills & Documents → Bill numbering; every other type has its own
    prefix (quotations: the shop's quotation prefix) and the bills' digits and suffix, starting at 1 */
 export function numberingFor(type){
   const s = store.settings || {}, bill = numberingOf({ prefix: s.prefix, start: s.invoiceStart, padding: s.invoicePadding, suffix: s.invoiceSuffix });

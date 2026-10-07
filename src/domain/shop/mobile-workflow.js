@@ -1,11 +1,12 @@
 // Phone navigation and quick-action priorities for the existing roles. This changes presentation only: permissions and
 // database policies remain authoritative, and a custom permission can surface an otherwise non-default module.
 import { ROLE_DEFAULTS } from './permissions.js';
+import { ROLE_BAR } from './role-workspace.js';
 
 export const MOBILE_MODULE_ORDER = Object.freeze({
   owner: ['home', 'sell', 'bills', 'stock', 'customers', 'report', 'orders', 'products', 'tables', 'kitchen', 'assistant', 'store', 'team', 'settings'],
   manager: ['home', 'sell', 'bills', 'stock', 'customers', 'report', 'orders', 'products', 'tables', 'kitchen', 'assistant', 'store', 'settings'],
-  cashier: ['home', 'sell', 'bills', 'stock', 'orders', 'customers', 'tables', 'settings'],
+  cashier: ['home', 'sell', 'bills', 'customers', 'orders', 'stock', 'tables', 'settings'],
   server: ['tables', 'orders', 'home', 'settings'],
   kitchen: ['kitchen', 'settings'],
 });
@@ -41,19 +42,12 @@ export function mobileLandingModule(role, modules, permissions, current){
   return first ? first.id : null;
 }
 
-/* The phone tab bar: three places and "More". A shop: Home · Sell · Stock; a restaurant (one with Tables): Home · Tables ·
-   Kitchen; each role its own (a cashier sells and looks up customers, a server takes table orders, the kitchen cooks).
-   A place the shop or the role doesn't have goes to the next module the role uses on a phone. */
-export const PHONE_BAR = Object.freeze({
-  owner: { shop: ['home', 'sell', 'bills', 'stock'], restaurant: ['home', 'sell', 'bills', 'stock'] },
-  manager: { shop: ['home', 'sell', 'bills', 'stock'], restaurant: ['home', 'sell', 'bills', 'stock'] },
-  cashier: { shop: ['home', 'sell', 'bills', 'stock'], restaurant: ['home', 'sell', 'bills', 'stock'] },
-  server: { shop: ['home', 'tables', 'orders'], restaurant: ['home', 'tables', 'orders'] },
-  kitchen: { shop: ['kitchen'], restaurant: ['kitchen'] },
-});
-/* ids: the modules this person may open on a phone (mobileModulesFor), in its order. → the bar's module ids, at most `room` */
-export function phoneBarFor(role, restaurant, ids, room = 4){
-  const have = Array.isArray(ids) ? ids : [], want = (PHONE_BAR[role] || PHONE_BAR.owner)[restaurant ? 'restaurant' : 'shop'];
+/* The phone tab bar: the role's own workspaces that fit (role-workspace.js ROLE_BAR: the owner and a manager Home · Sell ·
+   Bills · Stock, a cashier Home · Sell · Bills · Customers, a server Home · Tables · Orders · Kitchen, the kitchen its
+   screen), then "More". A place the shop or the person doesn't have goes to the next module the role uses on a phone.
+   ids: the modules this person may open on a phone (mobileModulesFor), in its order. → the bar's module ids, at most `room` */
+export function phoneBarFor(role, ids, room = 4){
+  const have = Array.isArray(ids) ? ids : [], want = ROLE_BAR[role] || ROLE_BAR.owner;
   const bar = want.filter(id => have.includes(id));
   for(const id of have){ if(bar.length >= room) break; if(!bar.includes(id) && id !== 'settings') bar.push(id); }
   return bar.slice(0, room);

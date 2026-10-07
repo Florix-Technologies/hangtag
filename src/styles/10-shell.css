@@ -81,6 +81,11 @@
 .command-row,.quick-row{display:flex;align-items:center;gap:12px;width:100%;min-height:52px;padding:9px 12px;text-align:left}.command-row+.command-row,.quick-row+.quick-row{border-top:1px solid var(--line)}
 .command-row:hover,.command-row:focus-visible,.quick-row:hover,.quick-row:focus-visible{background:var(--wash)}.command-row>svg,.quick-row>svg{width:20px;height:20px;flex:none;color:var(--ink-2)}
 .command-row span,.quick-row span{display:flex;min-width:0;flex-direction:column;gap:2px}.command-row b,.quick-row b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}.command-row small,.quick-row small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-3);font-size:12px}
+/* New: Suggested (this page's actions, what is started often) above everything else; a keyboard's number keys start them */
+.quick-h{margin:0 0 6px;font-size:11.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}.quick-list+.quick-h{margin-top:15px}
+.quick-why{font-style:normal;font-weight:600;color:var(--ink-2)}.quick-row span{flex:1}
+.quick-key{display:none;flex:none;min-width:22px;padding:1px 6px;border:1px solid var(--line-2);border-radius:6px;font:600 11.5px/18px var(--font-mono,ui-monospace,monospace);text-align:center;color:var(--ink-3);background:var(--bg)}
+@media (hover:hover) and (pointer:fine){.quick-key{display:inline-block}}
 .command-empty{display:grid;justify-items:center;gap:8px;padding:36px 16px;text-align:center;color:var(--ink-2)}.command-empty>svg{width:28px;height:28px;color:var(--ink-3)}.command-empty p{margin:0;color:var(--ink-3);font-size:13px}.quick-sheet{max-width:480px}
 
 /* ---------- page layout ---------- */

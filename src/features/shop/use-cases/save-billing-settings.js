@@ -44,7 +44,7 @@ export function saveGstSettings(input){
   saveSettings();enqueue({type:"settings"});
   return {ok:true};
 }
-/* Billing & Documents → Templates: { docTpl, docAccent, docGst, docTerms, docSign, docBank } → { ok } or { error, field } */
+/* Bills & Documents → Templates: { docTpl, docAccent, docGst, docTerms, docSign, docBank } → { ok } or { error, field } */
 export function saveDocSettings(input){
   if(!can("manage_settings"))return {error:notAllowedText("change the shop's document templates")};
   const r=checkDocSettings(input);

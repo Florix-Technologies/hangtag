@@ -12,7 +12,7 @@ import { hasCap } from '../features/shop/services/shop-caps.js';
 import { scaleSetupHTML } from '../features/hardware/components/scale-settings.js';
 import { onSubviewClick, renderAreaNav, renderSubviews } from '../features/shop/components/module-page.js';
 import { openTeam } from '../features/shop/components/team-settings.js';
-import { renderHome } from '../features/home/pages/home-page.js';
+import { installHomeEvents, renderHome } from '../features/home/pages/home-page.js';
 import { installBillsPageEvents, renderBillsPage } from '../features/bills/pages/bills-page.js';
 import { renderBill } from '../features/sales/components/bill-panel.js';
 import { renderGrid } from '../features/sales/pages/sell-page.js';
@@ -41,10 +41,9 @@ import { installVoiceSearch } from '../features/search/components/voice-search.j
 import { installOpenAnything } from '../features/search/components/open-anything.js';
 import { priceListsSettingsHTML } from '../features/commerce/components/settings-parts.js';
 import { gstSettingsHTML } from '../features/commerce/components/gst-documents.js';
-import { vouchersSettingsHTML } from '../features/commerce/components/vouchers.js';
 import { integrationsSettingsHTML } from '../features/commerce/components/webhooks.js';
 import { bankAccountsSettingsHTML, installBankEvents } from '../features/finance/components/bank-accounts-view.js';
-import { installStoreEvents, renderStorePage, storeOpen } from '../features/commerce/pages/store-page.js';
+import { installStoreEvents, renderStorePage } from '../features/commerce/pages/store-page.js';
 import { docTemplatesHTML, installDocTemplateEvents } from '../features/receipts/components/doc-templates.js';
 import { automationSettingsHTML, installAutomationEvents } from '../features/automation/components/automation-view.js';
 import { diagnosticsHTML, installDiagnosticsEvents } from '../features/shop/components/diagnostics-view.js';
@@ -73,21 +72,20 @@ export function installModules(){
   registerModule({ id: "settings", view: true, landing: false, render: () => renderSettingsPage() });
   // Team (the owner's): the people who sell in the shop, their roles and phones
   registerModule({ id: "team", label: "Team", order: 88, phone: 75, view: false, perms: ["manage_users"], open: () => openTeam() });
-  // Settings → Team & Devices: the weighing scale (T1), for shops that sell by weight (the capability, or a product sold by the kg or
+  // Settings → This device: the weighing scale (T1), for shops that sell by weight (the capability, or a product sold by the kg or
   // litre) or that already set one up on this device
   const weighs = () => hasCap("uses_weight") || !!storage.get("hangtag_scale", null) || products().some(p => /^(weight|volume)$/.test(unitOf(p.unit).kind));
   registerSettingsPart("devices", { id: "scale", order: 20, html: () => weighs() ? scaleSetupHTML() : "" });
   // Settings → Products & Inventory (Wave 2): for shops that keep expiry dates or batches
   const expires = () => hasCap("uses_expiry") || hasCap("uses_batches") || products().some(p => trackingOfP(p) === "batch");
   registerSettingsPart("inventory", { id: "expiry", order: 20, perms: ["manage_settings"], html: () => expires() ? expirySettingsHTML() : "" });
-  // Settings → Billing & Documents: the page invoice links open (the owner's), and the quotation template for shops that make quotations
+  // Settings → Bills & Documents: the page invoice links open (the owner's), and the quotation template for shops that make quotations
   registerSettingsPart("integrations", { id: "invoice-page", order: 20, perms: ["manage_settings"], html: invoicePageHTML });
   registerSettingsPart("billing", { id: "quotations", order: 60, perms: ["manage_settings"], html: () => hasCap("uses_quotations") ? quotationSettingsHTML() : "" });
   // Settings → Sales & Customers (section 3r): price lists for shops that use them
   registerSettingsPart("sales", { id: "price-lists", order: 10, perms: ["manage_products"], html: () => hasCap("uses_price_lists") ? priceListsSettingsHTML() : "" });
-  registerSettingsPart("sales", { id: "vouchers", order: 20, perms: ["create_sale", "manage_settings"], html: vouchersSettingsHTML });
   registerSettingsPart("billing", { id: "gst-docs", order: 50, perms: ["manage_settings"], html: gstSettingsHTML });
-  // Settings → Billing & Documents → Templates: one look for every A4 document
+  // Settings → Bills & Documents → Templates: one look for every A4 document
   registerSettingsPart("billing", { id: "templates", order: 5, perms: ["manage_settings"], html: docTemplatesHTML });
   // Settings → Advanced: integrations (outbound webhooks), the owner's only
   registerSettingsPart("integrations", { id: "webhooks", order: 10, html: integrationsSettingsHTML });
@@ -104,10 +102,10 @@ export function installModules(){
   registerModule({ id: "tables", label: "Tables", order: 32, phone: 25, caps: ["uses_tables"], perms: ["create_sale", "create_order", "manage_tables", "manage_settings"], available: mayWorkTables, render: renderTablesPage });
   registerModule({ id: "kitchen", label: "Kitchen", order: 34, phone: 26, caps: ["uses_kitchen"], perms: ["manage_kitchen"], render: renderKitchenPage });
   // Store (UX pass): the public mobile store as its own area for the owner and managers, where the shop takes sales orders
-  registerModule({ id: "store", label: "Store", order: 36, phone: 65, caps: ["uses_sales_orders", "uses_mobile_store"], perms: ["manage_settings"], render: renderStorePage });
-  registerSettingsPart("storefront", { id: "store", order: 10, perms: ["manage_settings"], html: () => `<div class="setblk"><h5>Mobile store</h5><p class="note" style="margin:0 0 12px">${storeOpen() ? "Your store is open: customers can browse and order from their phones." : "Your store is closed. Open it, share the link or QR, and see the orders in the Store area."}</p><button type="button" class="btn primary" data-tab="store">Open the Store area</button></div>` });
+  registerModule({ id: "store", label: "Store", order: 36, phone: 65, caps: ["uses_sales_orders", "uses_mobile_store"], perms: ["manage_settings"], render(){ renderStorePage(); renderAreaNav("store"); } });
   installRestaurantTimers();
   installAssistantEvents();
+  installHomeEvents();   // Business today: a figure opens why it is what it is
   installProductDraftEvents();
   installVoiceSearch();
   installOpenAnything();

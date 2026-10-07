@@ -46,6 +46,22 @@ export function queueAutoDelivery(sale){
   setTimeout(processDeliveryQueue,1200);
   return jobs;
 }
+/* Sends again the receipts of bills that reached nobody (their failed sends: automatic ones are tried afresh, a failed
+   send made by hand goes into the same queue) → how many sends were queued */
+export function sendFailedAgain(sids){
+  const now = Date.now(); let n = 0;
+  (sids || []).forEach(sid => {
+    const failedAuto = store.deliveryQueue.filter(j => j.saleId === sid && j.status === "failed");
+    failedAuto.forEach(j => { Object.assign(j, { status: "queued", attempts: 0, first: now, nextAt: now, t: now, error: "", wait: "" }); n++; });
+    // a failed send made by hand (or one from another device): queued once for its channel
+    const done = new Set(store.deliveryQueue.filter(j => j.saleId === sid).map(j => j.channel));
+    [...new Set((store.deliveries[sid] || []).filter(e => e.status === "failed").map(e => e.channel))].filter(ch => !done.has(ch)).forEach(channel => {
+      store.deliveryQueue.push({ id: uid(), saleId: sid, channel, status: "queued", attempts: 0, first: now, nextAt: now, t: now }); n++; });
+    changed(sid);
+  });
+  if(n){ saveDeliveryQueue(); setTimeout(processDeliveryQueue, 300); }
+  return n;
+}
 /* Temporary: worth trying again later. Everything else (no contact, cancelled bill, channel not set up) is final. */
 function temporary(e){
   const why=e&&e.details&&e.details.error;
@@ -74,10 +90,11 @@ async function run(){
       // the server's own record of it, for the bill's history
       store.deliveries[j.saleId]=[{channel:j.channel,to:r.to,status:j.status,provider:r.provider,providerId:r.id,mode:"auto",t:j.t},...(store.deliveries[j.saleId]||[]).filter(e=>e.status!=="sending")];
     }catch(e){
-      const msg=userMessage(e,"The receipt wasn't sent."), again=temporary(e)&&!(j.channel==="whatsapp"&&j.fallback&&e.code===ERROR_CODES.DELIVERY)?nextAttemptAt(j,Date.now()):null;
+      const passing=temporary(e)&&!(j.channel==="whatsapp"&&j.fallback&&e.code===ERROR_CODES.DELIVERY), msg=userMessage(e,"The receipt wasn't sent."), again=passing?nextAttemptAt(j,Date.now()):null;
       if(again) Object.assign(j,{status:"queued",nextAt:again,error:msg});
       else{
-        Object.assign(j,{status:"failed",error:msg,t:Date.now()});
+        // temp: it failed for a passing reason (Automation's "Send failed receipts again" tries it once a day)
+        Object.assign(j,{status:"failed",error:msg,t:Date.now(),temp:passing});
         if(j.fallback&&!store.deliveryQueue.some(x=>x.saleId===j.saleId&&x.channel===j.fallback)){
           const t=Date.now();
           store.deliveryQueue.push({id:uid(),saleId:j.saleId,channel:j.fallback,status:"queued",attempts:0,first:t,nextAt:t,t,after:j.channel});

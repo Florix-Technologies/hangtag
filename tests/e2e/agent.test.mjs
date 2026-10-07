@@ -61,7 +61,10 @@ check('setup: purchase orders on, a purchase from Lakshmi Textiles, two bills (o
 console.log('--- the page ---');
 await run('setTab("assistant");renderAll()'); await sleep(300);
 check('the Hangtag Agent page: what it does and that you confirm anything it would save', /Hangtag Agent/.test(await text('#v-assistant .viewhead') || '') && /you confirm anything it would save/.test(await text('#v-assistant .viewhead') || ''));
-check('suggestions include recent bills, the sales trend, UPI to verify and drafting a purchase order', await A.$$eval('#v-assistant [data-ask-question]', (b) => b.map((x) => x.dataset.askQuestion)).then((l) => ['Recent bills', 'Sales trend', 'UPI to verify', 'Draft a purchase order'].every((s) => l.includes(s))));
+check('the owner\'s suggestions are about the owner\'s day: what\'s unusual, profit, GST, cash, the bank, UPI to verify', await A.$$eval('#v-assistant [data-ask-question]', (b) => b.map((x) => x.dataset.askQuestion)).then((l) => ['What’s unusual today?', 'Profit this month', 'GST this month', 'Cash in hand', 'Bank balances', 'UPI to verify'].every((s) => l.includes(s))));
+await run('window.__owner=access;access={role:"manager",perms:[...ROLE_DEFAULTS.manager],shopName:"x"};renderAll()'); await sleep(200);
+check('...a manager\'s about stock, orders and purchases (reorder, low stock, open orders, purchase orders, drafting one)', await A.$$eval('#v-assistant [data-ask-question]', (b) => b.map((x) => x.dataset.askQuestion)).then((l) => ['What should I reorder?', 'Low stock', 'Open orders', 'Purchase orders to receive', 'Draft a purchase order'].every((s) => l.includes(s))));
+await run('access=window.__owner;renderAll()'); await sleep(200);
 
 console.log('--- answers with buttons ---');
 await A.click('#v-assistant [data-ask-question="Who owes me money?"]'); await until('!!document.querySelector("#v-assistant .ask-answer")'); await sleep(200);
@@ -92,14 +95,26 @@ check('...the page says so, with the way to Purchase orders', /Saved as draft PO
 await run('await flushSbQueue()');
 const row = (await q(`SELECT status, source, jsonb_array_length(items) AS n FROM public.hangtag_purchase_orders`))[0];
 check('...and in the cloud as a draft', row && row.status === 'draft' && row.source === 'reorder' && row.n === 1, row);
-const au = await run('return autoLog.filter(e=>e.rule==="agent").map(e=>({action:e.action,why:e.why,tool:e.tool,before:e.before,after:e.after,outcome:e.outcome,by:e.by,t:e.t>0}))');
-check('the audit: Save and "Not now" are in the automation log — who, when, why (the question), the tool, before, after, the approval and the outcome',
+const au = await run('return autoLog.filter(e=>e.rule==="agent"&&e.action!=="answered").map(e=>({action:e.action,why:e.why,tool:e.tool,before:e.before,after:e.after,approvedBy:e.approvedBy,outcome:e.outcome,by:e.by,t:e.t>0}))');
+check('the audit: Save and "Not now" are in the automation log — who, when, why (the question), the tool, before, after, who approved it and the outcome',
   au.length === 2 && au[0].action === 'approved' && au[0].why === 'Draft a purchase order for Lakshmi' && au[0].tool === 'draft_purchase_order' && au[0].before === 'No draft purchase order for Lakshmi Textiles'
-  && /^Draft PO-\d+ for Lakshmi Textiles: 1 line/.test(au[0].after) && /after the person tapped Save \(not sent to the supplier\)/.test(au[0].outcome) && !!au[0].by && au[0].t
-  && au[1].action === 'dismissed' && au[1].why === 'Draft a purchase order' && au[1].after === 'Nothing saved' && au[1].outcome === 'Dismissed by the person (Not now)', au);
+  && /^Draft PO-\d+ for Lakshmi Textiles: 1 line/.test(au[0].after) && /after the person tapped Save \(not sent to the supplier\)/.test(au[0].outcome) && !!au[0].by && au[0].t && au[0].approvedBy === au[0].by
+  && au[1].action === 'dismissed' && au[1].why === 'Draft a purchase order' && au[1].after === 'Nothing saved' && /Not approved/.test(au[1].approvedBy) && au[1].outcome === 'Dismissed by the person (Not now)', au);
+const chains = await run('return getTraces().map(t=>t.steps.map(s=>s.step+":"+(s.op||"")).join(" "))');
+check('the chains (Diagnostics): the saved proposal ends approval:approved → outcome:saved, the other approval:dismissed → outcome:dismissed (tools traced on the way)', chains.some((c) => /tool:draft_purchase_order .*approval:approved outcome:saved/.test(c))
+  && chains.some((c) => /approval:dismissed outcome:dismissed/.test(c)), chains);
+const ans = await run('return autoLog.filter(e=>e.rule==="agent"&&e.action==="answered").map(e=>({why:e.why,tool:e.tool,before:e.before,after:e.after,approvedBy:e.approvedBy,outcome:e.outcome,by:e.by}))');
+check('…and every answer that read the records: why (the question), the tools, read only, no approval needed', ans.length >= 3 && ans.some((a) => a.why === 'Draft a purchase order for Lakshmi' && a.tool === 'draft_purchase_order' && /waiting for the person/.test(a.after))
+  && ans.every((a) => a.before === 'Read only' && /Not needed/.test(a.approvedBy) && !!a.by && !!a.tool), ans.slice(0, 4));
 await run('openSettings("automation")'); await sleep(300);
 const act = await text('#autoLogBlk') || '';
-check('...shown in Settings → Automation → Activity', /Approved · Hangtag Agent/.test(act) && /Asked: “Draft a purchase order for Lakshmi”/.test(act) && /Tool: draft_purchase_order/.test(act) && /Outcome: Saved as a draft/.test(act) && /Dismissed · Hangtag Agent/.test(act), act.slice(0, 400));
+check('...shown in Settings → Automation → Activity', /Approved · Hangtag Agent/.test(act) && /Why: “Draft a purchase order for Lakshmi”/.test(act) && /Tool: draft_purchase_order/.test(act) && /Outcome: Saved as a draft/.test(act) && /Dismissed · Hangtag Agent/.test(act), act.slice(0, 400));
+check('the Agent\'s boundaries are spelled out: it never changes stock or prices, bills, payments, sends, sees another shop, or goes past the role', (await A.$$eval('#agentRulesBlk .agentnever li', (l) => l.length)) === 6
+  && /never/.test(await text('#agentRulesBlk') || '') && /mark one verified/.test(await text('#agentRulesBlk') || ''));
+await A.click('#autoLogBlk [data-logfilter="agent"]'); await sleep(200);
+const rulesShown = await A.$$eval('#autoLogBlk [data-logrule]', (l) => [...new Set(l.map((x) => x.dataset.logrule))]);
+check('Activity → Agent: only the Agent\'s steps, each with who approved it', JSON.stringify(rulesShown) === '["agent"]' && /Answered by the Agent/.test(await text('#autoLogBlk') || '') && /Approved by: Not needed \(read only\)/.test(await text('#autoLogBlk') || ''), rulesShown);
+await A.click('#autoLogBlk [data-logfilter="all"]'); await sleep(150);
 await run('setTab("assistant");renderAll()'); await sleep(200);
 
 console.log('--- questions it doesn\'t know; an AI provider ---');
@@ -112,7 +127,7 @@ await run(`window.__steps=[];override({agentProvider:{config:async()=>({availabl
   resetAssistant();setTab("assistant");renderAll()`); await sleep(400);
 await ask('Write a thank-you note for my staff');
 const steps = await run('return window.__steps');
-check('with a provider: it gets only the Agent\'s tools; the tools run here and their results go back', steps.length === 2 && steps[0].tools.length === 17 && steps[0].tools.every((t) => t.inputSchema && t.annotations && !t.perms)
+check('with a provider: it gets only the Agent\'s tools; the tools run here and their results go back', steps.length === 2 && steps[0].tools.length === 20 && steps[0].tools.every((t) => t.inputSchema && t.annotations && !t.perms)
   && /₹2,000 from 2 bills/.test(steps[1].transcript[1].results[0].content), steps.map((s) => s.transcript.length));
 check('...its answer is marked as AI, with the tools it checked; a draft it asked for still waits for Save', /AI · from your shop/.test(await answer() || '') && /From your records: Today: ₹2,000 from 2 bills/.test(await answer() || '')
   && /Checked: Today's sales, Draft a purchase order/.test(await answer() || '') && await vis('#v-assistant .agent-prop') && await run('return poList().length') === 1, await answer());

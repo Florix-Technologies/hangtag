@@ -374,8 +374,9 @@ const ownerAgain = () => { store.access = null; };
   }
   check('typing a search lists matching items', OE.orderFormInput({ id: 'ofQ', value: 'tee', dataset: {}, closest: () => el }) && store.orderForm.q === 'tee');
   store.orderForm = null;
-  const acc = CA.accountHTML('c1');
-  check('a customer\'s account: purchases, paid, outstanding and the history', /Total purchases/.test(acc) && /Outstanding/.test(acc) && /acents/.test(acc));
+  const acc = CA.accountHTML('c1'), CI = await import('../../src/features/customers/components/customer-insight-view.js');
+  const top = CI.insightHTML(store.customers.c1 || { id: 'c1', name: 'Customer' });
+  check('a customer\'s account: purchases, paid and outstanding in the profile\'s summary, then the history', /Total purchases/.test(top) && /Outstanding/.test(top) && /data-acctpaid/.test(top) && /acents/.test(acc));
   CA.openCollectForm('c1');
   check('Collect payment opens with what they owe', /collectForm/.test(el.innerHTML) && store.collectForm && store.collectForm.amount === String(accountOf('c1').outstanding));
   store.collectForm = null;

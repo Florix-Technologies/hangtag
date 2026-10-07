@@ -158,6 +158,12 @@ export async function applyRestore(){
   return true;
 }
 /* This device's record of backups and restores (the last 20) */
+/* When a backup file was last downloaded on this device (0: never) */
+export function lastBackupAt(){
+  const log=storage.get("hangtag_backup_log",[]);
+  const e=(Array.isArray(log)?log:[]).find(x=>x&&x.outcome==="downloaded"&&(x.type==="backup"||x.type==="before-restore"));
+  return e?+e.t||0:0;
+}
 function logBackup(entry){
   try{ const log=storage.get("hangtag_backup_log",[]); storage.set("hangtag_backup_log",[{t:Date.now(),dev:store.dev,...entry},...(Array.isArray(log)?log:[])].slice(0,20)); }
   catch(e){ logger.warn("Backup log:",e); }

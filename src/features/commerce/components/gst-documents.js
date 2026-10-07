@@ -1,5 +1,5 @@
 // E-invoice and e-way bill on the phone: on a bill, one line each — "E-invoice ✓ Ready" or "Needs: Buyer GSTIN" — and a
-// short sheet that asks only for what is missing. Never a tax form. Settings → Billing & Documents → E-invoice and e-way bill switches them on.
+// short sheet that asks only for what is missing. Never a tax form. Settings → Bills & Documents → E-invoice and e-way bill switches them on.
 import { EINV_LABELS } from '../../../domain/gst/einvoice.js';
 import { EWAY_LABELS, TRANSPORT_MODES, transportFieldsNeeded } from '../../../domain/gst/eway.js';
 import { store } from '../../../shared/state/store.js';
@@ -48,10 +48,10 @@ const NO_PROVIDER = { einv: "Generating the e-invoice (its IRN and signed QR) ne
   eway: "Generating the e-way bill (its EWB number) needs an e-way bill provider, and none is connected to Hangtag. Export the JSON to upload it on the e-way bill portal. Hangtag has not generated an e-way bill." };
 export function renderGstDoc(){
   const F = V(), eway = F.what === "eway", st = eway ? ewayOf(F.saleId) : einvoiceOf(F.saleId);
-  if(!st){ bizSheet({ label: eway ? "E-way bill" : "E-invoice", body: `<p class="note">${eway ? "E-way bills are switched off for this shop." : "E-invoicing is switched off for this shop."} Switch it on in Settings → Billing &amp; Documents → E-invoice and e-way bill.</p>`, foot: `<button type="button" class="btn sm" data-biz="close">Close</button>` }); return; }
+  if(!st){ bizSheet({ label: eway ? "E-way bill" : "E-invoice", body: `<p class="note">${eway ? "E-way bills are switched off for this shop." : "E-invoicing is switched off for this shop."} Switch it on in Settings → Bills &amp; Documents → E-invoice and e-way bill.</p>`, foot: `<button type="button" class="btn sm" data-biz="close">Close</button>` }); return; }
   if(st.state === "not_required"){
-    const s = D().saleById[F.saleId], why = eway ? `An e-way bill is needed when goods worth more than ${inr((store.settings.eway && store.settings.eway.threshold) || 50000)} are moved${store.settings.eway && store.settings.eway.on ? "" : ", once e-way bills are switched on in Settings → Billing & Documents"}. This bill is ${inr(s ? s.total : 0)}.`
-      : `E-invoices are made for bills to registered businesses (a buyer with a GSTIN)${store.settings.einv && store.settings.einv.on ? "" : ", once e-invoicing is switched on in Settings → Billing & Documents"}, with GST on the bill. ${s && s.cust && s.cust.gstin ? "" : "This bill's buyer has no GSTIN."}`;
+    const s = D().saleById[F.saleId], why = eway ? `An e-way bill is needed when goods worth more than ${inr((store.settings.eway && store.settings.eway.threshold) || 50000)} are moved${store.settings.eway && store.settings.eway.on ? "" : ", once e-way bills are switched on in Settings → Bills & Documents"}. This bill is ${inr(s ? s.total : 0)}.`
+      : `E-invoices are made for bills to registered businesses (a buyer with a GSTIN)${store.settings.einv && store.settings.einv.on ? "" : ", once e-invoicing is switched on in Settings → Bills & Documents"}, with GST on the bill. ${s && s.cust && s.cust.gstin ? "" : "This bill's buyer has no GSTIN."}`;
     bizSheet({ label: eway ? "E-way bill" : "E-invoice", body: `<div class="biznote">Not needed for this bill</div><p class="note">${esc(why)}</p>`, foot: `<button type="button" class="btn sm" data-biz="close">Close</button>` });
     return;
   }
@@ -75,7 +75,7 @@ export function renderGstDoc(){
     : `<button type="button" class="btn sm" data-biz="gstjson">Export JSON</button>`;
   bizSheet({ label: eway ? "E-way bill" : "E-invoice", body, foot });
 }
-/* Settings → Billing & Documents → E-invoice and e-way bill */
+/* Settings → Bills & Documents → E-invoice and e-way bill */
 export function gstSettingsHTML(){
   if(!(usesEinvoice() || usesEway())) return "";
   const e = store.settings.einv || {}, w = store.settings.eway || {};

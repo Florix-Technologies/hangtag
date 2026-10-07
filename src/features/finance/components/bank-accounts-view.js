@@ -12,6 +12,7 @@ import { renderAll } from '../../../shared/ui/render.js';
 import { UI_ICON, emptyStateHTML, formActionsHTML, sheetHTML, statusChip } from '../../../shared/ui/kit.js';
 import { accountBalances, accountLedger, bankAccount, bankAccounts, mayEditBanks, mayViewBanks, methodLanding, recordBankMove, reverseBankEntry, saveBankAccount } from '../use-cases/bank-accounts.js';
 import { BANK_MOVE_LABELS } from '../../../domain/finance/bank-accounts.js';
+import { can } from '../../shop/services/access.js';
 
 const nameOf = a => a ? a.name + (a.last4 ? " ••" + a.last4 : "") : "—";
 const signed = n => (n < 0 ? "− " : "+ ") + inrx(Math.abs(n));
@@ -22,10 +23,11 @@ function chipsOf(a, landing){
 export function bankAccountsSettingsHTML(){
   if(!mayViewBanks()) return "";
   const B = accountBalances(), landing = methodLanding(), edit = mayEditBanks();
-  const list = B.rows.length ? `<div class="olist">${B.rows.map(r => `<button type="button" class="orow chev" data-bankopen="${esc(r.account.id)}"><span class="e-ic bankic">${UI_ICON.bank}</span><span class="o-main"><span class="o-t">${esc(nameOf(r.account))}</span><span class="o-s">${esc(r.account.bank || "Bank account")}</span><span class="o-chips">${chipsOf(r.account, landing)}</span></span><span class="o-end"><span class="o-amt">${inrx(r.balance)}</span><span class="o-s">balance</span></span></button>`).join("")}</div>`
+  const row = r => edit ? `<button type="button" class="orow chev" data-bankedit="${esc(r.account.id)}" aria-label="Edit ${esc(nameOf(r.account))}">` : `<div class="orow">`, rowEnd = edit ? "</button>" : "</div>";
+  const list = B.rows.length ? `<div class="olist">${B.rows.map(r => `${row(r)}<span class="e-ic bankic">${UI_ICON.bank}</span><span class="o-main"><span class="o-t">${esc(nameOf(r.account))}</span><span class="o-s">${esc(r.account.bank || "Bank account")}</span><span class="o-chips">${chipsOf(r.account, landing)}</span></span><span class="o-end"><span class="o-amt">${inrx(r.balance)}</span><span class="o-s">balance</span></span>${rowEnd}`).join("")}</div>`
     : emptyStateHTML({ icon: "bank", title: "No bank accounts yet", text: "Add the accounts your shop uses. UPI and card money then shows in the account it lands in, next to the money you move by hand.", cls: "compact plain" });
   const unmapped = B.rows.length && (!landing.upi || !landing.card) ? `<p class="note" style="margin:10px 0 0">${!landing.upi && !landing.card ? "UPI and card money" : !landing.upi ? "UPI money" : "Card money"} isn't counted in any account yet: choose where it lands in an account, or make one the default.</p>` : "";
-  return `<div class="setblk" id="banksBlk"><h5>Bank accounts</h5><p class="note" style="margin:0 0 12px">Opening balances, money moved by hand, and where UPI and card money lands. ${B.rows.length ? "Total in active accounts: <b>" + inrx(B.total) + "</b>." : ""}</p>${list}${unmapped}
+  return `<div class="setblk" id="banksBlk"><h5>Bank accounts</h5><p class="note" style="margin:0 0 12px">Your accounts, their opening balances, and where UPI and card money lands. ${B.rows.length ? "Total in active accounts: <b>" + inrx(B.total) + "</b>." : ""}${can("view_reports") ? ` Money in, money out and transfers are recorded in Reports → Bank book. <button type="button" class="link xs" data-reportgo="30d|bankBook">Open the bank book</button>` : ""}</p>${list}${unmapped}
     ${edit ? `<div class="btnrow" style="margin-top:12px"><button type="button" class="btn" data-bankedit="">${UI_ICON.plus} Add bank account</button></div>` : ""}</div>`;
 }
 /* Reports: the balances, each opening its account */
@@ -50,6 +52,14 @@ function draw(){
 const errHTML = () => V && V.err ? `<p class="autherr" role="alert">${esc(V.err)}</p>` : "";
 export function openBankAccount(id){ if(!bankAccount(id)) return; V = { kind: "acct", id }; draw(); }
 export function openBankEdit(id){ if(!mayEditBanks()) return; V = { kind: "edit", id: id || "" }; draw(); }
+/* Quick actions' "Bank entry": straight to money in or out, on the default account (any active one can be chosen); with no
+   account yet, adding one comes first */
+export function openBankMove(){
+  if(!mayViewBanks()) return;
+  const live = bankAccounts().filter(a => a && a.active !== false);
+  if(!live.length){ if(mayEditBanks()){ toast("Add the bank account first."); openBankEdit(""); } return; }
+  V = { kind: "move", id: (live.find(a => a.isDefault) || live[0]).id, type: "out", quick: true }; draw();
+}
 function acctHTML(){
   const L = accountLedger(V.id); if(!L) return "";
   const a = L.account, landing = methodLanding(), live = a.active !== false, others = bankAccounts().filter(x => x.id !== a.id && x.active !== false);
@@ -84,11 +94,14 @@ function editHTML(){
     ${errHTML()}${formActionsHTML({ save: V.id ? "Save account" : "Add account" })}</form>` });
 }
 function moveHTML(){
-  const a = bankAccount(V.id), t = V.type, v = V.values || {}, others = bankAccounts().filter(x => x.id !== V.id && x.active !== false);
+  const a = bankAccount(V.id), t = V.type, v = V.values || {}, others = bankAccounts().filter(x => x.id !== V.id && x.active !== false), live = bankAccounts().filter(x => x.active !== false);
   const help = { in: "Money that came into this account without a bill: a deposit, a loan, a transfer from outside.", out: "Money that left this account: rent, salaries, a supplier paid by bank transfer, bank charges.",
     transfer: "Money moved from this account to another of the shop's accounts.", adjust: "Correct the balance to match the bank statement. Say why." }[t];
-  return sheetHTML({ id: "bankMove", title: BANK_MOVE_LABELS[t] + " · " + nameOf(a), sub: esc(help), keep: true,
-    body: `<form id="bankMoveForm" class="authform" novalidate><input type="hidden" name="type" value="${esc(t)}"><div class="pgrid">
+  // from Quick actions: which account and which way, in the form
+  const pick = V.quick ? `${live.length > 1 ? `<label class="f"><span class="lab">Account</span><select name="account">${live.map(o => `<option value="${esc(o.id)}"${o.id === V.id ? " selected" : ""}>${esc(nameOf(o))}</option>`).join("")}</select></label>` : ""}
+      <label class="f"><span class="lab">Money</span><select name="type"><option value="in"${t === "in" ? " selected" : ""}>In: came into the account</option><option value="out"${t === "out" ? " selected" : ""}>Out: paid from the account</option></select></label>` : "";
+  return sheetHTML({ id: "bankMove", title: V.quick ? "Bank entry" + (live.length > 1 ? "" : " · " + nameOf(a)) : BANK_MOVE_LABELS[t] + " · " + nameOf(a), sub: esc(V.quick ? "Money in or out of a bank account without a bill: a deposit, rent, salaries, a supplier paid by transfer, bank charges." : help), keep: true,
+    body: `<form id="bankMoveForm" class="authform" novalidate>${V.quick ? "" : `<input type="hidden" name="type" value="${esc(t)}">`}<div class="pgrid">${pick}
       <label class="f"><span class="lab">${esc(moneyLabel("Amount"))}<span class="req">*</span></span><input name="amount" type="number" inputmode="decimal" step="0.01" min="0.01" value="${esc(v.amount || "")}"></label>
       ${t === "transfer" ? `<label class="f"><span class="lab">To account<span class="req">*</span></span><select name="to">${others.map(o => `<option value="${esc(o.id)}"${v.to === o.id ? " selected" : ""}>${esc(nameOf(o))}</option>`).join("")}</select></label>` : ""}
       ${t === "adjust" ? `<label class="f"><span class="lab">The balance goes</span><select name="direction"><option value="up"${v.direction !== "down" ? " selected" : ""}>Up (add)</option><option value="down"${v.direction === "down" ? " selected" : ""}>Down (take off)</option></select></label>` : ""}
@@ -109,6 +122,7 @@ export function installBankEvents(){
     const t = e.target && e.target.closest ? e.target : null; if(!t) return;
     const op = t.closest("[data-bankopen]"); if(op){ openBankAccount(op.dataset.bankopen); return; }
     const ed = t.closest("[data-bankedit]"); if(ed){ openBankEdit(ed.dataset.bankedit); return; }
+    if(t.closest("[data-bankquick]")){ openBankMove(); return; }
     const mv = t.closest("[data-bankmove]"); if(mv && V){ V = { kind: "move", id: V.id, type: mv.dataset.bankmove }; draw(); return; }
     const rv = t.closest("[data-bankrev]"); if(rv && V){ V = { kind: "rev", id: V.id, rev: rv.dataset.bankrev }; draw(); return; }
     // Cancel or × on a form goes back to the account (or closes when adding one)
@@ -132,9 +146,9 @@ export function installBankEvents(){
     }
     if(f.id === "bankMoveForm"){
       const values = { type: val("type"), amount: val("amount"), to: val("to"), direction: val("direction"), reason: val("reason") };
-      const r = recordBankMove(Object.assign({ account: V.id }, values));
-      if(r.error){ V = Object.assign({}, V, { err: r.error, field: r.field, values }); draw(); return; }
-      V = { kind: "acct", id: V.id }; draw(); after(BANK_MOVE_LABELS[values.type] + " recorded."); return;
+      const account = val("account") || V.id, r = recordBankMove(Object.assign({ account }, values));
+      if(r.error){ V = Object.assign({}, V, { id: account, type: values.type || V.type, err: r.error, field: r.field, values }); draw(); return; }
+      V = { kind: "acct", id: account }; draw(); after(BANK_MOVE_LABELS[values.type] + " recorded."); return;
     }
     const r = reverseBankEntry(V.rev, val("reason"));
     if(r.error){ V = Object.assign({}, V, { err: r.error, field: "reason" }); draw(); return; }

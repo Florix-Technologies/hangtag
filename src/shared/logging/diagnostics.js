@@ -127,6 +127,73 @@ export function recordDiagnostic(input = {}){
   return { ...list[list.length - 1] };
 }
 
+/* ---------- server-call latency: every call's time, as hourly counts per operation, for the last 24 hours ----------
+   Kept by operation name only (rpc:hangtag_save_sales, table:hangtag_sales, fn:send-receipt, auth:token, storage) — never
+   the address's values, the body or the answer. { [hour]: { [op]: { n, fail, sum, max, b: [under 1 s, 1–3, 3–10, 10–30, 30+] } } } */
+export const LATENCY_KEY = "hangtag_latency_v1";
+const BANDS = [1000, 3000, 10000, 30000], BAND_WORDS = ["under 1 s", "1–3 s", "3–10 s", "10–30 s", "30 s or more"], OPS_PER_HOUR = 40;
+let latency = null, latencyTimer = null;
+const readLatency = () => { if(latency) return latency; try{ const v = use("storage").get(LATENCY_KEY, {}); latency = v && typeof v === "object" && !Array.isArray(v) ? v : {}; }catch{ latency = {}; } return latency; };
+const saveLatency = () => { if(latencyTimer) return; latencyTimer = setTimeout(() => { latencyTimer = null; try{ use("storage").set(LATENCY_KEY, latency || {}); }catch{} }, 1500); };
+const bandOf = ms => { let i = 0; while(i < BANDS.length && ms >= BANDS[i]) i++; return i; };
+/* an operation exactly as the client names it (rpc:…, table:…, fn:…, auth:…, storage) — anything else counts as "other" */
+const LAT_OP = /^(?:(?:rpc|table|fn|auth):[a-z0-9_-]{1,60}|storage|other)$/;
+export function recordLatency(op, ms, ok = true, now = Date.now()){
+  const s = text(op).toLowerCase(), o = LAT_OP.test(s) ? s : "other", n = +ms; if(!Number.isFinite(n) || n < 0) return;
+  const L = readLatency(), hour = Math.floor(now / 3600e3), H = L[hour] || (L[hour] = {});
+  if(!H[o] && Object.keys(H).length >= OPS_PER_HOUR) return;
+  const x = H[o] || (H[o] = { n: 0, fail: 0, sum: 0, max: 0, b: [0, 0, 0, 0, 0] });
+  x.n++; if(!ok) x.fail++; x.sum += Math.round(n); x.max = Math.max(x.max, Math.round(n)); x.b[bandOf(n)]++;
+  Object.keys(L).forEach(h => { if(+h < hour - 23) delete L[h]; });
+  saveLatency();
+}
+const pBand = (b, p) => { const total = b.reduce((a, c) => a + c, 0); let run = 0; for(let i = 0; i < b.length; i++){ run += b[i]; if(run >= total * p) return BAND_WORDS[i]; } return BAND_WORDS[0]; };
+/* The last `hours`: { calls, failed, avgMs, slow (3 s or more), ops: [{ op, calls, failed, avgMs, maxMs, p50, p95 }] } busiest first */
+export function latencySummary(hours = 24, now = Date.now()){
+  const L = readLatency(), from = Math.floor(now / 3600e3) - hours + 1, by = {};
+  Object.entries(L).forEach(([h, H]) => { if(+h < from) return; Object.entries(H || {}).forEach(([op, x]) => {
+    const y = by[op] || (by[op] = { n: 0, fail: 0, sum: 0, max: 0, b: [0, 0, 0, 0, 0] });
+    y.n += +x.n || 0; y.fail += +x.fail || 0; y.sum += +x.sum || 0; y.max = Math.max(y.max, +x.max || 0); (x.b || []).forEach((c, i) => { if(i < 5) y.b[i] += +c || 0; }); }); });
+  const ops = Object.entries(by).map(([op, y]) => ({ op, calls: y.n, failed: y.fail, avgMs: y.n ? Math.round(y.sum / y.n) : 0, maxMs: y.max, p50: pBand(y.b, 0.5), p95: pBand(y.b, 0.95), slow: y.b[2] + y.b[3] + y.b[4] }))
+    .sort((a, b) => b.calls - a.calls || a.op.localeCompare(b.op));
+  const calls = ops.reduce((a, o) => a + o.calls, 0);
+  return { calls, failed: ops.reduce((a, o) => a + o.failed, 0), avgMs: calls ? Math.round(ops.reduce((a, o) => a + o.avgMs * o.calls, 0) / calls) : 0, slow: ops.reduce((a, o) => a + o.slow, 0), ops };
+}
+export function clearLatency(){ latency = {}; try{ use("storage").set(LATENCY_KEY, {}); }catch{} }
+
+/* ---------- the Agent's chain: request → tool → result → action → approval → outcome ----------
+   One trace per question, the latest TRACE_LIMIT kept on this device. Codes only: where it was answered (local or the AI
+   provider), each tool's name and whether it worked (or what it tried was refused), how many rows came back, which screen
+   opened, approved or dismissed, the outcome — never the question, a name, a number or an amount. */
+export const TRACE_KEY = "hangtag_agent_traces_v1", TRACE_LIMIT = 20;
+export const TRACE_STEPS = Object.freeze(["request", "tool", "result", "action", "approval", "outcome"]);
+const STEPS_MAX = 30;
+let traces = null, current = null;
+const readTraces = () => { if(traces) return traces; try{ const v = use("storage").get(TRACE_KEY, []); traces = Array.isArray(v) ? v.filter(t => t && t.id).slice(-TRACE_LIMIT) : []; }catch{ traces = []; } return traces; };
+const saveTraces = () => { try{ use("storage").set(TRACE_KEY, traces || []); }catch{} };
+/* A new chain for a question (it becomes the current one: the tool host adds its tool steps to it) → its id */
+export function startTrace(source, now = Date.now()){
+  const T = readTraces(), id = "t" + now.toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+  T.push({ id, at: new Date(now).toISOString(), t0: now, source: safeToken(source, "agent"), steps: [] });
+  while(T.length > TRACE_LIMIT) T.shift();
+  current = id; saveTraces(); return id;
+}
+export const currentTrace = () => current;
+export function endTrace(id){ if(current === id) current = null; }
+/* A step: { op (a tool name, a screen, approved / dismissed, an outcome), ok, code, ms (as a band), count } */
+export function traceStep(id, step, fields = {}, now = Date.now()){
+  const t = id && readTraces().find(x => x.id === id); if(!t || !TRACE_STEPS.includes(step) || t.steps.length >= STEPS_MAX) return;
+  const f = fields && typeof fields === "object" ? fields : {}, s = { step, ok: f.ok !== false };
+  const op = safeOp(f.op); if(op) s.op = op;
+  const code = safeCode(f.code); if(code) s.code = code;
+  const band = durationBand(f.ms); if(band) s.time = band;
+  if(Number.isInteger(+f.count) && +f.count >= 0) s.count = Math.min(9999, +f.count);
+  s.after = durationBand(now - (+t.t0 || now));
+  t.steps.push(s); saveTraces();
+}
+export const getTraces = () => readTraces().map(t => ({ id: t.id, at: t.at, source: t.source, steps: t.steps.map(s => ({ ...s })) }));
+export function clearTraces(){ traces = []; current = null; saveTraces(); }
+
 export const recordLog = (level, values) => recordDiagnostic({ level, source: "logger", values });
 export const getDiagnostics = () => read().map(x => ({ ...x }));
 export function clearDiagnostics(){ write([]); }
@@ -150,7 +217,7 @@ export function diagnosticsReport(health = {}){
     serviceWorker: safeToken(health.serviceWorker, "unknown"),
     build: sanitizeDiagnosticText(health.build || "unknown"),
   };
-  return { schema: 2, createdAt: new Date().toISOString(), health: cleanHealth, last24h: categoryCounts(24), diagnostics: getDiagnostics() };
+  return { schema: 3, createdAt: new Date().toISOString(), health: cleanHealth, last24h: categoryCounts(24), latency: latencySummary(24), agentChains: getTraces(), diagnostics: getDiagnostics() };
 }
 
 /* Install once per window. Resource failures, synchronous errors and rejected promises all enter the same safe history. */

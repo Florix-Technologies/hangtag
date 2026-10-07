@@ -112,7 +112,7 @@ console.log('=== entries ===');
 console.log('=== the report ===');
 {
   const rep = await report(db);
-  check('migration report: 64 rows, all ok with bank accounts and entries', rep.length === 64 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
+  check('migration report: 65 rows, all ok with bank accounts and entries', rep.length === 65 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
 }
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');
 process.exit(fails ? 1 : 0);

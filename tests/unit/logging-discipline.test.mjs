@@ -12,7 +12,7 @@ const ROOT = path.resolve(new URL('../..', import.meta.url).pathname.replace(/^\
 let fails = 0;
 const check = (name, ok, info) => { if (!ok) fails++; console.log((ok ? 'PASS ' : 'FAIL ') + name + (!ok && info !== undefined ? '  ' + JSON.stringify(info, null, 1).slice(0, 3000) : '')); };
 
-const CALL = /\b(?:logger\.(?:error|warn|info|event)|recordDiagnostic|recordEvent)\s*\(/g;
+const CALL = /\b(?:logger\.(?:error|warn|info|event)|recordDiagnostic|recordEvent|recordLatency|traceStep|startTrace)\s*\(/g;
 const PERSONAL = /(?:^|[^\w$])(?:\.\s*)?(names?|full_?name|fullName|first_?name|user_?name|username|cust(?:omer)?s?|custName|supplier(?:Name)?s?|buyer|party|guest(?:Name)?|phones?|mobile|e_?mails?|address(?:es)?|gstin|pan|shop_?name|shopName|business_?name|label|title|notes?|description)\b/i;
 /* Deliberate exceptions: [file, the exact argument text, why it is not personal] */
 const ALLOW = [

@@ -91,7 +91,7 @@ const text = th.lines.map((l) => l.text);
 check('every line fits the paper width (48 columns)', text.every((t) => t.length <= 48), text.filter((t) => t.length > 48));
 check('plain ASCII only (the printer has no ₹ or dashes)', text.every((t) => /^[\x20-\x7E]*$/.test(t)) && asciiText('Kurta – Blue ₹10 × 2') === 'Kurta - Blue Rs.10 x 2');
 check('header: shop name big and bold, address, phone, GSTIN, TAX INVOICE', th.lines[0].text === 'Aura Threads' && th.lines[0].big && th.lines[0].bold && text.includes('GSTIN: 27ABCDE1234F1Z5') && text.includes('TAX INVOICE'));
-check('bill number, customer, place of supply', text.some((t) => t.startsWith('Bill: ' + b2b.no)) && text.includes('Customer: Blr Traders') && text.includes('Place of supply: Karnataka (29)'));
+check('bill number, customer, place of supply', text.some((t) => t.startsWith('Invoice no. ' + b2b.no)) && text.includes('Customer: Blr Traders') && text.includes('Place of supply: Karnataka (29)'));
 check('items with quantity × price, the line amount and the discount', text.some((t) => /^  2 x 999\.00 +1,998\.00$/.test(t)) && text.some((t) => /^  Discount 10% +-199\.80$/.test(t)));
 check('totals: subtotal, discounts, taxable, IGST, TOTAL (bold, big)', text.some((t) => /^Subtotal +2,498\.00$/.test(t)) && text.some((t) => t.startsWith('IGST')) && th.lines.some((l) => /^TOTAL +Rs\./.test(l.text) && l.bold && l.big));
 check('split payment lines with received / change and the UPI reference', text.some((t) => /^Paid by Cash +1,000\.00$/.test(t)) && text.some((t) => /Received 1,500\.00 +Change 500\.00/.test(t)) && text.includes('  Ref: UTR998877'));
@@ -116,7 +116,7 @@ check('printed receipt of a bill left partly on account: what was paid, then BAL
 const allAcct = thermalReceipt({ ...inv, payments: [], paid: 0, balance: inv.totals.due }, { cols: 48 }).lines.map((l) => l.text);
 check('...and of a bill all on account: no "Nothing to pay", only the balance due', !allAcct.some((t) => /Nothing to pay/.test(t)) && allAcct.some((t) => /BALANCE DUE/.test(t)), allAcct.slice(-8));
 const longNo = thermalReceipt({ ...inv, number: 'INV-260925-001' }, { cols: 32 }).lines.map((l) => l.text), cashBig = { ...inv, payments: [{ ...inv.payments[0], received: 12000, change: 1499.5 }] };
-check('58 mm: the bill number and the cash received are printed whole', longNo.some((t) => t.includes('Bill: INV-260925-001')) && longNo.every((t) => t.length <= 32)
+check('58 mm: the bill number and the cash received are printed whole', longNo.some((t) => t.includes('Invoice no. INV-260925-001')) && longNo.every((t) => t.length <= 32)
   && thermalReceipt(cashBig, { cols: 32 }).lines.some((l) => l.text.includes('Received 12,000.00')));
 check('double-width lines (shop name, TOTAL) are laid out at half the columns', [48, 42, 32].every((c) => thermalReceipt({ ...inv, seller: { ...inv.seller, name: 'Aura Threads Fashion House Pune' } }, { cols: c }).lines.filter((l) => l.big).every((l) => l.text.length <= c / 2))
   && thermalReceipt(inv, { cols: 48 }).lines.filter((l) => l.big && /TOTAL|Rs\./.test(l.text)).length >= 1);

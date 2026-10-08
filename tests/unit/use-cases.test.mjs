@@ -63,6 +63,13 @@ check('edit: stock typed as the counted number becomes an ADJUST move for the di
 check('edit: product saved with trimmed fields and its variants', saved.product.cat === 'Tops' && saved.product.variants.length === 2 && saved.isNew === false && saved.renamed === false);
 restore();
 
+seed(); Object.assign(store.catalog.products[0], { low: 3, repack: [{ f: 'v1', t: 'v2', per: 2 }] }); repo = fakeProducts(); restore = override({ productRepository: repo });
+r = saveProduct({ draft: editorDraft({ price: '649' }) });
+saved = repo.calls[0] && repo.calls[0][1];
+check('edit: what the editor doesn\'t show stays — the product\'s own low-stock alert (from an import) and its repack conversions', !!saved && saved.product.price === 649
+  && saved.product.low === 3 && JSON.stringify(saved.product.repack) === '[{"f":"v1","t":"v2","per":2}]', saved && saved.product);
+restore();
+
 seed(); repo = fakeProducts(); restore = override({ productRepository: repo });
 d = editorDraft({ name: 'Boxy Tee', cells: { [K('Black', 'M')]: cell(['Black', 'M'], { id: 'v1', sku: 'TEE-BM', stock: '5' }),
   [K('Black', 'L')]: cell(['Black', 'L'], { id: 'v2', sku: '', stock: '4' }) } });
@@ -114,6 +121,7 @@ restore();
 seed(); let stockCalls = []; restore = override({ stockRepository: { record: (a) => stockCalls.push(clone(a)) } });
 r = recordStockOperation({ kind: 'in', productId: 'p1', values: { v1: '5' }, costRaw: '320', setCost: true, reason: '', note: 'Invoice 42' });
 check('stock in: records the move and, when the cost is new, the product too', r.pieces === 5 && stockCalls[0].moves.length === 1 && stockCalls[0].moves[0].type === 'RESTOCK' && stockCalls[0].changedProductId === 'p1');
+check('…uploaded as just the variant whose cost changed (another till\'s edit of the product stays)',JSON.stringify(stockCalls[0].changedVariantIds) === '["v1"]');
 check('…and the variant now carries that cost', store.catalog.products[0].variants[0].cost === 320);
 stockCalls = []; store._d = null;
 r = recordStockOperation({ kind: 'in', productId: 'p1', values: { v1: '1' }, costRaw: '320', setCost: true, reason: '', note: '' });

@@ -52,7 +52,7 @@ export function buildInvoice(sale,ctx={}){
     payments:pays,paid,received:toRupees(sumP(pays.map(p=>toPaise(p.received==null?p.amount:p.received)))),
     change:toRupees(sumP(pays.map(p=>toPaise(p.change)))),balance:Math.max(0,toRupees(toPaise(due)-toPaise(paid))),
     returns:rets,returned:toRupees(sumP(rets.map(r=>toPaise(r.value)))),refunded:toRupees(sumP(rets.map(r=>toPaise(r.refund)))),
-    amountInWords:amountInWords(sale.total),footer:ctx.footer||"",logo:ctx.logo||"",
+    amountInWords:amountInWords(sale.total),footer:ctx.footer||"",logo:ctx.logo||"",logoAlign:ctx.logoAlign||"",
   };
 }
 /* GST by rate: the saved lines added up by rate; bills saved before line GST was kept show their bill totals as one row */

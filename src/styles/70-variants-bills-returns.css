@@ -232,3 +232,8 @@
 .pv-tbl td.low{color:var(--warn-ink);font-weight:700}.pv-tbl td.out{color:var(--crit);font-weight:700}
 .pv-tbl small{color:var(--ink-3);font-weight:500}
 @media (max-width:520px){.pv-top{flex-direction:column}}
+
+/* Touch targets (WCAG 2.2, at least 24 px): Reports' bill rows a finger's height; a customer's account entry opens its bill
+   from a real button, not a sliver of text */
+.bill .bi.asbtn{padding-block:5px}
+.acent .link[data-billview]{display:inline-flex;align-items:center;justify-content:center;min-width:36px;min-height:28px}

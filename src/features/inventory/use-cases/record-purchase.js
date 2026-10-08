@@ -43,9 +43,9 @@ export function savePurchase(input,opts={}){
   const b=buildPurchase({...x,id:"pur"+uid(),lines,supplierName:sup?sup.name:"",supplierGstin:sup?sup.gstin:"",t,dev:store.dev},
     {today:dayKey(t),purchases:purchasesList(),allowDuplicate:!!opts.allowDuplicate,trackingOf,serialState,batchOf});
   if(b.error) return b;
-  const changed=[];
-  if(opts.updateCost) b.purchase.lines.forEach(l=>{const r=vRec(l.v),c=Math.round(l.cost);if(r&&vCost(r.p,r.v)!==c){r.v.cost=c;if(!changed.includes(r.p.id))changed.push(r.p.id)}});
-  purchaseRepository().savePurchase({purchase:b.purchase,moves:b.moves,cashMove:purchaseCashMove(b.purchase),changedProductIds:changed});
+  const changed=[], changedV={};   // the products, and their variants, whose cost price this purchase changed
+  if(opts.updateCost) b.purchase.lines.forEach(l=>{const r=vRec(l.v),c=Math.round(l.cost);if(r&&vCost(r.p,r.v)!==c){r.v.cost=c;if(!changed.includes(r.p.id))changed.push(r.p.id);(changedV[r.p.id]=changedV[r.p.id]||[]).push(r.v.id)}});
+  purchaseRepository().savePurchase({purchase:b.purchase,moves:b.moves,cashMove:purchaseCashMove(b.purchase),changedProductIds:changed,changedVariantIds:changedV});
   return {purchase:b.purchase,totals:b.totals};
 }
 /* → { error } or { purchase } (cancelled, its stock and cash back) */

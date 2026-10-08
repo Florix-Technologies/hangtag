@@ -49,6 +49,18 @@ export function checkDocSettings(input){
   return { patch: { docTpl: tpl, docAccent: x.docAccent, docGst: flag(x.docGst), docTerms: terms, docSign: sign, docBank: bank,
     docSignImg: x.docSignImg === undefined ? true : flag(x.docSignImg), docStampImg: x.docStampImg === undefined ? true : flag(x.docStampImg) } };
 }
+/* The shop's logo on its bills and documents: printed or not (the picture stays saved), and where — "auto" keeps each
+   output's own place (the left of an A4 header, the centre of a receipt) */
+export const LOGO_ALIGNS = Object.freeze(["auto", "left", "center", "right"]);
+export const logoDisplayOf = settings => { const s = settings || {}; return { show: s.docLogo !== false, align: LOGO_ALIGNS.includes(s.docLogoAlign) ? s.docLogoAlign : "auto" }; };
+/* input: { show, align } → { patch: { docLogo, docLogoAlign } } or { error, field } */
+export function checkLogoDisplay(input){
+  const x = input || {}, align = x.align === undefined || x.align === "" ? "auto" : x.align;
+  if(!LOGO_ALIGNS.includes(align)) return { error: "Choose where the logo goes.", field: "align" };
+  return { patch: { docLogo: flag(x.show), docLogoAlign: align } };
+}
+/* Where the logo sits on one output ("a4" or "receipt") → "left" | "center" | "right" */
+export const logoPlace = (display, output) => !display || display.align === "auto" || !LOGO_ALIGNS.includes(display.align) ? (output === "a4" ? "left" : "center") : display.align;
 /* The two pictures a document may carry besides the logo */
 export const DOC_IMAGE_KINDS = Object.freeze({ signature: "Authorised signature", stamp: "Company stamp" });
 /* The pictures as kept on a device or read back from a backup: only picture data URLs, anything else is dropped */

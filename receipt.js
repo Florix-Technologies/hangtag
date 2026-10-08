@@ -19,7 +19,7 @@ import { inrx } from './src/shared/formatting/money.js';
     var B = d.bill;
     document.title = B.title + " " + B.number + " · " + B.shop;
     box.textContent = "";
-    if(d.logo){ var img = el("img", "logo"); img.src = d.logo; img.alt = ""; box.appendChild(img); }
+    if(d.logo){ var img = el("img", "logo logo-" + (d.logoAlign === "center" || d.logoAlign === "right" ? d.logoAlign : "left")); img.src = d.logo; img.alt = ""; box.appendChild(img); }
     box.appendChild(el("h1", "", B.shop));
     (B.contact || []).forEach(function(c){ box.appendChild(el("div", "muted", c)); });
     if(d.cancelled) box.appendChild(el("div", "void", "CANCELLED"));

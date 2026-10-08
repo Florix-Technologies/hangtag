@@ -6,6 +6,7 @@
 // shop profile, read with the caller's own session. The request only says which bill and which channel: it carries no
 // words, links or HTML of its own, and every saved text is escaped. Those saved texts (shop and product names) are still
 // the account's own, which is why only the accounts in SEND_ALLOWED_USERS may send at all (allowedToSend).
+import { callbackUrl } from "../delivery-status/core.js";
 
 export const CHANNELS = ["email", "whatsapp", "sms"];
 export const CHANNEL_LABELS = { email: "email", whatsapp: "WhatsApp", sms: "SMS" };
@@ -67,7 +68,8 @@ export function providerConfig(channel, env, kind = "bill") {
     }
   }
   const e = (k) => str(env[k]).trim();
-  const twilio = e("TWILIO_ACCOUNT_SID") && e("TWILIO_AUTH_TOKEN") ? { accountSid: e("TWILIO_ACCOUNT_SID"), authToken: e("TWILIO_AUTH_TOKEN") } : null;
+  const callback = callbackUrl(e("DELIVERY_STATUS_URL"), "twilio");
+  const twilio = e("TWILIO_ACCOUNT_SID") && e("TWILIO_AUTH_TOKEN") ? { accountSid: e("TWILIO_ACCOUNT_SID"), authToken: e("TWILIO_AUTH_TOKEN"), ...(callback ? { statusCallback: callback } : {}) } : null;
   if (channel === "email") {
     const name = (e("EMAIL_PROVIDER") || "resend").toLowerCase();
     if (name === "resend" && e("RESEND_API_KEY") && e("EMAIL_FROM")) return { name, apiKey: e("RESEND_API_KEY"), from: e("EMAIL_FROM"), replyTo: e("EMAIL_REPLY_TO") };
@@ -238,10 +240,13 @@ export function billMessage(channel, data) {
   const items = B.lines.map((l) => `<tr><td ${td}><b>${esc(l.name)}</b>${l.detail ? `<br><span style="color:#666;font-size:13px">${esc(l.detail)}</span>` : ""}${l.discount ? `<br><span style="color:#2e7d32;font-size:13px">Discount −${esc(rupees(l.discount))}</span>` : ""}</td><td ${tdr}>${l.qty} × ${esc(rupees(l.rate))}</td><td ${tdr}>${esc(rupees(l.gross))}</td></tr>`).join("")
     + (B.more ? `<tr><td ${td} colspan="3">… and ${B.more} more items</td></tr>` : "");
   const money = B.rows.map(([l, v, b]) => `<tr><td style="padding:3px 0;font-size:14px;color:#222${b ? ";font-weight:700" : ""}">${esc(l)}</td><td style="padding:3px 0;font-size:14px;color:#222;text-align:right${b ? ";font-weight:700" : ""}">${esc(v)}</td></tr>`).join("");
-  const html = `<!doctype html><html><body style="margin:0;background:#f5f4f1;font-family:Arial,Helvetica,sans-serif">
+  // the logo row (an inline picture the message carries, data.logo from emailLogo) — and the same email without it, in case
+  // the email service turns the picture down (the receipt still goes)
+  const L = data && data.logo, logoRow = L ? `<tr><td style="padding-bottom:10px;text-align:${L.align}"><img src="cid:${LOGO_CID}" alt="${esc(B.shop)}" style="max-height:64px;max-width:180px;display:inline-block"></td></tr>` : "";
+  const page = (top) => `<!doctype html><html><body style="margin:0;background:#f5f4f1;font-family:Arial,Helvetica,sans-serif">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f4f1;padding:24px 12px"><tr><td align="center">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;padding:24px">
-<tr><td style="font-size:20px;font-weight:700;color:#111">${esc(B.shop)}</td></tr>
+${top}<tr><td style="font-size:20px;font-weight:700;color:#111">${esc(B.shop)}</td></tr>
 ${B.contact.length ? `<tr><td style="font-size:13px;color:#666;padding-top:2px">${B.contact.map(esc).join(" · ")}</td></tr>` : ""}
 <tr><td style="padding-top:18px;font-size:15px;color:#222">${B.customer ? `Hello ${esc(B.customer)},<br>` : ""}Thank you for shopping with us. Here is your ${esc(B.title.toLowerCase())}.</td></tr>
 <tr><td style="padding-top:14px;font-size:13px;color:#666">${esc(B.title)} <b style="color:#222">${esc(B.number)}</b> · ${esc(B.date)}</td></tr>
@@ -251,7 +256,28 @@ ${B.contact.length ? `<tr><td style="font-size:13px;color:#666;padding-top:2px">
 </table></td></tr></table></body></html>`;
   const text = [B.shop, ...B.contact, "", `${B.customer ? `Hello ${B.customer},\n` : ""}Thank you for shopping with us. Here is your ${B.title.toLowerCase()}.`, "",
     `${B.title} ${B.number} · ${B.date}`, "", ...B.lines.map(lineText), ...more, "", ...B.rows.map(([l, v]) => (v ? `${l}: ${v}` : l))].join("\n");
-  return { subject, html, text };
+  if (!L) return { subject, html: page(""), text };
+  return { subject, html: page(logoRow), text, plainHtml: page(""),
+    attachments: [{ filename: `logo.${L.ext}`, content: L.base64, content_type: L.contentType, content_id: LOGO_CID }] };
+}
+
+/* The shop's logo as it prints on a page the customer opens — the email, the online receipt (hangtag_meta "logo" value, the
+   shop's settings): none when the shop hid it (Settings → Bills & Documents → Logo), there is none, or it isn't a picture
+   of a sane size; on the side the shop chose ("auto" → left, as on an A4 document) → { url, type, base64, align } | null */
+export function shopLogo(meta, settings) {
+  const s = settings && typeof settings === "object" ? settings : {};
+  if (s.docLogo === false) return null;
+  const data = meta && typeof meta === "object" && typeof meta.data === "string" ? meta.data : "";
+  const m = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(data);
+  if (!m || m[2].length > 400000) return null;
+  return { url: data, type: m[1], base64: m[2], align: ["left", "center", "right"].includes(s.docLogoAlign) ? s.docLogoAlign : "left" };
+}
+/* ...in an email: attached inline (cid:shop-logo) — email apps block pictures written into the message
+   → { base64, contentType, ext, align } | null */
+export const LOGO_CID = "shop-logo";
+export function emailLogo(meta, settings) {
+  const L = shopLogo(meta, settings);
+  return L && { base64: L.base64, contentType: "image/" + L.type, ext: L.type === "jpeg" ? "jpg" : L.type, align: L.align };
 }
 
 /* ---------- a quotation (sent before anything is sold: never an invoice) ---------- */
@@ -356,6 +382,38 @@ export const linkRow = ({ ownerId, saleId, token, now = Date.now() }) =>
   ({ token, owner_id: ownerId, sale_id: saleId, expires_at: new Date(now + LINK_DAYS * 864e5).toISOString() });
 /* A link that still works: not revoked, not expired */
 export const liveLink = (row, now = Date.now()) => !!row && !row.revoked_at && Date.parse(row.expires_at) > now;
+
+/* ---------- a provider that refused: worth trying again, or not ----------
+   The providers' own codes (WhatsApp Cloud API, Twilio, Resend): "temporary" — the service is busy, limited or down: try
+   again later; "recipient" — this customer's number or address can't receive it (not on WhatsApp, not a mobile, opted
+   out, invalid): fix the customer's details, trying again won't help; "setup" — the shop's provider set-up is the problem
+   (template, token, sender, domain, permissions): the owner fixes it. Anything else a provider refuses (4xx) is final. */
+const META_TEMPORARY = ["130429", "131056", "131000", "131016", "2", "4", "80007", "133004", "133005"];
+const META_RECIPIENT = ["131026", "131021"];
+const TWILIO_TEMPORARY = ["20429", "20500", "20503", "30001", "63018"];
+const TWILIO_RECIPIENT = ["21211", "21614", "21610", "21612", "21217", "63003", "63024"];
+export function failureKind(provider, result) {
+  const st = +(result && result.status) || 0, code = String(result && result.code != null ? result.code : ""), msg = String(result && result.message || "");
+  if (code === "no_template" || code === "no_provider") return "setup";
+  if (!st || st === 429 || st >= 500) return "temporary";
+  if (provider === "meta") return META_TEMPORARY.includes(code) ? "temporary" : META_RECIPIENT.includes(code) ? "recipient" : "setup";
+  if (provider === "twilio") return TWILIO_TEMPORARY.includes(code) ? "temporary" : TWILIO_RECIPIENT.includes(code) ? "recipient" : "setup";
+  if (provider === "resend") {
+    if (/rate_limit|internal_server_error|application_error/.test(code)) return "temporary";
+    if (/validation_error|invalid_to|invalid_recipient/.test(code) && /\bto\b|recipient|email address|invalid email/i.test(msg) && !/\bfrom\b|domain|sender/i.test(msg)) return "recipient";
+    return "setup";
+  }
+  return "setup";
+}
+/* The function's answer to a refusal of that kind → { status, body } (temporary: the app tries again; the others are final) */
+export function failureAnswer(channel, kind, error) {
+  const label = CHANNEL_LABELS[channel] || channel, why = String(error || "not accepted").slice(0, 200);
+  if (kind === "recipient") return { status: 422, body: { ok: false, status: "failed", error: "bad_recipient",
+    message: `The ${label} service can't deliver to this customer's ${channel === "email" ? "email address" : "number"} (${why}). Check the customer's details.` } };
+  if (kind === "setup") return { status: 422, body: { ok: false, status: "failed", error: "provider_setup",
+    message: `The ${label} set-up needs the shop owner's attention (${why}). Sending again won't help until it is fixed.` } };
+  return { status: 502, body: { ok: false, status: "failed", error: "provider_error", message: `The ${label} service didn't accept the message: ${why}` } };
+}
 
 /* ---------- delivery status from the providers ---------- */
 /* A provider's report on one message → "delivered" | "failed" | null (nothing new) */

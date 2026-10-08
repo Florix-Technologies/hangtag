@@ -3,7 +3,7 @@
 // {{1}}… filled from params): WhatsApp accepts free text a business starts but doesn't deliver it, so it is never sent.
 // Returns { ok: true, id } only when WhatsApp accepted the message and gave its id.
 export async function sendMetaWhatsApp(cfg, msg, fetchImpl) {
-  if (!cfg.template) return { ok: false, status: 0, message: "No approved WhatsApp template is set up." };
+  if (!cfg.template) return { ok: false, status: 0, code: "no_template", message: "No approved WhatsApp template is set up." };
   const to = String(msg.to).replace(/^\+/, "");
   const body = { messaging_product: "whatsapp", to, type: "template", template: { name: cfg.template, language: { code: cfg.language || "en" },
     components: (msg.params || []).length ? [{ type: "body", parameters: msg.params.map((p) => ({ type: "text", text: p })) }] : [] } };
@@ -18,5 +18,5 @@ export async function sendMetaWhatsApp(cfg, msg, fetchImpl) {
   const json = await res.json().catch(() => ({}));
   const id = json && Array.isArray(json.messages) && json.messages[0] && json.messages[0].id;
   if (res.ok && id) return { ok: true, id: String(id) };
-  return { ok: false, status: res.status, message: (json && json.error && json.error.message) || `WhatsApp answered ${res.status}.` };
+  return { ok: false, status: res.status, code: json && json.error && json.error.code != null ? String(json.error.code) : "", message: (json && json.error && json.error.message) || `WhatsApp answered ${res.status}.` };
 }

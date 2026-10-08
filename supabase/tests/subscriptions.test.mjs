@@ -5,6 +5,9 @@
 // service role, calendar-month periods that never lose paid days, the lock on every business write (direct and through
 // SECURITY DEFINER functions), reads that keep working, renewal that opens everything again, the public store closing,
 // and that no app user can read or write any of it directly.
+// The prices and the trial length are data: these checks use their own (the 1, 3 and 6 months plans at 499, 1349 and 2499, a
+// 7-day trial, no offer that applies by itself), set by fixtures() after each migration run. Section 3w's defaults (the
+// 30-day trial, Monthly to 12 Months, the launch offer, AutoPay) are checked in plans-autopay-platform.test.mjs.
 // Run: node supabase/tests/subscriptions.test.mjs
 import { PGlite } from '@electric-sql/pglite';
 import crypto from 'node:crypto';
@@ -15,6 +18,7 @@ import { billArgs } from '../../src/infrastructure/supabase/mappers.js';
 
 const NEW = fs.readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
 const MIG = fs.readFileSync(new URL('../migrations/20261006120000_hangtag_plans_subscriptions.sql', import.meta.url), 'utf8');
+const MIG_W = fs.readFileSync(new URL('../migrations/20261009120000_hangtag_plans_autopay_platform.sql', import.meta.url), 'utf8');
 const A = '11111111-1111-1111-1111-111111111111', B = '22222222-2222-2222-2222-222222222222';
 const A2 = '55555555-5555-5555-5555-555555555555';   // a second account made later with A's email (other case and spaces)
 const NEWSHOP = '66666666-6666-6666-6666-666666666666';
@@ -77,6 +81,18 @@ await db.query(`INSERT INTO auth.users (id, email) VALUES ($1, 'Owner@A.test'), 
 await db.exec(NEW);
 await db.exec(MIG);   // the migration runs on top of schema.sql, and again: safe to run twice
 await db.exec(MIG);
+await db.exec(MIG_W);   // then section 3w's (its functions are the current ones)
+/* this test's own prices and trial (only where section 3w's defaults replaced them) */
+async function fixtures() {
+  await db.query(`UPDATE public.hangtag_plans p SET price = v.price FROM (VALUES ('m1', 999, 499), ('m3', 2499, 1349), ('m6', 4499, 2499)) v(code, now_price, price)
+      WHERE p.code = v.code AND p.price = v.now_price`);
+  await db.query(`UPDATE public.hangtag_plans p SET label = v.label FROM (VALUES ('m1', 'Monthly', '1 month'), ('m3', '3 Months', '3 months'), ('m6', '6 Months', '6 months'))
+      v(code, now_label, label) WHERE p.code = v.code AND p.label = v.now_label`);
+  await db.query(`UPDATE public.hangtag_plans SET days = 7 WHERE code = 'trial' AND days = 30`);
+  await db.query(`UPDATE public.hangtag_plans SET active = false WHERE code = 'm12'`);
+  await db.query(`UPDATE public.hangtag_promo_codes SET active = false WHERE code = 'LAUNCH100'`);
+}
+await fixtures();
 
 console.log('=== the trial starts when the shop is set up, not at sign-up ===');
 {
@@ -149,8 +165,8 @@ console.log('=== plans and prices come from the database ===');
   await sql(db, `UPDATE public.hangtag_plans SET price = 599 WHERE code = 'm1'`);
   const p2 = (await one(db, A, `SELECT public.hangtag_subscription_plans() AS p`)).p;
   check('a price changed in the database is what the app gets', +p2[0].price === 599, p2[0]);
-  await db.exec(MIG);
-  check('running the migration again keeps the changed price', +(await sql(db, `SELECT price FROM public.hangtag_plans WHERE code = 'm1'`))[0].price === 599);
+  await db.exec(MIG); await db.exec(MIG_W); await fixtures();
+  check('running the migrations again keeps the changed price', +(await sql(db, `SELECT price FROM public.hangtag_plans WHERE code = 'm1'`))[0].price === 599);
   await sql(db, `UPDATE public.hangtag_plans SET price = 499 WHERE code = 'm1'`);
   const r = await tryAs(db, A, `UPDATE public.hangtag_plans SET price = 1 WHERE code = 'm1'`);
   const r2 = await tryAs(db, A, `INSERT INTO public.hangtag_plans (code, label, kind, months, price) VALUES ('cheap', 'Cheap', 'paid', 12, 1)`);
@@ -371,9 +387,11 @@ console.log('=== the migration on a database with shops already set up ===');
   await sql(db, `DELETE FROM public.hangtag_subscriptions WHERE owner_id = $1`, [B]);
   await db.exec(MIG);
   const s = (await sql(db, `SELECT * FROM public.hangtag_subscriptions WHERE owner_id = $1`, [B]))[0];
-  check('an existing shop without a plan record gets a 7-day trial from when the migration runs', s && days(s.trial_started_at, s.trial_ends_at) === 7 && Math.abs(new Date(s.trial_started_at) - Date.now()) < 120000, s);
-  const rep = await report(db);
-  check('migration report: 65 rows, all ok (74-77: plans, every set-up shop has a record, every business table locked, promo uses on paid payments)', rep.length === 65 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('an existing shop without a plan record gets a trial (this test\'s 7 days) from when the migration runs', s && days(s.trial_started_at, s.trial_ends_at) === 7 && Math.abs(new Date(s.trial_started_at) - Date.now()) < 120000, s);
+  await db.exec(MIG_W); await fixtures();
+  // rows 80 and 81 check section 3w's default plans and trial, which this test replaced with its own
+  const all = await report(db), rep = all.filter((r) => !/^(Plans on sale: Monthly|The free trial lasts 30 days)/.test(r.check_name));
+  check('migration report: every row ok (74-77: plans, every set-up shop has a record, every business table locked, promo uses on paid payments)', rep.length === all.length - 2 && rep.length >= 65 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   const guarded = (await sql(db, `SELECT count(*)::int n FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid WHERE t.tgname = 'zz_hangtag_subscription_guard'`))[0].n;
   check('the lock is on every business table (at least 40)', guarded >= 40, guarded);
   const defs = await sql(db, `SELECT p.proname, p.prosecdef, array_to_string(p.proconfig, ',') cfg FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace

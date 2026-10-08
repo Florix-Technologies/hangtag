@@ -151,6 +151,9 @@ check('product remove: catalog, its stock records, photo, queued work dropped, t
 log.length = 0;
 createLocalFirstStockRepository({ store, persist, outbox }).record({ moves: [{ id: 'm2', v: 'v1', q: 5 }], changedProductId: 'p1' });
 check('stock record: moves saved, then the changed product, then the moves are queued', log.join() === 'moves,catalog,enqueue:prod,enqueue:move' && store.moves.m2.q === 5, log);
+const sent = [];
+createLocalFirstStockRepository({ store, persist, outbox: { enqueue: (i) => sent.push(i) } }).record({ moves: [{ id: 'm3', v: 'v1', q: 2 }], changedProductId: 'p1', changedVariantIds: ['v1'] });
+check('…a cost changed by a stock-in goes up as just that variant (fields none, variants [v1])', JSON.stringify(sent[0]) === JSON.stringify({ type: 'prod', id: 'p1', fields: [], vars: ['v1'] }), sent[0]);
 
 // ---------- error mapping ----------
 const m = (e) => toAppError(e);

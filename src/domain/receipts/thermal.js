@@ -86,5 +86,5 @@ export function thermalReceipt(inv,{cols=48}={}){
   B.closing.filter(x=>x.key!=="change").forEach(x=>row(x.grand?grandLabel(x.label):x.label,amount(x),x.grand?{bold:true}:undefined));
   L.push(rule);
   if(B.footer) center(B.footer);
-  return {cols:w,logo:B.logo,lines:L};
+  return {cols:w,logo:B.logo,logoAlign:B.logoAlign||"center",lines:L};
 }

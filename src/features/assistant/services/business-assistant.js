@@ -30,8 +30,37 @@ function askedPeriod(text, fallback = 'today'){
   return fallback;
 }
 const has = (text, re) => re.test(text);
-/* The question's intent, or null when it isn't one Ask Hangtag knows */
-export function parseBusinessQuestion(question){
+/* Something the Agent may not do, asked of it — change, cancel, refund, send, verify, give, pay, run a query, reach another
+   shop: { kind: 'action', what, bill?, product?, shop? }. Answered with what it can't do and where the person does it
+   (domain/agent/governance.js AGENT_NEVER), before any figure is read: such a request never reaches a tool or a provider. */
+const ACTION_VERB = /^(?:(?:please|pls|kindly|hey|ok|okay)\s+)?(?:(?:can|could|would|will) you\s+(?:please\s+)?|i want (?:you )?to\s+|go ahead and\s+|just\s+)?(delete|remove|cancel|void|refund|return|exchange|change|edit|update|set|mark|verify|add|increase|decrease|reduce|send|message|whatsapp|email|sms|text|give|apply|transfer|pay|adjust|run|execute|drop|grant|remind|discount|approve|block|unblock|revoke|close|reset|wipe|erase)\b/;
+const INJECT = /\b(ignore (?:all |your |the |any |previous |earlier |prior |above )*(?:rules|instructions|prompts?)|system prompt|jailbreak|developer mode|select \* from|drop table|delete from|insert into|update \w+ set|run (?:an? |this |the )?(?:sql|query)|sql query)\b/;
+const OTHER_SHOP = /\b(?:another|other|a different|someone else's|competitor's?)\s+(?:shop|store|business|account|tenant|owner)s?\b|\b(?:shop|owner|tenant|user)[ _-]?ids?\b/;
+const SHOP_WORDS = /\b([A-Z][A-Za-z&'.-]+(?:\s+[A-Z][A-Za-z&'.-]+){0,3})\s+(Stores?|Shop|Mart|Supermarket|Boutique|Emporium|Traders|Enterprises)\b/;
+function actionRequest(text, raw, shopName){
+  if(INJECT.test(text)) return { kind: 'action', what: 'query' };
+  if(OTHER_SHOP.test(text)) return { kind: 'action', what: 'other-shop', shop: shopName || '' };
+  const named = SHOP_WORDS.exec(raw || ''), own = lower(shopName || '');
+  if(named && own && !lower(named[0]).includes(own) && !own.includes(lower(named[1]))) return { kind: 'action', what: 'other-shop', shop: shopName, other: named[0] };
+  const m = ACTION_VERB.exec(text); if(!m) return null;
+  const v = m[1], billM = /\b((?!(?:po|pq|so|dc|cn)-)[a-z]{2,5}-(?:[a-z]-)?\d{2,})\b/.exec(text), bill = billM ? billM[1] : '';
+  const prodM = /\b(?:price|mrp|rate|cost) of (?:the |my |all )?(.+?)(?:\s+(?:to|at|from|by)\b|$)/.exec(text), product = prodM ? prodM[1].trim() : '';
+  const what = /^(delete|remove|cancel|void|erase|wipe)$/.test(v) && (bill || /\b(bills?|invoices?|sales?|receipts?)\b/.test(text)) ? 'cancel-bill'
+    : /^(refund|return|exchange)$/.test(v) ? 'return'
+    : /^(mark|verify|approve)$/.test(v) && /\b(paid|payments?|upi|verified|verify|card)\b/.test(text) ? 'verify'
+    : /^(send|message|whatsapp|email|sms|text|remind)$/.test(v) ? 'send'
+    : /^(grant|revoke|block|unblock)$/.test(v) || /\b(permissions?|roles?|owner|access|admin)\b/.test(text) ? 'access'
+    : /\b(price|prices|mrp|rate|discount|%|percent|cost price)\b/.test(text) && /^(change|edit|update|set|increase|decrease|reduce|give|apply|discount)$/.test(v) ? 'price'
+    : /^(add|increase|decrease|reduce|adjust|set|remove)$/.test(v) && /\b(stock|pieces?|units?|qty|quantity|\d+)\b/.test(text) ? 'stock'
+    : /^(delete|remove|erase|wipe|reset)$/.test(v) ? 'delete-record'
+    : /^(pay|transfer)$/.test(v) ? 'pay'
+    : /^(run|execute|drop)$/.test(v) ? 'query'
+    : 'change';
+  return { kind: 'action', what, verb: v, ...(bill ? { bill } : {}), ...(product ? { product } : {}) };
+}
+/* The question's intent, or null when it isn't one Ask Hangtag knows. shopName: the shop asked about (another shop's name
+   is declined) */
+export function parseBusinessQuestion(question, { shopName = '' } = {}){
   const text = lower(question);
   if(!text) return null;
   const period = askedPeriod(text);
@@ -40,6 +69,7 @@ export function parseBusinessQuestion(question){
     && !has(text, /\b(briefing|brief|summary|report|update|sales?|stock|dues?)\b/)) return { kind: 'greeting' };
   if(has(text, /^(thanks|thank you|thx|ty|ok thanks|great thanks|cool|nice)\b/)) return { kind: 'thanks' };
   if(has(text, /\bhelp\b|what can you do|what can i ask|how (do|does) (this|it) work|what do you know|commands|^menu$|options/)) return { kind: 'help' };
+  const act = actionRequest(text, clean(question), shopName); if(act) return act;
   const tool = toolIntent(text); if(tool) return tool;
   if(has(text, /\b(reorder|re-order|order more|buy more|restock|what should i (buy|order)|what to (buy|order)|need to order)\b/)) return { kind: 'inventory', view: 'reorder', period };
   if(has(text, /\b(running low|low stock|stock low|almost (out|finished)|low on|finishing)\b/)) return { kind: 'inventory', view: 'low', period };
@@ -48,6 +78,8 @@ export function parseBusinessQuestion(question){
   if(has(text, /\b(fastest|fast moving|fast-moving|fast sellers?|top sell(ing|ers)?|best sell(ing|ers)?|selling most|most sold|popular)\b/)) return { kind: 'products', metric: 'quantity', period: period === 'today' && !/\btoday\b/.test(text) ? '30d' : period };
   if(has(text, /\b(most profit|profitable products?|profit by product|which products? (make|made) (the )?most)\b/)) return { kind: 'products', metric: 'profit', period: period === 'today' && !/\btoday\b/.test(text) ? 'month' : period };
   if(has(text, /\b(supplier|vendor|suppliers|vendors)\b/) && has(text, /\b(due|dues|owe|owed|pay|payable|pending|outstanding|balance)\b/)) return { kind: 'supplierDues' };
+  // what the shop owes ("what do I owe Lakshmi Textiles?") — not what customers owe it
+  if(has(text, /\b(what|how much) (do|does|did) (i|we|the shop) owe\b|\bi owe\b|\bwe owe\b|\bpayables?\b/)) return { kind: 'supplierDues' };
   if(has(text, /\b(outstanding|customer dues?|dues|owed to me|owe me|receivables?|udhaar|udhar|credit (given|pending)|who owes)\b/)) return { kind: 'dues' };
   if(has(text, /\b(bank|account)s?\b/) && has(text, /\b(balance|balances|how much|money|in the bank|total)\b/)) return { kind: 'banks' };
   if(has(text, /\bcash in (hand|drawer|the drawer|counter)\b|\bdrawer\b|\bcounter cash\b|\bclosing cash\b/)) return { kind: 'cashInHand' };
@@ -55,7 +87,8 @@ export function parseBusinessQuestion(question){
   if(has(text, /\b(purchase orders?|pos\b|po\b|orders? to (receive|arrive)|supplier orders?)\b/)) return { kind: 'purchaseOrders' };
   if(has(text, /\b(gst|tax|taxes|cgst|sgst|igst)\b/)) return { kind: 'gst', period: period === 'today' && !/\btoday\b/.test(text) ? 'month' : period };
   if(has(text, /\b(returns?|returned|refunds?|refunded|exchanges?)\b/)) return { kind: 'returns', period };
-  if(has(text, /\b(quotations?|quotes?|sales orders?|pending orders?|open orders?|orders? (to deliver|pending)|online orders?|store orders?)\b/) || /^orders?\b/.test(text)) return { kind: 'orders' };
+  if(has(text, /\b(quotations?|quotes?|sales orders?|pending orders?|open orders?|orders? (to deliver|pending)|online orders?|store orders?)\b/) || /^orders?\b/.test(text)
+    || has(text, /\borders?\b.{0,24}\b(waiting|pending|open|to deliver|outstanding|status|not delivered)\b/)) return { kind: 'orders' };
   if(has(text, /\b(stock value|inventory value|value of (my )?stock|how much stock|stock worth|inventory worth|total stock|stock summary|how many pieces)\b/)) return { kind: 'stock' };
   if(has(text, /\bcard\b/) && !has(text, /\bgift card\b/)) return { kind: 'payment', method: 'card', period };
   if(has(text, /\bupi\b|\bgpay\b|\bphonepe\b|\bpaytm\b/)) return { kind: 'payment', method: 'upi', period };
@@ -155,8 +188,35 @@ const unavailable = () => ({
 const openAct = (target, id, label) => ({ kind: 'open', target, id, label });
 const askAct = (question, label) => ({ kind: 'ask', question, label: label || question });
 const may = (host, tool) => !!host && host.allowed(tool);
+/* What the Agent won't do, and where the person does it (the request stays theirs to make) */
+const DECLINE = {
+  'cancel-bill': (i) => `I can't cancel or delete bills — I only read the shop's records. ${i.bill ? `Open ${i.bill.toUpperCase()}` : 'Open the bill'}, then More → Cancel bill: it stays in the books, marked cancelled, with your reason.`,
+  return: () => "I can't make returns or refunds. Open the bill, then More → Return (or Exchange): the stock and the money are put right there, with a credit note.",
+  verify: () => "I can't mark a payment verified — only your payment provider's own record does that. Check UPI payments in Reports → Reconcile.",
+  send: () => "I can't send messages. Payment reminders are written for you in Settings → Automation (each opens WhatsApp for you to press Send), and a bill's receipt is sent from the bill.",
+  stock: () => "I can't change stock. Use New → Receive stock for stock that arrived, or adjust a product's stock (with a reason) from Stock.",
+  price: () => "I can't change prices or discounts. Change a price on the product (Products → the product → Edit); a discount is given on the bill at the till.",
+  access: () => "I can't change who may do what. The owner manages the team and their roles in More → Team.",
+  'delete-record': () => "I can't delete records. Customers, products and suppliers are changed (or switched off) on their own screens.",
+  pay: () => "I can't make payments. Record a payment to a supplier from the supplier's account in Stock → Suppliers.",
+  query: () => "I can't run queries or change how I work — I answer only from the shop's records, through the read tools listed in Help.",
+  'other-shop': (i) => `I can't see another shop's records — only this shop's${i.shop ? ` (${i.shop})` : ''}.`,
+  change: () => "I can't change anything in the shop — I only read its records and open screens for you. Make the change on its screen, or start it from New.",
+};
+function declinedActions(intent, host){
+  const open = (tool, args) => { if(!may(host, tool)) return null; const r = host.callTool(tool, args), a = r && !r.isError && r.structuredContent && r.structuredContent.action; return a || null; };
+  const w = intent.what;
+  if((w === 'cancel-bill' || w === 'return' || w === 'verify') && intent.bill){ const a = open('open_bill', { bill_no: intent.bill }); if(a) return [a]; }
+  if(w === 'price' && intent.product){ const a = open('open_product', { name: intent.product }); if(a) return [a]; }
+  if(w === 'verify' && may(host, 'get_payment_reconciliation')) return [openAct('reconcile', '30d', 'Open Reconcile')];
+  if((w === 'cancel-bill' || w === 'return') && may(host, 'get_recent_bills')) return [openAct('bills', '', 'Open Bills')];
+  if(w === 'send' && may(host, 'open_customer')) return [openAct('customers', '', 'Open Customers')];
+  if(w === 'stock' && may(host, 'get_low_stock')) return [openAct('stock', '', 'Open Stock')];
+  return [];
+}
 function actionsFor(intent, host, answer){
   const k = intent.kind, acts = [];
+  if(k === 'action') return declinedActions(intent, host);
   if(['sales', 'profit', 'payment', 'payments', 'gst', 'returns'].includes(k) && may(host, 'open_report')) acts.push(openAct('report', intent.period || 'today', 'Open Reports'));
   if(k === 'dues' && may(host, 'open_customer')) (answer.dueRows || []).slice(0, 3).forEach(r => acts.push(openAct('customer', r.id, `Open ${r.name}`)));
   if(k === 'inventory' && (intent.view === 'reorder' || intent.view === 'low')){
@@ -224,6 +284,7 @@ function toolAnswer(intent, host){
 
 function localAnswer(intent, query){
   const k = intent.kind;
+  if(k === 'action') return { supported: true, title: "That's not something I can do", text: (DECLINE[intent.what] || DECLINE.change)(intent), rows: [] };
   if(k === 'greeting') return { supported: true, title: 'Hi 👋', text: 'I can help with sales, profit, stock, payments, customer dues and reordering. ' + SUGGEST, rows: [] };
   if(k === 'thanks') return { supported: true, title: "You're welcome", text: 'Ask me anything else about the shop: ' + SUGGEST, rows: [] };
   if(k === 'help') return { supported: true, title: 'What you can ask', text: 'Answers come from this shop’s own bills, stock and books on this device. Nothing is changed, and no AI service is used.', rows: HELP_ROWS };
@@ -298,15 +359,15 @@ function localAnswer(intent, query){
 const periodLabel = p => ({ today: 'today', yesterday: 'yesterday', '7d': 'in the last 7 days', month: 'this month', lastmonth: 'last month', '30d': 'in the last 30 days' })[p] || 'recently';
 
 /* tools: the tool host, or a function that gives it (fresh for each question) */
-export function createBusinessAssistant({ query, provider = null, tools = null }){
+export function createBusinessAssistant({ query, provider = null, tools = null, shopName = () => '' }){
   if(!query) throw new Error('Ask Hangtag needs a read-only query service.');
   const hostOf = () => typeof tools === 'function' ? tools() : tools;
   let previous = null;
   return Object.freeze({
     async ask(question){
-      const intent = parseBusinessQuestion(question) || followUpIntent(question, previous);
+      const intent = parseBusinessQuestion(question, { shopName: typeof shopName === 'function' ? shopName() : shopName }) || followUpIntent(question, previous);
       if(intent){
-        if(!['greeting', 'thanks', 'help', 'tool'].includes(intent.kind)) previous = intent;
+        if(!['greeting', 'thanks', 'help', 'tool', 'action'].includes(intent.kind)) previous = intent;
         const host = hostOf();
         if(intent.kind === 'tool') return Object.freeze({ ...toolAnswer(intent, host), intent: Object.freeze(intent), source: 'local' });
         const { dueRows, ...answer } = localAnswer(intent, query);

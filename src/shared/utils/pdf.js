@@ -83,8 +83,9 @@ export function pdfBytes(doc){
 }
 
 /* ---------- documents: an A4 portrait page in the shop's template (features/receipts/components/doc-render.js) ----------
-   m: the document model (title, number, meta, seller, logo, parties, columns, left, rows, tax, totals, words, notes, terms,
-   bank, signature, signImg, stampImg (JPEG data URLs, drawn at the signature), notice, footer, cancelled);
+   m: the document model (title, number, meta, seller, logo, logoAlign ("left" | "center" | "right": where the logo goes),
+   parties, columns, left, rows, tax, totals, words, notes, terms, bank, signature, signImg, stampImg (JPEG data URLs, drawn at
+   the signature), notice, footer, cancelled);
    o: { template: "standard"|"classic"|"modern"|"compact" ("minimal": the earlier name of standard), accent: "#rrggbb" }.
    Same content as the printed page; Helvetica, figures right-aligned, the table head repeated on every page. */
 const PW=595, PH=842, PM=40;
@@ -104,15 +105,37 @@ export function docPdfBytes(m,o={}){
   const line=(x1,y1,x2,y2,w,color)=>ops.push(`${color||"0.79 0.80 0.84"} RG ${w||0.6} w ${x1.toFixed(1)} ${y1.toFixed(1)} m ${x2.toFixed(1)} ${y2.toFixed(1)} l S`);
   const box=(x,yy,w,h,fill)=>ops.push(`${fill} rg ${x.toFixed(1)} ${yy.toFixed(1)} ${w.toFixed(1)} ${h.toFixed(1)} re f`);
   const newPage=()=>{ if(ops.length) pages.push(ops); ops=[]; y=PH-PM; };
-  // header: the shop (logo, name, address) and the document's title and numbers
-  let lx=PM;
-  if(logo){ const k=Math.min(90/logo.w,48/logo.h), w=logo.w*k, h=logo.h*k; ops.push(`q ${w.toFixed(1)} 0 0 ${h.toFixed(1)} ${PM} ${(y-h).toFixed(1)} cm /Im1 Do Q`); lx=PM+w+10; }
-  text(fit(m.seller.name,250,13),lx,y-12,13,true);
-  let sy=y-26; (m.seller.lines||[]).filter(Boolean).forEach(l=>{ text(fit(l,250,8),lx,sy,8,false,GRAY); sy-=10; });
-  rtext(fit(String(m.title||"").toUpperCase(),220,16),PW-PM,y-14,16,true,minimal?INK:ACC);
-  // a long value wraps onto the next line instead of losing its end (a place of supply keeps its state code)
-  let my=y-30; (m.meta||[]).filter(r=>r&&r[1]).forEach(([k,v])=>{ wrap(v,120,8.5).forEach((l,i)=>{ rtext(l,PW-PM,my,8.5,true); if(!i) rtext(k,PW-PM-128,my,8.5,false,GRAY); my-=11; }); });
-  y=Math.min(sy,my,y-(logo?52:30))-6;
+  // header: the shop (logo, name, address) and the document's title and numbers, the logo where the shop put it (as on the
+  // printed page): on the left with the shop beside it and the title on the right; on the right, mirrored; or centred above
+  // the shop, the title and the numbers
+  const place=m.logoAlign==="center"||m.logoAlign==="right"?m.logoAlign:"left", meta=(m.meta||[]).filter(r=>r&&r[1]);
+  const gk=logo?Math.min(90/logo.w,48/logo.h):0, gw=logo?logo.w*gk:0, gh=logo?logo.h*gk:0;
+  if(place==="center"){
+    const cx=PW/2, ctext=(s,yy,size,bold,color)=>text(s,cx-textWidth(s,size)/2,yy,size,bold,color);
+    let cy=y; if(logo){ ops.push(`q ${gw.toFixed(1)} 0 0 ${gh.toFixed(1)} ${(cx-gw/2).toFixed(1)} ${(y-gh).toFixed(1)} cm /Im1 Do Q`); cy=y-gh-4; }
+    ctext(fit(m.seller.name,400,13),cy-12,13,true);
+    let sy=cy-26; (m.seller.lines||[]).filter(Boolean).forEach(l=>{ ctext(fit(l,400,8),sy,8,false,GRAY); sy-=10; });
+    const ty=sy-12; ctext(fit(String(m.title||"").toUpperCase(),400,16),ty,16,true,minimal?INK:ACC);
+    let my=ty-16; meta.forEach(([k,v])=>{ wrap(v,120,8.5).forEach((l,i)=>{ text(l,cx+6,my,8.5,true); if(!i) rtext(k,cx-6,my,8.5,false,GRAY); my-=11; }); });
+    y=my-6;
+  } else if(place==="right"){
+    let rx=PW-PM; if(logo){ ops.push(`q ${gw.toFixed(1)} 0 0 ${gh.toFixed(1)} ${(PW-PM-gw).toFixed(1)} ${(y-gh).toFixed(1)} cm /Im1 Do Q`); rx=PW-PM-gw-10; }
+    rtext(fit(m.seller.name,250,13),rx,y-12,13,true);
+    let sy=y-26; (m.seller.lines||[]).filter(Boolean).forEach(l=>{ rtext(fit(l,250,8),rx,sy,8,false,GRAY); sy-=10; });
+    text(fit(String(m.title||"").toUpperCase(),220,16),PM,y-14,16,true,minimal?INK:ACC);
+    const vx=PM+Math.min(110,Math.max(0,...meta.map(([k])=>textWidth(k,8.5))))+10;
+    let my=y-30; meta.forEach(([k,v])=>{ wrap(v,120,8.5).forEach((l,i)=>{ text(l,vx,my,8.5,true); if(!i) text(fit(k,vx-PM-6,8.5),PM,my,8.5,false,GRAY); my-=11; }); });
+    y=Math.min(sy,my,y-(logo?52:30))-6;
+  } else {
+    let lx=PM;
+    if(logo){ const k=Math.min(90/logo.w,48/logo.h), w=logo.w*k, h=logo.h*k; ops.push(`q ${w.toFixed(1)} 0 0 ${h.toFixed(1)} ${PM} ${(y-h).toFixed(1)} cm /Im1 Do Q`); lx=PM+w+10; }
+    text(fit(m.seller.name,250,13),lx,y-12,13,true);
+    let sy=y-26; (m.seller.lines||[]).filter(Boolean).forEach(l=>{ text(fit(l,250,8),lx,sy,8,false,GRAY); sy-=10; });
+    rtext(fit(String(m.title||"").toUpperCase(),220,16),PW-PM,y-14,16,true,minimal?INK:ACC);
+    // a long value wraps onto the next line instead of losing its end (a place of supply keeps its state code)
+    let my=y-30; meta.forEach(([k,v])=>{ wrap(v,120,8.5).forEach((l,i)=>{ rtext(l,PW-PM,my,8.5,true); if(!i) rtext(k,PW-PM-128,my,8.5,false,GRAY); my-=11; }); });
+    y=Math.min(sy,my,y-(logo?52:30))-6;
+  }
   if(classic){ line(PM,y,PW-PM,y,1.2,ACC); line(PM,y-2.5,PW-PM,y-2.5,0.5,ACC); y-=10; } else { line(PM,y,PW-PM,y,minimal?0.6:1.6,minimal?"0.84 0.85 0.89":ACC); y-=12; }
   if(m.cancelled){ box(PM,y-18,PW-2*PM,18,"0.99 0.93 0.93"); text("CANCELLED"+(m.cancelled===true?"":" - "+m.cancelled),PM+8,y-12.5,9,true,"0.79 0.21 0.21"); y-=26; }
   // who it is for (and a second party: deliver to)

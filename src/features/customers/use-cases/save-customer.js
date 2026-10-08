@@ -8,6 +8,10 @@ import { uid } from '../../../shared/utils/ids.js';
 import { can, canAny, notAllowedText } from '../../shop/services/access.js';
 import { repriceCart } from '../../sales/services/cart.js';
 
+/* The fields an edit can change. An edit uploads only the ones it changed, so two tills changing different fields of the
+   same customer while offline both keep their change (the same field: the later upload's value) */
+const FIELDS = ["name", "phone", "email", "gstin", "type", "addr", "priceList"];
+const same = (a, b) => JSON.stringify(a == null || a === "" ? null : a) === JSON.stringify(b == null || b === "" ? null : b);
 /* input: form values; id: the customer being edited (none = new).
    → { error, field, duplicate? } (nothing saved) or { customer, created } */
 export function saveCustomer(input, { id } = {}){
@@ -25,7 +29,7 @@ export function saveCustomer(input, { id } = {}){
     if(pl && !(store.biz && store.biz.pl && store.biz.pl[pl])) return { error: "That price list no longer exists.", field: "priceList" };
   }
   const customer = Object.assign(old ? { ...old, ...c } : { id: "c" + uid(), ...c, t: Date.now() }, pl !== undefined ? { priceList: pl } : {});
-  repo.save(customer);
+  repo.save(customer, old ? { fields: FIELDS.filter(f => !same(old[f], customer[f])) } : {});
   if(store.cartCust && store.cartCust.id === customer.id) setBillCustomer(customer);   // the open bill shows the new name/mobile
   return { customer, created: !old };
 }

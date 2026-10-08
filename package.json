@@ -9,10 +9,12 @@
     "build": "node scripts/build.mjs",
     "check": "node scripts/build.mjs --check",
     "lint": "eslint src",
-    "test": "node tests/run.mjs tests/unit supabase/tests tests/e2e",
+    "test": "node tests/run.mjs tests/unit supabase/tests tests/eval tests/e2e",
     "test:unit": "node tests/run.mjs tests/unit",
     "test:db": "node tests/run.mjs supabase/tests",
     "test:e2e": "node tests/run.mjs tests/e2e",
+    "test:eval": "node tests/run.mjs tests/eval",
+    "eval:agent:provider": "node tests/eval/agent-provider.eval.mjs",
     "build:zxing": "node scripts/build-zxing.mjs"
   },
   "devDependencies": {

@@ -50,6 +50,13 @@ export function nextAttemptAt(job,now){
 }
 
 /* ---------- where a bill's receipt is: Queued, Sent, Delivered or Failed ---------- */
+/* A message worth asking its provider about now: still "sent" a minute after it went, by a provider that can be asked
+   (Twilio for SMS / WhatsApp, Resend for email — WhatsApp through Meta reports by itself), within a week, and not asked in
+   the last 10 minutes by any device (checkedAt, the server's) */
+export const ASKABLE_PROVIDERS=["twilio","resend"];
+export const CHECK_EVERY=10*60e3;
+export const needsDeliveryCheck=(e,now)=>!!(e&&e.id&&e.status==="sent"&&ASKABLE_PROVIDERS.includes(e.provider)
+  &&now-(e.t||0)>60e3&&now-(e.t||0)<7*864e5&&!(e.checkedAt&&now-e.checkedAt<CHECK_EVERY));
 export const RECEIPT_STATES=Object.freeze({queued:"Queued",sent:"Sent",delivered:"Delivered",failed:"Failed"});
 const RANK={failed:1,queued:2,sent:3,delivered:4};
 /* A record's status (an automatic send on this device, or the server's record of a send) as one of the four, or null when

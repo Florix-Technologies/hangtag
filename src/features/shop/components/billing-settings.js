@@ -6,7 +6,8 @@ import { store } from '../../../shared/state/store.js';
 import { renderSync } from '../../sync/components/sync-status.js';
 import { flushSbQueue } from '../../sync/services/outbox.js';
 import { savePrinterSettings, testPrinter } from '../../printing/use-cases/print-receipt.js';
-import { removeReceiptLogo, setReceiptLogo } from '../use-cases/receipt-logo.js';
+import { removeReceiptLogo, setLogoDisplay, setReceiptLogo } from '../use-cases/receipt-logo.js';
+import { LOGO_ALIGNS, logoDisplayOf } from '../../../domain/documents/doc-settings.js';
 import { toast } from '../../../shared/components/toast.js';
 import { $, $$, esc } from '../../../shared/dom.js';
 import { renderAll } from '../../../shared/ui/render.js';
@@ -115,7 +116,15 @@ export function receiptSetupHTML(){
   return `<div class="setblk" id="receiptSetup"><h5>Logo</h5>
     <div class="logoedit"><span class="logoprev">${store.logo?`<img src="${esc(store.logo)}" alt="Shop logo">`:`<span class="note">No logo</span>`}</span>
       <div><p class="note" style="margin:0 0 6px">Your logo, shop name, address, phone and GSTIN (from Business) print at the top of every receipt and document. It is saved as soon as you choose it.</p>
-      <label class="btn sm">${store.logo?"Change logo":"Add logo"}<input type="file" accept="image/png,image/jpeg,image/webp" data-logofile hidden></label>${store.logo?` <button type="button" class="btn sm danger" data-act="logoremove">Remove logo</button>`:""}</div></div></div>`;
+      <label class="btn sm">${store.logo?"Change logo":"Add logo"}<input type="file" accept="image/png,image/jpeg,image/webp" data-logofile hidden></label>${store.logo?` <button type="button" class="btn sm danger" data-act="logoremove">Remove logo</button>`:""}</div></div>
+    ${store.logo?logoDisplayHTML():""}</div>`;
+}
+/* Printed or not, and where: on every bill, receipt, invoice, quotation and the online receipt */
+function logoDisplayHTML(){
+  const L=logoDisplayOf(store.settings), A={auto:"Auto",left:"Left",center:"Centre",right:"Right"};
+  return `<div class="logodisp"><label class="chk"><input type="checkbox" data-logoshow${L.show?" checked":""}> Print the logo on bills and documents</label>
+    <div class="segrow" role="radiogroup" aria-label="Where the logo goes"${L.show?"":" hidden"}>${LOGO_ALIGNS.map(a=>`<label class="segopt"><input type="radio" name="logoAlign" value="${a}" data-logoalign${L.align===a?" checked":""}><span>${A[a]}</span></label>`).join("")}</div>
+    <p class="note" style="margin:6px 0 0">Auto: on the left of A4 invoices and documents, centred on receipts.</p></div>`;
 }
 /* Purchasing: Smart reorder's planning */
 export function reorderFormHTML(){
@@ -179,6 +188,7 @@ export function installBillingSettingsEvents(){
   document.addEventListener("change",async e=>{
     const t=e.target;
     if(t.matches&&t.matches("[data-printerkind]")){const ep=t.value==="epson";t.form.querySelectorAll("[data-epson]").forEach(x=>{x.hidden=!ep});return}
+    if(t.matches&&(t.matches("[data-logoshow]")||t.matches("[data-logoalign]"))){const box=t.closest("#receiptSetup"),show=box.querySelector("[data-logoshow]").checked,al=box.querySelector("[data-logoalign]:checked");const r=setLogoDisplay({show,align:al?al.value:"auto"});if(r.error){toast(r.error);return}redrawReceiptSetup();flushSbQueue();toast(show?"The logo prints on bills and documents.":"The logo is kept, but not printed.");return}
     if(t.matches&&t.matches("[data-logofile]")){const f=t.files&&t.files[0];t.value="";if(!f)return;const r=await setReceiptLogo(f);if(r.error){toast(r.error);return}redrawReceiptSetup();flushSbQueue();toast("Logo saved. It prints on every receipt.")}
   });
   // Bill numbering: the preview follows what is typed

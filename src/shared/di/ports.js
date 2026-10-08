@@ -58,7 +58,8 @@
  * @property {Object} records                                Row → app record converters for live updates (toSale, toSaleLine, toMove).
  * @property {Function} saveSale  A bill with its lines and payments in one step (RPC hangtag_save_sales; the database checks the
  *   payments add up and posts the financial transactions and cash / bank book entries). Also: setSaleVoid, saveProduct(p, index),
- *   deleteVariants, deleteProduct, saveImage, saveMove, saveReturn, saveCustomer, saveSettings, saveAllSales.
+ *   patchProduct(p, index, fields, variantIds) (an edit: only the columns of the fields and the variants it changed), deleteVariants, deleteProduct, saveImage, saveMove, saveReturn, saveCustomer, patchCustomer(c, fields) (an edit: only the columns
+ *   of the fields it changed, so two tills changing different fields of a customer both keep theirs), saveSettings, saveAllSales.
  *   Used by the outbox (features/sync/services/outbox.js) only. An update or delete that row security quietly skipped (a team
  *   member's role doesn't allow it; the rows are still there) throws PERMISSION instead of passing as done.
  * @property {Function} fetchProducts  Also: fetchVariants, fetchImages, fetchMoves, fetchReturns, fetchCustomers, fetchSettings,
@@ -96,8 +97,9 @@
  * "stockRepository": stock moves. Implementation: infrastructure/repositories/local-first-stock-repository.js, provided by
  * app/container.js. Reach it through features/inventory/repositories/stock-repository.js.
  * @typedef {Object} StockRepositoryPort
- * @property {(change: {moves: Object[], changedProductId?: string}) => void} record  Record moves; changedProductId: a product
- *   whose data changed too (e.g. its cost), uploaded before the moves.
+ * @property {(change: {moves: Object[], changedProductId?: string, changedVariantIds?: string[]}) => void} record  Record moves;
+ *   changedProductId: a product whose data changed too (its cost), uploaded before the moves — as just the variants changed
+ *   (changedVariantIds), so another till's edit of the product stays.
  */
 
 /**
@@ -108,8 +110,9 @@
  * @typedef {Object} PurchaseRepositoryPort
  * @property {() => Object[]} suppliers / purchases / payments           This device's records.
  * @property {(s: Object) => Object} saveSupplier                          Add or change a supplier (never deleted: active = false).
- * @property {(p: {purchase: Object, moves: Object[], cashMove?: Object, changedProductIds?: string[]}) => Object} savePurchase
- *   A purchase, its RESTOCK records (import_id = the purchase) and the cash book entry of cash paid (the database adds the same).
+ * @property {(p: {purchase: Object, moves: Object[], cashMove?: Object, changedProductIds?: string[], changedVariantIds?: Object}) => Object} savePurchase
+ *   A purchase, its RESTOCK records (import_id = the purchase) and the cash book entry of cash paid (the database adds the same);
+ *   the products whose cost it changed go up as just those variants (changedVariantIds: { product id: [variant ids] }).
  * @property {(c: {id: string, reason: string, moves: Object[], cashMove?: Object, t: number, dev: string}) => Object} cancelPurchase
  *   Mark it cancelled with the opposite adjustments (pcx:<record>) and the cash coming back (purx:<purchase>).
  * @property {(x: {payment: Object, cashMove?: Object}) => Object} recordPayment   A payment to a supplier or its reversal.
@@ -251,13 +254,17 @@
 
 /**
  * "subscriptionService": the shop's Hangtag plan (Plans & Billing, the lock). Implementation:
- * infrastructure/billing/subscription-client.js → database functions of schema.sql section 3t + the subscription Edge Function.
+ * infrastructure/billing/subscription-client.js → database functions of schema.sql sections 3t, 3w + the subscription Edge Function.
  * @typedef {Object} SubscriptionServicePort
  * @property {() => Promise<Object|null>} status  The shop's plan (hangtag_subscription_status). Throws an AppError when it can't.
- * @property {() => Promise<Object[]>} plans  The plans on sale with their prices (from the database).
+ * @property {() => Promise<Object[]>} plans  The plans on sale with their prices and the offer the shop may take on each (from the database).
  * @property {(plan: string, promo: string) => Promise<Object>} quote  The price, the promo discount and the amount (computed by the database).
  * @property {() => Promise<Object[]>} payments  The owner's plan payments, newest first.
- * @property {() => Promise<{available: boolean, provider: (string|null)}>} config  Whether online payment is set up (never throws).
+ * @property {() => Promise<{available: boolean, provider: (string|null), autopay: boolean}>} config  Whether online payment and AutoPay are set up (never throws).
+ * @property {() => Promise<Object>} autopayQuote  AutoPay's terms: today, the plan's price after the trial, from when, the consent's version.
+ * @property {(consentVersion: string) => Promise<Object>} autopayStart  AutoPay with the owner's consent: { auth_url } (approved with the bank / UPI app).
+ * @property {() => Promise<Object>} autopayVerify  Asks the provider about the mandate: { status }.
+ * @property {() => Promise<Object>} autopayCancel  Turns AutoPay off (at the provider first): { status: "cancelled" }.
  * @property {(plan: string, promo: string) => Promise<Object>} checkout  Starts a payment: { payment_id, amount, pay_url } or { free: true, status: "paid" }.
  * @property {(paymentId: string) => Promise<Object>} verify  Asks the provider: { status: "paid"|"pending"|… }.
  */

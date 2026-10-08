@@ -61,7 +61,10 @@ export function saveProduct({ draft }){
   if(bad) return {error:bad};
   if(newMoves.length&&!canAny(UPLOAD_PERMISSIONS.move)) return {error:notAllowedText("set stock")+" Leave the stock numbers as they are."};
   const opts=e.hasOpts?e.opts.map(op=>({n:cleanOptionName(op.n),v:op.v.slice()})):[];
-  const product={id:e.id,name,cat:String(e.cat||"").trim(),brand:String(e.brand||"").trim(),desc:String(e.desc||"").trim(),price,cost,color:okColor(e.color),archived:!!e.archived,
+  // what the editor doesn't show stays as it is: the product's own low-stock alert (from an import), its repack conversions
+  // and a kit's items
+  const unseen=old?Object.fromEntries(["low","repack","bundle"].filter(k=>old[k]!=null).map(k=>[k,old[k]])):{};
+  const product={...unseen,id:e.id,name,cat:String(e.cat||"").trim(),brand:String(e.brand||"").trim(),desc:String(e.desc||"").trim(),price,cost,color:okColor(e.color),archived:!!e.archived,
     hsn,gst,code:e.codesOn?(e.code==="qr"?"qr":"barcode"):"",opts,variants,...(unit!=="pcs"?{unit}:{})};
   if(trk.tracking!=="none") product.tracking=trk.tracking;   // serial | batch (none: not stored)
   if(trk.expiry) product.expiry=true;   // a batch-tracked product whose batches have expiry dates

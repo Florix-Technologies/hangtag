@@ -3,10 +3,18 @@
 import { store } from '../../../shared/state/store.js';
 import { enqueue } from '../../sync/services/outbox.js';
 import { use } from '../../../shared/di/services.js';
-import { saveLogo } from '../../../shared/state/persistence.js';
+import { saveLogo, saveSettings } from '../../../shared/state/persistence.js';
+import { checkLogoDisplay } from '../../../domain/documents/doc-settings.js';
 import { can, notAllowedText } from '../services/access.js';
 
 export const MAX_LOGO_CHARS=300000;
+/* The logo printed or not, and where (input: { show, align }) → { ok } or { error } */
+export function setLogoDisplay(input){
+  if(!can("manage_settings")) return {error:notAllowedText("change how the logo prints")};
+  const r=checkLogoDisplay(input); if(r.error) return r;
+  store.settings=Object.assign({},store.settings,r.patch); saveSettings(); enqueue({type:"settings"});
+  return {ok:true};
+}
 /* file: a picture from the file picker → { ok } or { error } */
 export async function setReceiptLogo(file){
   if(!can("manage_settings")) return {error:notAllowedText("change the receipt logo")};

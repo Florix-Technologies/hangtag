@@ -13,7 +13,10 @@ export function renderSync(){
 export function syncSummary(){
   const n=store.sbOfflineQueue.length, stuck=store.sbOfflineQueue.find(q=>(q.tries||0)>=3), rv=(store.syncReview||[]).length;
   let cls="sync",txt="Connecting…",tip="";
-  if(store.sbStatus === "connected"){
+  // the device knows it has no internet: say so (whatever the last state of the connection was), with what is waiting
+  const offline=typeof navigator!=="undefined"&&navigator.onLine===false&&!!store.authUser;
+  if(offline){ cls+=" off"; txt=n?"Offline · "+n+" pending":"Offline"; tip=n?n+" change"+(n===1?"":"s")+" saved on this device: they upload by themselves when the internet is back.":"No internet: what you do is saved on this device and uploads when the internet is back."; }
+  else if(store.sbStatus === "connected"){
     if(rv){ cls+=" off"; txt="Sync problem · "+rv; tip=rv+" change"+(rv===1?"":"s")+" the database refused. Tap to review them."; }
     else if(stuck){ cls+=" off"; txt="Sync problem"; tip="Some changes couldn't upload: "+(stuck.err||"unknown error")+". They're kept on this device and will retry. Tap for details."; }
     else if(n || store.syncing){ cls+=" wait"; txt=n?"Syncing "+n+"…":"Syncing…"; tip=n?n+" change"+(n===1?"":"s")+" uploading to the cloud.":"Checking for changes from your other devices."; }

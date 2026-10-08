@@ -1,16 +1,16 @@
 // The public receipt page behind a secure invoice link (receipt.html#<token>), end to end in Chrome. The "receipt" Edge
 // Function is stood in for by the same steps it takes (supabase/functions/receipt/index.ts): the token is looked up in
 // hangtag_invoice_links (PGlite running the real schema.sql), a revoked or expired one is "not valid any more", the bill is
-// read only from the link's own shop, and the answer is shaped by the function's own billView (send-receipt/core.js).
+// read only from the link's own shop, and the answer is shaped by the function's own billView and shopLogo (send-receipt/core.js).
 // Checked: the right bill of the right shop (two shops use the same bill id), cancelled bills say CANCELLED, bad links
 // are refused without asking anything, the page sends only the token with the publishable key (no service key anywhere
-// in what the browser loads).
+// in what the browser loads), the shop's logo on the side it chose and none when the shop switched it off.
 import puppeteer from 'puppeteer-core';
 import fs from 'fs';
 import path from 'path';
 import H from '../helpers/env.mjs';
 import { createPgRest, CORS } from '../helpers/pg-rest.mjs';
-import { ITEM_COLUMNS, PAYMENT_COLUMNS, PROFILE_COLUMNS, SALE_COLUMNS, billView, liveLink } from '../../supabase/functions/send-receipt/core.js';
+import { ITEM_COLUMNS, PAYMENT_COLUMNS, PROFILE_COLUMNS, SALE_COLUMNS, billView, liveLink, shopLogo } from '../../supabase/functions/send-receipt/core.js';
 await H.ensureServer();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let fails = 0; const check = (n, ok, i) => { if (!ok) fails++; console.log((ok ? 'PASS ' : 'FAIL ') + n + (!ok && i !== undefined ? '  ' + JSON.stringify(i).slice(0, 500) : '')); };
@@ -45,8 +45,10 @@ async function receiptFn(r) {
   const items = (await pg.db.query(`SELECT ${ITEM_COLUMNS} FROM public.hangtag_sale_items WHERE owner_id = $1 AND sale_id = $2 ORDER BY line_no`, [l.owner_id, sale.id])).rows;
   const payments = (await pg.db.query(`SELECT ${PAYMENT_COLUMNS} FROM public.hangtag_payments WHERE owner_id = $1 AND sale_id = $2 ORDER BY id`, [l.owner_id, sale.id])).rows;
   const shop = (await pg.db.query(`SELECT ${PROFILE_COLUMNS} FROM public.hangtag_profiles WHERE id = $1`, [l.owner_id])).rows[0];
+  const meta = async (key) => ((await pg.db.query(`SELECT value FROM public.hangtag_meta WHERE owner_id = $1 AND key = $2`, [l.owner_id, key])).rows[0] || {}).value;
+  const L = shopLogo(await meta('logo'), await meta('settings'));
   await pg.db.query(`UPDATE public.hangtag_invoice_links SET views = views + 1, last_viewed_at = now() WHERE token = $1`, [token]);
-  return reply(200, { ok: true, bill: billView({ sale, items, payments, shop, customer: null }), cancelled: !!sale.is_void, logo: null, expiresAt: l.expires_at });
+  return reply(200, { ok: true, bill: billView({ sale, items, payments, shop, customer: null }), cancelled: !!sale.is_void, logo: L ? L.url : null, logoAlign: L ? L.align : 'left', expiresAt: l.expires_at });
 }
 
 const browser = await puppeteer.launch({ executablePath: H.CHROME, headless: true });
@@ -70,6 +72,18 @@ check('…never the other shop\'s bill with the same id', !/Secret item|Other Sh
 check('the page sends only the token, with the publishable key (as apikey and bearer) — no session, no service key', fnCalls.length === 1 && JSON.stringify(fnCalls[0].keys) === '["token"]' && /^sb_publishable_|^eyJ/.test(fnCalls[0].apikey || '')
   && fnCalls[0].auth === 'Bearer ' + fnCalls[0].apikey, fnCalls);
 check('the link\'s views are counted', (await pg.db.query(`SELECT views FROM public.hangtag_invoice_links WHERE token = $1`, [tok('A')])).rows[0].views === 1);
+// the shop's logo, as the shop prints it (Settings → Bills & Documents → Logo; hangtag_meta "logo" and "settings")
+const putMeta = (key, value) => pg.db.query(`INSERT INTO public.hangtag_meta (owner_id, key, value) VALUES ($1, $2, $3) ON CONFLICT (owner_id, key) DO UPDATE SET value = EXCLUDED.value`, [A, key, JSON.stringify(value)]);
+const logoOf = () => P.evaluate(() => { const i = document.querySelector('img.logo'); return i ? i.className + '|' + i.src.slice(0, 22) : ''; });
+await putMeta('logo', { data: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==' });
+t = await open('#' + tok('A'));
+check('the shop\'s logo heads the online receipt, on the left when the shop chose no side (Auto)', (await logoOf()) === 'logo logo-left|data:image/png;base64,' && /Aura Threads/.test(t), await logoOf());
+await putMeta('settings', { docLogo: true, docLogoAlign: 'right' });
+t = await open('#' + tok('A'));
+check('…on the right when the shop put it there', (await logoOf()) === 'logo logo-right|data:image/png;base64,', await logoOf());
+await putMeta('settings', { docLogo: false, docLogoAlign: 'right' });
+t = await open('#' + tok('A'));
+check('…and none when the shop switched it off (the shop\'s name still heads it)', (await logoOf()) === '' && /Aura Threads/.test(t) && /Kurta/.test(t), await logoOf());
 t = await open('#' + tok('B'));
 check('shop B\'s link shows shop B\'s bill (the token decides the shop)', /Other Shop/.test(t) && /Secret item/.test(t) && !/Aura Threads/.test(t));
 await pg.db.query(`UPDATE public.hangtag_sales SET is_void = true WHERE owner_id = $1 AND id = 's1'`, [A]);

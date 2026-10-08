@@ -13,6 +13,7 @@ import { computeCheckout } from '../../src/domain/sales/checkout-totals.js';
 import { paymentId, settlePayments } from '../../src/domain/sales/payments.js';
 import { billArgs } from '../../src/infrastructure/supabase/mappers.js';
 import { ROLE_DEFAULTS, PERMISSIONS, sha256Hex } from '../functions/team/core.js';
+import { readLeaks, writeLeaks } from '../../tests/helpers/tenancy.mjs';
 
 const NEW = fs.readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
 const A = '11111111-1111-1111-1111-111111111111', B = '22222222-2222-2222-2222-222222222222';
@@ -91,7 +92,7 @@ await db.exec(NEW); await db.exec(NEW);
 console.log('=== the schema runs twice; the report has the team rows ===');
 {
   const rep = await report(db);
-  check('migration report: 65 rows, all ok on an empty database', rep.length === 65 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: 73 rows, all ok on an empty database', rep.length === 73 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   const pols = (await db.query(`SELECT count(*)::int n FROM pg_policies WHERE schemaname = 'public' AND policyname = 'Own rows only'`)).rows[0].n;
   check('no table keeps the old "Own rows only" rule', pols === 0, pols);
   const noRls = (await db.query(`SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE 'hangtag_%' AND NOT c.relrowsecurity`)).rows;
@@ -403,6 +404,14 @@ console.log('=== shop A and shop B never meet ===');
   }
   check(`shop A has rows in every one of the ${tables.length} shop tables (so the check below means something)`, empty.length === 0 && tables.length === 48, empty);
   check('no one from shop B (owner or cashier), nor an outsider, sees any row of shop A in any table; nor A\'s cashier any of B\'s', leaks.length === 0, leaks);
+  // the same, through the shared helper (tests/helpers/tenancy.mjs), with a signed-out visitor too — and then writes: change,
+  // delete, or add a row naming shop A, in every shop table, each attempt rolled back
+  const ATTACKERS = [['B', B], ['B cashier', CB], ['outsider', OUT], ['signed out', null]], run = (who, q, p) => as(db, who, q, p);
+  const rl = await readLeaks({ run, tables, victim: A, attackers: ATTACKERS });
+  check('the shared read sweep agrees: nothing of shop A seen by anyone outside it (signed out included)', rl.length === 0, rl);
+  const W = await writeLeaks({ db, run, tables, victim: A, attackers: ATTACKERS });
+  check(`no one outside shop A can change, delete or add a row of shop A, in any of the ${tables.length} shop tables (${W.attempts} attempts)`, W.leaks.length === 0, W.leaks);
+  check('…the attempts were stopped by row security or privileges themselves (none got through as "0 rows" by luck alone is counted as stopped)', W.byRls + W.byOther > 0 && W.byRls > 0, { byRls: W.byRls, byOther: W.byOther, attempts: W.attempts });
   check('B sees none of A\'s team, and A none of B\'s', (await count(db, B, 'hangtag_members', `WHERE shop_id = '${A}'`)) === 0 && (await count(db, A, 'hangtag_members', `WHERE shop_id = '${B}'`)) === 0
     && (await count(db, CB, 'hangtag_members')) === 1);
   const prof = await rows(db, CB, `SELECT id::text AS id FROM public.hangtag_profiles`);
@@ -612,7 +621,7 @@ console.log('=== accounts removed ===');
 console.log('=== report after use ===');
 {
   let rep = await report(db);
-  check('migration report: every row ok with a team, devices and audit rows present', rep.length === 65 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: every row ok with a team, devices and audit rows present', rep.length === 73 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   await db.query(`INSERT INTO public.hangtag_products (owner_id, id, name) VALUES ($1, 'stray', 'Stray')`, [CA.id]);
   rep = await report(db);
   check('the report spots a member that runs a shop of its own', rep.find((r) => /no shop of their own/.test(r.check_name)).ok === false);
@@ -643,7 +652,7 @@ console.log('=== upgrade from the schema on the live database today (fixtures/le
   r = !r.err && o.o === A ? await tryAs(up, A, `UPDATE public.hangtag_products SET archived = TRUE WHERE id = 'p1' RETURNING id`) : r;
   check('…and keeps saving bills and changing products (owner_id still the owner)', !r.err && r.r.rows.length === 1, r);
   const rep = await report(up);
-  check('the report is all ok after the upgrade', rep.length === 65 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
+  check('the report is all ok after the upgrade', rep.length === 73 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');

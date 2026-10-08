@@ -23,7 +23,7 @@ import { openBillView } from '../../features/receipts/components/bill-view.js';
 import { downloadReceipt, shareReceipt, whatsappReceipt } from '../../features/receipts/services/receipt-output.js';
 import { onPrint } from '../../features/printing/components/print-actions.js';
 import { onDeliveryRefresh, onInvoiceLink, onRevokeLinks, onSend } from '../../features/delivery/components/send-actions.js';
-import { renderReport, showTable } from '../../features/reports/pages/report-page.js';
+import { renderReport, reportOption, showTable } from '../../features/reports/pages/report-page.js';
 import { exportCsv } from '../../features/reports/services/csv-export.js';
 import { openReturn, renderReturnSheet, saveReturn, setReturnQty, setReturnReason, swapReturnLine } from '../../features/returns/components/return-sheet.js';
 import { exAvail } from '../../features/returns/services/return-rules.js';
@@ -133,6 +133,7 @@ export function installDomEvents(){
     const den=t.closest("[data-density]");if(den){store.prefs.density=den.dataset.density;savePrefs();renderNav();renderGrid();return}
     const per=t.closest("[data-period]");if(per){store.prefs.period=per.dataset.period;if(per.dataset.period==="custom"&&!store.prefs.from){store.prefs.from=addDays(dayKey(Date.now()),-6);store.prefs.to=dayKey(Date.now())}store.showAllBills=false;savePrefs();renderReport();return}
     const tb=t.closest("[data-table]");if(tb){showTable[tb.dataset.table]=!showTable[tb.dataset.table];renderReport();return}
+    const ro=t.closest("[data-repopt]");if(ro){reportOption.name=ro.dataset.repopt;renderReport();return}
     // bills
     const bv=t.closest("[data-billview]");if(bv){closeSheets();openBillView(bv.dataset.billview);return}
     const bp=t.closest("[data-billpaper]");if(bp){const i=bp.dataset.billpaper.indexOf(":");openBillView(bp.dataset.billpaper.slice(i+1),bp.dataset.billpaper.slice(0,i));return}

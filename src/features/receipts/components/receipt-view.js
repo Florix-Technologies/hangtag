@@ -21,7 +21,7 @@ const rateOf = l => inr(l.rate) + (l.unit ? "/" + esc(l.unit) : "");
 /* Logo, shop name and contact lines (the shop profile controls all of it) */
 function shopHTML(B){
   const S = B.seller;
-  return `<div class="r-shop">${B.logo ? `<img class="r-logo" src="${esc(B.logo)}" alt="">` : ""}<b>${esc(S.name)}</b>${S.address ? `<span>${esc(S.address)}</span>` : ""}${S.phone ? `<span>Phone ${esc(S.phone)}</span>` : ""}${S.gstin ? `<span>GSTIN ${esc(S.gstin)}${S.stateCode ? ` · ${esc(S.stateName)} (${esc(S.stateCode)})` : ""}</span>` : ""}</div>`;
+  return `<div class="r-shop">${B.logo ? `<img class="r-logo r-logo-${esc(B.logoAlign || "center")}" src="${esc(B.logo)}" alt="">` : ""}<b>${esc(S.name)}</b>${S.address ? `<span>${esc(S.address)}</span>` : ""}${S.phone ? `<span>Phone ${esc(S.phone)}</span>` : ""}${S.gstin ? `<span>GSTIN ${esc(S.gstin)}${S.stateCode ? ` · ${esc(S.stateName)} (${esc(S.stateCode)})` : ""}</span>` : ""}</div>`;
 }
 /* The document's money rows: totals, how it was paid (or what settled it), then the balance due, change and returns */
 function totalsHTML(B){
@@ -41,7 +41,7 @@ function receipt80(B){
 export function receiptHTML(s, paper){ return paper === "a4" ? documentHTML(invoiceModel(s), docOptions()) : receipt80(billContent(invoiceFor(s))); }
 export const RECEIPT_CSS=`*{box-sizing:border-box}body{margin:0;font-family:"Instrument Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#000;background:#fff}
 .rcpt{width:72mm;margin:0 auto;padding:2mm 0;font-size:11.5px;line-height:1.35;position:relative}
-.r-shop{text-align:center;display:flex;flex-direction:column;align-items:center;gap:1px;margin-bottom:6px}.r-shop b{font-size:15px}.r-logo{max-width:44mm;max-height:22mm;object-fit:contain;margin-bottom:3px}
+.r-shop{text-align:center;display:flex;flex-direction:column;align-items:center;gap:1px;margin-bottom:6px}.r-logo-left{align-self:flex-start}.r-logo-right{align-self:flex-end}.r-shop b{font-size:15px}.r-logo{max-width:44mm;max-height:22mm;object-fit:contain;margin-bottom:3px}
 .r-title{display:block;font-size:15px;margin:2px 0 4px}.r-meta{border-top:1px dashed #000;border-bottom:1px dashed #000;padding:4px 0;margin-bottom:4px}
 .r-row{display:flex;justify-content:space-between;gap:8px}.r-row>span:last-child{text-align:right}.r-row small{font-size:.85em;color:#333}.r-row.big{font-weight:700;font-size:13.5px}.r-row.small{font-size:10.5px}
 .r-void{text-align:center;font-weight:700;letter-spacing:.2em;margin-top:3px}.rcpt.void .r-items,.rcpt.void .r-tot{opacity:.55}

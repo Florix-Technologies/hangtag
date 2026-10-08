@@ -1,7 +1,7 @@
 // Upload queue: ordered, retried, never loses work. The rules (one upload per record, order, dependencies, which failures
 // go to review) are in domain/sync/queue-rules.js.
 import { store } from '../../../shared/state/store.js';
-import { canDiscard, failureAction, isBlocked, mergeIntoQueue, numberTaken, ORDERED_TYPES, recordKey, uploadAllowed, waitingKeys } from '../../../domain/sync/queue-rules.js';
+import { canDiscard, failureAction, isBlocked, mergeIntoQueue, mergeProductUpload, numberTaken, ORDERED_TYPES, recordKey, uploadAllowed, waitingKeys } from '../../../domain/sync/queue-rules.js';
 import { sbSessionOk } from '../../auth/services/auth-settings.js';
 import { D, invalidate } from '../../inventory/services/ledger.js';
 import { products } from '../../products/services/catalog.js';
@@ -30,9 +30,10 @@ export function enqueue(item){
     const it={...item,tries:0,err:notAllowedText("upload this")};
     toReview(it,{code:"PERMISSION"}); toast(it.err+" It's in the sync review."); renderSync(); return;
   }
+  // a product's waiting upload takes this edit too (not one being sent: it may have read the product before this edit)
   if(item.type==="prod"){
-    const ex=store.sbOfflineQueue.find(q=>q.type==="prod"&&q.id===item.id&&!q.tries);
-    if(ex){ex.delV=[...new Set([...(ex.delV||[]),...(item.delV||[])])];saveSbQueue();return}
+    const ex=store.sbOfflineQueue.find(q=>q.type==="prod"&&q.id===item.id&&!q.tries&&!q.sending);
+    if(ex){const m=mergeProductUpload(ex,item);delete ex.fields;delete ex.vars;Object.assign(ex,m);saveSbQueue();return}
   }
   // one waiting upload of the settings / logo is enough (it sends the latest value) — but not one already uploading:
   // that one may have read the old value, so a change made meanwhile gets its own upload
@@ -61,7 +62,8 @@ export async function sendItem(item){
     await cloud.setSaleVoid(item.id, item.isVoid, item.reason);
   } else if(item.type === "prod"){
     const i = products().findIndex(p=>p.id===item.id);
-    if(i > -1) await cloud.saveProduct(products()[i], i);
+    // an edit: only what it changed (another till's edit of other fields stays); a new product, or one sent whole: all of it
+    if(i > -1) await (Array.isArray(item.fields) ? cloud.patchProduct(products()[i], i, item.fields, item.vars || []) : cloud.saveProduct(products()[i], i));
     const del = (item.delV||[]).filter(id=>!(i>-1 && products()[i].variants.some(v=>v.id===id)));
     if(del.length) await cloud.deleteVariants(del);
   } else if(item.type === "proddel"){
@@ -73,7 +75,9 @@ export async function sendItem(item){
   } else if(item.type === "return"){
     await cloud.saveReturn(item.ret);
   } else if(item.type === "cust"){
-    await cloud.saveCustomer(item.cust);
+    // an edit: only the fields it changed (another till's change to other fields stays); a new customer: whole
+    if(Array.isArray(item.fields) && item.fields.length) await cloud.patchCustomer(item.cust, item.fields);
+    else await cloud.saveCustomer(item.cust);
   } else if(item.type === "event"){
     await cloud.saveEvent(item.ev);
   } else if(item.type === "eventdel"){

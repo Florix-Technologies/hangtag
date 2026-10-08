@@ -119,5 +119,69 @@ console.log('=== the plan gate of the business Edge Functions ===');
   }
 }
 
+console.log('=== AutoPay: consent, the provider\'s plan, mandates, and only captured charges ===');
+{
+  const { autopayPlanMatches, autopayStartAt } = await import('../../supabase/functions/subscription/core.js');
+  const { autopayPlanId } = await import('../../supabase/functions/subscription/providers/index.js');
+  const { autopayState } = await import('../../supabase/functions/subscription/providers/razorpay.js');
+  check('autopay_start needs the owner\'s explicit consent and the terms\' version', validateRequest({ action: 'autopay_start', consent: true, consent_version: 'autopay-2026-10' }).consentVersion === 'autopay-2026-10'
+    && !validateRequest({ action: 'autopay_start', consent: 'yes', consent_version: 'autopay-2026-10' }).ok && !validateRequest({ action: 'autopay_start', consent: true }).ok
+    && validateRequest({ action: 'autopay_start', consent: false, consent_version: 'v1x' }).error === 'consent_required');
+  check('autopay_verify / autopay_cancel take nothing else', validateRequest({ action: 'autopay_verify' }).ok && validateRequest({ action: 'autopay_cancel', amount: 1 }).ok
+    && !('amount' in validateRequest({ action: 'autopay_cancel', amount: 1 })));
+  const terms = { plan: { code: 'm1', months: 1 }, price: 999, currency: 'INR', first_charge_at: new Date(Date.now() + 30 * 864e5).toISOString() };
+  check('the provider\'s plan must be exactly the AutoPay plan: 99900 paise, INR, monthly', autopayPlanMatches({ amount: 99900, currency: 'INR', period: 'monthly', interval: 1 }, terms)
+    && !autopayPlanMatches({ amount: 49900, currency: 'INR', period: 'monthly', interval: 1 }, terms) && !autopayPlanMatches({ amount: 99900, currency: 'USD', period: 'monthly', interval: 1 }, terms)
+    && !autopayPlanMatches({ amount: 99900, currency: 'INR', period: 'weekly', interval: 1 }, terms) && !autopayPlanMatches(null, terms));
+  check('the first charge: when the trial ends (ms); at once when it ends within ten minutes', autopayStartAt(terms) === Date.parse(terms.first_charge_at)
+    && autopayStartAt({ ...terms, first_charge_at: new Date(Date.now() + 5 * 60e3).toISOString() }) === null && autopayStartAt({}) === null);
+  check('the provider\'s AutoPay plan comes from a secret (a malformed one = not set up)', autopayPlanId({ SUBSCRIPTION_RAZORPAY_AUTOPAY_PLAN_ID: 'plan_Abc123XYZ' }) === 'plan_Abc123XYZ'
+    && autopayPlanId({ SUBSCRIPTION_RAZORPAY_AUTOPAY_PLAN_ID: 'x' }) === '' && autopayPlanId({}) === '');
+  check('a mandate\'s state: created → nothing yet; authenticated / active / halted → their events, with the next charge', autopayState({ id: 'sub_1', status: 'created' }).event === null
+    && autopayState({ id: 'sub_1', status: 'authenticated', charge_at: 1800000000 }).event === 'authenticated'
+    && autopayState({ id: 'sub_1', status: 'authenticated', charge_at: 1800000000 }).nextChargeAt === new Date(1800000000e3).toISOString()
+    && autopayState({ id: 'sub_1', status: 'active' }).event === 'activated' && autopayState({ id: 'sub_1', status: 'halted' }).event === 'halted' && autopayState(null).event === null);
+  // the Razorpay calls, against a fake API
+  const calls = [];
+  const api = (routes) => async (url, init = {}) => {
+    calls.push({ url, method: init.method || 'GET', body: init.body ? JSON.parse(init.body) : null });
+    const path = url.replace('https://api.razorpay.com/v1', '').replace(/\/sub_\w+/, '/sub_X').replace(/\/plan_\w+/, '/plan_X'), r = routes[(init.method || 'GET') + ' ' + path];
+    return { ok: !!r, status: r ? 200 : 404, json: async () => r || {} };
+  };
+  const p = providerFor({ SUBSCRIPTION_RAZORPAY_KEY_ID: 'rzp_test_1', SUBSCRIPTION_RAZORPAY_KEY_SECRET: 's', SUBSCRIPTION_WEBHOOK_SECRET: 'whsec' }, api({
+    'GET /plans/plan_X': { id: 'plan_Abc123XYZ', period: 'monthly', interval: 1, item: { amount: 99900, currency: 'INR' } },
+    'POST /subscriptions': { id: 'sub_Fx12345678', short_url: 'https://rzp.io/i/abc', status: 'created', customer_id: 'cust_9' },
+    'POST /subscriptions/sub_X/cancel': { id: 'sub_Fx12345678', status: 'cancelled' },
+    'GET /subscriptions/sub_X': { id: 'sub_Fx12345678', status: 'authenticated', charge_at: 1800000000 } }));
+  const plan = await p.getPlan('plan_Abc123XYZ');
+  check('the provider\'s plan is read (amount in paise) and matches', plan.amount === 99900 && plan.period === 'monthly' && plan.interval === 1 && autopayPlanMatches(plan, terms), plan);
+  const start = Date.now() + 30 * 864e5, made = await p.createAutopay({ planId: 'plan_Abc123XYZ', startAt: start, notes: { hangtag_owner: 'u1' }, expireBy: Date.now() + 864e5 });
+  const body = calls.find((c) => c.method === 'POST' && /\/subscriptions$/.test(c.url)).body;
+  check('the mandate: on the plan, nothing charged before the trial\'s end (start_at in seconds), the shop noted, no amount sent',
+    made.subscriptionId === 'sub_Fx12345678' && made.authUrl === 'https://rzp.io/i/abc' && made.customerId === 'cust_9' && body.plan_id === 'plan_Abc123XYZ'
+    && body.start_at === Math.floor(start / 1000) && body.notes.hangtag_owner === 'u1' && body.quantity === 1 && body.total_count > 0 && body.customer_notify === 1 && !('amount' in body), body);
+  check('its state, and turning it off at once (not at the cycle\'s end)', (await p.getAutopay('sub_Fx12345678')).event === 'authenticated'
+    && (await p.cancelAutopay('sub_Fx12345678')).event === 'cancelled' && calls.some((c) => /\/cancel$/.test(c.url) && c.body.cancel_at_cycle_end === 0));
+  let threw = false; try { await p.cancelAutopay('bogus'); } catch { threw = true; }
+  check('a malformed subscription id is never sent', threw && (await p.getAutopay('../x')).event === null);
+  const sub = (ev, pay) => ({ event: 'subscription.' + ev, payload: { subscription: { entity: { id: 'sub_Fx12345678', status: 'active', charge_at: 1800000000, notes: { hangtag_owner: 'u1' } } },
+    ...(pay !== undefined ? { payment: { entity: pay } } : {}) } });
+  const ch = p.readWebhook(sub('charged', { id: 'pay_1', amount: 99900, status: 'captured' }));
+  check('webhook: a captured charge → { charged, its payment, the amount in rupees, the next charge, the shop }', ch.kind === 'autopay' && ch.event === 'charged' && ch.paymentId === 'pay_1'
+    && ch.amount === 999 && ch.nextChargeAt === new Date(1800000000e3).toISOString() && ch.owner === 'u1', ch);
+  check('…a charge not captured (only authorised, nothing paid, no payment) is not money: ignored', p.readWebhook(sub('charged', { id: 'pay_2', amount: 99900, status: 'authorized' })) === null
+    && p.readWebhook(sub('charged', { id: 'pay_3', amount: 0, status: 'captured' })) === null && p.readWebhook(sub('charged', null)) === null);
+  check('…the mandate\'s other reports', ['authenticated', 'activated', 'pending', 'halted', 'cancelled', 'completed', 'resumed'].every((e) => p.readWebhook(sub(e)).event === e)
+    && p.readWebhook(sub('updated')) === null && p.readWebhook({ event: 'subscription.charged', payload: {} }) === null);
+  check('…plan payment links read as before', p.readWebhook({ event: 'payment_link.paid', payload: { payment_link: { entity: { id: 'plink_1', status: 'paid', amount: 99900, amount_paid: 99900, notes: {} } },
+    payment: { entity: { id: 'pay_9', amount: 99900, status: 'captured' } } } }).kind === 'payment');
+  const wh = readFileSync(new URL('../../supabase/functions/subscription-webhook/index.ts', import.meta.url), 'utf8');
+  const fn = readFileSync(new URL('../../supabase/functions/subscription/index.ts', import.meta.url), 'utf8');
+  check('the webhook records AutoPay only through hangtag_autopay_event, after the signature check', wh.indexOf('provider.verifyWebhook(') > 0 && wh.indexOf('provider.verifyWebhook(') < wh.indexOf('admin.rpc("hangtag_autopay_event"') && /p_payment: target\.paymentId/.test(wh));
+  check('the function records the consent AS the owner and checks the provider\'s plan before making a mandate; it never records a charge itself',
+    fn.indexOf('db.rpc("hangtag_autopay_begin"') > 0 && fn.indexOf('db.rpc("hangtag_autopay_begin"') < fn.indexOf('provider.createAutopay') && fn.indexOf('provider.getPlan') < fn.indexOf('provider.createAutopay')
+    && !/p_event: "charged"/.test(fn));
+}
+
 console.log(fails ? `\n${fails} FAILED` : '\nall passed');
 process.exit(fails ? 1 : 0);

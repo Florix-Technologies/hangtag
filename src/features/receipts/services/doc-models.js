@@ -21,6 +21,7 @@ import { purchasesList, supplierById } from '../../inventory/services/purchase-s
 import { D } from '../../inventory/services/ledger.js';
 import { challanNoOf } from '../../../domain/documents/numbering.js';
 import { numberingFor } from '../../sales/services/doc-numbers.js';
+import { documentLogo, documentLogoPlace } from './logo-display.js';
 
 const day = v => { if(!v) return ""; const d = /^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? new Date(String(v) + "T12:00:00") : new Date(v); return Number.isNaN(+d) ? "" : fmtDate(d, { day: "numeric", month: "short", year: "numeric" }); };
 const pct = r => r == null ? "—" : Math.round(r * 100) / 100 + "%";
@@ -29,7 +30,7 @@ function seller(){ const S = sellerOf(store.profile || {}); return { name: S.nam
 /* What every document carries: the shop, its logo, terms, bank details, the signature line — and the authorised signature
    and company stamp pictures when the shop has them and prints them (Settings → Bills & Documents → Templates) */
 const base = () => { const D = settings(), im = store.docImages || {};
-  return { seller: seller(), logo: store.logo || "", terms: D.terms, bank: D.bank, signature: D.signature, signImg: D.signImg && im.signature || "", stampImg: D.stampImg && im.stamp || "",
+  return { seller: seller(), logo: documentLogo(), logoAlign: documentLogoPlace("a4"), terms: D.terms, bank: D.bank, signature: D.signature, signImg: D.signImg && im.signature || "", stampImg: D.stampImg && im.stamp || "",
     footer: store.settings && store.settings.footer || "" }; };
 
 /* ---------- a bill: Tax Invoice (with GST) or Bill ---------- */

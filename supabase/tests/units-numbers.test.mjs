@@ -97,7 +97,7 @@ await db.exec(NEW); await db.exec(NEW);
 console.log('=== the schema runs twice; quantities keep 3 decimals ===');
 {
   const rep = await report(db);
-  check('migration report: 65 rows, all ok (rows 35-39: decimals, units, unique numbers, who made it)', rep.length === 65 && rep.every((r) => r.ok) && rep.filter((r) => /3 decimals|known unit|no other|who made/.test(r.check_name)).length === 5, rep.filter((r) => !r.ok));
+  check('migration report: 73 rows, all ok (rows 35-39: decimals, units, unique numbers, who made it)', rep.length === 73 && rep.every((r) => r.ok) && rep.filter((r) => /3 decimals|known unit|no other|who made/.test(r.check_name)).length === 5, rep.filter((r) => !r.ok));
   const cols = (await db.query(`SELECT table_name || '.' || column_name AS c, numeric_precision AS p, numeric_scale AS s FROM information_schema.columns WHERE table_schema = 'public'
       AND (table_name, column_name) IN (('hangtag_sale_items','quantity'), ('hangtag_return_items','quantity'), ('hangtag_stock_moves','qty'), ('hangtag_sales','subtotal')) ORDER BY 1`)).rows;
   check('bill / return line quantities and stock records are NUMERIC(12,3); a bill\'s subtotal NUMERIC(12,2)', cols.length === 4 && cols.every((c) => c.p === 12 && c.s === (c.c === 'hangtag_sales.subtotal' ? 2 : 3)), cols);
@@ -216,7 +216,7 @@ console.log('\n=== one bill number per bill in a shop ===');
   check('bills that already shared a number stay, and can still be changed (cancelled)', !keep.err, keep.err);
   await db.exec(NEW);
   const rep = await report(db);
-  check('the schema runs again with them there; the report is all ok', rep.length === 65 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('the schema runs again with them there; the report is all ok', rep.length === 73 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   // credit notes
   const cn = nextDocNo([], CN, day, seriesOf('dev-a', known));
   const s4 = bill('s4', [{ ...TEE, q: 2 }], { no: numberOn('dev-a', known, day), t: day });

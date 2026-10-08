@@ -23,7 +23,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { planGate } from "../_shared/plan-gate.js";
 import { CHANNEL_LABELS, ITEM_COLUMNS, RETURN_COLUMNS, MAX_PER_HOUR, ORDER_COLUMNS, ORDER_ITEM_COLUMNS, PAYMENT_COLUMNS, PROFILE_COLUMNS, QUOTE_PERMISSION, SALE_COLUMNS, SEND_PERMISSION,
-  allowedToSend, billMessage, configuredChannels, deliveryOutcome, fromName, linkRow, linkUrl, liveLink, newToken, providerConfig, providerStatus, quoteMessage,
+  allowedToSend, billMessage, configuredChannels, emailLogo, failureAnswer, failureKind, deliveryOutcome, fromName, linkRow, linkUrl, liveLink, newToken, providerConfig, providerStatus, quoteMessage,
   receiptBase, recipientFor, requestedReceiptBase, reservationRow, validateRequest } from "./core.js";
 import { deliver } from "./providers/index.js";
 import { fetchStatus } from "./providers/status.js";
@@ -141,8 +141,10 @@ Deno.serve(async (req) => {
     const saved = await admin.from("hangtag_deliveries").update(outcome).eq("owner_id", shop).eq("id", heldId);
     if (saved.error) console.error("send-receipt: couldn't finish the delivery record:", saved.error.message);
     if (outcome.status === "sent") return reply(200, { ok: true, status: "sent", channel: r.channel, recipient: to.to, provider: cfg.name, provider_message_id: outcome.provider_message_id });
-    console.error("send-receipt: provider refused:", cfg.name, result && result.status, outcome.error);
-    return reply(502, { ok: false, status: "failed", error: "provider_error", message: `The ${CHANNEL_LABELS[r.channel]} service didn't accept the message: ${outcome.error}` });
+    // worth trying again (the service busy or down) or not (the customer's contact, the shop's set-up): the app retries only the first
+    const kind = failureKind(cfg.name, result), answer = failureAnswer(r.channel, kind, outcome.error);
+    console.error("send-receipt: provider refused:", cfg.name, result && result.status, result && result.code, kind);
+    return reply(answer.status, answer.body);
   };
 
   if (r.orderId) {
@@ -205,8 +207,11 @@ Deno.serve(async (req) => {
     if (p) return reply(409, { ok: false, error: "busy", message: "This receipt is being sent already." });
   }
   const link = r.channel === "email" ? null : await billLink(sale.id);
+  // an email carries the shop's logo (as the shop prints it: Settings → Bills & Documents → Logo)
+  const logoMeta = r.channel === "email" ? (await admin.from("hangtag_meta").select("value").eq("owner_id", shop).eq("key", "logo").maybeSingle()).data : null;
   const message = billMessage(r.channel, { sale, items: items.data || [], payments: payments.data || [], returns: rets.data || [], shop: profile.data || {}, customer, region, link: link && link.url || "",
-    linkParam: String(Deno.env.get("WHATSAPP_LINK_PARAM") || "").toLowerCase() === "on" });
+    linkParam: String(Deno.env.get("WHATSAPP_LINK_PARAM") || "").toLowerCase() === "on",
+    logo: logoMeta ? emailLogo(logoMeta.value, regionRow && regionRow.value) : null });
 
   return await sendLogged({ saleId: sale.id, auto: r.auto }, to, cfg, message, profile.data && profile.data.shop_name);
 });

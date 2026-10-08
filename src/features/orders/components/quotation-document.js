@@ -26,6 +26,7 @@ import { hhmm, fmtDate } from '../../../shared/formatting/dates.js';
 import { ICON } from '../../../shared/constants/icons.js';
 import { toast } from '../../../shared/components/toast.js';
 import { logger } from '../../../shared/logging/logger.js';
+import { documentLogo, documentLogoPlace } from '../../receipts/services/logo-display.js';
 
 const dateText=v=>{ if(!v) return "—"; const d=/^\d{4}-\d{2}-\d{2}$/.test(String(v))?new Date(String(v)+"T12:00:00"):new Date(v); return Number.isNaN(+d)?"—":fmtDate(d,{day:"numeric",month:"short",year:"numeric"}); };
 const cleanFile=s=>String(s||"quotation").replace(/[^A-Za-z0-9._-]+/g,"-").replace(/^-+|-+$/g,"").slice(0,80)||"quotation";
@@ -38,7 +39,7 @@ export function quotationDocument(o){
   const T=orderTotals(o), saved=o.cust&&o.cust.id?customerRepository().get(o.cust.id):null, buyer={...(saved||{}),...(o.cust||{})}, seller=sellerOf(store.profile||{});
   const set=S(), heading=String(set.quoteTitle||"").trim()||"QUOTATION";
   return { heading, number:o.no||"Draft", date:dateText(o.t), validUntil:dateText(o.validUntil), seller, buyer,
-    logo:store.logo||"", footer:set.quoteFooter||set.footer||"", signature:set.quoteSignature||"", showGst:set.quoteGst!==false&&T.mode!=="none",
+    logo:documentLogo(), logoAlign:documentLogoPlace("a4"), footer:set.quoteFooter||set.footer||"", signature:set.quoteSignature||"", showGst:set.quoteGst!==false&&T.mode!=="none",
     notes:o.notes||"", terms:o.terms||"", gstMode:T.mode, inclusive:T.incl,
     items:(o.items||[]).map((l,i)=>{ const x=T.lines[i]||{}, d=normalizeDiscount(l.disc); return { name:l.name||"",variant:l.vl||"",qty:qtyText(l.q,l.u),unit:unitOf(l.u).label,
       price:l.price,discount:d?discountLabel(d):"—",taxable:x.taxable||0,gstRate:x.rate||0,gst:x.tax||0,total:x.total||0 }; }), totals:T };

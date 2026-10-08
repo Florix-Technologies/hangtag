@@ -313,5 +313,55 @@ check('a signature not yet uploaded is not replaced by the older copy in the clo
   check('...a PDF without them has no pictures (and still the signatory line)', !/\/Subtype \/Image/.test(plain) && /Authorised signatory/.test(plain));
 }
 
+// ---------- the logo: printed or not, and where (Settings → Bills & Documents → Logo) ----------
+{
+  const { LOGO_ALIGNS, checkLogoDisplay, logoDisplayOf, logoPlace } = await import('../../src/domain/documents/doc-settings.js');
+  const { billContent } = await import('../../src/domain/documents/bill-content.js');
+  const { documentLogo, documentLogoPlace } = await import('../../src/features/receipts/services/logo-display.js');
+  const { setLogoDisplay } = await import('../../src/features/shop/use-cases/receipt-logo.js');
+  const { setAccess } = await import('../../src/features/shop/services/access.js');
+  check('the logo is printed unless the shop switched it off, in each output\'s own place until a side is chosen',
+    eq(logoDisplayOf({}), { show: true, align: 'auto' }) && eq(logoDisplayOf(null), { show: true, align: 'auto' }) && eq(logoDisplayOf({ docLogo: false, docLogoAlign: 'right' }), { show: false, align: 'right' })
+    && logoDisplayOf({ docLogoAlign: 'top' }).align === 'auto' && LOGO_ALIGNS.join() === 'auto,left,center,right');
+  check('saving: printed or not, and a side from the list (none chosen → Auto); any other side is refused',
+    eq(checkLogoDisplay({ show: true, align: 'right' }).patch, { docLogo: true, docLogoAlign: 'right' }) && eq(checkLogoDisplay({ show: false }).patch, { docLogo: false, docLogoAlign: 'auto' })
+    && eq(checkLogoDisplay({ show: 'false', align: '' }).patch, { docLogo: false, docLogoAlign: 'auto' }) && checkLogoDisplay({ show: true, align: 'middle' }).field === 'align');
+  check('Auto: the left of an A4 header, the centre of a receipt; a chosen side is the same on both',
+    logoPlace({ align: 'auto' }, 'a4') === 'left' && logoPlace({ align: 'auto' }, 'receipt') === 'center' && logoPlace(null, 'a4') === 'left'
+    && logoPlace({ align: 'right' }, 'a4') === 'right' && logoPlace({ align: 'right' }, 'receipt') === 'right' && logoPlace({ align: 'center' }, 'a4') === 'center' && logoPlace({ align: 'up' }, 'receipt') === 'center');
+  const onRight = buildInvoice(walk, { profile, logo: 'data:image/png;base64,AAA', logoAlign: 'right' });
+  check('the invoice and the receipt\'s content carry the side (none, or anything else → centred)', onRight.logoAlign === 'right' && billContent(onRight).logoAlign === 'right'
+    && billContent(buildInvoice(walk, { profile })).logoAlign === 'center' && billContent({ ...onRight, logoAlign: 'auto' }).logoAlign === 'center');
+  const raster = { logo: { width: 16, height: 1, base64: 'AAA=' } };
+  check('the thermal print puts the logo on the chosen side (Epson: that alignment just before the picture; centred otherwise)', thermalReceipt(onRight).logoAlign === 'right' && thermalReceipt(inv).logoAlign === 'center'
+    && /<text align="right"\/><image /.test(eposXml(thermalReceipt(onRight), raster)) && /<text align="center"\/><image /.test(eposXml(thermalReceipt(inv), raster)));
+  // the PDF (downloaded, emailed): a 180×60 JPEG logo is drawn 90×30 pt; the A4 page is 595 pt wide with 40 pt margins
+  const jpgLogo = 'data:image/jpeg;base64,' + Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0, 60, 0, 180, 0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01, 0xff, 0xd9]).toString('base64');
+  const pdfAt = (a) => { const p = Buffer.from(docPdfBytes({ seller: { name: 'Aura Threads', lines: ['12 MG Road'] }, logo: jpgLogo, logoAlign: a, title: 'Tax Invoice', meta: [['Invoice no.', 'INV-000001']], parties: [],
+    columns: ['#', 'Item', 'Amount'], left: 2, rows: [['1', { t: 'Kurta' }, '999']], totals: [['Total', '999', true]] }, { template: 'standard' })).toString('latin1');
+    return { logo: Number((/ ([\d.]+) [\d.]+ cm \/Im1 Do/.exec(p) || [])[1]), title: Number((/([\d.]+) [\d.]+ Td \(TAX INVOICE\) Tj/.exec(p) || [])[1]), shop: Number((/([\d.]+) [\d.]+ Td \(Aura Threads\) Tj/.exec(p) || [])[1]) }; };
+  const pl = pdfAt('left'), pr = pdfAt('right'), pc = pdfAt('center'), pn = pdfAt(undefined);
+  check('the PDF follows the side too: left — logo at the margin, the shop beside it, the title on the right', pl.logo === 40 && pl.shop === 140 && pl.title > 400 && JSON.stringify(pn) === JSON.stringify(pl), pl);
+  check('...right — logo against the right margin, the shop to its left, the title at the left margin', pr.logo === 465 && pr.shop < 455 && pr.shop > 300 && pr.title === 40, pr);
+  check('...centre — logo, shop and title centred on the page', pc.logo === 252.5 && pc.shop > 200 && pc.shop < 297.5 && pc.title > 200 && pc.title < 297.5, pc);
+  // the app's own outputs, from the shop's settings
+  const keep = { settings: store.settings, logo: store.logo, access: store.access, sbOfflineQueue: store.sbOfflineQueue };
+  store.logo = 'data:image/png;base64,TE9HTw=='; store.sbOfflineQueue = [];
+  store.settings = { ...keep.settings, docLogo: true, docLogoAlign: 'auto' };
+  check('Auto: the receipt centres the logo, the A4 invoice keeps it on the left of its header', documentLogo() === store.logo && documentLogoPlace('receipt') === 'center' && documentLogoPlace('a4') === 'left'
+    && /class="r-logo r-logo-center"/.test(receiptHTML(walk, '80mm')) && /<header class="d-head logo-left">/.test(receiptHTML(walk, 'a4')));
+  const moved = setLogoDisplay({ show: true, align: 'right' });
+  check('the owner moves it to the right: the receipt and the A4 invoice follow, and the setting goes up for the shop\'s other devices', moved.ok && store.settings.docLogoAlign === 'right' && store.settings.docLogo === true
+    && /class="r-logo r-logo-right"/.test(receiptHTML(walk, '80mm')) && /<header class="d-head logo-right">/.test(receiptHTML(walk, 'a4')) && store.sbOfflineQueue.some((q) => q.type === 'settings'), moved);
+  setLogoDisplay({ show: false, align: 'right' });
+  check('switched off: no logo on the receipt or the A4 invoice, but the picture is kept', store.logo === 'data:image/png;base64,TE9HTw==' && documentLogo() === ''
+    && !/r-logo/.test(receiptHTML(walk, '80mm')) && !/d-logo/.test(receiptHTML(walk, 'a4')) && store.settings.docLogo === false);
+  check('a side not on the list is refused, and nothing changes', setLogoDisplay({ show: true, align: 'middle' }).error === 'Choose where the logo goes.' && store.settings.docLogo === false);
+  setAccess({ userId: 'u-cashier', shopId: 's-1', role: 'cashier', perms: ['make_sales'], overrides: {} });
+  const denied = setLogoDisplay({ show: true, align: 'left' });
+  check('a cashier can\'t change how the logo prints (nothing changes)', !!denied.error && store.settings.docLogo === false && store.settings.docLogoAlign === 'right', denied);
+  Object.assign(store, keep);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

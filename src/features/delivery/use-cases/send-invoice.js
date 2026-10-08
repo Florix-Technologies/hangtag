@@ -2,7 +2,7 @@
 // Only the bill and the channel go to the server: it writes the message from the saved bill and sends it to the
 // customer's saved email / mobile. A send counts as sent only when the server says the provider accepted it; every
 // other outcome is reported as not sent.
-import { deliveryTarget } from '../../../domain/invoices/delivery.js';
+import { CHECK_EVERY, deliveryTarget, needsDeliveryCheck } from '../../../domain/invoices/delivery.js';
 import { store } from '../../../shared/state/store.js';
 import { D } from '../../inventory/services/ledger.js';
 import { invoiceFor } from '../../receipts/services/receipt-model.js';
@@ -22,10 +22,18 @@ export async function loadChannels(){
   return store.channels;
 }
 /* The server's record of what was sent from this bill (online only) */
+const askedAt={};
 export async function loadDeliveryHistory(sid){
   if(!online()) return deliveriesOf(sid);
   try{
-    const rows=await messageDelivery().history(sid), mine=deliveriesOf(sid).filter(e=>e.status==="sending");
+    let rows=await messageDelivery().history(sid);
+    // a message still "sent" is asked about by itself when its bill is opened (at most every 10 minutes per bill)
+    const now=Date.now();
+    if(rows.some(e=>needsDeliveryCheck(e,now))&&!(askedAt[sid]&&now-askedAt[sid]<CHECK_EVERY)){
+      askedAt[sid]=now;
+      try{ await messageDelivery().refresh(sid); rows=await messageDelivery().history(sid); }catch(e){ logger.warn("Delivery status:",e); }
+    }
+    const mine=deliveriesOf(sid).filter(e=>e.status==="sending");
     store.deliveries[sid]=[...mine,...rows];
   }catch(e){ logger.warn("Delivery history:",e); }
   return deliveriesOf(sid);

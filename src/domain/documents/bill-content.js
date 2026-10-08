@@ -43,7 +43,7 @@ export function billContent(inv, { showGst = true } = {}){
   const kind = taxed ? "invoice" : "bill";
   return { kind, title: taxed ? "Tax Invoice" : "Bill", numberLabel: taxed ? "Invoice no." : "Bill no.", number: inv.number, t: inv.t, status: inv.status,
     cancelled: inv.status === "cancelled" ? (taxed ? "not a valid invoice" : "not a valid bill") : false,
-    seller: inv.seller, logo: inv.logo || "", buyer: inv.buyer, placeOfSupply: inv.placeOfSupply && inv.gstMode !== "none" ? inv.placeOfSupply : null,
+    seller: inv.seller, logo: inv.logo || "", logoAlign: ["left", "center", "right"].includes(inv.logoAlign) ? inv.logoAlign : "center", buyer: inv.buyer, placeOfSupply: inv.placeOfSupply && inv.gstMode !== "none" ? inv.placeOfSupply : null,
     gstMode: inv.gstMode, inclusive: inv.inclusive, lineTax: inv.lineTax, lines: inv.lines, totals, payments, closing, settled,
     words: inv.amountInWords, taxSummary: showGst ? inv.taxSummary : [], returns: inv.returns || [],
     notice: (taxed ? (inv.inclusive ? "Prices include GST. " : "GST is added to the prices. ") : "") + (taxed ? "Computer-generated invoice." : "Computer-generated bill."),

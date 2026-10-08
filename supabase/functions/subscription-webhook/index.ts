@@ -4,8 +4,13 @@
 // - Every request must carry the provider's valid signature (Razorpay: X-Razorpay-Signature = HMAC-SHA256 of the raw body
 //   with SUBSCRIPTION_WEBHOOK_SECRET); anything else is refused before the body is read as JSON.
 // - Idempotent: activation of an already paid payment changes nothing; the amount must be exactly the amount due.
+// - AutoPay: subscription.authenticated / activated / charged / pending / halted / cancelled / completed / resumed move the
+//   shop's AutoPay (hangtag_autopay_event). A charge counts only when the payment was CAPTURED; the same charge twice
+//   changes nothing. A mandate Hangtag made but no longer tracks (replaced by a new set-up) is cancelled, not charged on.
 // In the Razorpay dashboard (Hangtag's own account): Webhooks → URL https://<project>.supabase.co/functions/v1/subscription-webhook,
-// the same secret, events payment_link.paid, payment_link.expired, payment_link.cancelled.
+// the same secret, events payment_link.paid, payment_link.expired, payment_link.cancelled, and subscription.authenticated,
+// subscription.activated, subscription.charged, subscription.pending, subscription.halted, subscription.cancelled,
+// subscription.completed, subscription.resumed.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { verifyDecision } from "../subscription/core.js";
 import { providerFor } from "../subscription/providers/index.js";
@@ -26,6 +31,16 @@ Deno.serve(async (req) => {
   const target = provider.readWebhook(event);
   if (!target) return reply(200, { ok: true, ignored: true });
   const admin = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+  if (target.kind === "autopay") {
+    const { data: a, error: aErr } = await admin.rpc("hangtag_autopay_event", { p_provider: provider.name, p_subscription: target.subscriptionId, p_event: target.event,
+      p_payment: target.paymentId, p_amount: target.amount, p_next_charge_at: target.nextChargeAt });
+    if (aErr) { console.error("subscription-webhook: AutoPay report refused:", aErr.code); return reply(500, { ok: false }); }   // the provider retries
+    if (a && a.known === false && target.owner && ["authenticated", "activated", "charged"].includes(target.event)) {
+      try { await provider.cancelAutopay(target.subscriptionId); } catch { console.error("subscription-webhook: an AutoPay Hangtag no longer tracks couldn't be cancelled"); }
+      if (target.event === "charged") console.error("subscription-webhook: a charge on an AutoPay Hangtag no longer tracks: refund it in the provider's dashboard");
+    }
+    return reply(200, { ok: true, autopay: target.event, known: !!(a && a.known) });
+  }
   const { data: row } = await admin.from("hangtag_subscription_payments").select("id, amount, status, provider_order_id")
     .eq("provider", provider.name).eq("provider_order_id", target.orderId).maybeSingle();
   if (!row) return reply(200, { ok: true, ignored: true });   // not a Hangtag plan payment

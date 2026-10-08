@@ -280,3 +280,6 @@ button.hatt-row:hover{background:var(--wash)}
 .dg-chain{display:flex;flex-wrap:wrap;align-items:center;gap:4px}.dg-step{padding:1px 7px;border:1px solid var(--line-2);border-radius:999px;font-size:12px;background:var(--bg)}
 .dg-step.bad{border-color:var(--bad,#b91c1c);color:var(--bad,#b91c1c)}.dg-arrow{color:var(--ink-3);font-size:12px}
 @media (max-width:640px){.diag-lat th:nth-child(5),.diag-lat td:nth-child(5),.diag-lat th:nth-child(6),.diag-lat td:nth-child(6){display:none}}
+
+/* Settings → Bills & Documents → Logo: printed or not, and where */
+.logodisp{margin-top:12px;display:flex;flex-direction:column;gap:8px}

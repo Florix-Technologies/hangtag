@@ -33,7 +33,16 @@ function.
 - **"Sent" means the provider accepted the message and returned its id.** Anything else is recorded as `failed` with
   the provider's reason, and the app says it wasn't sent. `{ action: "refresh", sale_id }` asks Twilio (SMS) and
   Resend (email) what happened to the bill's sent messages and records `delivered` (or `failed` when the provider
-  couldn't deliver it). Meta WhatsApp reports delivery only through webhooks, so its messages stay `sent`.
+  couldn't deliver it). Meta WhatsApp reports delivery only through webhooks: with the `delivery-status` function set
+  up (its README), every provider reports by itself and the bill shows Delivered or why it failed without a refresh.
+- **A refusal says whether trying again helps** (core.js `failureKind`, from the provider's own error code): the
+  service busy, limited or down → `502 provider_error`, which the app's queue tries again; the customer's number or
+  address can't receive it (not on WhatsApp, not a mobile, opted out, invalid) → `422 bad_recipient`; the shop's
+  provider set-up (template, token, sender, domain) → `422 provider_setup`. The last two are final: the app says what
+  to fix and never sends again by itself.
+- **Emails carry the shop's logo** as Settings → Bills & Documents → Logo prints it (shown or not, left / centre /
+  right): an inline picture (`cid:shop-logo`), since email apps block pictures written into the message. If Resend
+  turns the picture down, the same email goes once more without it.
 - **Automatic receipts** (`{ action: "send", ..., auto: true }`, sent by the phone when a bill completes and the shop
   turned the channel on): at most one per bill and channel. A unique index on the `auto` rows makes a retry (or a
   second phone) get the first attempt's answer (`already: true`) or `409 busy` while it is still being sent.
@@ -78,6 +87,7 @@ Set the secrets of the channels you want (`supabase secrets set NAME=value --pro
 | Who may send (**required**) | `SEND_ALLOWED_USERS`: the accounts allowed to send, as user ids or sign-in emails, comma-separated, or `*` for every signed-in account. **Unset = nobody sends.** Sign-up is open and the messages go out from your provider accounts, so list your shops' accounts rather than using `*` |
 
 | Invoice links (optional) | `RECEIPT_URL`: the address of `receipt.html` on your site, e.g. `https://<you>.github.io/hangtag/receipt.html` (https, no query). Without it, the receipt page of the app the shop's owner uses (saved in the shop's settings) is used. With WhatsApp, `WHATSAPP_LINK_PARAM=on` when the approved template has a 5th value `{{5}}` for the link. |
+| Delivery reports (optional) | `DELIVERY_STATUS_URL`: the address of the `delivery-status` function (`https://<project>.supabase.co/functions/v1/delivery-status`). Twilio messages then ask Twilio to report there. Meta and Resend are set up in their dashboards (see `delivery-status/README.md`). |
 | Quotations by WhatsApp (optional) | `WHATSAPP_QUOTE_TEMPLATE` (Meta: an approved template with `{{1}}` customer, `{{2}}` shop, `{{3}}` quotation number, `{{4}}` amount, `{{5}}` valid until) or, with `WHATSAPP_PROVIDER=twilio`, `TWILIO_WHATSAPP_QUOTE_CONTENT_SID`. Quotations by email use the email secrets above. |
 
 The invoice-link page needs the `receipt` function, deployed **without** JWT verification (it is called with the

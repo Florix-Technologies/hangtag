@@ -145,7 +145,7 @@ export const rowToEvent = r => ({ id:r.id, name:r.name, start:String(r.start_dat
   status:r.status==="closed"?"closed":"active", t:Number(r.created_t)||Date.parse(r.created_at)||0 });
 /* A bill sent to its customer (hangtag_deliveries, written by the send-receipt Edge Function) */
 export const rowToDelivery = r => ({ id:r.id, saleId:r.sale_id, ...(r.order_id ? { orderId:r.order_id } : {}), ...(r.request_id ? { requestId:r.request_id } : {}), channel:r.channel, to:r.recipient, status:r.status, provider:r.provider||"", providerId:r.provider_message_id||"", error:r.error||"",
-  mode:r.mode||"manual", t:Date.parse(r.created_at)||0, ...(r.delivered_at ? { deliveredAt:Date.parse(r.delivered_at) } : {}) });
+  mode:r.mode||"manual", t:Date.parse(r.created_at)||0, ...(r.delivered_at ? { deliveredAt:Date.parse(r.delivered_at) } : {}), ...(r.checked_at ? { checkedAt:Date.parse(r.checked_at) } : {}) });
 export const rowToCustomer = r => Object.assign({ id:r.id, name:r.name, phone:r.phone||"", email:r.email||"", gstin:r.gstin||"", type:r.customer_type==='business'?'business':'individual', t:Date.parse(r.created_at)||0 },
   r.address && typeof r.address === "object" && (r.address.line || r.address.pin || r.address.city) ? { addr:{ line:r.address.line||"", city:r.address.city||"", pin:r.address.pin||"", state:r.address.state||"" } } : {},
   r.price_list_id ? { priceList:r.price_list_id } : {});

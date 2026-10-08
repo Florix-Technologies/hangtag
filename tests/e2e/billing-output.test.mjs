@@ -122,7 +122,7 @@ check('the database has the email as sent (with its id) and the SMS as failed; W
 
 // ---------- Phase 13/14: receipt and invoice from the saved bill ----------
 const printedPage = await A.evaluate(async (sid) => { document.querySelector(`#sheetHost [data-print="${sid}"]`).click(); await new Promise((r) => setTimeout(r, 400)); const f = [...document.querySelectorAll('iframe')].pop(); return f && f.contentDocument ? { html: f.contentDocument.body.innerHTML, text: f.contentDocument.body.innerText } : null; }, sid);
-check('Print (no thermal printer set): the print-only 80 mm receipt with the logo, shop, GSTIN, IGST and the split payment', printedPage && /class="r-logo"/.test(printedPage.html) && /Aura Threads/.test(printedPage.text) && /GSTIN 27ABCDE1234F1Z5/.test(printedPage.text)
+check('Print (no thermal printer set): the print-only 80 mm receipt with the logo (centred), shop, GSTIN, IGST and the split payment', printedPage && /class="r-logo r-logo-center"/.test(printedPage.html) && /Aura Threads/.test(printedPage.text) && /GSTIN 27ABCDE1234F1Z5/.test(printedPage.text)
   && /IGST/.test(printedPage.text) && /Paid by Cash/.test(printedPage.text) && /Paid by UPI/.test(printedPage.text), printedPage && printedPage.text.slice(0, 300));
 await run('closeSheets()');
 await run(`openBillView(${JSON.stringify(sid)},"a4")`); await sleep(300);
@@ -165,6 +165,44 @@ printerMode = 'ok';
 await A.click(`.billview [data-printstate="${sid}"] [data-print]`); await sleep(700);
 check('try again once the printer is back: printed', /✓ Printed/.test(await text(`.billview [data-printstate="${sid}"]`)));
 await run('closeModal()');
+
+// ---------- the logo: printed or not, and where (Settings → Bills & Documents → Logo) ----------
+const prevHTML = () => A.evaluate(() => { const f = document.querySelector('.billview .rcpt-prev iframe'); return f && f.contentDocument ? f.contentDocument.body.innerHTML : ((document.querySelector('.billview .rcpt-prev') || {}).innerHTML || ''); });
+const outputs = async () => {
+  await run(`openBillView(${JSON.stringify(sid)})`); await sleep(300);
+  const r80 = await prevHTML();
+  prints.length = 0; await A.click(`.billview [data-print="${sid}"]`); await sleep(700);
+  await run('closeModal()'); await run(`openBillView(${JSON.stringify(sid)},"a4")`); await sleep(400);
+  const a4html = await prevHTML(); await run('closeModal()');
+  return { r80, a4html, epos: prints[0] || '' };
+};
+await run('openSettings("billing")'); await sleep(200);
+check('settings: the logo is printed, each output keeping its own place (Auto · Left · Centre · Right)', await A.$eval('#receiptSetup [data-logoshow]', (c) => c.checked)
+  && (await A.$$eval('#receiptSetup [data-logoalign]', (r) => r.map((x) => x.value + (x.checked ? '*' : '')))).join() === 'auto*,left,center,right');
+await A.$eval('#receiptSetup [data-logoalign][value="right"]', (r) => r.click()); await sleep(300);
+check('Right: saved for the shop, and still chosen when the settings are drawn again', await run('return settings.docLogo===true&&settings.docLogoAlign==="right"') && await A.$eval('#receiptSetup [data-logoalign][value="right"]', (r) => r.checked));
+await run('await flushSbQueue()');
+check('...and in the cloud for the shop\'s other devices (hangtag_meta "settings")', ((await q(`SELECT value FROM public.hangtag_meta WHERE key='settings'`))[0] || {}).value?.docLogoAlign === 'right');
+await run('closeSettings()');
+const onRight = await outputs();
+check('the 80 mm receipt, the A4 invoice and the Epson print all put the logo on the right', /class="r-logo r-logo-right"/.test(onRight.r80) && /<header class="d-head logo-right">/.test(onRight.a4html) && /class="d-logo"/.test(onRight.a4html)
+  && /<text align="right"\/><image width="\d+" height="\d+"/.test(onRight.epos), { r80: (onRight.r80.match(/<img class="r-logo[^"]*"/) || [])[0], a4: (onRight.a4html.match(/<header[^>]*>/) || [])[0], epos: (onRight.epos.match(/<text align="\w+"\/><image/) || [])[0] });
+await A.screenshot({ path: H.ARTIFACTS + '/bo4_logo_right.png' });
+await run('openSettings("billing")'); await sleep(200);
+await A.$eval('#receiptSetup [data-logoshow]', (c) => c.click()); await sleep(300);
+check('switched off: the sides are put away, and the picture is kept', await run('return settings.docLogo===false&&/^data:image/.test(logo)') && await A.$eval('#receiptSetup .logodisp .segrow', (e) => e.hidden) && !!(await A.$('#receiptSetup .logoprev img')));
+await run('closeSettings()');
+const hidden = await outputs();
+check('...no logo on the receipt, the A4 invoice or the Epson print (the shop name still heads them)', !/r-logo/.test(hidden.r80) && !/d-logo/.test(hidden.a4html) && !/<image /.test(hidden.epos)
+  && /Aura Threads/.test(hidden.r80) && /Aura Threads/.test(hidden.a4html) && /Aura Threads/.test(hidden.epos));
+await run('openSettings("billing")'); await sleep(200);
+await A.$eval('#receiptSetup [data-logoshow]', (c) => c.click()); await sleep(300);
+await A.$eval('#receiptSetup [data-logoalign][value="auto"]', (r) => r.click()); await sleep(300);
+check('back on, Auto: the logo is printed again in each output\'s own place', await run('return settings.docLogo===true&&settings.docLogoAlign==="auto"'));
+await run('closeSettings()');
+const auto = await outputs();
+check('...centred on the receipt and the Epson print, on the left of the A4 header', /class="r-logo r-logo-center"/.test(auto.r80) && /<header class="d-head logo-left">/.test(auto.a4html) && /<text align="center"\/><image /.test(auto.epos));
+await run('await flushSbQueue()');
 
 // ---------- walk-in and cancelled bills ----------
 await sleep(700);

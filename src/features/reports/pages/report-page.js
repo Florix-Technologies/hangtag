@@ -1,5 +1,6 @@
 // Reports page sections.
-import { lineLabel } from '../../../domain/catalog/options.js';
+import { lineLabel, optionSnapshot } from '../../../domain/catalog/options.js';
+import { optionBreakdown } from '../../../domain/reports/option-breakdown.js';
 import { store } from '../../../shared/state/store.js';
 import { vLabel, variantsOf } from '../../../domain/catalog/variants.js';
 import { levelOf } from '../../inventory/services/stock-levels.js';
@@ -26,20 +27,42 @@ import { qtyText, roundQty } from '../../../domain/catalog/units.js';
 import { returnsByReason } from '../../../domain/returns/return-reasons.js';
 
 export const showTable={time:false,size:false};
+/* the option the "Sold by option" card shows (the most-sold one when none is chosen or it sold nothing in the period) */
+export const reportOption={name:""};
 export function drawTime(TS){
   const host=$("#chTime");if(!host)return;const rows=TS.rows;
   if(!rows.length||rows.every(r=>!r.v)){host.innerHTML=`<p class="muted">No sales in this period.</p>`;return}
   if(showTable.time){host.innerHTML=tableHTML([TS.unit,"Sales","Bills","Pieces"],rows.filter(r=>r.n||r.v).map(r=>[r.label,inr(r.v),r.n,r.p]));return}
   colChart(host,rows.map(r=>({short:r.short,v:r.v,tv:inr(r.v),tl:r.label,tm:r.n+" bill"+(r.n===1?"":"s")+" · "+r.p+" pcs"})),{axis:inrShort,peak:inrShort,labelW:TS.labelW,aria:TS.title});
 }
-export function drawSizes(lines){
-  const host=$("#chSize");if(!host)return;const m={};lines.forEach(l=>{const k=l.s||"One size";m[k]=roundQty((m[k]||0)+l.q)});
-  Object.keys(m).forEach(k=>{if(m[k]<=0)delete m[k]});
-  const tot=Object.values(m).reduce((a,b)=>a+b,0);
-  if(!tot){host.innerHTML=`<p class="muted">No sizes sold in this period.</p>`;return}
-  const order=sizeOrder(Object.keys(m)).filter(s=>m[s]);if(m["One size"]&&!order.includes("One size"))order.push("One size");
-  if(showTable.size){host.innerHTML=tableHTML(["Size","Pieces","Share"],order.map(s=>[s,m[s]||0,Math.round((m[s]||0)/tot*100)+"%"]));return}
-  colChart(host,order.map(s=>({short:s,v:m[s]||0,tv:(m[s]||0)+" pcs",tl:"Size "+s,tm:Math.round((m[s]||0)/tot*100)+"% of pieces sold"})),{axis:v=>String(v),peak:v=>v+" pcs",int:true,labelW:24,aria:"Pieces sold by size"});
+/* Each line's options as the product names them now ({ n, v }); a line whose variant is gone keeps its colour and size */
+function lineOptions(l){
+  const rec=D().vIdx[l.vid];
+  if(rec) return optionSnapshot(rec.p,rec.v);
+  return [l.c&&{n:"Colour",v:l.c},l.s&&{n:"Size",v:l.s}].filter(Boolean);
+}
+/* An option's values in the order the shop's products define them (sizes as sizes run) */
+function optionOrder(name,seen){
+  const k=String(name).trim().toLowerCase(), order=[];
+  liveProducts().forEach(p=>(p.opts||[]).filter(o=>String(o.n||"").trim().toLowerCase()===k).forEach(o=>(o.v||[]).forEach(v=>{if(!order.includes(String(v)))order.push(String(v))})));
+  return /^sizes?$/.test(k)?sizeOrder(seen):order;
+}
+/* The period's pieces by option, and the option shown */
+export function optionsSold(lines){
+  const OB=optionBreakdown(lines.map(l=>({pid:l.pid,name:l.name,q:l.q,amt:l.amt,opts:lineOptions(l)})),{orderOf:optionOrder});
+  const name=OB.names.find(n=>n.toLowerCase()===String(reportOption.name).toLowerCase())||OB.names[0]||"";
+  return {OB,name,one:name?OB.of(name):null};
+}
+/* "Sold by option": a chip for each option the products sold have, the chart (or table) of the one chosen */
+export function optionChipsHTML(S){
+  return S.OB.names.length>1?`<div class="billfilters optchips" role="group" aria-label="Option">${S.OB.names.map(n=>`<button type="button" class="chipbtn${n===S.name?" on":""}" data-repopt="${esc(n)}" aria-pressed="${n===S.name}">${esc(n)}</button>`).join("")}</div>`:"";
+}
+export function drawSizes(lines,S=optionsSold(lines)){
+  const host=$("#chSize");if(!host)return;
+  const one=S.one;
+  if(!one||!one.total){host.innerHTML=`<p class="muted">${S.OB.plain>0?"What sold this period has no options (sizes, colours, storage…).":"Nothing sold in this period."}</p>`;return}
+  if(showTable.size){host.innerHTML=tableHTML([one.name,"Pieces","Share"],one.values.map(x=>[x.value,x.q,x.share+"%"]));return}
+  colChart(host,one.values.map(x=>({short:x.value,v:x.q,tv:x.q+" pcs",tl:one.name+" "+x.value,tm:x.share+"% of pieces sold"})),{axis:v=>String(v),peak:v=>v+" pcs",int:true,labelW:Math.min(60,Math.max(24,...one.values.map(x=>x.value.length*7))),aria:"Pieces sold by "+one.name.toLowerCase()});
 }
 export function payHTML(live,rets,R){
   // each payment counts under its own method, so a split bill adds to more than one (domain/reports/sales-report.js)
@@ -66,19 +89,15 @@ export function variantPerfHTML(lines){
   if(!rows.length)return `<p class="muted">Nothing sold in this period.</p>`;
   return `<div class="vperf">${rows.map((r,i)=>{const p=prod(r.pid)||{id:r.pid,name:r.n,color:"#8E8A83"};return `<div class="vp-row"><span class="vp-i">${i+1}</span>${thumb(p,"xs")}<span class="vp-n"><b>${esc(p.name)}</b>${r.vl?` <span class="szl">${esc(r.vl)}</span>`:""}</span><span class="vp-q">${r.q} sold</span><span class="vp-a">${inr(r.a)}</span></div>`}).join("")}</div>`;
 }
-export function heatHTML(lines){
-  const m={},names={},amt={};
-  lines.forEach(l=>{const r=m[l.pid]||(m[l.pid]={});const s=l.s||"One size";r[s]=roundQty((r[s]||0)+l.q);names[l.pid]=l.name;amt[l.pid]=(amt[l.pid]||0)+l.amt});
-  const ids=Object.keys(m).filter(id=>Object.values(m[id]).some(v=>v>0));if(!ids.length)return `<p class="muted">Nothing sold in this period.</p>`;
-  const rows=ids.map(id=>prod(id)||{id,name:names[id],color:"#8E8A83"});
-  let sizes=sizeOrder([].concat(...ids.map(id=>Object.keys(m[id]))));if(ids.some(id=>m[id]["One size"])&&!sizes.includes("One size"))sizes.push("One size");
-  sizes=sizes.filter(s=>ids.some(id=>(m[id][s]||0)!==0));
-  const tot=id=>Object.values(m[id]||{}).reduce((a,b)=>a+b,0);
-  rows.sort((a,b)=>tot(b.id)-tot(a.id));
-  let max=0;ids.forEach(id=>Object.values(m[id]).forEach(v=>{if(v>max)max=v}));
+/* Product × the option shown: each product that has it, its values as columns, darker = more */
+export function optionHeatHTML(S){
+  const one=S.one;
+  if(!one||!one.products.length)return `<p class="muted">Nothing with options sold in this period.</p>`;
+  const vals=one.values.map(x=>x.value);let max=0;one.products.forEach(p=>vals.forEach(v=>{if((p.by[v]||0)>max)max=p.by[v]}));
   const colT={};let all=0,allA=0;
-  const body=rows.map(p=>{const r=m[p.id]||{};const cells=sizes.map(s=>{const v=r[s]||0;colT[s]=(colT[s]||0)+v;if(v<=0)return `<td class="h0">${v<0?v:"·"}</td>`;return `<td class="h${Math.max(1,Math.ceil(v/max*6))}">${v}</td>`}).join("");const t=tot(p.id);all+=t;allA+=amt[p.id]||0;return `<tr><td class="pn"><span class="who">${thumb(p,"xs")}<span class="nmx">${esc(p.name)}</span></span></td>${cells}<td class="sum">${t}</td><td class="am">${inr(amt[p.id]||0)}</td></tr>`}).join("");
-  return `<div class="tw"><table class="hm"><thead><tr><th>Product</th>${sizes.map(s=>`<th>${esc(s)}</th>`).join("")}<th>Pieces</th><th style="text-align:right">Amount</th></tr></thead><tbody>${body}</tbody><tfoot><tr><td class="pn">All products</td>${sizes.map(s=>`<td>${colT[s]||0}</td>`).join("")}<td class="sum">${all}</td><td class="am">${inr(allA)}</td></tr></tfoot></table></div><div class="hmleg"><span>Fewer</span>${[1,2,3,4,5,6].map(i=>`<i class="h${i}"></i>`).join("")}<span>More pieces · all colours together</span></div>`;
+  const body=one.products.map(r=>{const p=prod(r.pid)||{id:r.pid,name:r.name,color:"#8E8A83"};const cells=vals.map(v=>{const q=r.by[v]||0;colT[v]=roundQty((colT[v]||0)+q);return q<=0?`<td class="h0">${q<0?q:"·"}</td>`:`<td class="h${Math.max(1,Math.ceil(q/max*6))}">${q}</td>`}).join("");all=roundQty(all+r.q);allA+=r.amt;
+    return `<tr><td class="pn"><span class="who">${thumb(p,"xs")}<span class="nmx">${esc(p.name)}</span></span></td>${cells}<td class="sum">${r.q}</td><td class="am">${inr(r.amt)}</td></tr>`}).join("");
+  return `<div class="tw"><table class="hm"><thead><tr><th>Product</th>${vals.map(v=>`<th>${esc(v)}</th>`).join("")}<th>Pieces</th><th style="text-align:right">Amount</th></tr></thead><tbody>${body}</tbody><tfoot><tr><td class="pn">All products</td>${vals.map(v=>`<td>${colT[v]||0}</td>`).join("")}<td class="sum">${all}</td><td class="am">${inr(allA)}</td></tr></tfoot></table></div><div class="hmleg"><span>Fewer</span>${[1,2,3,4,5,6].map(i=>`<i class="h${i}"></i>`).join("")}<span>More pieces · ${esc(one.name.toLowerCase())} only (the other options together)</span></div>`;
 }
 export function slowHTML(lines,R){
   const sold=byProduct(lines);
@@ -135,7 +154,7 @@ export function renderReport(){
   const {all,live,rets}=periodData(R.from,R.to);
   const host=$("#repBody"), evCard=`<div class="card span-12"><div class="card-h"><h3>Events</h3><span class="note">Pop-ups, fairs and exhibitions: their bills are tagged and reported apart</span></div>${eventsCardHTML()}</div>`;
   if(!all.length&&!rets.length){host.innerHTML=`${eventFilterHTML()}<div class="empty"><b>No sales ${store.prefs.period==="today"?"yet today":"in this period"}</b><p>Bills you ring up on the Sell tab show up here straight away.</p></div><div class="dash">${evCard}</div>`;return}
-  const lines=netLines(live,rets);
+  const lines=netLines(live,rets), OS=optionsSold(lines);
   const K=kstats(live,rets),PD=R.prev?periodData(R.prev.from,R.prev.to):null,P=PD?kstats(PD.live,PD.rets):null,TS=timeSeries(live,rets,R);
   const PS=profitSummary(lines);
   let h=eventFilterHTML()+`<div class="kpis five"><div class="kpi hero"><div class="lab">Total sales</div><div class="val">${inr(K.rev)}</div><div class="kps">${delta(K.rev,P&&P.rev,R.vs)}${K.retVal?` <span class="delta flat">after ${inr(K.retVal)} returns</span>`:""}</div></div>`;
@@ -152,15 +171,15 @@ export function renderReport(){
     <div class="card span-7"><div class="card-h"><h3>Gross profit</h3><span class="note">Sales minus the cost of the pieces sold</span></div>${profitHTML(lines)}</div>
     <div class="card span-5"><div class="card-h"><h3>Stock movement</h3><span class="note">In and out in this period</span></div>${movementHTML(R)}</div>
     <div class="card span-7"><div class="card-h"><h3>Best sellers</h3><span class="note">Pieces sold · amount</span></div>${bestHTML(lines)}</div>
-    <div class="card span-5"><div class="card-h"><h3>Sizes that sold</h3><button class="btn xs" data-table="size" aria-pressed="${showTable.size}">${showTable.size?"Show chart":"Show table"}</button></div><div id="chSize" class="chart"></div></div>
-    <div class="card span-7"><div class="card-h"><h3>Top variants</h3><span class="note">Colour and size · pieces sold</span></div>${variantPerfHTML(lines)}</div>
+    <div class="card span-5"><div class="card-h"><div><h3>Sold by option</h3><span class="note">${OS.name?`Pieces by ${esc(OS.name.toLowerCase())}`:"Sizes, colours, storage… as your products name them"}</span></div><button class="btn xs" data-table="size" aria-pressed="${showTable.size}">${showTable.size?"Show chart":"Show table"}</button></div>${optionChipsHTML(OS)}<div id="chSize" class="chart"></div></div>
+    <div class="card span-7"><div class="card-h"><h3>Top variants</h3><span class="note">Each option combination · pieces sold</span></div>${variantPerfHTML(lines)}</div>
     <div class="card span-5"><div class="card-h"><h3>Not selling</h3><span class="note">In stock, nothing sold in this period</span></div>${slowHTML(lines,R)}</div>
     <div class="card span-7"><div class="card-h"><h3>Running low now</h3><span class="note">Tap to add stock</span></div>${lowStockHTML()}</div>
     <div class="card span-5"><div class="card-h"><h3>Top customers</h3></div>${custTopHTML(live,rets)}</div>
     ${returnsHTML(rets)}
-    <div class="card span-12"><div class="card-h"><h3>Product × size</h3><span class="note">Pieces sold · darker = more</span></div>${heatHTML(lines)}</div>
+    <div class="card span-12"><div class="card-h"><h3>Product × ${esc((OS.name||"option").toLowerCase())}</h3><span class="note">Pieces sold · darker = more</span></div>${optionHeatHTML(OS)}</div>
     ${evCard}
     <div class="card span-12"><div class="card-h"><div><h3>Bills</h3><span class="note">Open a bill to print, share, return, exchange or cancel it</span></div><button class="btn xs" data-act="export">Download CSV</button></div>${billsHTML(all,R)}</div>
   </div>`;
-  host.innerHTML=h;drawTime(TS);drawSizes(lines);
+  host.innerHTML=h;drawTime(TS);drawSizes(lines,OS);
 }

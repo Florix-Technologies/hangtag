@@ -6,7 +6,7 @@
 // Views are counted on the link. The figures come from the saved bill (send-receipt/core.js billView): nothing is
 // recalculated here.
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { ITEM_COLUMNS, PAYMENT_COLUMNS, PROFILE_COLUMNS, RETURN_COLUMNS, SALE_COLUMNS, billView, liveLink } from "../send-receipt/core.js";
+import { ITEM_COLUMNS, PAYMENT_COLUMNS, PROFILE_COLUMNS, RETURN_COLUMNS, SALE_COLUMNS, billView, liveLink, shopLogo } from "../send-receipt/core.js";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -40,10 +40,10 @@ Deno.serve(async (req) => {
   ]);
   if (items.error || payments.error) { console.error("receipt: couldn't read the bill:", (items.error || payments.error)!.message); return reply(503, { ok: false, error: "unavailable" }); }
   await admin.from("hangtag_invoice_links").update({ views: (link.views || 0) + 1, last_viewed_at: new Date().toISOString() }).eq("token", token);
-  const data = (logo as { data?: { value?: { data?: string } } }).data;
-  const logoUrl = data && data.value && typeof data.value.data === "string" && /^data:image\/(png|jpeg|webp);base64,/.test(data.value.data) ? data.value.data : null;
   // the shop's region (settings.region): the invoice in its currency and time zone, as its messages are (India when not set)
   const sv = (settings as { data?: { value?: { region?: unknown } } }).data, region = sv && sv.value && typeof sv.value.region === "string" ? sv.value.region : "IN";
+  // the logo as the shop prints it: not at all when switched off; where it goes (Settings → Bills & Documents → Logo)
+  const L = shopLogo((logo as { data?: { value?: unknown } }).data?.value, sv && sv.value);
   return reply(200, { ok: true, bill: billView({ sale, items: items.data || [], payments: payments.data || [], returns: (rets as { data?: unknown[] }).data || [], shop: profile.data || {}, customer: customer.data, region }),
-    cancelled: !!sale.is_void, logo: logoUrl, expiresAt: link.expires_at });
+    cancelled: !!sale.is_void, logo: L ? L.url : null, logoAlign: L ? L.align : "left", expiresAt: link.expires_at });
 });

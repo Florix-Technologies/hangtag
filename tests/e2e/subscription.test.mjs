@@ -2,11 +2,13 @@
 // PostgREST stand-in (row security, the HT402 guard); the subscription Edge Function is stood in by a stub that uses the
 // function's own request rules and payment decision (supabase/functions/subscription/core.js) and the same database
 // functions: checkout AS the user, activation as the trusted server once "the provider" says paid.
-// A new shop's trial (7 days, Home banner, Plans & Billing), prices from the database, promo codes checked by the database,
+// A new shop's trial (30 days, Home banner, Plans & Billing), the plans (Monthly to 12 Months) and the launch offer from the
+// database, promo codes checked by the database,
 // a tampered request, Pay Now → waiting → paid → the app unlocked; the plan ending → the lock screen (nothing else
 // reachable: tabs, routes, shortcuts), data kept, writes refused and kept queued; tampering with the saved status or the
 // clock doesn't unlock; renewing opens everything at once and the queue goes up; another device sees the same; a team
-// member sees "ask the owner"; the screens at 320 / 375 / 768 / 1280 px.
+// member sees "ask the owner"; the screens at 320 / 375 / 768 / 1280 px. AutoPay: a new trial that needs it is locked until
+// the owner consents (nothing today, the plan after the trial) and the provider confirms; turning it off keeps the trial.
 import puppeteer from 'puppeteer-core';
 import H from '../helpers/env.mjs';
 import { createPgRest } from '../helpers/pg-rest.mjs';
@@ -24,13 +26,13 @@ await sql(`INSERT INTO public.hangtag_promo_codes (code, kind, value, plans, end
   ('OLD', 'percent', 10, NULL, now() - interval '1 day'), ('SIXONLY', 'percent', 50, '{m6}', NULL)`);
 
 // the subscription function, stood in: the real request rules, the real database functions
-let providerPaid = new Set(), payable = true;
+let providerPaid = new Set(), payable = true, apApproved = false;
 const stub = async (r) => {
   const body = JSON.parse(r.postData() || '{}'), who = pg.subOf(r.headers()['authorization']) || UID;
   const reply = (status, b) => r.respond({ status, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(b) });
   const v = validateRequest(body);
   if (!v.ok) return reply(v.status, { ok: false, error: v.error, message: v.message });
-  if (v.action === 'config') return reply(200, { ok: true, available: payable, provider: payable ? 'razorpay' : null });
+  if (v.action === 'config') return reply(200, { ok: true, available: payable, provider: payable ? 'razorpay' : null, autopay: payable });
   try {
     if (v.action === 'checkout') {
       if (!payable) {   // as index.ts: the price first; with something to pay and no provider, nothing is created
@@ -41,6 +43,23 @@ const stub = async (r) => {
       if (+c.amount === 0) { const a = (await sql(`SELECT public.hangtag_subscription_activate($1, $2, 0) AS a`, [c.payment_id, 'free:' + c.payment_id]))[0].a; if (a && a.ok === false) return reply(409, { ok: false, error: 'promo', reason: a.reason, message: a.message }); return reply(200, { ok: true, free: true, status: 'paid', payment_id: c.payment_id, period_end: a.period_end }); }
       await sql(`SELECT public.hangtag_subscription_attach($1, 'razorpay', $2)`, [c.payment_id, 'plink_' + c.payment_id.replace(/-/g, '').slice(0, 14)]);
       return reply(200, { ok: true, payment_id: c.payment_id, amount: +c.amount, pay_url: 'https://pay.example.test/' + c.payment_id, provider: 'razorpay' });
+    }
+    // AutoPay, as index.ts: the consent AS the owner, the mandate stored by the trusted server; only the provider turns it on
+    if (v.action === 'autopay_start') {
+      const t = (await pg.as(`SELECT public.hangtag_autopay_begin(true, $1) AS t`, [v.consentVersion], who)).rows[0].t, subId = 'sub_' + Date.now().toString(36);
+      await sql(`SELECT public.hangtag_autopay_attach($1, 'razorpay', $2, NULL)`, [who, subId]);
+      return reply(200, { ok: true, auth_url: 'https://pay.example.test/autopay/' + subId, first_charge_at: t.first_charge_at, today: +t.today, price: +t.price, currency: t.currency });
+    }
+    if (v.action === 'autopay_verify') {
+      await pg.as(`SELECT public.hangtag_autopay_quote()`, [], who);   // the owner only
+      const s = (await sql(`SELECT autopay_subscription_id FROM public.hangtag_subscriptions WHERE owner_id = $1`, [who]))[0];
+      if (s && s.autopay_subscription_id && apApproved) await sql(`SELECT public.hangtag_autopay_event('razorpay', $1, 'authenticated')`, [s.autopay_subscription_id]);
+      return reply(200, { ok: true, status: (await sql(`SELECT autopay_status FROM public.hangtag_subscriptions WHERE owner_id = $1`, [who]))[0].autopay_status });
+    }
+    if (v.action === 'autopay_cancel') {
+      const c = (await pg.as(`SELECT public.hangtag_autopay_cancel_request() AS c`, [], who)).rows[0].c;
+      if (c.subscription_id) await sql(`SELECT public.hangtag_autopay_event($1, $2, 'cancelled')`, [c.provider, c.subscription_id]);
+      return reply(200, { ok: true, status: 'cancelled' });
     }
     const row = (await pg.as(`SELECT id, owner_id, amount, status, period_end FROM public.hangtag_subscription_payments WHERE id = $1`, [v.paymentId], who)).rows[0];
     if (!row) return reply(404, { ok: false, error: 'not_found', message: 'Unknown payment.' });
@@ -91,31 +110,33 @@ console.log('--- a new shop: the trial ---');
 await run(`openEditor(null);editor.name="Kurta";editor.price="1000";editor.cost="600";edCombos()[0].cell.stock="40";saveEditor();
   saveCustomer({name:"Riya",phone:"98765 43210",email:""});closeModal();await flushSbQueue()`);
 await run('setTab("home");renderAll()'); await sleep(300);
-check('Home: "Free trial · 7 days left · ends <date>" with "Choose a plan"', /Free trial · 7 days left · ends /.test(await text('#homeBody .subban') || '') && await vis('#homeBody .subban [data-setgo="plans"]'), await text('#homeBody .subban'));
+check('Home: "Free trial · 30 days left · ends <date>" with "Choose a plan"', /Free trial · 30 days left · ends /.test(await text('#homeBody .subban') || '') && await vis('#homeBody .subban [data-setgo="plans"]'), await text('#homeBody .subban'));
 await A.click('#homeBody .subban [data-setgo="plans"]');
 await until('!!document.querySelector("#plansBlk .subplan")');
 const page1 = await text('#plansBlk');
-check('Plans & Billing: "7 days remaining" and "Trial ends on <date>", the status chip', /7 days remaining/.test(page1 || '') && /Trial ends on \d{1,2} \w{3} \d{4}/.test(page1 || '') && /Free trial/.test(page1 || ''), page1);
+check('Plans & Billing: "30 days remaining" and "Trial ends on <date>", the status chip', /30 days remaining/.test(page1 || '') && /Trial ends on \d{1,2} \w{3} \d{4}/.test(page1 || '') && /Free trial/.test(page1 || ''), page1);
 const cards = await A.$$eval('#plansBlk .subplan', (l) => l.map((x) => x.innerText.replace(/\s+/g, ' ').trim()));
-check('three plans with the database\'s prices (1 month ₹599 after the change in the database)', cards.length === 3 && /1 month ₹599/.test(cards[0]) && /3 months ₹1,349/.test(cards[1]) && /6 months ₹2,499/.test(cards[2]), cards);
-check('the 3-month plan is chosen first; the summary is the server\'s', /Plan price ₹1,349 Promo discount ₹0 Final amount ₹1,349/.test(await text('#plansBlk .subsum') || ''), await text('#plansBlk .subsum'));
-check('Pay Now shows the amount', /Pay ₹1,349/.test(await text('#plansBlk [data-sub-act="pay"]') || ''));
+check('four plans with the database\'s prices (Monthly ₹599 after the change in the database), the launch offer on 3 Months', cards.length === 4 && /Monthly ₹599/.test(cards[0])
+  && /3 Months ₹2,499 ₹999 Launch offer · 100 left/.test(cards[1]) && /6 Months ₹4,499/.test(cards[2]) && /12 Months ₹7,999/.test(cards[3]), cards);
+check('the 3-month plan is chosen first; the launch offer applies by itself — the summary is the server\'s', /Plan price ₹2,499 Promo discount −₹1,500 Final amount ₹999/.test(await text('#plansBlk .subsum') || '')
+  && /Launch offer applied\. 100 left\./.test(await text('#plansBlk .subck') || ''), await text('#plansBlk .subck'));
+check('Pay Now shows the amount', /Pay ₹999/.test(await text('#plansBlk [data-sub-act="pay"]') || ''));
 
 console.log('--- promo codes (checked by the database) ---');
 const promo = async (code) => { await A.$eval('#subPromo-set', (e, v) => { e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); }, code); await A.click('#plansBlk [data-sub-act="apply"]'); await sleep(150); await until('!document.querySelector("#plansBlk [data-sub-act=apply]").disabled'); await sleep(150); };
 await promo('launch20');
-check('LAUNCH20 (20%): applied, discount ₹269.80, final ₹1,079.20', /Promo code applied/.test(await text('#plansBlk .subpromo-msg') || '') && /Promo discount −₹269\.80 Final amount ₹1,079\.20/.test(await text('#plansBlk .subsum') || ''), [await text('#plansBlk .subpromo-msg'), await text('#plansBlk .subsum')]);
+check('LAUNCH20 (20%) typed instead of the offer: applied, discount ₹499.80, final ₹1,999.20', /Promo code applied/.test(await text('#plansBlk .subpromo-msg') || '') && /Promo discount −₹499\.80 Final amount ₹1,999\.20/.test(await text('#plansBlk .subsum') || ''), [await text('#plansBlk .subpromo-msg'), await text('#plansBlk .subsum')]);
 await promo('FLAT300');
-check('FLAT300 (fixed): final ₹1,049', /Final amount ₹1,049/.test(await text('#plansBlk .subsum') || ''), await text('#plansBlk .subsum'));
+check('FLAT300 (fixed): final ₹2,199', /Final amount ₹2,199/.test(await text('#plansBlk .subsum') || ''), await text('#plansBlk .subsum'));
 await promo('NOSUCH');
-check('an unknown code: "This promo code isn\'t valid." and no discount', /isn't valid/.test(await text('#plansBlk .subpromo-msg') || '') && /Promo discount ₹0 Final amount ₹1,349/.test(await text('#plansBlk .subsum') || ''), await text('#plansBlk .subpromo-msg'));
+check('an unknown code: "This promo code isn\'t valid." and no discount', /isn't valid/.test(await text('#plansBlk .subpromo-msg') || '') && /Promo discount ₹0 Final amount ₹2,499/.test(await text('#plansBlk .subsum') || ''), await text('#plansBlk .subpromo-msg'));
 await promo('OLD');
 check('an ended code: "This promo code has expired."', /has expired/.test(await text('#plansBlk .subpromo-msg') || ''));
 await promo('SIXONLY');
-check('a code for another plan: "isn\'t for the 3 months plan."', /isn't for the 3 months plan/.test(await text('#plansBlk .subpromo-msg') || ''));
+check('a code for another plan: "isn\'t for the 3 Months plan."', /isn't for the 3 Months plan/.test(await text('#plansBlk .subpromo-msg') || ''));
 await A.click('#plansBlk input[name="subPlan"][value="m6"]'); await sleep(200); await until('!document.querySelector("#plansBlk .subsum")||!/Working/.test(document.querySelector("#plansBlk .subck").innerText)');
 await sleep(300);
-check('…choosing the 6-month plan, the same code applies: 50% → ₹1,249.50', /Final amount ₹1,249\.50/.test(await text('#plansBlk .subsum') || ''), await text('#plansBlk .subsum'));
+check('…choosing the 6-month plan, the same code applies: 50% → ₹2,249.50', /Final amount ₹2,249\.50/.test(await text('#plansBlk .subsum') || ''), await text('#plansBlk .subsum'));
 
 console.log('--- the browser cannot set the price ---');
 const tampered = await run(`try{ const r = await use("cloud").subscriptionCall({action:"checkout", plan:"m1", promo:"", amount:1, discount:598, price:1}); return r; }catch(e){ return {err:e.message}; }`);
@@ -134,7 +155,7 @@ const opened = await A.evaluate(() => window.__opened.map((w) => ({ href: w.loca
 check('…the provider\'s page was opened in a new tab (with no way back into the app)', opened.length === 1 && /^https:\/\/pay\.example\.test\//.test(opened[0].href) && !opened[0].closed && opened[0].opener === null, opened);
 const pend = await run('return storage.get("hangtag_sub_pending", null)');
 const prow = (await sql(`SELECT * FROM public.hangtag_subscription_payments WHERE id = $1`, [pend && pend.paymentId]))[0];
-check('the payment waiting: 6 months with LAUNCH20, amount computed by the database (₹1,999.20)', prow && prow.plan_code === 'm6' && prow.promo_code === 'LAUNCH20' && +prow.amount === 1999.2, prow);
+check('the payment waiting: 6 Months with LAUNCH20, amount computed by the database (₹3,599.20)', prow && prow.plan_code === 'm6' && prow.promo_code === 'LAUNCH20' && +prow.amount === 3599.2, prow);
 await A.click('#plansBlk [data-sub-act="check"]'); await sleep(400);
 check('"I\'ve paid" before the provider confirms: not confirmed yet, still waiting', /isn't confirmed yet/.test(await text('#plansBlk .subpromo-msg') || '') && await vis('#plansBlk .subwait'));
 const trialEnd = await run('return subscriptionStatus().trial_ends_at');
@@ -142,7 +163,7 @@ providerPaid.add(prow.id);
 check('the provider confirms → "Payment received", the plan runs until its end, without a reload', await until('!!document.querySelector("#plansBlk .subdone")', 15000) && /Payment received/.test(await text('#plansBlk') || ''), await text('#plansBlk'));
 const st1 = await run('return subscriptionStatus()');
 check('…paid_active; the 6 months start when the trial ends (no trial day lost)', st1.state === 'paid_active' && st1.plan_code === 'm6' && Date.parse(st1.period_start) === Date.parse(trialEnd), st1);
-check('…and the payment history shows it as Paid', /6 months/.test(await text('#plansBlk .subhist') || '') && /Paid/.test(await text('#plansBlk .subhist') || ''), await text('#plansBlk .subhist'));
+check('…and the payment history shows it as Paid', /6 Months/.test(await text('#plansBlk .subhist') || '') && /Paid/.test(await text('#plansBlk .subhist') || ''), await text('#plansBlk .subhist'));
 check('the promo use was recorded against the payment', (await sql(`SELECT count(*)::int n FROM public.hangtag_promo_redemptions WHERE payment_id = $1 AND code = 'LAUNCH20'`, [prow.id]))[0].n === 1);
 
 console.log('--- the plan ends: the app locks ---');
@@ -152,7 +173,7 @@ await run('window.dispatchEvent(new Event("online"))');
 check('the server says the plan ended → the lock screen replaces the app', await until('!!document.getElementById("lockScreen")'));
 const lock = await text('#lockScreen');
 check('"Your plan has ended", "Plan expired", the end date, the plans with the database\'s prices, promo, summary, Pay, history, sign out', /Your plan has ended/.test(lock || '') && /Plan expired/.test(lock || '')
-  && /Ended on \d{1,2} \w{3} \d{4}/.test(lock || '') && /1 month ₹599/.test(lock || '') && /Promo code/.test(lock || '') && /Final amount/.test(lock || '') && /Payment history/.test(lock || '') && /Sign out/.test(lock || ''), lock);
+  && /Ended on \d{1,2} \w{3} \d{4}/.test(lock || '') && /Monthly ₹599/.test(lock || '') && /Promo code/.test(lock || '') && /Final amount/.test(lock || '') && /Payment history/.test(lock || '') && /Sign out/.test(lock || ''), lock);
 check('nothing of the app is shown: no navigation, no Agent, no page', !(await vis('.nav')) && !(await vis('#v-home')) && !(await vis('#globalActions')) && await A.$eval('.nav', (e) => getComputedStyle(e).display === 'none').catch(() => true));
 await run('setTab("sell")'); await sleep(200);
 const afterTab = await run('return {page: document.documentElement.dataset.page, sell: !!document.querySelector("#v-sell")&&getComputedStyle(document.querySelector("#v-sell")).display!=="none"&&document.querySelector("#v-sell").getClientRects().length>0}');
@@ -239,6 +260,49 @@ check('Pay with no payment provider set up: "Online payment isn\'t set up yet" (
 const notSet = await run('try{ await use("subscriptionService").checkout("m1", ""); return "accepted"; }catch(e){ return e.code; }');
 check('…and a checkout asked for directly is refused as not set up (no payment created)', notSet === 'NOT_CONFIGURED' && await nPay() === n0, notSet);
 payable = true;
+
+console.log('--- AutoPay: a new trial needs it — nothing to pay today, the plan after the trial ---');
+await sql(`UPDATE public.hangtag_platform_config SET autopay_enabled = TRUE`);
+const capturedBefore = (await sql(`SELECT count(*)::int n FROM public.hangtag_subscription_payments WHERE owner_id = $1 AND captured_at IS NOT NULL`, [UID]))[0].n;
+await sql(`UPDATE public.hangtag_subscriptions SET plan_code = NULL, period_start = NULL, period_end = NULL, trial_started_at = now(), trial_ends_at = now() + interval '30 days',
+  autopay_required = TRUE, autopay_status = 'none', autopay_subscription_id = NULL, autopay_provider = NULL, autopay_authorized_at = NULL WHERE owner_id = $1`, [UID]);
+await run('await refreshSubscription({force:true}); renderAll()');
+check('the trial waits for AutoPay: the lock screen says "Start your 30-day free trial"', await until('!!document.getElementById("lockScreen")', 15000) && /Start your 30-day free trial/.test(await text('#lockScreen') || ''), await text('#lockScreen'));
+await until('!!document.querySelector("#lockScreen [data-apcard]")', 15000);
+const apText = await text('#lockScreen [data-apcard]');
+check('AutoPay\'s terms: ₹0 today, ₹599 / month after the trial (the AutoPay plan\'s price from the database), the first charge, "Required for the free trial"',
+  /Today ₹0/.test(apText || '') && /After your trial ₹599 \/ month/.test(apText || '') && /First charge \d{1,2} \w{3} \d{4}/.test(apText || '') && /Required for the free trial/.test(apText || ''), apText);
+check('…the consent says how much, how often, from when, until cancelled; Set up stays off until it is ticked', /charges ₹599 every month from .+ until I cancel/.test(apText || '')
+  && await A.$eval('#lockScreen [data-sub-act="ap-start"]', (b) => b.disabled));
+check('…a prepaid plan is offered instead ("Or pay for a plan now")', /Or pay for a plan now/.test(await text('#lockScreen') || '') && await vis('#lockScreen [data-sub-act="pay"]'));
+await A.click('#apConsent'); await sleep(200);
+check('ticked: Set up AutoPay is on', await A.$eval('#lockScreen [data-sub-act="ap-start"]', (b) => !b.disabled));
+await A.click('#lockScreen [data-sub-act="ap-start"]');
+check('Set up → the bank\'s approval page opens; AutoPay waits for it', await until('!!document.querySelector("#lockScreen .apcard.on")', 15000) && /Waiting for approval/.test(await text('#lockScreen .apcard') || ''), await text('#lockScreen'));
+const apRow = (await sql(`SELECT autopay_status, autopay_consent_at, autopay_consent_version, autopay_subscription_id FROM public.hangtag_subscriptions WHERE owner_id = $1`, [UID]))[0];
+check('…the consent is in the database with its version; the mandate is the provider\'s', apRow.autopay_status === 'pending' && !!apRow.autopay_consent_at && apRow.autopay_consent_version === 'autopay-2026-10'
+  && /^sub_/.test(apRow.autopay_subscription_id || ''), apRow);
+const apOpened = await A.evaluate(() => window.__opened.map((w) => w.location.href));
+check('…the approval page opened in a new tab; still locked (the browser can\'t turn AutoPay on)', apOpened.some((h) => /^https:\/\/pay\.example\.test\/autopay\//.test(h)) && await locked(), apOpened);
+apApproved = true;
+check('the provider confirms the mandate → the trial opens without a reload', await until('!document.getElementById("lockScreen")', 20000) && await vis('.nav'));
+const st3 = await run('return subscriptionStatus()');
+check('…the trial runs, AutoPay on, the next charge at the trial\'s end', st3.state === 'trial_active' && st3.autopay.status === 'active' && Date.parse(st3.autopay.next_charge_at) === Date.parse(st3.trial_ends_at), st3);
+check('no money counted for the trial or the AutoPay set-up', (await sql(`SELECT count(*)::int n FROM public.hangtag_subscription_payments WHERE owner_id = $1 AND captured_at IS NOT NULL`, [UID]))[0].n === capturedBefore);
+await run('openSettings("plans")'); await until('!!document.querySelector("#plansBlk [data-apcard]")');
+const onTxt = await text('#plansBlk [data-apcard]');
+check('Plans & Billing: AutoPay On · ₹599 · Monthly · next charge on <date>; another plan waits until AutoPay is off', /₹599 · Monthly · next charge on \d{1,2} \w{3} \d{4}/.test(onTxt || '')
+  && /turn AutoPay off first/.test(await text('#plansBlk') || '') && !(await A.$('#plansBlk [data-sub-act="pay"]')), onTxt);
+await A.click('#plansBlk [data-sub-act="ap-cancel"]'); await sleep(200);
+check('Turn off AutoPay asks first, saying until when Hangtag stays open', /Turn off AutoPay\?/.test(await text('#plansBlk [data-apcard]') || '') && /You keep using Hangtag until/.test(await text('#plansBlk [data-apcard]') || ''));
+await A.click('#plansBlk [data-sub-act="ap-cancel-yes"]');
+check('turned off (cancel any time before it renews): the trial keeps running, AutoPay off, a plan can be bought again',
+  await until('subscriptionStatus().autopay.status==="cancelled"', 15000) && !(await locked()) && (await run('return subscriptionStatus().lifecycle')) === 'cancelled'
+  && await until('!!document.querySelector("#plansBlk [data-sub-act=pay]")', 10000), await run('return subscriptionStatus()'));
+for (const w of [320, 768]) {
+  await A.setViewport({ width: w, height: 800 }); await sleep(250);
+  check(`AutoPay in Plans & Billing at ${w}px: no horizontal overflow`, !(await overflow()) && await vis('#plansBlk [data-apcard]'));
+}
 
 await browser.close();
 console.log(fails ? `\n${fails} FAILED` : '\nall passed');

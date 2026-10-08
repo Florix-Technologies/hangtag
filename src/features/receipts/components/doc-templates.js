@@ -21,6 +21,7 @@ const money2 = n => formatMoney(n, { decimals: 2 });   // the preview's columns,
 import { invoiceModel } from '../services/doc-models.js';
 import { documentFrameHTML, fitDocFrames } from './doc-render.js';
 import { accountBalances } from '../../finance/use-cases/bank-accounts.js';
+import { documentLogo, documentLogoPlace } from '../services/logo-display.js';
 
 /* The signature and stamp: each with its picture (or none yet), Upload / Replace, Remove, and whether it is printed */
 function picturesHTML(S){
@@ -63,7 +64,7 @@ function sampleModel(){
   if(last) return invoiceModel(last);
   const p = store.profile || {};
   return { kind: "invoice", title: "Tax Invoice", number: "INV-SAMPLE", seller: { name: p.shop_name || "Your shop", lines: [[p.address, p.city, p.state].filter(Boolean).join(", "), p.phone && "Phone " + p.phone, p.gstin && "GSTIN " + p.gstin] },
-    logo: store.logo || "", meta: [["Invoice no.", "INV-SAMPLE"], ["Date", fmtDate(Date.now(), { day: "numeric", month: "short", year: "numeric" })]],
+    logo: documentLogo(), logoAlign: documentLogoPlace("a4"), meta: [["Invoice no.", "INV-SAMPLE"], ["Date", fmtDate(Date.now(), { day: "numeric", month: "short", year: "numeric" })]],
     parties: [{ label: "Bill to", name: "Customer name", lines: ["Phone number"] }], columns: ["#", "Item", "Qty", "Rate", "Amount"], left: 2,
     rows: [["1", { t: "First item", sub: "Variant · SKU" }, "2", money2(500), money2(1000)], ["2", { t: "Second item" }, "1", money2(750), money2(750)]],
     totals: [["Subtotal", money2(1750)], ["Total", inr(1750), true]], words: amountInWords(1750), notice: "This is a preview with sample lines.", footer: (store.settings && store.settings.footer) || "" };

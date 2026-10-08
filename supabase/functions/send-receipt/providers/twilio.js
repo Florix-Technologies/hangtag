@@ -7,8 +7,10 @@ export async function sendTwilioMessage(cfg, msg, fetchImpl) {
   const form = new URLSearchParams();
   form.set("To", wa(msg.to));
   if (/^MG[0-9a-f]{32}$/i.test(cfg.from)) form.set("MessagingServiceSid", cfg.from); else form.set("From", wa(cfg.from));
+  // the delivery report comes back to the delivery-status function (when its address is set: DELIVERY_STATUS_URL)
+  if (cfg.statusCallback) form.set("StatusCallback", cfg.statusCallback);
   if (cfg.whatsapp) {
-    if (!cfg.contentSid) return { ok: false, status: 0, message: "No approved WhatsApp template is set up." };
+    if (!cfg.contentSid) return { ok: false, status: 0, code: "no_template", message: "No approved WhatsApp template is set up." };
     form.set("ContentSid", cfg.contentSid);
     form.set("ContentVariables", JSON.stringify(Object.fromEntries((msg.params || []).map((p, i) => [String(i + 1), String(p)]))));
   } else form.set("Body", msg.text);
@@ -24,5 +26,5 @@ export async function sendTwilioMessage(cfg, msg, fetchImpl) {
   }
   const json = await res.json().catch(() => ({}));
   if (res.ok && json && json.sid && json.status !== "failed" && json.status !== "undelivered") return { ok: true, id: String(json.sid) };
-  return { ok: false, status: res.status, message: (json && json.message) || `The messaging service answered ${res.status}.` };
+  return { ok: false, status: res.status, code: json && json.code != null ? String(json.code) : json && json.error_code != null ? String(json.error_code) : "", message: (json && (json.message || json.error_message)) || `The messaging service answered ${res.status}.` };
 }

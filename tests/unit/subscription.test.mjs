@@ -78,5 +78,29 @@ console.log('=== the upload queue and the server\'s refusal ===');
   check('other errors keep their codes', toAppError({ code: 'P0001', message: 'x' }).code === ERROR_CODES.VALIDATION && toAppError(new Error('Failed to fetch')).code === ERROR_CODES.NETWORK);
 }
 
+console.log('=== the 30-day trial with AutoPay: states and words ===');
+{
+  const { autopayConsentText, autopayLive, autopayText, lifecycleOf } = await import('../../src/domain/billing/subscription.js');
+  const setup = { ...trial(30 * DAY), state: 'trial_setup', lifecycle: 'autopay_required', trial_days: 30, days_left: 0, autopay: { status: 'none', required: true } };
+  check('a trial waiting for AutoPay is locked, with the set-up words for the owner (and "ask the owner" for staff)', isLocked(setup, T0) && lifecycleOf(setup, T0) === 'autopay_required'
+    && lockCopy(setup, T0, true).title === 'Start your 30-day free trial' && /AutoPay is required/.test(lockCopy(setup, T0, true).body)
+    && /owner sets up AutoPay/.test(lockCopy(setup, T0, false).body) && statusChip(setup, T0).label === 'AutoPay needed', lockCopy(setup, T0, true));
+  const renewing = { ...paid(-DAY), state: 'renewal_due', lifecycle: 'renewing', access_until: iso(T0 + DAY), autopay: { status: 'active' } };
+  check('AutoPay collecting the renewal: open (not locked) until the grace ends, then plan ended', !isLocked(renewing, T0) && statusChip(renewing, T0).label === 'Renewing'
+    && isLocked(renewing, T0 + 2 * DAY) && stateAt(renewing, T0 + 2 * DAY) === 'paid_expired' && lifecycleOf(renewing, T0 + 2 * DAY) === 'expired');
+  const pastDue = { ...renewing, lifecycle: 'past_due', autopay: { status: 'past_due' } };
+  check('a failed renewal the bank is asked again for: a warning, a "Pay now" banner', statusChip(pastDue, T0).tone === 'warn' && bannerFor(pastDue, T0).cta === 'Pay now');
+  const halted = { state: 'paid_expired', lifecycle: 'halted', plan_code: 'm1', period_end: iso(T0 - DAY), access_until: iso(T0 - DAY), autopay: { status: 'halted' } };
+  check('AutoPay stopped after failed charges: locked, saying the payment didn\'t go through', isLocked(halted, T0) && /didn't go through/.test(lockCopy(halted, T0, true).title) && statusChip(halted, T0).tone === 'bad');
+  const ending = { ...trial(2 * DAY), lifecycle: 'trial_ending', autopay: { status: 'active', next_charge_at: iso(T0 + 2 * DAY) } };
+  check('the trial\'s last days with AutoPay on: a warning naming when AutoPay starts, "Manage"', statusChip(ending, T0).tone === 'warn' && /AutoPay from/.test(bannerFor(ending, T0).text) && bannerFor(ending, T0).cta === 'Manage');
+  const off = { ...trial(10 * DAY), lifecycle: 'cancelled', autopay: { status: 'cancelled' } };
+  check('AutoPay turned off during the trial: still open, "AutoPay off"', !isLocked(off, T0) && statusChip(off, T0).label === 'Trial · AutoPay off' && planFacts(off, T0).some((r) => r.label === 'AutoPay' && r.value === 'Off'));
+  check('AutoPay in words; "live" while on, failing or waiting for approval', autopayText({ status: 'active', next_charge_at: iso(T0) }).startsWith('On · next charge on')
+    && autopayLive({ status: 'pending', set_up: true }) && !autopayLive({ status: 'pending', set_up: false }) && autopayLive({ status: 'past_due' }) && !autopayLive({ status: 'cancelled' }) && !autopayLive(null));
+  const consent = autopayConsentText({ price: 'X999', today: 'X0', months: 1, firstChargeOn: '7 Nov 2026' });
+  check('the consent says what today, how much, how often, from when, until cancelled', /charges X999 every month from 7 Nov 2026, until I cancel/.test(consent) && /X0 is charged today/.test(consent) && /cancel any time before a renewal/.test(consent), consent);
+}
+
 console.log(fails ? `\n${fails} FAILED` : '\nall passed');
 process.exit(fails ? 1 : 0);

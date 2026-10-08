@@ -7,6 +7,7 @@
 import puppeteer from 'puppeteer-core';
 import H from '../helpers/env.mjs';
 import { CORS, createPgRest } from '../helpers/pg-rest.mjs';
+import { failureAnswer } from '../../supabase/functions/send-receipt/core.js';
 await H.ensureServer();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let fails = 0; const check = (n, ok, i) => { if (!ok) fails++; console.log((ok ? 'PASS ' : 'FAIL ') + n + (!ok && i !== undefined ? '  ' + JSON.stringify(i).slice(0, 700) : '')); };
@@ -26,6 +27,9 @@ const sendReceipt = async (r) => {
   const sale = (await q(`SELECT s.id, c.email, c.phone FROM public.hangtag_sales s LEFT JOIN public.hangtag_customers c ON c.owner_id = s.owner_id AND c.id = s.customer_id WHERE s.id = $1`, [body.sale_id]))[0];
   if (!sale) return reply(404, { ok: false, error: 'not_found', message: "That bill isn't in the cloud yet." });
   const to = body.channel === 'email' ? sale.email : '+91' + String(sale.phone || '').replace(/\D/g, '').slice(-10), ok = mode[body.channel] === 'ok';
+  // the provider refused: the function's own answer for that kind of refusal (busy → try again; the number, the set-up → final)
+  const kind = { busy: 'temporary', recipient: 'recipient', setup: 'setup' }[mode[body.channel]];
+  if (kind) { const a = failureAnswer(body.channel, kind, kind === 'temporary' ? 'Too many requests' : kind === 'recipient' ? 'Not a mobile number (21614)' : 'Template not approved (132001)'); return reply(a.status, a.body); }
   await q(`INSERT INTO public.hangtag_deliveries (owner_id, sale_id, channel, recipient, status, provider, provider_message_id, error, mode) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
     [UID, body.sale_id, body.channel, to, ok ? 'sent' : 'failed', body.channel === 'email' ? 'resend' : 'msg91', ok ? 'm_' + calls.length : null, ok ? null : 'The number is not a valid mobile number', body.auto ? 'auto' : 'manual']);
   return ok ? reply(200, { ok: true, status: 'sent', channel: body.channel, recipient: to, provider: body.channel === 'email' ? 'resend' : 'msg91', provider_message_id: 'm_' + calls.length })
@@ -99,6 +103,23 @@ await run('renderAll()'); await sleep(300);
 check('...the banner and Home\'s item are gone', !(await A.$('#v-bills .bill-alert')) && (await chip(R2.no)).includes('Receipt sent') && !(await run('return watchFindings(Date.now()).some(f=>f.id==="receipts")')), await chip(R2.no));
 const rows = await q(`SELECT channel, status, mode FROM public.hangtag_deliveries WHERE sale_id = $1 ORDER BY created_at`, [R2.id]);
 check('the server\'s record: the failed SMS, then the one that went (both automatic)', JSON.stringify(rows) === JSON.stringify([{ channel: 'sms', status: 'failed', mode: 'auto' }, { channel: 'sms', status: 'sent', mode: 'auto' }]), rows);
+
+console.log('--- the provider refused: try again, or not ---');
+const jobs = (id) => run(`return autoJobs(${JSON.stringify(id)})`);
+mode.sms = 'busy';
+const R3 = await sellTo('Arjun Rao');
+check('the SMS service busy (502 provider_error): the receipt waits to be tried again — queued for later, not failed',
+  await until(`(j=>!!j&&j.attempts>=1&&j.status==="queued"&&j.nextAt>Date.now()&&!!j.error)(autoJobs(${JSON.stringify(R3.id)})[0])`), await jobs(R3.id));
+mode.sms = 'recipient';
+const R4 = await sellTo('Arjun Rao');
+const j4 = (await settled(R4.id)) && (await jobs(R4.id))[0];
+check("the customer's number can't receive SMS (422 bad_recipient): Failed for good — tried once, never again by itself (not even by the daily retry), and the bill says to check the customer",
+  !!j4 && j4.status === 'failed' && j4.attempts === 1 && !j4.temp && /can't deliver to this customer's number/.test(j4.error) && /Check the customer's details/.test(j4.error), j4);
+mode.sms = 'setup';
+const R5 = await sellTo('Arjun Rao');
+const j5 = (await settled(R5.id)) && (await jobs(R5.id))[0];
+check("the shop's SMS set-up refused it (422 provider_setup): Failed for good, saying the owner must fix it",
+  !!j5 && j5.status === 'failed' && j5.attempts === 1 && !j5.temp && /needs the shop owner's attention/.test(j5.error), j5);
 
 await browser.close();
 await pg.close?.();

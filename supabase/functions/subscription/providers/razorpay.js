@@ -19,6 +19,15 @@ export function linkState(link, now = Date.now()) {
   return { state: "failed", paid, paymentId };
 }
 
+/* An AutoPay subscription (Razorpay Subscriptions: the UPI / card mandate on Hangtag's plan) as Hangtag reads it: the event
+   it amounts to now, or null while it only waits for the owner ("created") — and when the next charge is due */
+const SUB_EVENTS = { authenticated: "authenticated", active: "activated", pending: "pending", halted: "halted", cancelled: "cancelled", completed: "completed", expired: "expired" };
+export function autopayState(sub) {
+  if (!sub || typeof sub !== "object" || !sub.id) return { status: "unknown", event: null, nextChargeAt: null };
+  return { status: str(sub.status), event: SUB_EVENTS[sub.status] || null, nextChargeAt: sub.charge_at ? new Date(sub.charge_at * 1000).toISOString() : null };
+}
+const SUB_ID = /^sub_[A-Za-z0-9]{6,40}$/;
+
 /* The webhook's signature: HMAC-SHA256 (hex) of the raw body with the webhook secret, compared in constant time */
 export async function verifySignature(rawBody, signature, secret) {
   if (!secret || !signature) return false;
@@ -66,15 +75,52 @@ export function razorpay({ keyId, keySecret, webhookSecret }, fetchImpl = fetch,
       if (!/^plink_[A-Za-z0-9]{6,40}$/.test(str(orderId))) return { state: "failed", paid: 0, paymentId: null };
       return linkState(await call("/payment_links/" + encodeURIComponent(orderId)), now());
     },
+    /* AutoPay: Hangtag's plan at the provider → { amount (paise), currency, period, interval } (checked against the
+       AutoPay plan's price before any mandate is made) */
+    async getPlan(planId) {
+      if (!/^plan_[A-Za-z0-9]{6,40}$/.test(str(planId))) { const err = new Error("provider_error"); err.status = 400; throw err; }
+      const p = await call("/plans/" + encodeURIComponent(planId));
+      return { amount: +(p && p.item && p.item.amount) || 0, currency: str(p && p.item && p.item.currency), period: str(p && p.period), interval: +(p && p.interval) || 0 };
+    },
+    /* AutoPay set-up: a subscription on the plan that the owner authorises on its page; nothing is charged before startAt
+       (ms; none = at once). Returns { subscriptionId, authUrl, customerId }. */
+    async createAutopay({ planId, startAt, totalCount = 120, notes, expireBy }) {
+      const body = { plan_id: str(planId), total_count: totalCount, quantity: 1, customer_notify: 1, notes: notes || {},
+        ...(startAt ? { start_at: Math.floor(startAt / 1000) } : {}), ...(expireBy ? { expire_by: Math.floor(expireBy / 1000) } : {}) };
+      const s = await call("/subscriptions", { method: "POST", body: JSON.stringify(body) });
+      if (!s || !SUB_ID.test(str(s.id)) || !/^https:\/\//.test(str(s.short_url))) throw new Error("provider_error");
+      return { subscriptionId: str(s.id), authUrl: str(s.short_url), customerId: s.customer_id ? str(s.customer_id) : null };
+    },
+    /* What the provider says about an AutoPay subscription now */
+    async getAutopay(subscriptionId) {
+      if (!SUB_ID.test(str(subscriptionId))) return { status: "unknown", event: null, nextChargeAt: null };
+      return autopayState(await call("/subscriptions/" + encodeURIComponent(subscriptionId)));
+    },
+    /* Turn an AutoPay subscription off at once (no further charge) */
+    async cancelAutopay(subscriptionId) {
+      if (!SUB_ID.test(str(subscriptionId))) { const err = new Error("provider_error"); err.status = 400; throw err; }
+      return autopayState(await call("/subscriptions/" + encodeURIComponent(subscriptionId) + "/cancel", { method: "POST", body: JSON.stringify({ cancel_at_cycle_end: 0 }) }));
+    },
     verifyWebhook: (rawBody, headers) => verifySignature(rawBody, headers["x-razorpay-signature"] || "", webhookSecret),
-    /* A webhook event → { orderId, paymentRef, view } for the plan payment it is about, or null */
+    /* A webhook event → { kind: "payment", orderId, paymentRef, view } for a plan payment, { kind: "autopay", subscriptionId,
+       event, paymentId, amount (rupees), nextChargeAt, owner } for AutoPay — a charge only when the payment was CAPTURED —
+       or null */
     readWebhook(event) {
       const e = event && event.event, p = event && event.payload;
+      if (typeof e === "string" && e.startsWith("subscription.") && p && p.subscription && p.subscription.entity) {
+        const s = p.subscription.entity, pay = p.payment && p.payment.entity;
+        const ev = { authenticated: "authenticated", activated: "activated", charged: "charged", pending: "pending", halted: "halted",
+          cancelled: "cancelled", completed: "completed", resumed: "resumed" }[e.slice("subscription.".length)];
+        if (!ev || !SUB_ID.test(str(s.id))) return null;
+        if (ev === "charged" && !(pay && pay.status === "captured" && +pay.amount > 0 && str(pay.id))) return null;
+        return { kind: "autopay", subscriptionId: str(s.id), event: ev, paymentId: ev === "charged" ? str(pay.id) : null, amount: ev === "charged" ? +pay.amount / 100 : null,
+          nextChargeAt: s.charge_at ? new Date(s.charge_at * 1000).toISOString() : null, owner: str(s.notes && s.notes.hangtag_owner) || null };
+      }
       if (!p || !p.payment_link || !p.payment_link.entity) return null;
       if (!["payment_link.paid", "payment_link.expired", "payment_link.cancelled"].includes(e)) return null;
       const link = { ...p.payment_link.entity }, pay = p.payment && p.payment.entity;
       if (pay && !Array.isArray(link.payments)) link.payments = [{ payment_id: pay.id, amount: pay.amount, status: pay.status }];
-      return { orderId: str(link.id), paymentRef: str((link.notes && link.notes.hangtag_payment) || ""), view: linkState(link, now()) };
+      return { kind: "payment", orderId: str(link.id), paymentRef: str((link.notes && link.notes.hangtag_payment) || ""), view: linkState(link, now()) };
     },
   };
 }

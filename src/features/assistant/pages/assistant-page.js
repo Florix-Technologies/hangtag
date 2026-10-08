@@ -55,7 +55,7 @@ function assistant(){
   if(one) return one;
   ai = createAgentAI({ provider: use('agentProvider'), host: () => appAgentToolHost(), online });
   if(online()) ai.prepare().catch(() => {});
-  return (one = createBusinessAssistant({ query: createReadOnlyBusinessQuery({ inventory: kind => inventorySource(kind) }), tools: () => appAgentToolHost(), provider: ai }));
+  return (one = createBusinessAssistant({ query: createReadOnlyBusinessQuery({ inventory: kind => inventorySource(kind) }), tools: () => appAgentToolHost(), shopName: () => (store.access && store.access.shopName) || (store.profile && store.profile.shop_name) || '', provider: ai }));
 }
 
 const actionHTML = a => a.kind === 'ask' ? `<button type="button" class="btn sm" data-ask-question="${esc(a.question)}">${esc(a.label)}</button>`
@@ -109,7 +109,7 @@ const READ_KINDS = new Set(['greeting', 'thanks', 'help']);
 function auditAnswer(question, answer){
   if(!answer || answer.source === 'unavailable' || answer.supported === false) return;
   const intent = answer.intent || null; if(intent && READ_KINDS.has(intent.kind)) return;
-  const tools = answer.toolsUsed && answer.toolsUsed.length ? answer.toolsUsed : intent ? ['read: ' + intent.kind] : [];
+  const tools = answer.toolsUsed && answer.toolsUsed.length ? answer.toolsUsed : intent && intent.kind === 'action' ? ['declined: ' + intent.what] : intent ? ['read: ' + intent.kind] : [];
   if(!tools.length) return;
   try{ logAutomation({ ...answerAudit({ question, tools, proposal: answer.proposal, refused: answer.refused }), key: 'agent:answer:' + Date.now() }); }
   catch(e){ logger.event('agent', 'audit-failed', { op: 'answer', code: e && e.code }, 'warn'); }

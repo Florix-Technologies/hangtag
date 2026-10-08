@@ -15,7 +15,7 @@ export function documentHTML(m, o = {}){
   if(!m) return "";
   const tpl = o.template || "modern", left = Math.max(1, Math.min(3, m.left || 2));
   return `<article class="doc t-${esc(tpl)}${m.cancelled ? " cancelled" : ""}" style="--acc:${esc(o.accent || "#1D5BBF")}">
-<header class="d-head"><div class="d-brand">${m.logo ? `<img class="d-logo" src="${esc(m.logo)}" alt="">` : ""}<div><h2>${esc(m.seller.name)}</h2>${(m.seller.lines || []).filter(Boolean).map(l => `<p>${esc(l)}</p>`).join("")}</div></div>
+<header class="d-head logo-${esc(["center", "right"].includes(m.logoAlign) ? m.logoAlign : "left")}"><div class="d-brand">${m.logo ? `<img class="d-logo" src="${esc(m.logo)}" alt="">` : ""}<div><h2>${esc(m.seller.name)}</h2>${(m.seller.lines || []).filter(Boolean).map(l => `<p>${esc(l)}</p>`).join("")}</div></div>
 <div class="d-title"><h1>${esc(m.title)}</h1><dl class="d-meta">${(m.meta || []).filter(r => r && r[1]).map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("")}</dl></div></header>
 ${m.cancelled ? `<div class="d-void">CANCELLED${m.cancelled === true ? "" : " — " + esc(m.cancelled)}</div>` : ""}
 ${(m.parties || []).length ? `<section class="d-parties">${m.parties.map(p => `<div class="d-party"><b class="d-lab">${esc(p.label)}</b><h3>${esc(p.name || "—")}</h3>${(p.lines || []).filter(Boolean).map(l => `<p>${esc(l)}</p>`).join("")}</div>`).join("")}</section>` : ""}
@@ -32,7 +32,7 @@ export function documentCSS(){
 html,body{background:#fff}body{margin:0;color:#1b1f2a;font:11.5px/1.45 "Instrument Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .doc{max-width:182mm;margin:0 auto}
 .d-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;padding-bottom:12px;margin-bottom:14px;border-bottom:2px solid var(--acc)}
-.d-brand{display:flex;gap:12px;align-items:flex-start;max-width:60%}.d-logo{max-width:34mm;max-height:20mm;object-fit:contain}
+.d-brand{display:flex;gap:12px;align-items:flex-start;max-width:60%}.logo-center.d-head{flex-direction:column;align-items:center;text-align:center}.logo-center .d-brand{flex-direction:column;align-items:center;max-width:none}.logo-right.d-head{flex-direction:row-reverse}.logo-right .d-brand{flex-direction:row-reverse;text-align:right}.logo-right .d-title{text-align:left}.logo-right .d-meta div{justify-content:flex-start}.logo-right .d-meta dt{min-width:22mm}.logo-right .d-meta dd{text-align:left}.d-logo{max-width:34mm;max-height:20mm;object-fit:contain}
 .d-brand h2{margin:0 0 3px;font-size:17px;line-height:1.2}.d-brand p{margin:0;color:#4a5060;font-size:10.5px}
 .d-title{text-align:right;min-width:62mm}.d-title h1{margin:0 0 6px;font-size:20px;letter-spacing:.06em;text-transform:uppercase;color:var(--acc);line-height:1.15}
 .d-meta{margin:0;display:grid;gap:2px}.d-meta div{display:flex;justify-content:flex-end;gap:10px}.d-meta dt{color:#6b7185}.d-meta dd{margin:0;font-weight:600;min-width:30mm;text-align:right}

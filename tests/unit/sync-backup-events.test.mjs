@@ -21,6 +21,15 @@ const check = (name, ok, info) => { if (ok) passed++; else failed++; console.log
   check('one waiting upload per record: a later change replaces it where it stands', q1.length === 2 && q1[1].cust.name === 'B');
   const q2 = mergeIntoQueue([{ ...q1[1], sending: true }], { type: 'cust', id: 'c1', cust: { id: 'c1', name: 'C' } });
   check('…but not one being sent (the new change gets its own upload)', q2.length === 2);
+  // an edit uploads only the fields it changed: two waiting edits of a customer send the fields of both
+  const e1 = mergeIntoQueue([], { type: 'cust', id: 'c2', cust: { id: 'c2', phone: '1' }, fields: ['phone'] });
+  const e2 = mergeIntoQueue(e1, { type: 'cust', id: 'c2', cust: { id: 'c2', phone: '1', email: 'x@y.in' }, fields: ['email'] });
+  check('two waiting edits of a customer: one upload with the fields of both (the latest values)', e2.length === 1 && JSON.stringify(e2[0].fields) === '["phone","email"]' && e2[0].cust.email === 'x@y.in', e2);
+  const n1 = mergeIntoQueue([], { type: 'cust', id: 'c3', cust: { id: 'c3', name: 'New' } });
+  const n2 = mergeIntoQueue(n1, { type: 'cust', id: 'c3', cust: { id: 'c3', name: 'New', phone: '2' }, fields: ['phone'] });
+  check('an edit of a customer not uploaded yet: still uploaded whole (the cloud has nothing to patch)', n2.length === 1 && !('fields' in n2[0]) && n2[0].cust.phone === '2', n2);
+  const w2 = mergeIntoQueue(e2, { type: 'cust', id: 'c2', cust: { id: 'c2', name: 'Whole' } });
+  check('a whole upload replacing an edit: whole', !('fields' in w2[0]) && w2[0].cust.name === 'Whole', w2);
   check('record keys', itemKey({ type: 'sale', sale: { id: 's1' } }) === 'sale:s1' && itemKey({ type: 'return', id: 'r1' }) === 'return:r1' && itemKey({ type: 'settings' }) === null);
   check('a return waits for its bill, a cancel for its bill, a stock move for its product', dependsOn({ type: 'return', ret: { sale: 's1' } })[0] === 'sale:s1' && dependsOn({ type: 'void', id: 's1' })[0] === 'sale:s1' && dependsOn({ type: 'move', move: { p: 'p1' } })[0] === 'prod:p1');
   const w = waitingKeys([{ type: 'sale', sale: { id: 's1' } }, { type: 'prod', id: 'p1' }], [{ item: { type: 'sale', sale: { id: 's9' } } }]);
@@ -98,6 +107,72 @@ enqueue({ type: 'sale', sale: sale('A-1') }); await flushSbQueue();
 const devA = cloud.db.sales;
 store.sbOfflineQueue = []; enqueue({ type: 'sale', sale: sale('B-1') }); enqueue({ type: 'sale', sale: sale('A-1') }); await flushSbQueue();
 check('two devices (and a repeated upload of the same bill) end with one copy of each bill', Object.keys(devA).sort().join() === 'A-1,B-1');
+
+// ---------- a product edit uploads only what it changed (spec Phase 21: conflicts resolved, another till's edit stays) ----------
+{
+  const { mergeProductUpload } = await import('../../src/domain/sync/queue-rules.js');
+  const { productChanges } = await import('../../src/domain/catalog/product-changes.js');
+  const { createLocalFirstProductRepository } = await import('../../src/infrastructure/repositories/local-first-product-repository.js');
+  const { createCloudGateway } = await import('../../src/infrastructure/supabase/cloud-gateway.js');
+  const P = { id: 'p1', name: 'Kurta', price: 1000, cost: 600, cat: 'Tops', archived: false, low: 4, opts: [{ n: 'Size', v: ['M', 'L'] }],
+    variants: [{ id: 'p1:M', o: ['M'], sku: 'K-M', bc: '', price: null, cost: null, active: true }, { id: 'p1:L', o: ['L'], sku: 'K-L', bc: '', price: null, cost: null, active: true }] };
+  const edit = (patch) => ({ ...structuredClone(P), ...patch });
+  check('an edit\'s changes: the fields it changed — not what only looks different (unset, empty and off are one)',
+    JSON.stringify(productChanges(P, edit({ price: 1100, desc: '', brand: undefined, archived: undefined }))) === JSON.stringify({ fields: ['price'], variants: [] }));
+  check('…a variant\'s new price: that variant; a variant moved in the list: it, with its new place', productChanges(P, edit({ variants: [{ ...P.variants[0], price: 1200 }, P.variants[1]] })).variants.join() === 'p1:M'
+    && productChanges(P, edit({ variants: [P.variants[1], P.variants[0]] })).variants.join() === 'p1:L,p1:M');
+  check('…options renamed or reordered change every variant\'s labels: all of them', JSON.stringify(productChanges(P, edit({ opts: [{ n: 'Size', v: ['L', 'M'] }] }))) === JSON.stringify({ fields: ['opts'], variants: ['p1:M', 'p1:L'] }));
+  const m1 = mergeProductUpload({ type: 'prod', id: 'p1', delV: ['v9'], fields: ['price'], vars: ['p1:M'], tries: 0 }, { type: 'prod', id: 'p1', delV: [], fields: ['desc'], vars: ['p1:L'] });
+  check('two waiting edits of a product: one upload with the fields and variants of both, and every variant removed', JSON.stringify([m1.fields, m1.vars, m1.delV]) === JSON.stringify([['price', 'desc'], ['p1:M', 'p1:L'], ['v9']]));
+  const m2 = mergeProductUpload({ type: 'prod', id: 'p1', delV: [] }, { type: 'prod', id: 'p1', delV: ['v8'], fields: ['price'], vars: [] });
+  check('…an edit of a product whose whole upload is still waiting: still whole (the cloud may not have it yet)', !('fields' in m2) && !('vars' in m2) && m2.delV.join() === 'v8');
+  // the repository works out what an edit changed (every caller: the product editor, HSN codes, repacks, kits)
+  const st = { catalog: { version: 3, products: [structuredClone(P)] }, moves: {}, imgs: {} }, sent = [];
+  const repo = createLocalFirstProductRepository({ store: st, persist: { saveCatalog() {}, saveMoves() {}, saveImgs() {} }, outbox: { enqueue: (x) => sent.push(x), dropQueued() {} } });
+  const save = (product, isNew = false) => repo.save({ product, isNew, renamed: false, newMoves: [], deletedVariantIds: [], image: undefined });
+  save(edit({ price: 1100 }));
+  check('the repository queues an edit as what it changed', JSON.stringify(sent.pop()) === JSON.stringify({ type: 'prod', id: 'p1', delV: [], fields: ['price'], vars: [] }));
+  save(structuredClone(st.catalog.products[0]));
+  check('…an edit that changed nothing uploads nothing', !sent.length);
+  const inPlace = st.catalog.products[0]; inPlace.cost = 650; save(inPlace);
+  check('…a product changed in place (nothing to compare it with) goes up whole', JSON.stringify(sent.pop()) === '{"type":"prod","id":"p1","delV":[]}');
+  save({ id: 'p2', name: 'Cap', price: 500, variants: [] }, true);
+  check('…a new product goes up whole', !('fields' in sent.pop()));
+  repo.setArchived('p1', true);
+  check('…archiving sends just that', JSON.stringify(sent.pop()) === '{"type":"prod","id":"p1","fields":["archived"],"vars":[]}');
+  // the cloud gateway: just those columns and variants
+  const calls = []; let found = true;
+  const client = { from: (t) => ({ update: (patch) => ({ eq: (c, v) => ({ select: async () => { calls.push({ op: 'update', t, patch, id: v }); return { data: found ? [{ id: v }] : [], error: null }; } }) }),
+    upsert: async (rows) => { calls.push({ op: 'upsert', t, rows }); return { data: null, error: null }; } }) };
+  const gw = createCloudGateway({ getClient: () => client, url: 'https://x.supabase.co', key: 'pk', storageKey: 'k' });
+  await gw.patchProduct(edit({ price: 1100, variants: [{ ...P.variants[0], price: 1200 }, P.variants[1]] }), 0, ['price'], ['p1:M']);
+  check('the cloud gets just the changed columns (and when) and just the changed variant', calls[0].op === 'update' && calls[0].t === 'hangtag_products' && calls[0].id === 'p1'
+    && JSON.stringify(Object.keys(calls[0].patch).sort()) === '["price","updated_at"]' && calls[0].patch.price === 1100
+    && calls[1].op === 'upsert' && calls[1].t === 'hangtag_variants' && calls[1].rows.map((r) => r.id).join() === 'p1:M' && calls[1].rows[0].price === 1200 && calls.length === 2, calls);
+  calls.length = 0;
+  await gw.patchProduct(edit({ low: undefined, desc: '' }), 0, ['low', 'desc'], []);
+  check('…a cleared value is cleared there too (the product\'s own low-stock alert, the description)', calls.length === 1 && calls[0].patch.low_stock === null && calls[0].patch.description === null, calls);
+  calls.length = 0; found = false;
+  await gw.patchProduct(edit({ price: 1100 }), 3, ['price'], []);
+  check('…a product the cloud doesn\'t have yet is saved whole, with all its variants', calls.map((c) => c.op + ':' + c.t).join() === 'update:hangtag_products,upsert:hangtag_products,upsert:hangtag_variants'
+    && calls[1].rows.name === 'Kurta' && calls[1].rows.sort_order === 3 && calls[2].rows.length === 2, calls);
+  // the queue: never merged into the upload being sent; uploaded as patches
+  reset(); store.catalog = { version: 3, products: [structuredClone(P)] };
+  cloud.patchProduct = async function(p, i, f, v){ this.calls.push(`patch:${p.id}:${f.join('+')}:${v.join('+')}`); };
+  cloud.saveProduct = async function(p){ this.calls.push('prod:' + p.id); };
+  cloud.deleteVariants = async function(ids){ this.calls.push('delv:' + ids.join('+')); };
+  enqueue({ type: 'prod', id: 'p1', delV: [], fields: ['price'], vars: [] });
+  store.sbOfflineQueue[0].sending = true;
+  enqueue({ type: 'prod', id: 'p1', delV: [], fields: ['desc'], vars: [] });
+  check('an edit made while the product\'s upload is on its way gets its own (that one may have read the product before it)', store.sbOfflineQueue.length === 2 && store.sbOfflineQueue[1].fields.join() === 'desc');
+  delete store.sbOfflineQueue[0].sending;
+  enqueue({ type: 'prod', id: 'p1', delV: ['p1:S'], fields: ['cat'], vars: ['p1:L'] });
+  check('…a waiting one takes the next edit in place', store.sbOfflineQueue.length === 2 && store.sbOfflineQueue[0].fields.join() === 'price,cat' && store.sbOfflineQueue[0].vars.join() === 'p1:L' && store.sbOfflineQueue[0].delV.join() === 'p1:S');
+  await flushSbQueue();
+  check('…and they go up as patches (what each changed), the removed variant deleted', cloud.calls.join() === 'patch:p1:price+cat:p1:L,delv:p1:S,patch:p1:desc:' && !store.sbOfflineQueue.length, cloud.calls);
+  reset(); enqueue({ type: 'prod', id: 'p1' }); enqueue({ type: 'prod', id: 'p1', delV: [], fields: ['price'], vars: [] }); await flushSbQueue();
+  check('…a product still waiting to go up whole takes the edit and goes up whole', cloud.calls.join() === 'prod:p1', cloud.calls);
+}
 
 // ---------- events ----------
 check('event checks: name, dates, end not before start', validateEvent({ name: '', start: '2026-10-01', end: '2026-10-02' }) === 'Give the event a name.' && validateEvent({ name: 'X', start: '2026-10-02', end: '2026-10-01' }) === "The end date can't be before the start date." && validateEvent({ name: 'X', start: '2026-10-01', end: '2026-10-01' }) === null);

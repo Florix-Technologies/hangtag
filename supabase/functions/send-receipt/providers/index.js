@@ -8,5 +8,5 @@ export function deliver(cfg, channel, msg, fetchImpl) {
   if (channel === "email" && cfg.name === "resend") return sendResendEmail(cfg, msg, fetchImpl);
   if ((channel === "sms" || channel === "whatsapp") && cfg.name === "twilio") return sendTwilioMessage(cfg, msg, fetchImpl);
   if (channel === "whatsapp" && cfg.name === "meta") return sendMetaWhatsApp(cfg, msg, fetchImpl);
-  return Promise.resolve({ ok: false, status: 0, message: `No ${channel} provider called ${cfg.name}.` });
+  return Promise.resolve({ ok: false, status: 0, code: "no_provider", message: `No ${channel} provider called ${cfg.name}.` });
 }

@@ -90,7 +90,7 @@ console.log('=== schema twice, then the migration twice on top ===');
   try { await db.exec(MIG); await db.exec(MIG); } catch (e) { err = e.message; }
   check('the migration file runs on a database that has the schema, and again (safe to run again)', !err, err);
   const rep = await report(db);
-  check('migration report: 65 rows, all ok (incl. price lists, POs, kits, vouchers, webhooks)', rep.length === 65 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: 73 rows, all ok (incl. price lists, POs, kits, vouchers, webhooks)', rep.length === 73 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   const sec = (await db.query(`SELECT relname FROM pg_class WHERE relname IN ('hangtag_price_lists','hangtag_purchase_orders','hangtag_einvoices','hangtag_eway_bills','hangtag_repacks',
     'hangtag_vouchers','hangtag_voucher_redemptions','hangtag_webhook_endpoints','hangtag_webhook_secrets','hangtag_webhook_events','hangtag_webhook_deliveries') AND relrowsecurity`)).rows;
   check('row security is on for every table of the batch', sec.length === 11, sec);
@@ -375,7 +375,7 @@ console.log('=== what changed (team phones poll it) ===');
   const r = await tryAs(db, CA, `SELECT public.hangtag_biz_changes() AS r`);
   check('a member reads the change marks of lists, POs, vouchers and GST rows', !r.err && ['lists', 'pos', 'vouchers', 'gst'].every((k) => k in val(r)), r);
   const rep = await report(db);
-  check('the report is still all ok with everything above in the database', rep.length === 65 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
+  check('the report is still all ok with everything above in the database', rep.length === 73 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nAll checks passed');

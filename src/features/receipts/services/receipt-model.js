@@ -7,12 +7,13 @@ import { store } from '../../../shared/state/store.js';
 import { D } from '../../inventory/services/ledger.js';
 import { dtLong } from '../../../shared/formatting/dates.js';
 import { inrx } from '../../../shared/formatting/money.js';
+import { documentLogo, documentLogoPlace } from './logo-display.js';
 
 export function saleReturns(sid){ return (D().retBySale[sid]||[]); }
 /* The invoice for a saved bill: shop profile, the customer's saved email / GSTIN, returns, footer and logo */
 export function invoiceFor(s){
   const cust=s.cust&&s.cust.id?store.customers[s.cust.id]:null;
-  return buildInvoice(s,{profile:store.profile||{},customer:cust,returns:saleReturns(s.id),footer:store.settings.footer||"",logo:store.logo||""});
+  return buildInvoice(s,{profile:store.profile||{},customer:cust,returns:saleReturns(s.id),footer:store.settings.footer||"",logo:documentLogo(),logoAlign:documentLogoPlace("receipt")});
 }
 /* How it was paid → [{ label, amount, note }] ("Cash", ₹400, "received ₹500 · change ₹100") */
 export const payLines = inv => inv.payments.map(p => ({ label: p.label, amount: p.amount, note: paymentNote(p, inrx) }));

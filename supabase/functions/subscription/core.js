@@ -5,6 +5,9 @@
 //   config   → { ok, available, provider }
 //   checkout → { plan, promo? } → { ok, payment_id, amount, pay_url, provider } or { ok, free: true, status: "paid", … }
 //   verify   → { payment_id } → { ok, status: "paid"|"pending"|"failed"|"expired"|"cancelled", state?, period_end? }
+//   autopay_start  → { consent: true, consent_version } → { ok, auth_url, first_charge_at, today, price, currency }
+//   autopay_verify → { ok, status } (what the provider says now about the owner's mandate; charges come only by webhook)
+//   autopay_cancel → { ok, status: "cancelled" } (turned off at the provider first; the time already running is kept)
 const str = (v) => (v == null ? "" : String(v));
 const fail = (status, error, message) => ({ ok: false, status, error, message });
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -22,6 +25,13 @@ export function validateRequest(body) {
     // anything else in the request (an amount, a discount, a price…) is ignored on purpose
     return { ok: true, action, plan, promo: promo || null };
   }
+  if (action === "autopay_start") {
+    // the owner's explicit consent to the terms shown (the database checks the version is the current one)
+    const version = str(body.consent_version).trim();
+    if (body.consent !== true || !/^[a-z0-9._-]{3,40}$/.test(version)) return fail(400, "consent_required", "Agree to the AutoPay terms first.");
+    return { ok: true, action, consentVersion: version };
+  }
+  if (action === "autopay_verify" || action === "autopay_cancel") return { ok: true, action };
   if (action === "verify") {
     const id = str(body.payment_id).trim();
     if (!UUID.test(id)) return fail(400, "bad_payment", "Unknown payment.");
@@ -53,6 +63,19 @@ export function verifyDecision(row, view) {
   return { action: "none", status: "pending" };
 }
 
+/* The provider's plan must be exactly the AutoPay plan the owner agreed to: its price (in paise), currency and length */
+export function autopayPlanMatches(providerPlan, terms) {
+  if (!providerPlan || !terms || !terms.plan) return false;
+  const months = +terms.plan.months || 1;
+  return providerPlan.amount === Math.round((+terms.price || 0) * 100) && str(providerPlan.currency).toUpperCase() === str(terms.currency).toUpperCase()
+    && ((providerPlan.period === "monthly" && providerPlan.interval === months) || (providerPlan.period === "yearly" && months === 12 && providerPlan.interval === 1));
+}
+/* When AutoPay charges first (ms): when the trial or plan running now ends — or null (at once) when it ends within ten
+   minutes (the provider needs a start in the future) */
+export function autopayStartAt(terms, now = Date.now()) {
+  const t = Date.parse(terms && terms.first_charge_at);
+  return Number.isFinite(t) && t > now + 10 * 60e3 ? t : null;
+}
 export const description = (q) => `Hangtag ${str(q && q.plan_label) || "plan"}`.slice(0, 120);
 export const callbackUrl = (env, paymentId) => {
   const base = str(env.APP_URL).trim().replace(/\/+$/, "");

@@ -25,8 +25,22 @@ export function itemKey(item){
 /* The queue with a new item: a waiting upload of the same record is replaced where it stands (not one being sent) */
 export function mergeIntoQueue(queue,item){
   const k=itemKey(item), q=(queue||[]).slice();
-  if(k){ const i=q.findIndex(x=>!x.sending&&itemKey(x)===k); if(i>-1){ q[i]=item; return q; } }
+  if(k){ const i=q.findIndex(x=>!x.sending&&itemKey(x)===k); if(i>-1){ q[i]=mergeFields(q[i],item); return q; } }
   q.push(item); return q;
+}
+/* An edit that uploads only the fields it changed (fields: [...]) replacing a waiting upload of the same record: the
+   fields of both go up; a waiting whole upload (a record not in the cloud yet) stays whole */
+function mergeFields(prev,item){
+  if(!Array.isArray(item.fields)) return item;
+  if(!Array.isArray(prev.fields)){ const { fields:_f, ...whole }=item; return whole; }
+  return { ...item, fields:[...new Set([...prev.fields,...item.fields])] };
+}
+/* A product edit joining a waiting upload of the same product: the variants removed by either are deleted; the fields and
+   variants changed by both go up — the whole product when either is a whole upload (a product the cloud may not have yet) */
+export function mergeProductUpload(prev,item){
+  const delV=[...new Set([...(prev.delV||[]),...(item.delV||[])])];
+  if(!Array.isArray(prev.fields)||!Array.isArray(item.fields)){ const { fields:_f, vars:_v, ...whole }=prev; return { ...whole, delV }; }
+  return { ...prev, delV, fields:[...new Set([...prev.fields,...item.fields])], vars:[...new Set([...(prev.vars||[]),...(item.vars||[])])] };
 }
 /* Serial numbers and batches (section 3n): a stock-in brings them into the cloud ("sn:<serial>", "bt:<variant>|<batch>");
    a bill, or a stock record taking them out, waits for the stock-in still on its way. Serials and batches as normalized

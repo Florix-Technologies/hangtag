@@ -37,7 +37,7 @@ export async function receiptPNG(s){
   const F='"Instrument Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';
   const ops=[];let y=P;
   const logo=await loadImage(I.logo);
-  if(logo){ const k=Math.min(1,240/logo.naturalWidth,110/logo.naturalHeight), w=logo.naturalWidth*k, h=logo.naturalHeight*k; ops.push({k:"i",img:logo,x:(W-w)/2,y,w,h}); y+=h+10; }
+  if(logo){ const k=Math.min(1,240/logo.naturalWidth,110/logo.naturalHeight), w=logo.naturalWidth*k, h=logo.naturalHeight*k; ops.push({k:"i",img:logo,x:I.logoAlign==="left"?P:I.logoAlign==="right"?W-P-w:(W-w)/2,y,w,h}); y+=h+10; }
   const text=(t,o)=>{o=o||{};const size=o.size||22;ops.push({k:"t",t:String(t),x:o.align==="c"?W/2:o.align==="r"?W-P:P,y:y+size,size,bold:o.bold,align:o.align||"l",color:o.color});if(!o.keep)y+=size+(o.gap==null?8:o.gap)};
   const pair=(l,r,o)=>{o=o||{};text(l,Object.assign({},o,{keep:true}));text(r,Object.assign({},o,{align:"r"}))};
   const rule=()=>{ops.push({k:"r",y:y+4});y+=14};

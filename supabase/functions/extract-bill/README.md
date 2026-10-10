@@ -28,6 +28,10 @@ supabase secrets set EXTRACT_PROVIDER=mock              # test the flow without 
 
 Keep JWT verification on (the default): the app calls the function with the signed-in user's session.
 
+Before deploying, check the Claude path with a real key from your machine: `HANGTAG_EVAL_ANTHROPIC_KEY=<key> npm run
+eval:extract-bill` sends a made-up PDF bill through this function's own request and answer code (`EXTRACT_MODEL` and
+`EXTRACT_EFFORT` apply). It costs one reading and touches no database or deployed function.
+
 ## Limits and privacy
 
 - PDF, JPG, PNG and WebP files up to 15 MB. The app shrinks photos to at most 2000 px before sending them.

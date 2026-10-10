@@ -92,7 +92,7 @@ await db.exec(NEW); await db.exec(NEW);
 console.log('=== the schema runs twice; the report has the team rows ===');
 {
   const rep = await report(db);
-  check('migration report: 77 rows, all ok on an empty database', rep.length === 77 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: 80 rows, all ok on an empty database', rep.length === 80 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   const pols = (await db.query(`SELECT count(*)::int n FROM pg_policies WHERE schemaname = 'public' AND policyname = 'Own rows only'`)).rows[0].n;
   check('no table keeps the old "Own rows only" rule', pols === 0, pols);
   const noRls = (await db.query(`SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE 'hangtag_%' AND NOT c.relrowsecurity`)).rows;
@@ -377,6 +377,9 @@ console.log('=== shop A and shop B never meet ===');
     // bank accounts and their entries (section 3s)
     await db.query(`INSERT INTO public.hangtag_bank_accounts (owner_id, id, name, opening, is_default, methods) VALUES ($1, 'ba1', 'Current account', 1000, true, '{upi}')`, [owner]);
     await db.query(`INSERT INTO public.hangtag_bank_moves (owner_id, id, account_id, type, amount, reason, t) VALUES ($1, 'bm1', 'ba1', 'in', 250, 'Deposit', 1)`, [owner]);
+    // the shop's own product fields and units (section 3z)
+    await db.query(`INSERT INTO public.hangtag_attributes (owner_id, id, name, type, options) VALUES ($1, 'fabric', 'Fabric', 'choice', '["Cotton", "Linen"]')`, [owner]);
+    await db.query(`INSERT INTO public.hangtag_units (owner_id, id, label, decimals, uqc) VALUES ($1, 'roll', 'Roll', 0, 'ROL')`, [owner]);
   }
   await db.exec(`SET session_replication_role = DEFAULT`);
   // the webhook secrets are read by nobody in the app (only the dispatch function, with the service role)
@@ -402,7 +405,7 @@ console.log('=== shop A and shop B never meet ===');
     const n = await count(db, CA, t, `WHERE owner_id = '${B}'`);
     if (n) leaks.push(`A cashier sees ${n} of B's ${t}`);
   }
-  check(`shop A has rows in every one of the ${tables.length} shop tables (so the check below means something)`, empty.length === 0 && tables.length === 48, empty);
+  check(`shop A has rows in every one of the ${tables.length} shop tables (so the check below means something)`, empty.length === 0 && tables.length === 50, empty);
   check('no one from shop B (owner or cashier), nor an outsider, sees any row of shop A in any table; nor A\'s cashier any of B\'s', leaks.length === 0, leaks);
   // the same, through the shared helper (tests/helpers/tenancy.mjs), with a signed-out visitor too — and then writes: change,
   // delete, or add a row naming shop A, in every shop table, each attempt rolled back
@@ -622,7 +625,7 @@ console.log('=== accounts removed ===');
 console.log('=== report after use ===');
 {
   let rep = await report(db);
-  check('migration report: every row ok with a team, devices and audit rows present', rep.length === 77 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: every row ok with a team, devices and audit rows present', rep.length === 80 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   await db.query(`INSERT INTO public.hangtag_products (owner_id, id, name) VALUES ($1, 'stray', 'Stray')`, [CA.id]);
   rep = await report(db);
   check('the report spots a member that runs a shop of its own', rep.find((r) => /no shop of their own/.test(r.check_name)).ok === false);
@@ -653,7 +656,7 @@ console.log('=== upgrade from the schema on the live database today (fixtures/le
   r = !r.err && o.o === A ? await tryAs(up, A, `UPDATE public.hangtag_products SET archived = TRUE WHERE id = 'p1' RETURNING id`) : r;
   check('…and keeps saving bills and changing products (owner_id still the owner)', !r.err && r.r.rows.length === 1, r);
   const rep = await report(up);
-  check('the report is all ok after the upgrade', rep.length === 77 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
+  check('the report is all ok after the upgrade', rep.length === 80 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');

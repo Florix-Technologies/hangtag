@@ -97,7 +97,7 @@ await db.exec(NEW); await db.exec(NEW);
 console.log('=== the schema runs twice; quantities keep 3 decimals ===');
 {
   const rep = await report(db);
-  check('migration report: 77 rows, all ok (rows 35-39: decimals, units, unique numbers, who made it)', rep.length === 77 && rep.every((r) => r.ok) && rep.filter((r) => /3 decimals|known unit|no other|who made/.test(r.check_name)).length === 5, rep.filter((r) => !r.ok));
+  check('migration report: 80 rows, all ok (rows 35-39: decimals, units, unique numbers, who made it)', rep.length === 80 && rep.every((r) => r.ok) && rep.filter((r) => /3 decimals|known unit|no other|who made/.test(r.check_name)).length === 5, rep.filter((r) => !r.ok));
   const cols = (await db.query(`SELECT table_name || '.' || column_name AS c, numeric_precision AS p, numeric_scale AS s FROM information_schema.columns WHERE table_schema = 'public'
       AND (table_name, column_name) IN (('hangtag_sale_items','quantity'), ('hangtag_return_items','quantity'), ('hangtag_stock_moves','qty'), ('hangtag_sales','subtotal')) ORDER BY 1`)).rows;
   check('bill / return line quantities and stock records are NUMERIC(12,3); a bill\'s subtotal NUMERIC(12,2)', cols.length === 4 && cols.every((c) => c.p === 12 && c.s === (c.c === 'hangtag_sales.subtotal' ? 2 : 3)), cols);
@@ -123,8 +123,14 @@ console.log('\n=== products in units ===');
   }
   const p = await rows(db, A, `SELECT id, unit FROM public.hangtag_products ORDER BY id`);
   check('a product sold by the kg, one by the piece (the default)', p.map((x) => x.id + ':' + x.unit).join() === 'rice:kg,tee:pcs', p);
-  const bad = await tryAs(db, A, `INSERT INTO public.hangtag_products (id, name, price, unit) VALUES ('x', 'X', 1, 'tonne')`);
-  check('an unknown unit is refused', /unit_check/.test(bad.err || ''), bad);
+  const bad = await tryAs(db, A, `INSERT INTO public.hangtag_products (id, name, price, unit) VALUES ('x', 'X', 1, 'Tonne!')`);
+  check('a unit that isn\'t a unit code is refused', /unit_check/.test(bad.err || ''), bad);
+  // a shop's own unit (section 3z) is any code: a product in one made on another phone is never refused for arriving first;
+  // the report's row 36 shows a product whose unit the shop doesn't have
+  const own = await tryAs(db, A, `INSERT INTO public.hangtag_products (id, name, price, unit) VALUES ('x', 'X', 1, 'tonne')`);
+  const flagged = (await report(db)).find((r) => /known unit/.test(r.check_name));
+  check('…a unit code the shop hasn\'t defined is taken, and the report flags it', !own.err && flagged && !flagged.ok && +flagged.value === +flagged.expected - 1, { own, flagged });
+  await as(db, A, `DELETE FROM public.hangtag_products WHERE id = 'x'`);
 }
 
 console.log('\n=== a bill of 2.5 kg, returns of weights ===');
@@ -216,7 +222,7 @@ console.log('\n=== one bill number per bill in a shop ===');
   check('bills that already shared a number stay, and can still be changed (cancelled)', !keep.err, keep.err);
   await db.exec(NEW);
   const rep = await report(db);
-  check('the schema runs again with them there; the report is all ok', rep.length === 77 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('the schema runs again with them there; the report is all ok', rep.length === 80 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   // credit notes
   const cn = nextDocNo([], CN, day, seriesOf('dev-a', known));
   const s4 = bill('s4', [{ ...TEE, q: 2 }], { no: numberOn('dev-a', known, day), t: day });

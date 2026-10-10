@@ -21,9 +21,64 @@ export const DEFAULT_UNIT="pcs";
 export const QTY_DP=3;
 const BY=Object.fromEntries(UNITS.map(u=>[u.id,u]));
 
-/* A unit's record; anything unknown (or missing: products and bill lines saved before units) is a piece */
-export const unitOf=id=>BY[id]||BY[DEFAULT_UNIT];
-export const unitId=id=>BY[id]?id:DEFAULT_UNIT;
+/* ---------- the shop's own units ----------
+   A shop can add units Hangtag doesn't have (Roll, Pair, Sq ft, Bundle…): { id (its code, shown after a quantity: "roll",
+   "sqft"), label, dp (decimals a quantity may have, 0–3), kind ("count" or "measure"), uqc (its GST unit code), archived }.
+   They are records of the shop (hangtag_units, synced like price lists). The app hands them over with setShopUnits
+   whenever they load or change, so every rule here knows them; nothing else in this file keeps state. A code nobody
+   defined on this device (a unit added on another phone, not downloaded yet) is shown as its code, with up to 3 decimals. */
+export const GST_UQC=[["PCS","Pieces"],["NOS","Numbers"],["UNT","Units"],["SET","Sets"],["PRS","Pairs"],["DOZ","Dozens"],["BOX","Box"],["PAC","Packs"],
+  ["BAG","Bags"],["BAL","Bale"],["BDL","Bundles"],["BKL","Buckles"],["BOU","Billion of units"],["BTL","Bottles"],["BUN","Bunches"],["CAN","Cans"],
+  ["CTN","Cartons"],["DRM","Drums"],["GGK","Great gross"],["GRS","Gross"],["ROL","Rolls"],["TBS","Tablets"],["TUB","Tubes"],["THD","Thousands"],
+  ["KGS","Kilograms"],["GMS","Grams"],["TGM","Ten grams"],["QTL","Quintal"],["TON","Tonnes"],["MTS","Metric ton"],["LTR","Litres"],["MLT","Millilitres"],
+  ["KLR","Kilolitre"],["CBM","Cubic metres"],["CCM","Cubic centimetres"],["MTR","Metres"],["CMS","Centimetres"],["KME","Kilometre"],["YDS","Yards"],
+  ["GYD","Gross yards"],["SQF","Square feet"],["SQM","Square metres"],["SQY","Square yards"],["UGS","US gallons"],["OTH","Others"]];
+export const UQC_CODES=GST_UQC.map(u=>u[0]);
+export const UNIT_CODE_RE=/^[a-z][a-z0-9]{0,11}$/;
+export const UNIT_KINDS=["count","measure"];
+let SHOP=[], SHOP_BY={};
+const cleanShopUnit=u=>{
+  if(!u||typeof u!=="object"||!UNIT_CODE_RE.test(String(u.id||""))||BY[u.id])return null;
+  const dp=Math.round(+u.dp);
+  return {id:u.id,label:String(u.label||u.id).replace(/\s+/g," ").trim().slice(0,20)||u.id,sym:u.id,dp:Number.isInteger(dp)&&dp>=0&&dp<=QTY_DP?dp:0,
+    kind:u.kind==="measure"?"measure":"count",uqc:UQC_CODES.includes(u.uqc)?u.uqc:"OTH",archived:!!u.archived};
+};
+/* The shop's own units, as loaded (archived ones too: products and bill lines may still use them) */
+export function setShopUnits(list){
+  SHOP=(Array.isArray(list)?list:[]).map(cleanShopUnit).filter(Boolean).sort((a,b)=>a.label.localeCompare(b.label));
+  SHOP_BY=Object.fromEntries(SHOP.map(u=>[u.id,u]));
+}
+export const shopUnits=()=>SHOP.slice();
+/* The units a product can be put in now: Hangtag's, then the shop's own (not archived) */
+export const allUnits=()=>[...UNITS,...SHOP.filter(u=>!u.archived)];
+const generic=id=>({id,label:id,sym:id,dp:QTY_DP,kind:"count",uqc:"OTH"});
+
+/* A unit's record. A code that isn't a unit at all (or none: products and bill lines saved before units) is a piece. */
+export const unitOf=id=>BY[id]||SHOP_BY[id]||(UNIT_CODE_RE.test(String(id||""))?generic(String(id)):BY[DEFAULT_UNIT]);
+export const unitId=id=>BY[id]||SHOP_BY[id]||UNIT_CODE_RE.test(String(id||""))?String(id):DEFAULT_UNIT;
+/* A unit being added or changed. input: { id (its code; made from the label when empty), label, dp, kind, uqc, archived }.
+   ctx: { units: the shop's units, before: the unit as saved (null for a new one), used: how many products are sold in it }.
+   → { unit } or { error }. A unit in use keeps its code and decimals (products, stock and bill lines carry them). */
+export function checkShopUnit(input,ctx={}){
+  const x=input||{}, before=ctx.before?cleanShopUnit(ctx.before):null, all=(ctx.units||[]).map(cleanShopUnit).filter(Boolean);
+  const label=String(x.label==null?"":x.label).replace(/[\u0000-\u001f\u007f]/g," ").replace(/\s+/g," ").trim();
+  if(!label)return {error:"Give the unit a name, e.g. Roll or Sq ft."};
+  if([...label].length>20)return {error:"A unit's name can be up to 20 characters."};
+  const id=before?before.id:String(x.id||label).toLowerCase().replace(/[^a-z0-9]/g,"").slice(0,12);
+  if(!UNIT_CODE_RE.test(id))return {error:"The unit's short code needs to start with a letter (letters and digits, up to 12), e.g. roll or sqft."};
+  const builtIn=UNITS.find(u=>[u.id,u.sym.toLowerCase(),u.label.toLowerCase()].includes(id)||u.label.toLowerCase()===label.toLowerCase());
+  if(builtIn)return {error:`Hangtag already has ${builtIn.label}: choose it under Sold by.`};
+  if(!before&&all.some(u=>u.id===id))return {error:`There's already a unit with the code ${id}${all.find(u=>u.id===id).archived?" (archived: restore it instead)":""}.`};
+  {const same=all.find(u=>u.id!==id&&!u.archived&&u.label.toLowerCase()===label.toLowerCase());if(same)return {error:`There's already a unit called ${same.label}.`};}
+  const dp=x.dp==null||x.dp===""?0:+x.dp;
+  if(!Number.isInteger(dp)||dp<0||dp>QTY_DP)return {error:`Decimals: 0 (counted, like pieces) to ${QTY_DP}.`};
+  if(before&&ctx.used>0&&dp!==before.dp)return {error:`${before.label} is used by ${ctx.used} product${ctx.used===1?"":"s"}, so its decimals can't change.`};
+  const uqc=x.uqc?String(x.uqc).toUpperCase():"OTH";
+  if(!UQC_CODES.includes(uqc))return {error:"Choose the GST unit code from the list (Others if none fits)."};
+  const kind=x.kind?String(x.kind):(dp>0?"measure":"count");
+  if(!UNIT_KINDS.includes(kind))return {error:"A unit is counted or measured."};
+  return {unit:{id,label,sym:id,dp,kind,uqc,archived:x.archived!=null?!!x.archived&&x.archived!=="false":!!(before&&before.archived)}};
+}
 export const decimalsOf=id=>unitOf(id).dp;
 /* Sold in parts (kg, litres, metres): typed, not stepped by one */
 export const isDecimalUnit=id=>unitOf(id).dp>0;

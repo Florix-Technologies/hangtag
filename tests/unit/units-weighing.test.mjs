@@ -27,7 +27,9 @@ const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 {
   check('nine units with labels, decimals and GST unit codes', eq(UNITS.map((u) => u.id + ':' + u.label + ':' + u.dp), ['pcs:Piece:0', 'box:Box:0', 'pack:Pack:0', 'dozen:Dozen:0', 'kg:Kg:3', 'g:Gram:0', 'l:Litre:3', 'ml:ml:0', 'm:Meter:2'])
     && unitOf('kg').uqc === 'KGS' && unitOf('l').uqc === 'LTR' && unitOf('m').uqc === 'MTR');
-  check('unknown or missing unit is a piece', unitId(undefined) === 'pcs' && unitId('tonne') === 'pcs' && unitOf(null).id === 'pcs' && decimalsOf('x') === 0);
+  check('a missing unit, or one that isn\'t a unit code at all, is a piece', unitId(undefined) === 'pcs' && unitId('Tonne!') === 'pcs' && unitOf(null).id === 'pcs' && decimalsOf('') === 0);
+  // a shop's own unit made on another phone (not downloaded here yet) keeps its code: saving the product here never turns it into pieces
+  check('…a unit code nobody defined on this device keeps its code', unitId('tonne') === 'tonne' && unitOf('tonne').sym === 'tonne');
   check('kinds: kg/l are weighed; m is measured, not weighed; box is counted', isWeighed('kg') && isWeighed('ml') && !isWeighed('m') && isMeasured('m') && !isMeasured('box') && isDecimalUnit('m') && !isDecimalUnit('g'));
   check('roundQty: 3 decimals, half up, no float noise', roundQty(0.1 + 0.2) === 0.3 && roundQty(1.0005) === 1.001 && roundQty(2.4999999) === 2.5 && roundQty(-0.0004) === 0 && roundQty('x') === 0 && roundQty(1.25, 1) === 1.3);
   check('sums and differences in thousandths', sumQty([0.1, 0.2, 0.3]) === 0.6 && subQty(2.5, 0.75) === 1.75 && sumQty([]) === 0 && subQty(1, 0.999) === 0.001);

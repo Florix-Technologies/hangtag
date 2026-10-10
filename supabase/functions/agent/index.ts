@@ -6,7 +6,7 @@
 //   function reads no shop data and writes nothing.
 // - Who: the owner, or a team member with view_reports (hangtag_can, with the phone's x-hangtag-device key forwarded).
 // Deploy with JWT verification on (the default).
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2.117.2";
 import { planGate } from "../_shared/plan-gate.js";
 import { agentConfig, allowedToUse, anthropicRequest, configView, rateDecision, rateLimits, readAnthropic, validateRequest } from "./core.js";
 

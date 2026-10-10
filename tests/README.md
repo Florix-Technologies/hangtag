@@ -1,7 +1,7 @@
 # Hangtag tests and evaluations
 
 Every suite is a plain Node script that prints `PASS …` / `FAIL …` lines and exits non-zero on failure.
-`node tests/run.mjs <folders or files>` runs them one after another and prints a summary.
+`node tests/run.mjs <folders or files>` runs them and prints a summary: unit and database suites side by side (`TEST_JOBS`), browser suites one at a time, each file stopped after `TEST_TIMEOUT_MS` (20 minutes).
 
 | Command | What runs |
 |---|---|
@@ -12,7 +12,7 @@ Every suite is a plain Node script that prints `PASS …` / `FAIL …` lines and
 | `npm run test:e2e` | `tests/e2e` — the app in Chrome against PGlite behind a PostgREST stand-in |
 | `npm run eval:agent:provider` | the Agent against a **real** AI provider (needs `HANGTAG_EVAL_ANTHROPIC_KEY`; costs money; skipped without a key) |
 
-Browser suites expect Chrome at the default path (override with `CHROME_PATH`) and serve the app on `localhost:3210`.
+Browser suites need Chrome, Chromium or Edge (found where Windows, macOS or Linux installs it, or set `CHROME_PATH`) and serve the app on `localhost:3210`. Without a browser they are reported as skipped, not failed (`TEST_STRICT=1` fails instead).
 
 ## Shared helpers (`tests/helpers`)
 
@@ -31,7 +31,8 @@ Browser suites expect Chrome at the default path (override with `CHROME_PATH`) a
   - the page never scrolls sideways;
   - no control sits off-screen;
   - sheets fit the screen or scroll inside;
-  - on touch screens, targets are at least 24 px.
+  - on touch screens, targets are at least 24 px;
+  - every control has a name a screen reader can say (its text, an aria-label, a <label> or a title; a placeholder alone is not one).
 - **`tenancy.mjs`**: `readLeaks` and `writeLeaks` sweep every shop table for rows of one shop that others can see, change, delete or add. Every write attempt is rolled back.
 - **`pg-rest.mjs`** and **`env.mjs`**: the PostgREST and Auth stand-in, and paths.
 
@@ -68,6 +69,6 @@ When the answer depends on new data, update both `agent/shop.mjs` and the fixtur
 ## Scenario suites (`tests/e2e`)
 
 - **`sync-scenarios.test.mjs`**: offline sales, offline UPI (never shown as verified), a save whose answer is lost (no duplicate), 503s and an unreachable server, two tills offline at once (distinct bill numbers), the same customer edited on both tills (both changes kept), an offline return, a double tap on Pay, and every device converging.
-- **`responsive-matrix.test.mjs`**: 16 screens and sheets on four sizes.
+- **`responsive-matrix.test.mjs`**: 17 screens and sheets on four sizes.
 
 To add a scenario, open devices with `startShop` / `openDevice`, seed with `seedShop`, and drive the network with `device.net`. Check what the server holds (`S.sql`) and what a freshly downloaded device shows.

@@ -5,7 +5,7 @@
 //   supabase functions deploy receipt --no-verify-jwt
 // Views are counted on the link. The figures come from the saved bill (send-receipt/core.js billView): nothing is
 // recalculated here.
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2.117.2";
 import { ITEM_COLUMNS, PAYMENT_COLUMNS, PROFILE_COLUMNS, RETURN_COLUMNS, SALE_COLUMNS, billView, liveLink, shopLogo } from "../send-receipt/core.js";
 
 const CORS = {

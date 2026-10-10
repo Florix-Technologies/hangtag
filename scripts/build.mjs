@@ -9,7 +9,6 @@ import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFi
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import esbuild from 'esbuild';
 import { ESLint } from 'eslint';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -69,7 +68,15 @@ process.stdout.write(arch.stdout); process.stderr.write(arch.stderr);
 if (arch.status !== 0) failed = true;
 
 // 4. Bundle check: every import resolves and every module parses — the shop app and the Platform Console (not deployed)
-try {
+// esbuild ships one binary per platform: node_modules installed on another system (copied from Windows to Linux, say) can't
+// load it. That is the environment, not the app: said so, with the fix.
+let esbuild = null;
+try { esbuild = (await import('esbuild')).default; }
+catch (e) {
+  console.error(`bundle check couldn't run (environment): esbuild for ${process.platform}-${process.arch} isn't installed — run "npm ci" on this system. ${String((e && e.message) || e).split('\n')[0]}`);
+  failed = true;
+}
+if (esbuild) try {
   const r = await esbuild.build({ entryPoints: [path.join(ROOT, 'src/app/main.js'), path.join(ROOT, 'src/app/platform-main.js')], bundle: true, format: 'esm',
     outdir: path.join(ROOT, 'dist/bundle-check'), logLevel: 'error', metafile: true });
   console.log(`bundle ok: ${Object.keys(r.metafile.inputs).length} modules`);

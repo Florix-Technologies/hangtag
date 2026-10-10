@@ -20,6 +20,7 @@ import { installScaleSettingsEvents } from '../features/hardware/components/scal
 import { reconnectScale } from '../features/hardware/services/scale.js';
 import { installWeighDialog } from '../features/sales/components/weigh-dialog.js';
 import { installPwa } from './pwa.js';
+import { refuseFraming } from './frame-guard.js';
 import { store } from '../shared/state/store.js';
 import { renderAll } from '../shared/ui/render.js';
 import { bootAuth } from '../features/auth/services/session.js';
@@ -40,6 +41,8 @@ import { installMenus } from '../shared/ui/kit.js';
 import { installGlobalDiagnostics } from '../shared/logging/diagnostics.js';
 import { installSubscription, onSubscriptionChange, subscriptionLocked } from '../features/billing/services/subscription.js';
 
+// never inside another site's frame (clickjacking): nothing below runs there
+if(refuseFraming()) throw new Error("Hangtag doesn't run inside another site's frame.");
 installContainer();    // ports first: everything below may use them
 installGlobalDiagnostics(); // capture startup and background failures into the privacy-safe, on-device history
 installNavigation();   // the render bus (shared/ui/render.js) now reaches this app shell

@@ -8,11 +8,13 @@ import { provide } from '../shared/di/services.js';
 import { makeSbClient } from '../infrastructure/supabase/client.js';
 import { createPlatformGateway } from '../infrastructure/supabase/platform-gateway.js';
 import { startConsole } from '../features/platform/components/console-app.js';
+import { refuseFraming } from './frame-guard.js';
 
 export const PLATFORM_AUTH_KEY = "hangtag-platform-auth";
 
 const surface = typeof document !== "undefined" ? document.documentElement.dataset.surface : "";
-if(surface === "platform" || surface === "platform-login"){
+// never inside another site's frame (clickjacking): the console doesn't start there
+if((surface === "platform" || surface === "platform-login") && !refuseFraming()){
   if(cloudConfigured) provide("platform", createPlatformGateway({ client: makeSbClient({ url: sbUrl, key: sbKey, storageKey: PLATFORM_AUTH_KEY, deviceKey: null }) }));
   startConsole(surface, { configured: cloudConfigured });
 }

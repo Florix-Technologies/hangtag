@@ -8,7 +8,7 @@
 // - Addresses that resolve to private, loopback or link-local networks are refused (no requests into Supabase's network).
 // Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (provided by Supabase), WEBHOOK_DISPATCH_SECRET (set it yourself).
 // Deploy with JWT verification off (the dispatch secret is the guard): supabase functions deploy webhook-dispatch --no-verify-jwt
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2.117.2";
 import { TIMEOUT_MS, afterAttempt, checkUrl, deliveryHeaders, eventBody, privateAddress, signature } from "./core.js";
 
 const reply = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });

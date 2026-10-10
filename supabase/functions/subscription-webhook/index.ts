@@ -11,7 +11,7 @@
 // the same secret, events payment_link.paid, payment_link.expired, payment_link.cancelled, and subscription.authenticated,
 // subscription.activated, subscription.charged, subscription.pending, subscription.halted, subscription.cancelled,
 // subscription.completed, subscription.resumed.
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2.117.2";
 import { verifyDecision } from "../subscription/core.js";
 import { providerFor } from "../subscription/providers/index.js";
 

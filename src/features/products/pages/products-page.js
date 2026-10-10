@@ -36,8 +36,8 @@ export function renderProducts(){
     if(store.prodView==="low"&&!variantsOf(p).some(v=>levelOf(stockOf(v.id),p)!=="ok"))return false;
     return !toks.length||toks.every(t=>productText(p).includes(t)||variantsOf(p,true).some(v=>variantText(p,v).includes(t)));
   });
-  let h=`<div class="ptools"><div class="search sellsearch prodsearch"><input id="prodSearch" type="search" placeholder="Search name, SKU or barcode" value="${esc(store.prodQuery)}" autocomplete="off">${voiceSearchButtonHTML('prodSearch')}</div>
-    ${cs.length?`<select id="prodCat" class="sel"><option value="">All categories</option>${cs.map(c=>`<option${c===store.prodCat?" selected":""}>${esc(c)}</option>`).join("")}</select>`:""}
+  let h=`<div class="ptools"><div class="search sellsearch prodsearch"><input id="prodSearch" type="search" aria-label="Search products" placeholder="Search name, SKU or barcode" value="${esc(store.prodQuery)}" autocomplete="off">${voiceSearchButtonHTML('prodSearch')}</div>
+    ${cs.length?`<select id="prodCat" class="sel" aria-label="Category"><option value="">All categories</option>${cs.map(c=>`<option${c===store.prodCat?" selected":""}>${esc(c)}</option>`).join("")}</select>`:""}
     <div class="seg" role="group" aria-label="Show">${[["active","Active"],["low","Low stock"],["archived","Archived"]].map(([k,l])=>`<button data-prodview="${k}" aria-pressed="${store.prodView===k}">${l}</button>`).join("")}</div>
     <button class="btn sm" data-act="prodimport">Import</button>${can('manage_products') ? '<button class="btn sm" data-product-draft>Draft from description</button>' : ''}${can('manage_products') && hasCap('uses_bundles') ? '<button class="btn sm" data-kitnew>New kit</button>' : ''}<button class="btn sm primary" data-act="addp">+ Add product</button></div>`;
   if(store.catalog&&store.catalog.example)h+=`<div class="banner"><span><b>These are example products.</b> Edit them to match your shop — names, colours, sizes, prices and real stock.</span></div>`;

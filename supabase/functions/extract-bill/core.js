@@ -179,3 +179,22 @@ export function normalizeExtraction(raw, meta = {}) {
     currency: str(r.currency, 8) || "INR", lines, warnings,
   };
 }
+
+/* ---------- the rate limit ----------
+   Reading a bill calls a paid AI service, and a free trial is easy to start: each user and each shop may read only so many
+   bills a minute and a day (EXTRACT_RATE_PER_MINUTE / _PER_DAY, EXTRACT_SHOP_RATE_PER_MINUTE / _PER_DAY; 0 = no limit).
+   The counters are the Agent's rate limiter (hangtag_agent_take), kept apart from the Agent's own: the user's and shop's
+   ids, hashed with this feature's name, name them. */
+const limitOf = (v, d) => { const n = Number(v); return v == null || String(v).trim() === "" || !Number.isFinite(n) ? d : Math.max(0, Math.floor(n)); };
+export function extractRateLimits(env = {}) {
+  return {
+    p_per_minute: limitOf(env.EXTRACT_RATE_PER_MINUTE, 6), p_per_day: limitOf(env.EXTRACT_RATE_PER_DAY, 60),
+    p_shop_per_minute: limitOf(env.EXTRACT_SHOP_RATE_PER_MINUTE, 12), p_shop_per_day: limitOf(env.EXTRACT_SHOP_RATE_PER_DAY, 150),
+  };
+}
+/* An id of this feature's own counter for a user or shop id: a UUID made from SHA-256("extract-bill:" + id) */
+export async function rateSubject(id) {
+  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode("extract-bill:" + String(id))));
+  const h = Array.from(bytes.slice(0, 16), (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-${(8 | (parseInt(h[16], 16) & 3)).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}

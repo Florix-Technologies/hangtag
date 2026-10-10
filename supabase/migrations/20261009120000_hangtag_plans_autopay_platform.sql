@@ -1,5 +1,6 @@
 -- Hangtag: commercial plans, the launch offer, the 30-day trial with AutoPay, and the Platform Console (Phases 53-55).
 -- Exactly section 3w of supabase/schema.sql. Needs section 3t (20261006120000_hangtag_plans_subscriptions.sql) first.
+-- Requires: supabase/schema.sql (applied first)
 -- Run it in the Supabase SQL Editor; safe to run again. Then the report at the end of schema.sql: rows 80-86.
 
 -- ==============================================================================

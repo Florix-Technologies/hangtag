@@ -11,7 +11,7 @@
 // - Deploy with JWT verification on (the default). Secrets: SUBSCRIPTION_PROVIDER=razorpay, SUBSCRIPTION_RAZORPAY_KEY_ID,
 //   SUBSCRIPTION_RAZORPAY_KEY_SECRET, SUBSCRIPTION_WEBHOOK_SECRET (for subscription-webhook), APP_URL (return page),
 //   SUBSCRIPTION_RAZORPAY_AUTOPAY_PLAN_ID (AutoPay's monthly plan at the provider).
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2.117.2";
 import { autopayPlanMatches, autopayStartAt, callbackUrl, description, rpcErrorReply, validateRequest, verifyDecision } from "./core.js";
 import { autopayPlanId, providerFor } from "./providers/index.js";
 

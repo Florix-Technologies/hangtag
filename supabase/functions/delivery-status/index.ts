@@ -13,7 +13,7 @@
 //         Webhook fields: messages.
 //   Resend: Webhooks → Add endpoint <DELIVERY_STATUS_URL>?provider=resend, events email.delivered and email.bounced; its
 //         signing secret (whsec_…) = RESEND_WEBHOOK_SECRET.
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2.117.2";
 import { MAX_BODY, PROVIDERS, callbackUrl, metaChallenge, patchFor, reportsOf, verifyMeta, verifySvix, verifyTwilio } from "./core.js";
 
 const reply = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });

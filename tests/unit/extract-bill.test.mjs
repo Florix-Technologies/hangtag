@@ -1,7 +1,8 @@
 // Supplier bill extraction (supabase/functions/extract-bill): upload checks, the request sent to Claude (PDF as a document,
 // photos as images, JSON schema output), stop reasons, and normalisation. A fake SDK client records requests; no network.
 // Run: npm run test:unit
-import { ACCEPTED_TYPES, EXTRACTION_SCHEMA, FALLBACK_BETA, MAX_BYTES, SYSTEM_PROMPT, buildRequest, normalizeExtraction, normalizeUnit, parseModelResponse, toNumber, validateUpload } from '../../supabase/functions/extract-bill/core.js';
+import { ACCEPTED_TYPES, EXTRACTION_SCHEMA, FALLBACK_BETA, MAX_BYTES, SYSTEM_PROMPT, buildRequest, extractRateLimits, normalizeExtraction, normalizeUnit, parseModelResponse, rateSubject, toNumber, validateUpload } from '../../supabase/functions/extract-bill/core.js';
+import { readFileSync } from 'node:fs';
 import { createClaudeProvider } from '../../supabase/functions/extract-bill/providers/claude.js';
 import { MOCK_EXTRACTION, createMockProvider } from '../../supabase/functions/extract-bill/providers/mock.js';
 
@@ -73,6 +74,24 @@ const u = normalizeExtraction({ lines: [{ name: 'Rice', quantity: 2.5, unit: 'Kg
 check('a decimal quantity in kg is kept without a warning; too many decimals for metres is warned about',
   u.lines[0].unit === 'kg' && u.lines[0].quantity === 2.5 && u.lines[2].unit === 'pcs' && u.warnings.length === 1 && /too many decimal places for m/.test(u.warnings[0]), u.warnings);
 check('nothing at all → empty but valid result', (() => { const e = normalizeExtraction(null); return e.ok && e.lines.length === 0 && e.supplier.name === null && e.currency === 'INR'; })());
+
+// the rate limit: a paid AI service behind a free trial — each user and shop reads only so many bills, on counters of
+// their own (not the Agent's), checked before the provider is called; nothing is sent when it can't be checked
+{
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  const id1 = 'aaaaaaaa-0000-0000-0000-000000000001', a = await rateSubject(id1), b = await rateSubject('aaaaaaaa-0000-0000-0000-000000000002');
+  check('rate counters: a UUID per id, the same every time, different per id and never the id itself (the Agent keeps its own)',
+    UUID.test(a) && UUID.test(b) && a !== b && a === await rateSubject(id1) && a !== id1);
+  const d = extractRateLimits({}), e = extractRateLimits({ EXTRACT_RATE_PER_MINUTE: '2', EXTRACT_SHOP_RATE_PER_DAY: '0', EXTRACT_RATE_PER_DAY: 'lots' });
+  check('limits: 6 a minute and 60 a day per user, 12 and 150 per shop; settable, 0 = none, nonsense = the default',
+    JSON.stringify(d) === JSON.stringify({ p_per_minute: 6, p_per_day: 60, p_shop_per_minute: 12, p_shop_per_day: 150 })
+    && e.p_per_minute === 2 && e.p_shop_per_day === 0 && e.p_per_day === 60);
+  const src = readFileSync(new URL('../../supabase/functions/extract-bill/index.ts', import.meta.url), 'utf8');
+  const take = src.indexOf('rpc("hangtag_agent_take"'), call = src.indexOf('p.extract(');
+  check('the function takes from the limiter (its own counters) before calling the provider; refuses when it can\'t check; 429 when over',
+    take > 0 && call > take && /p_user: await rateSubject\(user\.id\), p_shop: await rateSubject\(shopId\)/.test(src)
+    && /if \(takeErr\)[^\n]*return reply\(503/.test(src) && /status: 429/.test(src));
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

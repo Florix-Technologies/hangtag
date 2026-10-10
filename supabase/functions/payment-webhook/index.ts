@@ -7,7 +7,7 @@
 // - Idempotent: the same event delivered twice changes the intent once (core.js nextIntent).
 // In the Razorpay dashboard: Webhooks → URL https://<project>.supabase.co/functions/v1/payment-webhook, the same secret,
 // events qr_code.credited, qr_code.closed, payment_link.paid, payment_link.expired, payment_link.cancelled.
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2.117.2";
 import { nextIntent, verifySignature, webhookTarget } from "../payment-gateway/core.js";
 
 const reply = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });

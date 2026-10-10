@@ -18,7 +18,18 @@ import { resetProductDraftAssistant } from '../../products/components/product-dr
    under its owner and that account's own data (or a fresh start) is brought back. */
 
 export const USER_KEYS = ["hangtag_sb_queue", "hangtag_sync_review", "rc_local", "rc_dirty", "rc_moves", "rc_returns", "rc_customers", "rc_events", "rc_settings", "rc_pend", "rc_cart", "rc_disc", "rc_cartcust", "rc_catalog", "rc_imgs", "rc_docimg", "rc_autolog", "hangtag_profile", "rc_logo", "hangtag_pay_pending", "hangtag_delivery_queue", "rc_cash_moves", "rc_day_closes", "hangtag_access", "rc_collections", "rc_held", "rc_orders", "rc_cartorder", "rc_suppliers", "rc_purchases", "rc_supplier_pays",
-  "rc_tables", "rc_table_sessions", "rc_carttable", "rc_pending_docs", "rc_quote_sends", "rc_biz", "rc_cartpl", "hangtag_subscription", "hangtag_sub_pending"];
+  "rc_tables", "rc_table_sessions", "rc_carttable", "rc_pending_docs", "rc_quote_sends", "rc_biz", "rc_cartpl", "hangtag_subscription", "hangtag_sub_pending",
+  // when this account's data was last fully saved, and its backups: another account's must not hide this one's
+  // "not in the cloud yet" warning or its backup reminder
+  "hangtag_last_sync", "hangtag_backup_log",
+  // this device's bill-number series in this shop (another shop's would number its bills in a stray series), and an
+  // AutoPay approval this account is waiting for
+  "hangtag_till", "hangtag_ap_pending"];
+/* What stays with the device, whoever signs in: the email last typed (to fill in sign-in), this device's id and name,
+   its printer and scale, display preferences, sign-in flow flags, whose data is out, and the device's own diagnostics. */
+export const DEVICE_KEYS = ["hangtag_auth_email", "hangtag_data_owner", "hangtag_pick_account", "hangtag_pw_reset", "hangtag_recovery", "hangtag_device_id",
+  "hangtag_device_key", "hangtag_device_user", "hangtag_scale", "hangtag_welcome_hidden", "rc_dev", "rc_prefs", "rc_printer", "hangtag_diagnostics_v1",
+  "hangtag_latency_v1", "hangtag_agent_traces_v1"];
 export const MUST_KEEP = ["hangtag_sb_queue", "hangtag_sync_review", "rc_local", "rc_dirty", "rc_moves", "rc_returns", "rc_customers", "rc_events", "rc_cash_moves", "rc_day_closes", "rc_collections", "rc_held", "rc_orders", "rc_suppliers", "rc_purchases", "rc_supplier_pays", "rc_tables", "rc_table_sessions", "rc_pending_docs", "rc_quote_sends", "rc_biz"];   // unsent work: never drop these
 export const DATA_OWNER = "hangtag_data_owner";
 export const stashKey = (owner, k) => "hangtag_u_" + owner + "_" + k;
@@ -72,6 +83,7 @@ export function loadUserState(){
   store.events = objOr(storage.get("rc_events", {}), {});
   store.syncReview = storage.get("hangtag_sync_review", []); if(!Array.isArray(store.syncReview)) store.syncReview = [];
   store.payPending = objOr(storage.get("hangtag_pay_pending", null), null); store.payConfig = null; store.unmatched = null;
+  store.lastSyncAt = +storage.get("hangtag_last_sync", 0) || 0;
   store.cashMoves = objOr(storage.get("rc_cash_moves", {}), {}); store.dayCloses = objOr(storage.get("rc_day_closes", {}), {});
   store.suppliers = objOr(storage.get("rc_suppliers", {}), {}); store.purchases = objOr(storage.get("rc_purchases", {}), {}); store.supplierPays = objOr(storage.get("rc_supplier_pays", {}), {});
   // credit, held bills and orders (section 3m), a restaurant's tables (3o), supplier bills' originals and quotations still to send

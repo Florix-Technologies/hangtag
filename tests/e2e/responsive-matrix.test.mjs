@@ -26,6 +26,7 @@ const SCREENS = [
   { name: 'Customers', open: (D) => D.go('customers'), scope: PAGE },
   { name: 'A customer\'s profile', open: (D) => D.run(`openCustHistory(${js(riya)})`), scope: SHEETS },
   { name: 'Stock', open: (D) => D.go('stock'), scope: PAGE },
+  { name: 'Products', open: (D) => D.go('products'), scope: PAGE },
   { name: 'Reports', open: (D) => D.go('report'), scope: PAGE },
   { name: 'Orders', open: (D) => D.go('orders'), scope: PAGE },
   { name: 'Settings → Automation', open: (D) => D.run('closeModal();openSettings("automation")'), scope: PAGE },
@@ -50,8 +51,10 @@ for(const [size, vp] of Object.entries(VIEWPORTS)){
     await D.run('closeModal();closeSheets()').catch(() => {});
     await sc.open(D); await sleep(350);
     const issues = await layoutIssues(D.page, { touch, scope: sc.scope });
-    const layout = issues.filter((x) => x.kind !== 'small-target'), small = issues.filter((x) => x.kind === 'small-target');
+    const layout = issues.filter((x) => x.kind !== 'small-target' && x.kind !== 'unnamed'), small = issues.filter((x) => x.kind === 'small-target');
+    const unnamed = issues.filter((x) => x.kind === 'unnamed');
     R.check(`[${size}] ${sc.name}: fits the screen`, layout.length === 0, layout.slice(0, 6));
+    R.check(`[${size}] ${sc.name}: every control has a name a screen reader can say`, unnamed.length === 0, unnamed.slice(0, 8));
     if(touch) R.check(`[${size}] ${sc.name}: touch targets of 24 px or more`, small.length === 0, small.slice(0, 8));
   }
   await D.run('closeModal();closeSheets()').catch(() => {});

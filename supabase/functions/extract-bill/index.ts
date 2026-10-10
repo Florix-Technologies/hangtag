@@ -2,9 +2,10 @@
 // The Anthropic API key lives only here, as a function secret (ANTHROPIC_API_KEY) - never in the app.
 // Deploy with JWT verification on (the default): only signed-in Hangtag users can call it.
 import Anthropic from "npm:@anthropic-ai/sdk@0.128.0";
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2.117.2";
 import { planGate } from "../_shared/plan-gate.js";
-import { validateUpload } from "./core.js";
+import { extractRateLimits, rateSubject, validateUpload } from "./core.js";
+import { rateDecision } from "../agent/core.js";
 import { createClaudeProvider } from "./providers/claude.js";
 import { createMockProvider } from "./providers/mock.js";
 
@@ -46,6 +47,13 @@ Deno.serve(async (req) => {
   if (!up.ok) return reply(up.status, { ok: false, error: up.error, message: up.message });
   const p = provider();
   if (!p) return reply(503, { ok: false, error: "not_configured", message: "Reading bills isn't set up yet (no API key on the server)." });
+  // the rate limit, per user and per shop, before the paid AI service is called (counted only for requests that go ahead);
+  // if it can't be checked, nothing is sent: the limit protects the provider's cost
+  const { data: take, error: takeErr } = await admin.rpc("hangtag_agent_take", { p_user: await rateSubject(user.id), p_shop: await rateSubject(shopId),
+    ...extractRateLimits(Deno.env.toObject()) });
+  if (takeErr) { console.error("extract-bill: rate limit unavailable:", takeErr.code); return reply(503, { ok: false, error: "busy", message: "Reading bills isn't available right now. Try again later." }); }
+  const limit = rateDecision(take);
+  if (!limit.ok) return new Response(JSON.stringify(limit.body), { status: 429, headers: { ...CORS, "Content-Type": "application/json", ...limit.headers } });
   try {
     const r = await p.extract({ data: up.data, mimeType: up.mimeType, fileName: up.fileName });
     if (!r.ok) return reply(r.status, { ok: false, error: r.error, message: r.message });

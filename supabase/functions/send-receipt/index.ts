@@ -20,7 +20,7 @@
 // - A shop's team member sends for the shop: the shop is what the database says (hangtag_shop_id() with the caller's
 //   session and device key, forwarded as x-hangtag-device), never the caller's own id; the member needs create_sale.
 // Deploy with JWT verification on (the default).
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2.117.2";
 import { planGate } from "../_shared/plan-gate.js";
 import { CHANNEL_LABELS, ITEM_COLUMNS, RETURN_COLUMNS, MAX_PER_HOUR, ORDER_COLUMNS, ORDER_ITEM_COLUMNS, PAYMENT_COLUMNS, PROFILE_COLUMNS, QUOTE_PERMISSION, SALE_COLUMNS, SEND_PERMISSION,
   allowedToSend, billMessage, configuredChannels, emailLogo, failureAnswer, failureKind, deliveryOutcome, fromName, linkRow, linkUrl, liveLink, newToken, providerConfig, providerStatus, quoteMessage,

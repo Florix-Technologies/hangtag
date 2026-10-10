@@ -949,7 +949,7 @@ Commands:
 - `npm run test:unit`, `npm run test:db` and `npm run test:e2e` run one group.
 - `npm run lint` runs ESLint on its own.
 
-E2E tests need Chrome (set `CHROME_PATH` to override) and serve the repository on `http://localhost:3210`.
+E2E tests need a Chromium-based browser — Chrome, Chromium or Edge where Windows, macOS or Linux install it, Puppeteer's own download, or `CHROME_PATH` — and serve the repository on `http://localhost:3210` (as root on Linux, Chrome is started with `--no-sandbox`). Without a browser, `tests/run.mjs` reports those suites as skipped for the environment (exit 77), not as failures. Other suites run side by side (`TEST_JOBS`, default the cores less one, at most 4); a file running longer than `TEST_TIMEOUT_MS` (20 minutes) is stopped and reported as a timeout.
 
 The browser tests call app internals through `window.__ev`. The names they use are listed in
 `tests/test-api.json` and checked by `scripts/test-api.mjs`. When you move a function, keep it exported under the

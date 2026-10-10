@@ -13,6 +13,7 @@ import H from '../helpers/env.mjs';
 import { createPgRest } from '../helpers/pg-rest.mjs';
 import { seedProfile, sleep } from '../helpers/app.mjs';
 import { createReport } from '../helpers/report.mjs';
+import { layoutIssues } from '../helpers/responsive.mjs';
 
 const R = createReport();
 await H.ensureServer();
@@ -157,6 +158,8 @@ R.section('Customers: from the dashboard to the list, a shop\'s page, suspended 
   await P.click('[data-pc-go]');
   R.check('Restore: open again, audited', await until(P, () => /Done: restore/.test(document.querySelector('.pc-panel').innerText)) && (await suspended(OWNER)) === false
     && (await audit('customer.restore', SUPER)).length === 1);
+  const unnamed = (await layoutIssues(P, {})).filter((x) => x.kind === 'unnamed');
+  R.check('every control of the list and the shop\'s page has a name a screen reader can say', unnamed.length === 0, unnamed);
   await P.screenshot({ path: H.ARTIFACTS + '/pc3_customer_desktop.png' });
   await P.keyboard.press('Escape');
   R.check('Escape closes the shop\'s page', await until(P, () => !document.querySelector('.pc-panel')));
@@ -263,6 +266,21 @@ R.section('a billing admin: only their sections');
   const t1 = (await sql(`SELECT trial_ends_at FROM public.hangtag_subscriptions WHERE owner_id = $1`, [OWNER]))[0].trial_ends_at;
   R.check('…the trial ends 7 days later in the database, audited', Math.round((new Date(t1) - new Date(t0)) / 86400000) === 7 && (await audit('customer.extend', BILL)).length === 1, { t0, t1 });
   await ctx.close();
+}
+
+R.section('clickjacking: never inside another site\'s frame (a host that sends no frame headers too)');
+{
+  const page = await browser.newPage();   // (no page-error listener: the framed app stops itself on purpose)
+  await page.setContent(`<iframe id="c" src="${H.BASE_URL}/platform/login/" width="800" height="500"></iframe><iframe id="s" src="${H.BASE_URL}/" width="800" height="500"></iframe>`);
+  const inside = async (id) => {
+    const f = await (await page.$('#' + id)).contentFrame();
+    for (let i = 0; i < 80; i++) { const t = await f.evaluate(() => document.body && document.body.innerText).catch(() => ''); if (/inside another website/.test(t || '')) return t; await sleep(150); }
+    return f.evaluate(() => document.body && document.body.innerText).catch(() => '');
+  };
+  const c = await inside('c'), s = await inside('s');
+  R.check('the console framed by another site: it refuses and says why — no sign-in form drawn', /can't open inside another website/.test(c || '') && !/Password/.test(c || ''), c);
+  R.check('the shop app framed by another site: the same', /can't open inside another website/.test(s || ''), s);
+  await page.close();
 }
 
 await R.done(async () => { await browser.close(); await pg.close?.(); });

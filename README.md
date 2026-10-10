@@ -82,7 +82,7 @@ and are only for checking and testing (`npm install` first).
 |---|---|
 | `npm run build` | Updates the offline file list in `sw.js`, checks the architecture rules, bundle-checks and lints `src/`. Run it after changing anything under `src/`, and commit the updated `sw.js`. |
 | `npm run check` | The same checks, without writing |
-| `npm test` | Unit, database and browser tests (browser tests need Chrome and use port 3210) |
+| `npm test` | Unit, database and browser tests. Unit and database suites run side by side (`TEST_JOBS`); browser suites need Chrome, Chromium or Edge (found on Windows, macOS and Linux, or `CHROME_PATH`), use port 3210, and are reported as skipped — not failed — where no browser is installed (`TEST_STRICT=1` fails instead) |
 | `npm run test:unit` · `test:db` · `test:e2e` | One group of tests |
 
 How the code is organised, and how to add a feature, is in [ARCHITECTURE.md](ARCHITECTURE.md).

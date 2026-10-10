@@ -9,7 +9,7 @@
 //   caller's session and device key, forwarded as x-hangtag-device), never the caller's own id; each action needs the
 //   member's permission (core.js ACTION_PERMISSIONS).
 // Deploy with JWT verification on (the default). Payments that arrive later are caught by ../payment-webhook as well.
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2.117.2";
 import { planGate } from "../_shared/plan-gate.js";
 import { LIMITS, allowedToPay, apiUrl, basicAuth, configView, createLinkBody, createQrBody, expiresAt, intentReply, linkView,
   matchManual, nextIntent, permissionFor, qrView, razorpayConfig, validateRequest } from "./core.js";

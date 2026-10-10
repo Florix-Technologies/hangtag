@@ -10,7 +10,7 @@
 // - Every change records who made it (changed_by / created_by: the owner, or the member adding its own phone), so the
 //   audit log names a person although the service role writes. Reset, revoke and switch-off end the member's sign-ins
 //   (hangtag_end_sessions) and move access_reset_at on: a phone is added again only after a later password sign-in.
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2.117.2";
 import { BAN_FOREVER, LIMITS, accessResetPatch, deviceRow, enrollmentRow, freshSession, jwtClaims, latest, memberRow, newDeviceId, newDeviceKey,
   newPassword, newToken, publicMember, redeemable, revokePatch, sha256Hex, shopCode, staffEmail, validateRequest } from "./core.js";
 

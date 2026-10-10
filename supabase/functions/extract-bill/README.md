@@ -30,6 +30,11 @@ Keep JWT verification on (the default): the app calls the function with the sign
 ## Limits and privacy
 
 - PDF, JPG, PNG and WebP files up to 15 MB. The app shrinks photos to at most 2000 px before sending them.
+- A rate limit protects the AI service's cost (a free trial is easy to start): by default 6 bills a minute and 60 a day per
+  user, 12 and 150 per shop, counted before Anthropic is called (`429` with `Retry-After` when over; nothing is sent if the
+  limit can't be checked). Change them with `supabase secrets set EXTRACT_RATE_PER_MINUTE=…` (also `EXTRACT_RATE_PER_DAY`,
+  `EXTRACT_SHOP_RATE_PER_MINUTE`, `EXTRACT_SHOP_RATE_PER_DAY`; `0` = no limit). It needs the Agent's rate limiter in the
+  database (`hangtag_agent_take`, schema.sql section 3t) — its counters stay separate from the Agent's.
 - The bill is sent to Anthropic's API to be read, and is not stored by the function. The app keeps only the confirmed
   lines in `hangtag_stock_imports`.
 - Uncertain values come back as `null` with a low `confidence`. The app marks such lines "Needs review".

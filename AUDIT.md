@@ -1,7 +1,44 @@
 # Hangtag audit log
 
 The running checklist of the code audit: what was checked, what was fixed (each with a regression test), what is left.
-Newest session first. Production was never touched; nothing was deployed or pushed.
+Newest session first. Production data and services were never touched (no migration run, no function deployed); code is
+pushed only on the owner's word.
+
+## 2026-10-10 (third session: release readiness)
+
+### Checklist
+| # | Area | Finding | Status |
+|---|------|---------|--------|
+| 28 | Build (`sw.js`) | The cache name hashed the app's files byte for byte. Git stores them with LF (all 449 text files in the shell are `i/lf`) and checks them out with CRLF on Windows (`core.autocrlf=true`, set by Git for Windows) and LF on Linux, while this working tree was mixed (105 CRLF, 344 LF). So each checkout of the same commit computed its own name: on `f090c70` a fresh Windows clone gave `hangtag-e4a3197d42`, a Linux-style (LF) clone `hangtag-756745c4f5`, the committed `sw.js` said `hangtag-1b40e9a88a`, and both clones failed `npm run check` / `build.test` with "sw.js is out of date" | Fixed — `scripts/sw-cache.mjs` (the file list and hash, moved out of `build.mjs`) hashes text with CRLF read as LF and pictures byte for byte (git's own NUL test for binary). `tests/unit/sw-cache.test.mjs` computes the name from the real files as an LF and a CRLF checkout would have them: 3 failures before the fix (the two names above against `1b40e9a88a`, and the order below), 8/8 after. `sw.js` regenerated: `hangtag-756745c4f5`, one line changed |
+| 29 | Build (latent) | The file list was sorted by system path. Windows' `\` sorts after digits and capitals, `/` before them, so a folder such as `src/ui/` next to `src/ui2/` or `src/uiB.css` would be listed in another order on Linux (another `sw.js`, another test-hook module order). None of today's 437 files hit it | Fixed — sorted by URL; the same test |
+| 30 | Migrations 3x, 3y (validation) | The suites ran each migration only on top of a `schema.sql` that already holds it. The upgrade a live database goes through had not been run | Checked, no defect — `supabase/tests/upgrade-3x-3y.test.mjs` builds the previous release's database (today's `schema.sql` without 3x, 3y and their 4 report rows is exactly `9623601`'s, checked with `git diff`) with a shop, a cashier, bills (one cancelled, one with a return) and a console admin; shows its bug (a re-sent cancelled bill comes back); runs 3x then 3y, each twice, and 3y then 3x on a second copy. Report 77/77 ok, every row of the 67 tables unchanged, 3y holds for the old bills, 3x lists and opens the old shop and refuses its owner. Without 3y, 6 of its checks fail. PostgreSQL 18.3 (PGlite 0.5.8) with Supabase stand-ins; a hosted non-production project was not available (below) |
+| 31 | `extract-bill` with the real Claude API | Needs a key. There is none in this environment (the function reads `ANTHROPIC_API_KEY` from the Supabase project's secrets, not from this machine), and no Deno or Docker to serve the function locally | **Blocked** — added `npm run eval:extract-bill`: the function's own provider, request (schema, thinking, effort, fallback) and answer code on a made-up PDF bill, with only the HTTP call replaced by `fetch`. Skipped without a key. `extract-bill-provider-plumbing.test.mjs` proves its plumbing against a local stand-in for the Messages API (headers, fallback beta, streaming, JSON-schema format, a well-formed PDF, a split stream, a refused schema failing): 7/7 |
+
+### Pushed and deployed (on the owner's word, 2026-10-10)
+- `git push origin ux-productization`: `9623601..f090c70` (the eight commits of 2026-10-10). Scanned first: no `.env`, keys, tokens, logs, screenshots or `dist/` in the 103 files.
+- Vercel builds each push of the branch (`npm ci`, `npm run build`, `dist/site`). It built `f090c70` as a **Preview** (GitHub status "Deployment has completed", 14:06 UTC). The preview sits behind Vercel's sign-in (HTTP 302), so its pages weren't checked from here. Vercel's **Production** is still `6af8cc2` (2026-10-07). Promoting is done from the owner's Vercel account; this machine has no Vercel CLI login.
+- No migration was run and no Edge Function deployed. `main` (GitHub Pages) was not touched.
+
+### Test results (run, not assumed)
+- `npm run check` (this working tree): sw.js current (453 files, `hangtag-756745c4f5`), 415 modules, 0 architecture violations, bundle ok, lint 0 errors / 0 warnings.
+- Full suite on the working tree with every change of this session: **155/155 test files passed** (75 unit, 26 database, 4 eval, 50 browser) on Windows with Chrome.
+- Clean checkouts of `ed806ad`, one a fresh Windows clone (CRLF) and one an LF clone (the bytes Linux and Vercel check out):
+  - `npm run check` passes in both with the same `hangtag-756745c4f5`;
+  - unit, database and eval suites pass 105/105 in each;
+  - `npm run build` leaves `sw.js` as it is (`git status` clean), so Vercel's build produces the committed file;
+  - the service-worker browser test (`offline-queue-sw`) passes from the Windows clone.
+- Before the fix the regression test failed 3 of 8 checks; after, 8/8. The upgrade test fails 6 checks without 3y.
+- Not run: the real Claude API (no key), a hosted non-production database (none available), a Linux machine (the LF clone stands in for its checkout).
+
+### Committed (local, not pushed)
+On `ux-productization` after the pushed `f090c70`: `1eb8788` (items 28–29, the `sw.js` fix), `97df853` (item 30, the upgrade test), `ed806ad` (item 31, the real-API evaluation and its plumbing test), and this log in the commit after them.
+
+### Release blockers
+- **Live database**: sections 3x (`20261010120000_hangtag_platform_operations.sql`) and 3y (`20261011120000_hangtag_billing_integrity.sql`), in that order (the other order also works). Then run the report at the end of `schema.sql`: 77 rows, every one ok. If an earlier section (3u, 3v, 3w) was never run there, its rows say so; run it first.
+- **`extract-bill`**: run `HANGTAG_EVAL_ANTHROPIC_KEY=<key> npm run eval:extract-bill` once, then redeploy the function (items 16–20 live there).
+- **Vercel production**: promote a preview only after the two steps above. The Console's new pages need 3x; bill upload needs the redeployed function.
+- **Hosted staging**: the migrations have run only on PGlite. The one Supabase project this checkout is linked to (`supabase/.temp`) is the live one, so nothing was run there. A staging project (or a branch database) would close this.
+- Open from earlier sessions: updating known products by import; `hangtag_cap_on` callable for any shop; the console shop list's cost at scale; an unbundled first load; HSTS / nosniff on GitHub Pages.
 
 ## 2026-10-09 (second session: bill upload, product import, billing, Home, responsiveness)
 
@@ -34,7 +71,7 @@ One commit per piece of work, on `ux-productization` after `9623601`: Phase 56 `
 - The live database needs section 3y (`20261011120000_hangtag_billing_integrity.sql`) after 3r; report row 90 must say 2.
 - `extract-bill` needs redeploying for items 16–20 to reach the live app (the schema fix is in the function).
 - Products already in the shop can be left out of an import, not updated by it (prices / stock by file would be a feature).
-- `sw.js`'s cache name hashes the app's files byte for byte, line endings included (`scripts/build.mjs`). Built on this Windows working tree, a checkout with other line endings (Linux, or a fresh Windows clone) reports "sw.js is out of date" in `npm run check` and `build.test`. Hashing the text with line endings normalised would make it the same everywhere; this was found while splitting the commits and has not been changed yet.
+- ~~`sw.js`'s cache name hashes the app's files byte for byte, line endings included~~: fixed 2026-10-10 (item 28).
 
 ## 2026-10-09
 

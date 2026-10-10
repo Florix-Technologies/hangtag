@@ -4,39 +4,46 @@
 
 export const MAX_BYTES = 15 * 1024 * 1024;
 export const ACCEPTED_TYPES = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
-export const DEFAULT_MODEL = "claude-opus-5";
+export const DEFAULT_MODEL = "claude-opus-5-5";
+export const DEFAULT_EFFORT = "high";
 export const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 
+/* The Claude API compiles an output schema only within its limits: at most 16 fields that may hold two types (anyOf or a
+   type list) and 24 optional fields; past them every request is refused ("Schema is too complex for compilation"). So text
+   fields are plain strings, "" when the bill doesn't show them, and only the numbers may be null.
+   (tests/unit/extract-bill.test.mjs counts both against these limits.) */
+export const SCHEMA_LIMITS = { unionFields: 16, optionalFields: 24 };
+const text = { type: "string" };
 const nullable = (type) => ({ anyOf: [{ type }, { type: "null" }] });
 const obj = (properties) => ({ type: "object", properties, required: Object.keys(properties), additionalProperties: false });
 
-/* What the model must return. Every field is present; unknown values are null (never guessed). */
+/* What the model must return. Every field is present; unknown text is "" and unknown numbers are null (never guessed). */
 export const EXTRACTION_SCHEMA = obj({
-  supplier: obj({ name: nullable("string"), gstin: nullable("string") }),
-  invoice: obj({ number: nullable("string"), date: nullable("string") }),
-  currency: nullable("string"),
+  supplier: obj({ name: text, gstin: text }),
+  invoice: obj({ number: text, date: text }),
+  currency: text,
   lines: {
     type: "array",
     items: obj({
-      name: nullable("string"),
-      description: nullable("string"),
-      brand: nullable("string"),
-      options: { type: "array", items: obj({ name: { type: "string" }, value: { type: "string" } }) },
+      name: text,
+      description: text,
+      brand: text,
+      options: { type: "array", items: obj({ name: text, value: text }) },
       quantity: nullable("number"),
-      unit: nullable("string"),
+      unit: text,
       unit_price: nullable("number"),
       total_price: nullable("number"),
       mrp: nullable("number"),
-      sku: nullable("string"),
-      barcode: nullable("string"),
-      hsn: nullable("string"),
+      sku: text,
+      barcode: text,
+      hsn: text,
       gst_rate: nullable("number"),
       tax_amount: nullable("number"),
       confidence: { type: "number" },
-      notes: nullable("string"),
+      notes: text,
     }),
   },
-  warnings: { type: "array", items: { type: "string" } },
+  warnings: { type: "array", items: text },
 });
 
 export const SYSTEM_PROMPT = `You read supplier purchase bills (tax invoices, delivery challans, estimates) for a small Indian retail shop. The shop uses what you extract to add stock it received, after a person reviews every line, so accuracy matters more than completeness.
@@ -44,17 +51,17 @@ export const SYSTEM_PROMPT = `You read supplier purchase bills (tax invoices, de
 Extract every product line on the bill: the goods the shop received. Skip lines that are not products (freight, packing, round-off, discounts, sub-totals, tax summaries, totals) and mention each skipped line in warnings.
 
 Rules:
-- Never invent or infer a value that is not on the bill. If a field is not shown, or you cannot read it, return null. An empty list of options is correct when the bill shows none.
+- Never invent or infer a value that is not on the bill. If a text field is not shown, or you cannot read it, return an empty string; if a number is not shown or unreadable, return null. An empty list of options is correct when the bill shows none.
 - Split the product name from option values only when the bill clearly shows them, for example separate Colour / Size / Storage columns, or an obvious pattern such as "Dress Black M". Use the bill's own words for option names (Colour, Size, Storage, RAM, Weight, Pack size, Model, Shade, Material, Length…) and values. When unsure, keep the text in the name.
-- quantity is the number received on that line. unit is the printed unit, normalised to one of: pcs, box, pack, dozen, kg, g, l, ml, m. Common words such as Nos/pieces become pcs and litres become l. If no unit is printed, return null. If the bill gives packs or dozens and the piece count is not stated, keep the printed quantity and unit and explain in notes.
+- quantity is the number received on that line. unit is the printed unit, normalised to one of: pcs, box, pack, dozen, kg, g, l, ml, m. Common words such as Nos/pieces become pcs and litres become l. If no unit is printed, return an empty string. If the bill gives packs or dozens and the piece count is not stated, keep the printed quantity and unit and explain in notes.
 - unit_price is the supplier's price per unit before tax when the bill shows it; total_price is the line amount as printed. Do not compute a missing price.
 - mrp is the printed maximum retail price, if any.
 - hsn is the HSN/SAC code exactly as printed (digits only). gst_rate is the tax percentage for the line (for example 5 or 12); if CGST and SGST are shown separately, add them. tax_amount is the line's tax if printed.
 - sku and barcode only when printed for that line (article no., style no., item code, EAN/UPC).
 - Numbers: plain numbers without currency symbols or thousands separators.
-- invoice.date as YYYY-MM-DD when the date is readable, otherwise null. supplier.gstin exactly as printed.
+- invoice.date as YYYY-MM-DD when the date is readable, otherwise an empty string. supplier.gstin exactly as printed.
 - confidence (0 to 1) is how sure you are that the whole line is read correctly. Use a low value for blurry, handwritten, cut-off or ambiguous lines, and say why in notes.
-- currency: "INR" for rupee bills, otherwise the currency shown, or null.`;
+- currency: "INR" for rupee bills, otherwise the currency shown, or an empty string.`;
 
 /* Checks the request body; returns { ok:true, data, mimeType, fileName, fileHash } or { ok:false, status, error, message } */
 export function validateUpload(body) {
@@ -78,16 +85,19 @@ export function buildUserContent({ data, mimeType, fileName }) {
   return [file, { type: "text", text: `Extract the product lines from this supplier bill (file: ${String(fileName || "bill").slice(0, 120)}).` }];
 }
 
+/* EXTRACT_EFFORT: how hard the model works on a bill (lower is faster) */
+export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+
 /* Parameters for client.beta.messages.stream(): JSON output constrained to EXTRACTION_SCHEMA, adaptive thinking, and the
    server-side refusal fallback (a declined request is re-run on Anthropic's recommended fallback model) */
-export function buildRequest({ model, data, mimeType, fileName }) {
+export function buildRequest({ model, effort, data, mimeType, fileName }) {
   return {
     model: model || DEFAULT_MODEL,
     max_tokens: 64000,
     betas: [FALLBACK_BETA],
     fallbacks: "default",
     thinking: { type: "adaptive" },
-    output_config: { effort: "high", format: { type: "json_schema", schema: EXTRACTION_SCHEMA } },
+    output_config: { effort: EFFORTS.includes(effort) ? effort : DEFAULT_EFFORT, format: { type: "json_schema", schema: EXTRACTION_SCHEMA } },
     system: SYSTEM_PROMPT,
     messages: [{ role: "user", content: buildUserContent({ data, mimeType, fileName }) }],
   };
@@ -105,10 +115,11 @@ export function parseModelResponse(message, meta = {}) {
 }
 
 /* ---------- normalisation ---------- */
+/* Text as read: "" (the schema's "not on the bill") and placeholders such as "null" or "N/A" mean none */
 const str = (v, max = 300) => {
   if (v === null || v === undefined) return null;
   const s = String(v).replace(/\s+/g, " ").trim();
-  return s ? s.slice(0, max) : null;
+  return s && !/^(null|none|n\/?a|-+|—)$/i.test(s) ? s.slice(0, max) : null;
 };
 /* "₹1,099.00" → 1099, "5%" → 5, "Rs. 12.5" → 12.5; anything unreadable → null */
 export function toNumber(v) {
@@ -197,4 +208,27 @@ export async function rateSubject(id) {
   const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode("extract-bill:" + String(id))));
   const h = Array.from(bytes.slice(0, 16), (b) => b.toString(16).padStart(2, "0")).join("");
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-${(8 | (parseInt(h[16], 16) & 3)).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
+/* The limiter isn't in this database yet (schema.sql section 3t not applied): PostgREST can't find the function. Bills are
+   then read without a limit, as before it existed; any other failure to check it refuses the reading. */
+export const limiterMissing = (err) => !!err && (err.code === "PGRST202" || err.code === "42883");
+
+/* ---------- the answer, kept alive ----------
+   A long bill can take the model longer than the platform waits for a first byte (Supabase answers 504 after 150 s of
+   silence), so while the bill is read a space goes out every few seconds and the JSON follows (JSON allows leading
+   whitespace). The status is 200 by then: a failure travels in the body as { ok:false, error, message }. */
+export function keepAliveBody(work, { every = 10000 } = {}) {
+  const enc = new TextEncoder();
+  let timer;
+  return new ReadableStream({
+    start(controller) {
+      const send = (s) => { try { controller.enqueue(enc.encode(s)); return true; } catch { return false; } };
+      send(" ");
+      timer = setInterval(() => { if (!send(" ")) clearInterval(timer); }, every);
+      Promise.resolve(work)
+        .catch(() => ({ ok: false, error: "provider_error", message: "The bill couldn't be read right now. Try again, or enter the lines by hand." }))
+        .then((body) => { clearInterval(timer); send(JSON.stringify(body)); try { controller.close(); } catch { /* the caller left */ } });
+    },
+    cancel() { clearInterval(timer); },
+  });
 }

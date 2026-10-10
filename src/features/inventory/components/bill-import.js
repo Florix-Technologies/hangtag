@@ -66,7 +66,7 @@ export function renderBillImport(){
     `<div class="sh-acts"><button class="btn sm" data-bi="cancel">Cancel</button><button class="btn sm primary" data-bi="continue">Continue anyway</button></div>`);
   // reading failed: the bill is kept; read it again, or enter its lines by hand (the original stays attached)
   if(b.step === "failed") return shell("The bill couldn't be read", esc(b.file ? b.file.name : ""),
-    `<p class="autherr" role="alert">${esc(b.err)}</p>${docHTML(b)}`,
+    `<p class="autherr" role="alert">${esc(b.err)}</p><p class="note">Your bill is kept: read it again, or enter its lines by hand and it stays attached.</p>${docHTML(b)}`,
     `<div class="sh-acts"><button class="btn sm" data-bi="another">Choose another file</button><button class="btn sm" data-bi="manual">Enter the lines by hand</button><button class="btn sm primary" data-bi="retry">Try reading again</button></div>`);
   if(b.step === "review") return renderReview();
   if(b.step === "summary") return renderSummary();
@@ -74,7 +74,11 @@ export function renderBillImport(){
       <span class="note">${b.result.products ? `${b.result.products} new product${b.result.products === 1 ? "" : "s"} · ` : ""}${b.result.variants ? `${b.result.variants} new variant${b.result.variants === 1 ? "" : "s"} · ` : ""}${b.result.purchase ? `Recorded as a purchase from ${esc(b.result.purchase)} (Inventory → Purchases).` : "It shows in Stock history as “Supplier bill”."}</span></div>`,
     `<div class="sh-acts"><button class="btn sm primary" data-bi="close">Done</button></div>`);
 }
-/* Where the original is kept */
+/* Where the original is kept (redrawn alone when its cloud copy arrives: the lines being edited keep their focus) */
+function repaintDoc(){
+  const b = B(), el = document.querySelector("#modalHost [data-billimp] .bi-doc");
+  if(b && el) el.outerHTML = docHTML(b);
+}
 function docHTML(b){
   if(!b.file) return "";
   const d = b.doc || {};
@@ -188,9 +192,12 @@ async function chooseFile(file){
   b.file = file; b.err = ""; b.step = "busy"; b.busy = "Checking the bill…"; renderBillImport();
   try{
     // Keep the original before hashing or extraction: either may fail and the selected bill must still be recoverable.
+    // on this device at once; its cloud copy goes up while the bill is read
     b.busy = "Keeping the bill…"; renderBillImport();
-    b.doc = await keepBillDocument(b.importId, file);
+    b.doc = await keepBillDocument(b.importId, file, { background: true });
     if(B() !== b) return;
+    const doc = b.doc;
+    doc.cloudP.then(() => { if(B() === b && b.doc === doc) repaintDoc(); });
     b.busy = "Checking the bill…"; renderBillImport();
     const f = await fingerprintBill(file);
     if(B() !== b) return;
@@ -218,8 +225,9 @@ async function extract(){
     if(B() !== b) return;
     // the bill stays: read it again, enter its lines by hand (it stays attached), or choose another file
     b.step = "failed";
-    b.err = isAppError(e) && e.code === ERROR_CODES.NOT_CONFIGURED ? "Reading bills isn't set up yet (the extract-bill function needs its API key). Enter the lines by hand: the bill stays attached."
-      : (isAppError(e) ? e.message : "The bill couldn't be read.") + " Try reading it again, or enter the lines by hand: the bill stays attached.";
+    b.err = isAppError(e) && e.code === ERROR_CODES.NOT_CONFIGURED ? "Reading bills isn't set up yet (the extract-bill function needs its API key)."
+      : isAppError(e) && e.code === ERROR_CODES.SUBSCRIPTION ? e.message
+      : isAppError(e) ? e.message : "The bill couldn't be read.";
     renderBillImport();
   }
 }

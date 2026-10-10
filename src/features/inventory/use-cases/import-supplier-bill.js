@@ -8,7 +8,7 @@
 //   · Nothing reaches stock before the merchant confirms the reviewed lines.
 import { store } from '../../../shared/state/store.js';
 import { use } from '../../../shared/di/services.js';
-import { blankReviewLine, newReviewLines, planImport, prepareLines, reviewReasons } from '../../../domain/inventory/bill-import.js';
+import { billFileType, blankReviewLine, newReviewLines, planImport, prepareLines, reviewReasons } from '../../../domain/inventory/bill-import.js';
 import { lineMoney, lineTrackingError } from '../../../domain/inventory/purchase.js';
 import { normBatch, parseSerials } from '../../../domain/inventory/tracking.js';
 import { toRupees } from '../../../domain/sales/paise.js';
@@ -28,20 +28,26 @@ import { hasCap } from '../../shop/services/shop-caps.js';
 const EXT = { "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/heic": "heic" };
 /* The shop's folder in the cloud (the owner's account; a team member's shop) */
 const shopFolder = () => isMember() ? store.access && store.access.shopId : store.authUser && store.authUser.id;
-export const documentPath = (importId, file) => { const f = shopFolder(); const ext = EXT[file && file.type] || String(file && file.name || "").split(".").pop().toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 5) || "bin"; return f ? `${f}/${importId}.${ext}` : ""; };
-/* Keeps the chosen file: on this device at once, then in the cloud. → { local, cloud, path } (never throws) */
-export async function keepBillDocument(importId, file){
+export const documentPath = (importId, file) => { const f = shopFolder(); const ext = EXT[billFileType(file)] || String(file && file.name || "").split(".").pop().toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 5) || "bin"; return f ? `${f}/${importId}.${ext}` : ""; };
+/* Keeps the chosen file: on this device at once, then in the cloud. → { local, cloud, path, cloudP } (never throws).
+   background: returns once the device has it, the cloud copy still going up (cloudP settles when it is done; reading the
+   bill doesn't wait for a large photo or PDF to upload twice). */
+export async function keepBillDocument(importId, file, { background = false } = {}){
+  const type = billFileType(file) || file.type || "";
   const out = { local: false, cloud: false, path: documentPath(importId, file) };
-  try{ await use("blobStore").put(importId, { blob: file, name: file.name, type: file.type }); out.local = true; }catch(e){ logger.warn("Bill kept in memory only:", e); }
-  if(out.path){
-    try{ await use("cloud").uploadBillDocument(out.path, file, file.type); out.cloud = true; }
-    catch(e){ logger.warn("Bill not in the cloud yet:", e); }
-  }
-  // one the cloud doesn't have yet goes up later (pendingDocs: retried whenever the app connects)
+  try{ await use("blobStore").put(importId, { blob: file, name: file.name, type }); out.local = true; }catch(e){ logger.warn("Bill kept in memory only:", e); }
+  // until the cloud has it, it waits on this device (pendingDocs: retried whenever the app connects)
   const P = store.pendingDocs || (store.pendingDocs = {});
-  if(out.cloud){ delete P[importId]; if(out.local) use("blobStore").remove(importId).catch(() => {}); }
-  else if(out.local) P[importId] = { path: out.path, name: file.name || "", type: file.type || "", t: Date.now(), saved: false };
-  savePendingDocs();
+  if(out.local && out.path){ P[importId] = { path: out.path, name: file.name || "", type, t: Date.now(), saved: false }; savePendingDocs(); }
+  out.cloudP = (async () => {
+    if(!out.path) return false;
+    try{ await use("cloud").uploadBillDocument(out.path, file, type); out.cloud = true; }
+    catch(e){ logger.warn("Bill not in the cloud yet:", e); return false; }
+    const Q = store.pendingDocs || {};
+    if(Q[importId] && !Q[importId].saved){ delete Q[importId]; savePendingDocs(); if(out.local) use("blobStore").remove(importId).catch(() => {}); }
+    return true;
+  })();
+  if(!background) await out.cloudP;
   return out;
 }
 /* The merchant closed a bill without saving it (or chose another file): its original isn't kept waiting on this device
@@ -159,7 +165,8 @@ export async function confirmSupplierBill(b, plan, { allowDuplicate = false } = 
   const totals = used.map(l => l.total).filter(x => x != null);
   // the original: in the cloud already, or (still waiting) attached as soon as it gets there
   if(b.file && !b.doc) b.doc = await keepBillDocument(b.importId, b.file);
-  if(b.file && b.doc && !b.doc.cloud && b.doc.path){ try{ await use("cloud").uploadBillDocument(b.doc.path, b.file, b.file.type); b.doc.cloud = true; }catch{ /* goes up later */ } }
+  if(b.doc && b.doc.cloudP) await b.doc.cloudP;
+  if(b.file && b.doc && !b.doc.cloud && b.doc.path){ try{ await use("cloud").uploadBillDocument(b.doc.path, b.file, billFileType(b.file) || b.file.type); b.doc.cloud = true; }catch{ /* goes up later */ } }
   const pf = purchaseFields(b, plan);
   const meta = { id: b.importId, fileHash: b.fileHash, fileName: b.file && b.file.name, fileType: b.file && b.file.type,
     supplier: pf ? pf.supplier : b.supplier, gstin: pf ? pf.gstin : b.gstin, invoiceNo: b.invoiceNo, invoiceDate: b.invoiceDate,

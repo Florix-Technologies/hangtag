@@ -24,7 +24,8 @@ await pg.as(`INSERT INTO public.hangtag_meta (key, value) VALUES ('settings', '{
 const PDF = H.ARTIFACTS + '/bill-inv-1042.pdf', IMG = H.ARTIFACTS + '/bill-photo.png', PDF2 = H.ARTIFACTS + '/notconfigured.pdf', IMG2 = H.ARTIFACTS + '/tracked.png';
 fs.writeFileSync(IMG2, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==', 'base64'));
 const trackedHash = crypto.createHash('sha256').update(fs.readFileSync(IMG2)).digest('hex');
-let trackedCalls = 0, storageUp = false; const storageCalls = [];
+let trackedCalls = 0, storageUp = false, holdStorage = false; const storageCalls = [], held = [];
+const releaseStorage = () => { holdStorage = false; held.splice(0).forEach((f) => f()); };
 fs.writeFileSync(PDF, '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[]/Count 0>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n');
 fs.writeFileSync(PDF2, '%PDF-1.4\n% other\n%%EOF\n');
 fs.writeFileSync(IMG, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64'));
@@ -48,6 +49,9 @@ const extractBill = async (r) => {
   const body = JSON.parse(r.postData());
   fnCalls.push({ type: body.mime_type, name: body.file_name, bytes: body.data.length, hash: body.file_hash });
   if (body.file_name === 'notconfigured.pdf') return r.respond({ status: 503, contentType: 'application/json', headers: CORS, body: JSON.stringify({ ok: false, error: 'not_configured', message: 'no key' }) });
+  // section 8: the function's streamed answer (spaces while it reads, then the JSON), and a refusal inside one
+  if (body.file_name === 'streamed.pdf') return r.respond({ status: 200, contentType: 'application/json', headers: CORS, body: '    ' + String.fromCharCode(10) + ' ' + JSON.stringify(PHOTO) });
+  if (body.file_name === 'refused.pdf') return r.respond({ status: 200, contentType: 'application/json', headers: CORS, body: '   ' + JSON.stringify({ ok: false, error: 'busy', message: 'The reading service is busy. Try again in a minute.' }) });
   // section 7: the reading fails once (the provider is busy), then works
   if (body.file_hash === trackedHash) {
     if (++trackedCalls === 1) return r.respond({ status: 502, contentType: 'application/json', headers: CORS, body: JSON.stringify({ ok: false, error: 'provider_error', message: 'The reading service is busy.' }) });
@@ -69,6 +73,7 @@ A.on('request', async (r) => {
   if (u.startsWith('http://localhost:3210/')) return (u === 'http://localhost:3210/' || u.includes('/?')) ? r.respond({ status: 200, contentType: 'text/html', body: H.hookedHtml() }) : r.continue();
   // the shop's private bill folder (Storage): unreachable until section 7 turns it on
   if (u.includes('.supabase.co/storage/v1/object/hangtag-bills/')) { storageCalls.push({ path: new URL(u).pathname.split('/hangtag-bills/')[1], method: r.method(), up: storageUp });
+    if (holdStorage) { held.push(() => r.respond({ status: 200, contentType: 'application/json', headers: CORS, body: '{}' })); return; }
     return storageUp ? r.respond({ status: 200, contentType: 'application/json', headers: CORS, body: JSON.stringify({ Key: 'hangtag-bills/' + new URL(u).pathname.split('/hangtag-bills/')[1] }) }) : r.abort(); }
   if (u.includes('.supabase.co/')) { if (!(await pg.handle(r, { '/functions/v1/extract-bill': extractBill }))) r.abort(); return; }
   r.continue();
@@ -238,6 +243,35 @@ const upped = await run('return await sendPendingDocs()');
 const withDoc = (await q1(`SELECT count(*)::int AS n FROM public.hangtag_stock_imports WHERE document_path IS NOT NULL`))[0].n;
 check('…once it can, every original still waiting goes up to the shop\'s folder (this one and the earlier bills\') and each saved bill points at its own', upped >= 2 && upped === savedWaiting && (await docRow()).document_path === keptPath
   && withDoc === upped && (await run('return Object.keys(pendingDocs).length')) === 0 && storageCalls.some((c) => c.path === keptPath && c.up), { upped, withDoc, doc: await docRow() });
+
+// ---------- 8. reading doesn't wait for the cloud copy; a streamed answer; a refusal inside one; a file without a type ----------
+const PDF3 = H.ARTIFACTS + '/streamed.pdf', PDF4 = H.ARTIFACTS + '/refused.pdf';
+fs.writeFileSync(PDF3, '%PDF-1.4\n% streamed\n%%EOF\n'); fs.writeFileSync(PDF4, '%PDF-1.4\n% refused\n%%EOF\n');
+holdStorage = true;
+await A.click('.vh-acts [data-act="billimport"]'); await sleep(200);
+await (await A.$('.bi-pick input[accept^="application/pdf"]')).uploadFile(PDF3);
+check('the bill is read while its original is still going up to the cloud (the upload no longer comes first)',
+  await until('billImport&&billImport.step==="review"', 30000) && held.length >= 1 && fnCalls.some((c) => c.name === 'streamed.pdf'), { held: held.length, step: await run('return billImport&&billImport.step') });
+check('an answer that streamed (spaces, then the JSON) is read as usual', (await run('return billImport.lines.length')) === 1);
+check('…meanwhile the original shows as kept on this device', /kept on this device/.test(await A.$eval('.bi-doc', (e) => e.textContent)));
+const ln = await run('return billImport.lines[0].id');
+await A.focus(`#bi-${ln} [data-bif="name"]`);
+releaseStorage();
+check('…then as saved in the cloud, and the line being edited keeps its focus', await until('/saved in the cloud/.test((document.querySelector(".bi-doc")||{}).textContent||"")', 10000)
+  && (await A.evaluate(() => document.activeElement && document.activeElement.dataset.bif)) === 'name');
+await run('discardBillDocument(billImport.importId);billImport=null;closeModal()');
+await A.click('.vh-acts [data-act="billimport"]'); await sleep(200);
+await (await A.$('.bi-pick input[accept^="application/pdf"]')).uploadFile(PDF4);
+check('a refusal inside a streamed answer → its message, said once, with Try again and enter by hand', await until('billImport&&billImport.step==="failed"', 30000)
+  && (await A.$eval('.billimp .autherr', (e) => e.textContent)) === 'The reading service is busy. Try again in a minute.' && !!(await A.$('[data-bi="retry"]')) && !!(await A.$('[data-bi="manual"]')),
+  await A.$eval('.billimp', (e) => e.textContent.slice(0, 300)));
+await run('discardBillDocument(billImport.importId);billImport=null;closeModal()');
+await A.click('.vh-acts [data-act="billimport"]'); await sleep(200);
+const sent = fnCalls.length;
+await run('const f=new File([new TextEncoder().encode("%PDF-1.4 untyped %%EOF")],"untyped.PDF",{type:""});await billImportChange({matches:(s)=>s==="[data-bifile]",files:[f],value:""});');
+check('a PDF the file picker gave no type is still read as a PDF, and kept as one', await until('billImport&&billImport.step==="review"', 30000)
+  && fnCalls.slice(sent).some((c) => c.name === 'untyped.PDF' && c.type === 'application/pdf') && /\.pdf$/.test(await run('return billImport.doc.path')), fnCalls.slice(sent));
+await run('discardBillDocument(billImport.importId);billImport=null;closeModal()');
 
 await browser.close(); await pg.db.close();
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');

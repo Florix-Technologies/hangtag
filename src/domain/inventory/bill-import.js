@@ -5,6 +5,17 @@ import { COLORS } from '../../shared/utils/colors.js';
 import { normBatch } from './tracking.js';
 
 export const REVIEW_CONFIDENCE = 0.8;
+
+/* ---------- the chosen file ---------- */
+const BILL_TYPES = { pdf: "application/pdf", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", heic: "image/heic", heif: "image/heic" };
+/* A bill file's type: what the picker said, else read from its name (some Android pickers give PDFs and photos no type);
+   "" when it is neither a PDF nor a picture */
+export function billFileType(file){
+  const t = String((file && file.type) || "").toLowerCase().trim();
+  if(t === "application/pdf" || t.startsWith("image/")) return t === "image/jpg" ? "image/jpeg" : t === "image/heif" ? "image/heic" : t;
+  const ext = String((file && file.name) || "").toLowerCase().split(".").pop();
+  return BILL_TYPES[ext] || "";
+}
 const low = s => String(s == null ? "" : s).toLowerCase();
 /* names compared without case, punctuation or extra spaces ("T-Shirt  (Black)" ~ "t shirt black") */
 export const normName = s => low(s).replace(/[^\p{L}\p{N}]+/gu, " ").trim();

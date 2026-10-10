@@ -4,7 +4,7 @@
 import Anthropic from "npm:@anthropic-ai/sdk@0.128.0";
 import { createClient } from "npm:@supabase/supabase-js@2.117.2";
 import { planGate } from "../_shared/plan-gate.js";
-import { extractRateLimits, rateSubject, validateUpload } from "./core.js";
+import { extractRateLimits, keepAliveBody, limiterMissing, rateSubject, validateUpload } from "./core.js";
 import { rateDecision } from "../agent/core.js";
 import { createClaudeProvider } from "./providers/claude.js";
 import { createMockProvider } from "./providers/mock.js";
@@ -21,7 +21,7 @@ function provider() {
   const name = (Deno.env.get("EXTRACT_PROVIDER") || "claude").toLowerCase();
   if (name === "mock") return createMockProvider();
   if (!Deno.env.get("ANTHROPIC_API_KEY")) return null;
-  return createClaudeProvider(new Anthropic(), { model: Deno.env.get("EXTRACT_MODEL") || undefined });
+  return createClaudeProvider(new Anthropic(), { model: Deno.env.get("EXTRACT_MODEL") || undefined, effort: Deno.env.get("EXTRACT_EFFORT") || undefined });
 }
 
 Deno.serve(async (req) => {
@@ -51,18 +51,22 @@ Deno.serve(async (req) => {
   // if it can't be checked, nothing is sent: the limit protects the provider's cost
   const { data: take, error: takeErr } = await admin.rpc("hangtag_agent_take", { p_user: await rateSubject(user.id), p_shop: await rateSubject(shopId),
     ...extractRateLimits(Deno.env.toObject()) });
-  if (takeErr) { console.error("extract-bill: rate limit unavailable:", takeErr.code); return reply(503, { ok: false, error: "busy", message: "Reading bills isn't available right now. Try again later." }); }
-  const limit = rateDecision(take);
+  if (takeErr && limiterMissing(takeErr)) console.error("extract-bill: the rate limiter isn't in the database (schema.sql section 3t); reading without a limit");
+  else if (takeErr) { console.error("extract-bill: rate limit unavailable:", takeErr.code); return reply(503, { ok: false, error: "busy", message: "Reading bills isn't available right now. Try again later." }); }
+  const limit = takeErr ? { ok: true } : rateDecision(take);
   if (!limit.ok) return new Response(JSON.stringify(limit.body), { status: 429, headers: { ...CORS, "Content-Type": "application/json", ...limit.headers } });
-  try {
-    const r = await p.extract({ data: up.data, mimeType: up.mimeType, fileName: up.fileName });
-    if (!r.ok) return reply(r.status, { ok: false, error: r.error, message: r.message });
-    return reply(200, r.result);
-  } catch (e) {
-    // typed SDK errors: rate limits and overload are worth retrying; anything else is reported plainly (no file content logged)
-    const status = e instanceof Anthropic.APIError ? e.status : undefined;
-    console.error("extract-bill failed:", status ?? "", e instanceof Error ? e.message : String(e));
-    if (e instanceof Anthropic.RateLimitError || status === 529) return reply(503, { ok: false, error: "busy", message: "The reading service is busy. Try again in a minute." });
-    return reply(502, { ok: false, error: "provider_error", message: "The bill couldn't be read right now. Try again, or enter the lines by hand." });
-  }
+  // reading can outlast the platform's 150 s wait for a first byte: the answer streams (spaces, then the JSON)
+  const work = (async () => {
+    try {
+      const r = await p.extract({ data: up.data, mimeType: up.mimeType, fileName: up.fileName });
+      return r.ok ? r.result : { ok: false, error: r.error, message: r.message };
+    } catch (e) {
+      // typed SDK errors: rate limits and overload are worth retrying; anything else is reported plainly (no file content logged)
+      const status = e instanceof Anthropic.APIError ? e.status : undefined;
+      console.error("extract-bill failed:", status ?? "", e instanceof Error ? e.message : String(e));
+      if (e instanceof Anthropic.RateLimitError || status === 529) return { ok: false, error: "busy", message: "The reading service is busy. Try again in a minute." };
+      return { ok: false, error: "provider_error", message: "The bill couldn't be read right now. Try again, or enter the lines by hand." };
+    }
+  })();
+  return new Response(keepAliveBody(work), { status: 200, headers: { ...CORS, "Content-Type": "application/json", "Cache-Control": "no-store" } });
 });

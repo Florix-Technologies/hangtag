@@ -21,7 +21,8 @@ To use another OCR or extraction service, add a provider with the same `extract(
 supabase functions deploy extract-bill --project-ref <your-project-ref>
 supabase secrets set ANTHROPIC_API_KEY=<your key> --project-ref <your-project-ref>
 # optional
-supabase secrets set EXTRACT_MODEL=claude-opus-5        # default
+supabase secrets set EXTRACT_MODEL=claude-opus-5-5      # default
+supabase secrets set EXTRACT_EFFORT=high                # default; medium reads faster
 supabase secrets set EXTRACT_PROVIDER=mock              # test the flow without a key
 ```
 
@@ -32,9 +33,16 @@ Keep JWT verification on (the default): the app calls the function with the sign
 - PDF, JPG, PNG and WebP files up to 15 MB. The app shrinks photos to at most 2000 px before sending them.
 - A rate limit protects the AI service's cost (a free trial is easy to start): by default 6 bills a minute and 60 a day per
   user, 12 and 150 per shop, counted before Anthropic is called (`429` with `Retry-After` when over; nothing is sent if the
-  limit can't be checked). Change them with `supabase secrets set EXTRACT_RATE_PER_MINUTE=…` (also `EXTRACT_RATE_PER_DAY`,
+  limit can't be checked, except on a database without the limiter, which reads without one). Change them with `supabase secrets set EXTRACT_RATE_PER_MINUTE=…` (also `EXTRACT_RATE_PER_DAY`,
   `EXTRACT_SHOP_RATE_PER_MINUTE`, `EXTRACT_SHOP_RATE_PER_DAY`; `0` = no limit). It needs the Agent's rate limiter in the
   database (`hangtag_agent_take`, schema.sql section 3t) — its counters stay separate from the Agent's.
 - The bill is sent to Anthropic's API to be read, and is not stored by the function. The app keeps only the confirmed
   lines in `hangtag_stock_imports`.
-- Uncertain values come back as `null` with a low `confidence`. The app marks such lines "Needs review".
+- Uncertain values come back empty with a low `confidence`. The app marks such lines "Needs review".
+- The model answers in a JSON schema. The API compiles such a schema only within limits: at most 16 fields of two types
+  (`anyOf`) and 24 optional fields, or every request fails with "Schema is too complex for compilation". So text the bill
+  doesn't show comes back as `""` and only numbers may be `null` (`tests/unit/extract-bill.test.mjs` counts both).
+- Reading a long bill can take longer than Supabase waits for a first byte (150 s, then `504`). Once the reading starts,
+  the function answers `200` at once and sends a space every 10 s, then the JSON; a failure from then on is in the body
+  (`{ ok: false, error, message }`). A function's total run time is still capped (150 s on the free plan, 400 s paid):
+  for very long bills on the free plan, split the PDF or set `EXTRACT_EFFORT=medium`.

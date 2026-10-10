@@ -579,19 +579,25 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
       if(r.error) throw toAppError(r.error);
       throw new AppError(ERROR_CODES.DELIVERY, "The message wasn't confirmed as sent.", { details: info });
     },
-    /* Supabase Edge Function extract-bill: { file_name, mime_type, data (base64), file_hash } → the extraction */
+    /* Supabase Edge Function extract-bill: { file_name, mime_type, data (base64), file_hash } → the extraction. Its refusals
+       come as an error status (before reading starts) or, once the answer streams, as 200 with { ok:false, error, message }. */
     async extractBill(body){
       let r;
       try{ r = await db().functions.invoke("extract-bill", { body }); }
       catch(e){ throw toAppError(e); }
-      if(!r.error) return r.data;
-      let info = null;
-      try{ info = r.error.context && typeof r.error.context.json === "function" ? await r.error.context.json() : null; }catch{ info = null; }
-      if(info && info.error === "subscription_inactive") throw new AppError(ERROR_CODES.SUBSCRIPTION, info.message || "This shop's Hangtag plan has ended. Renew it in Plans & Billing.", { cause: r.error, details: info });
-      if(info && info.error === "not_configured") throw new AppError(ERROR_CODES.NOT_CONFIGURED, "Reading bills isn't set up yet.", { cause: r.error, details: info });
-      if(info && info.message) throw new AppError(ERROR_CODES.VALIDATION, info.message, { cause: r.error, details: info });
-      if(/relay|404|not found/i.test(String(r.error.message || "")) && !info) throw new AppError(ERROR_CODES.NOT_CONFIGURED, "Reading bills isn't set up yet.", { cause: r.error });
-      throw toAppError(r.error);
+      if(!r.error && !(r.data && r.data.ok === false)) return r.data;
+      let info = r.error ? null : r.data;
+      if(r.error){ try{ info = r.error.context && typeof r.error.context.json === "function" ? await r.error.context.json() : null; }catch{ info = null; } }
+      const E = (c, m) => new AppError(c, m, { cause: r.error || undefined, details: info });
+      if(info && info.error === "subscription_inactive") throw E(ERROR_CODES.SUBSCRIPTION, info.message || "This shop's Hangtag plan has ended. Renew it in Plans & Billing.");
+      if(info && info.error === "not_configured") throw E(ERROR_CODES.NOT_CONFIGURED, "Reading bills isn't set up yet.");
+      if(info && info.error === "unauthorized") throw E(ERROR_CODES.AUTH, "Sign in again to read bills.");
+      // busy, rate-limited or the reading service failing: worth trying again (the message says when)
+      if(info && ["busy", "rate_limited", "provider_error", "no_response", "bad_output"].includes(info.error)) throw E(ERROR_CODES.NETWORK, info.message || "The bill couldn't be read right now. Try again.");
+      if(info && info.message) throw E(ERROR_CODES.VALIDATION, info.message);
+      if(r.error && /relay|404|not found/i.test(String(r.error.message || "")) && !info) throw E(ERROR_CODES.NOT_CONFIGURED, "Reading bills isn't set up yet.");
+      if(r.error) throw toAppError(r.error);
+      throw E(ERROR_CODES.UNKNOWN, "The bill couldn't be read. Try again, or enter the lines by hand.");
     },
   };
 }

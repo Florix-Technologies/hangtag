@@ -1,6 +1,6 @@
 // Supplier bill import planning (src/domain/inventory/bill-import.js): review lines, matching, the plan and applying it.
 // Run: npm run test:unit
-import { applyPlan, buildIndex, matchLine, newReviewLines, planImport, prepareLines, reviewReasons } from '../../src/domain/inventory/bill-import.js';
+import { applyPlan, billFileType, buildIndex, matchLine, newReviewLines, planImport, prepareLines, reviewReasons } from '../../src/domain/inventory/bill-import.js';
 
 let passed = 0, failed = 0;
 function check(name, ok, info) {
@@ -97,6 +97,12 @@ p = errOf([L({ options: opt('White', 'L') })], (x) => { x[0].action = 'new-varia
 check('an off-sale variant is not silently revived', p.errors.some((e) => /off sale/.test(e.message)));
 p = errOf([L({ name: 'Scarf', brand: '', mrp: 299 }), L({ name: 'Shawl', brand: '', mrp: 199 })], (x) => { x[1].include = false; });
 check('removed lines are ignored', !p.errors.length && p.summary.lines === 1 && p.newProducts.length === 1);
+
+// the chosen file's type: what the picker said, else from its name (some Android pickers give a PDF or photo no type)
+check('bill file type: from the picker, else from the name; anything else is not a bill', billFileType({ type: 'application/pdf', name: 'x' }) === 'application/pdf'
+  && billFileType({ type: '', name: 'Bill.PDF' }) === 'application/pdf' && billFileType({ type: 'application/octet-stream', name: 'scan.jpeg' }) === 'image/jpeg'
+  && billFileType({ type: 'image/jpg', name: 'a' }) === 'image/jpeg' && billFileType({ type: '', name: 'IMG_1.HEIC' }) === 'image/heic'
+  && billFileType({ type: 'image/png', name: 'x.pdf' }) === 'image/png' && billFileType({ type: 'text/plain', name: 'notes.txt' }) === '' && billFileType(null) === '');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

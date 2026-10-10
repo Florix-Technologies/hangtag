@@ -1,7 +1,7 @@
 // Supplier bill extraction (supabase/functions/extract-bill): upload checks, the request sent to Claude (PDF as a document,
 // photos as images, JSON schema output), stop reasons, and normalisation. A fake SDK client records requests; no network.
 // Run: npm run test:unit
-import { ACCEPTED_TYPES, EXTRACTION_SCHEMA, FALLBACK_BETA, MAX_BYTES, SYSTEM_PROMPT, buildRequest, extractRateLimits, normalizeExtraction, normalizeUnit, parseModelResponse, rateSubject, toNumber, validateUpload } from '../../supabase/functions/extract-bill/core.js';
+import { ACCEPTED_TYPES, EXTRACTION_SCHEMA, FALLBACK_BETA, MAX_BYTES, SCHEMA_LIMITS, SYSTEM_PROMPT, buildRequest, extractRateLimits, keepAliveBody, limiterMissing, normalizeExtraction, normalizeUnit, parseModelResponse, rateSubject, toNumber, validateUpload } from '../../supabase/functions/extract-bill/core.js';
 import { readFileSync } from 'node:fs';
 import { createClaudeProvider } from '../../supabase/functions/extract-bill/providers/claude.js';
 import { MOCK_EXTRACTION, createMockProvider } from '../../supabase/functions/extract-bill/providers/mock.js';
@@ -30,14 +30,29 @@ const imgReq = buildRequest({ data: PNG, mimeType: 'image/png', fileName: 'photo
 const block = (r) => r.messages[0].content[0];
 check('PDF → a base64 document block before the instruction', block(pdfReq).type === 'document' && block(pdfReq).source.media_type === 'application/pdf' && block(pdfReq).source.data === PDF && pdfReq.messages[0].content[1].type === 'text');
 check('photo → a base64 image block', block(imgReq).type === 'image' && block(imgReq).source.media_type === 'image/png');
-check('default model claude-opus-5; EXTRACT_MODEL-style override honoured', pdfReq.model === 'claude-opus-5' && imgReq.model === 'claude-sonnet-5');
+check('default model claude-opus-5-5; EXTRACT_MODEL-style override honoured', pdfReq.model === 'claude-opus-5-5' && imgReq.model === 'claude-sonnet-5');
+check('effort high by default; EXTRACT_EFFORT-style override honoured, nonsense ignored', pdfReq.output_config.effort === 'high'
+  && buildRequest({ data: PNG, mimeType: 'image/png', effort: 'medium' }).output_config.effort === 'medium' && buildRequest({ data: PNG, mimeType: 'image/png', effort: 'turbo' }).output_config.effort === 'high');
 check('answer constrained to the JSON schema (structured outputs), adaptive thinking, room for long bills',
   pdfReq.output_config.format.type === 'json_schema' && pdfReq.output_config.format.schema === EXTRACTION_SCHEMA && pdfReq.thinking.type === 'adaptive' && pdfReq.max_tokens >= 32000);
 check('server-side refusal fallback on by default', pdfReq.fallbacks === 'default' && pdfReq.betas.includes(FALLBACK_BETA));
 check('the prompt says never to invent values', /Never invent/.test(SYSTEM_PROMPT) && /null/.test(SYSTEM_PROMPT) && !pdfReq.tool_choice);
 const everyObjectClosed = (s) => s.type !== 'object' ? (s.items ? everyObjectClosed(s.items) : (s.anyOf || []).every(everyObjectClosed))
   : s.additionalProperties === false && Object.keys(s.properties).every((k) => s.required.includes(k)) && Object.values(s.properties).every(everyObjectClosed);
-check('schema: every object closed, every field required (unknown = null)', everyObjectClosed(EXTRACTION_SCHEMA));
+check('schema: every object closed, every field required (unknown = "" or null)', everyObjectClosed(EXTRACTION_SCHEMA));
+// the regression behind "Upload bill doesn't work": 19 nullable fields made the API refuse every reading with a 400
+// ("Schema is too complex for compilation": at most 16 union-typed and 24 optional fields per request)
+{
+  let unions = 0, optional = 0;
+  const walk = (x) => { if (!x || typeof x !== 'object') return; if (x.anyOf || Array.isArray(x.type)) unions++;
+    if (x.type === 'object') Object.entries(x.properties).forEach(([k, v]) => { if (!x.required.includes(k)) optional++; walk(v); });
+    if (x.items) walk(x.items); (x.anyOf || []).forEach(walk); };
+  walk(EXTRACTION_SCHEMA);
+  check("schema within the API's compile limits: ≤ 16 union-typed fields, ≤ 24 optional", unions <= SCHEMA_LIMITS.unionFields && optional <= SCHEMA_LIMITS.optionalFields
+    && SCHEMA_LIMITS.unionFields === 16 && SCHEMA_LIMITS.optionalFields === 24, { unions, optional });
+  check('only numbers may be null; text not on the bill is "" (the prompt says so)', unions === 6 && /return an empty string/.test(SYSTEM_PROMPT)
+    && EXTRACTION_SCHEMA.properties.lines.items.properties.name.type === 'string' && !!EXTRACTION_SCHEMA.properties.lines.items.properties.quantity.anyOf);
+}
 check('schema: no unsupported constraints (minimum/maximum/minLength)', !/minimum|maximum|minLength|maxLength/.test(JSON.stringify(EXTRACTION_SCHEMA)));
 
 // ---------- provider with a fake client ----------
@@ -73,6 +88,13 @@ check('printed units are normalised to the catalog units (Nos → pcs, Ltrs → 
 const u = normalizeExtraction({ lines: [{ name: 'Rice', quantity: 2.5, unit: 'Kgs' }, { name: 'Cloth', quantity: 1.255, unit: 'mtr' }, { name: 'Soap', quantity: 3, unit: 'Nos' }] });
 check('a decimal quantity in kg is kept without a warning; too many decimals for metres is warned about',
   u.lines[0].unit === 'kg' && u.lines[0].quantity === 2.5 && u.lines[2].unit === 'pcs' && u.warnings.length === 1 && /too many decimal places for m/.test(u.warnings[0]), u.warnings);
+const blank = normalizeExtraction({ supplier: { name: '', gstin: '' }, invoice: { number: '', date: '' }, currency: '', lines: [
+  { name: 'Shirt', description: '', brand: 'N/A', options: [{ name: 'Size', value: '' }], quantity: 2, unit: '', unit_price: null, total_price: null, mrp: null, sku: 'null', barcode: '-', hsn: '', gst_rate: null, tax_amount: null, confidence: 0.9, notes: '' },
+  { name: '', description: '', brand: '', options: [], quantity: null, unit: '', unit_price: null, total_price: null, mrp: null, sku: '', barcode: '', hsn: '', gst_rate: null, tax_amount: null, confidence: 0, notes: '' }], warnings: [''] });
+check('"" and placeholders (N/A, null, -) read as not on the bill; an all-blank line is dropped',
+  blank.supplier.name === null && blank.invoice.number === null && blank.invoice.date === null && blank.currency === 'INR' && blank.lines.length === 1
+  && blank.lines[0].brand === null && blank.lines[0].sku === null && blank.lines[0].barcode === null && blank.lines[0].unit === null && blank.lines[0].hsn === null
+  && blank.lines[0].notes === null && blank.lines[0].options.length === 0 && blank.warnings.length === 0, blank);
 check('nothing at all → empty but valid result', (() => { const e = normalizeExtraction(null); return e.ok && e.lines.length === 0 && e.supplier.name === null && e.currency === 'INR'; })());
 
 // the rate limit: a paid AI service behind a free trial — each user and shop reads only so many bills, on counters of
@@ -90,7 +112,25 @@ check('nothing at all → empty but valid result', (() => { const e = normalizeE
   const take = src.indexOf('rpc("hangtag_agent_take"'), call = src.indexOf('p.extract(');
   check('the function takes from the limiter (its own counters) before calling the provider; refuses when it can\'t check; 429 when over',
     take > 0 && call > take && /p_user: await rateSubject\(user\.id\), p_shop: await rateSubject\(shopId\)/.test(src)
-    && /if \(takeErr\)[^\n]*return reply\(503/.test(src) && /status: 429/.test(src));
+    && /else if \(takeErr\)[^\n]*return reply\(503/.test(src) && /status: 429/.test(src));
+  check('a database without the limiter (section 3t not applied) reads without one; other failures still refuse',
+    limiterMissing({ code: 'PGRST202' }) && limiterMissing({ code: '42883' }) && !limiterMissing({ code: '57014' }) && !limiterMissing(null)
+    && /if \(takeErr && limiterMissing\(takeErr\)\)/.test(src));
+}
+
+// the answer streams: a space at once and every few seconds while the bill is read (Supabase gives up after 150 s without
+// a byte), then the JSON; a failure comes in the body
+{
+  const read = async (stream) => { const r = stream.getReader(), parts = []; for (;;) { const { done, value } = await r.read(); if (done) break; parts.push(Buffer.from(value).toString()); } return parts; };
+  let release; const slow = new Promise((ok) => { release = ok; });
+  const reading = read(keepAliveBody(slow, { every: 20 }));
+  await new Promise((ok) => setTimeout(ok, 90)); release({ ok: true, lines: [] });
+  const parts = await reading, body = parts.join('');
+  check('keep-alive: spaces while waiting, then the JSON (parses as is)', parts[0] === ' ' && parts.filter((x) => x === ' ').length >= 3 && JSON.parse(body).ok === true, parts);
+  const failed = (await read(keepAliveBody(Promise.reject(new Error('boom')), { every: 1000 }))).join('');
+  check('keep-alive: a failure while reading still ends in a JSON refusal', JSON.parse(failed).ok === false && JSON.parse(failed).error === 'provider_error');
+  const src = readFileSync(new URL('../../supabase/functions/extract-bill/index.ts', import.meta.url), 'utf8');
+  check('the function streams the reading through keepAliveBody', /new Response\(keepAliveBody\(work\)/.test(src));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -4,6 +4,68 @@ The running checklist of the code audit: what was checked, what was fixed (each 
 Newest session first. Production data and services were never touched (no migration run, no function deployed); code is
 pushed only on the owner's word.
 
+## 2026-10-10 (fourth session: any kind of product, without code changes)
+
+### Checklist
+| # | Area | Finding | Status |
+|---|------|---------|--------|
+| 32 | Product model (audit) | **Already generic:** variants (up to 3 options of any name, 100 values each, 400 variants), each variant with its own SKU, barcode, price, cost and stock; SKU and barcode unique per shop in the database; tracking chosen per product (none, serial/IMEI, batch, batch + expiry), with business types only setting default capabilities; stock always the sum of stock records. **Missing:** fields of the shop's own (only fixed fields and a free-text description); units were a fixed list of nine, enforced by CHECKs on products, bill, return and order lines; the import read an option column only if it was one of 13 built-in names; the template was fixed, and there was no export | Audited |
+| 33 | Custom fields | Nothing let a shop describe a product in its own words | Added — `domain/catalog/attributes.js`: seven kinds, choices, required, lowest/highest, decimals, unit after the number, longest text, limited to categories; values per product (`attrs`); names of built-in fields refused with where they live (Price, Stock, SKU, IMEI, Expiry…). Database section 3z: `hangtag_attributes`, each value checked against its field's kind, a field in use kept (kind fixed, archived not removed), row security as products, the plan-ended guard. Settings → Products & Inventory → Product fields; the editor's folded "More details"; the product view; search. Tests: `attributes.test.mjs` (49), `supabase/tests/custom-fields.test.mjs` (44) |
+| 34 | Variants from fields | Variant options were free text per product | Added — a product option can take its values from a field (`opts[i].a`, `options.opts[].attr`). The editor offers the shop's fields first, with their choices one tap away. A choice renamed in Settings is renamed on every product using it, values and variants alike (ids, stock and codes kept; renames apply at once, so a swap works). Tests: `shop-fields-sync.test.mjs` (21), the e2e |
+| 35 | Units | A unit outside the nine (roll, pair, sq ft…) was refused by the app and the database | Fixed — the shop's own units (`hangtag_units`: code, name, decimals 0–3, counted or measured, GST unit code). One registry in `units.js` lets all 51 modules that read units know them, including the GST exports. The database takes any unit code, also in sections 3k and 3p, so `schema.sql` re-runs. Report row 36 flags a code the shop doesn't have. A code this device hasn't downloaded keeps its code instead of becoming pieces. Stock count, supplier-bill import and code intake list the shop's units too |
+| 36 | Import and export | (a) A column such as "Wattage" was dropped silently, though the template's notes said any option name works. (b) No custom data could be imported. (c) No export | Fixed — a column named as a field imports into it. The same value on every row of a product is the product's; a value that differs makes its rows variants (linked to the field; a date, yes/no or several-choices field can't, said plainly). Required fields are checked per category. A column with no field is listed with the kind its values suggest, and "Add as fields" makes it one and reads the file again. The template has the shop's option names and a column per field. The export uses the same columns and reads back as the same products, values and variants. Tests: `product-import-fields.test.mjs` (27); the 31 + 44 earlier import checks still pass |
+| 37 | Sync, backups | — | Fields and units sync as commerce-batch records (kinds `at`, `un`; live updates; team members' poll). A product's upload waits for the fields it uses (`need`); a full upload sends units and fields first; backups carry and restore them |
+| 38 | Plan-ended guard (latent) | Section 3t puts the guard on the tables that exist when it runs, so a table made by a later section has none unless it adds its own. The upgrade test's report row 76 caught it | Fixed for 3z's tables; any future section with a new table must attach the guard |
+| 39 | Touch targets (pre-existing) | The variant editor's value chips (14 px and 22 px) and the variant table's checkboxes (18 px) were under 24 px on phones, found by the new e2e's phone check | Fixed — larger on touch screens |
+| 40 | Editor regression caught | Redrawing the whole editor when the category box lost focus swallowed the tap that moved the focus (`pos-variants` e2e) | Fixed — only "More details" is redrawn |
+
+### Demonstrated without code changes (`tests/e2e/custom-fields.test.mjs`, 33 checks, in Chrome against the real schema)
+An owner with no template for their products:
+- makes Wattage (one choice), Spectrum (one choice) and Warranty months (0–60) in Settings; IMEI is refused, pointing to serial numbers;
+- makes a unit, Sq ft (2 decimals, GST SQF);
+- adds an LED grow light whose variants come from Wattage, with its spectrum and warranty, and a hand-knotted rug sold by the square foot (24.5 in stock);
+- finds the light by "bloom", sees its details, and is stopped by a warranty of 72;
+- imports bar lights by Wattage with a Lumens column the shop had no field for, makes Lumens a field in one tap, and exports the catalog;
+- sells a 100 W light (stock 5 → 4), renames 100 W to 100 Watt (same variants and stock, on every product) and archives Spectrum (values kept).
+
+The database holds every step, and the new screens pass the phone layout checks.
+
+### Test results (run, not assumed)
+- `npm run check`: `sw.js` current (458 files, `hangtag-3031e0e5c1`), 420 modules, 0 architecture violations, bundle ok, lint 0 errors / 0 warnings.
+- Full suite: **160/160 test files passed** (78 unit, 27 database, 4 eval, 51 browser) on Windows with Chrome.
+  - The run before it failed two browser suites. `pos-variants` caught the editor regression (item 40, fixed). `google-signin` hit a 30 s navigation timeout while the machine was busy; it passed alone and in the final run.
+- **New suites:**
+  - unit: `attributes` 49, `shop-fields-sync` 21, `product-import-fields` 27;
+  - database: `custom-fields` 44, `upgrade-live-database` 20 (3x, 3y and 3z on the previous release's database, which still has the fixed unit list; report 80/80);
+  - browser: `custom-fields` 33.
+- **Existing suites kept passing:** the import checks (31 + 44), `options` 49, the responsive matrix 427, and the team-tenancy leak sweep, now covering the two new tables (155).
+- **Tests that failed first:**
+  - the new phone check failed on the chips and checkboxes (item 39);
+  - `pos-variants` failed on the regression (item 40);
+  - the suggestion test failed on free text offered as a choice;
+  - `attributes` caught `.map(tidy)` passing the index as a length.
+- **Not run:** a hosted Supabase project (the new section ran on PGlite only, PostgreSQL 18.3), and a real phone (puppeteer's touch emulation).
+
+### Committed (local, not pushed)
+On `ux-productization` after `b1f66cc`: `63b48d9` (rules and database section 3z), `dd2216a` (the app, import and export, the e2e), and this log in the commit after them.
+
+### Supported, and what is not
+- **Supported for any product:** the shop's own fields of seven kinds, in any category; variants from any field or free option names; per-variant SKU, barcode, price, cost and stock; tracking chosen per product (serial, batch, expiry or none); the shop's own units; import and export with all of it; search by field values. All of it is checked, shop-isolated and kept through archiving.
+- **Not done:**
+  - **Per-variant values:** a variant has only its options, SKU, barcode, price and cost; a field value per variant (each variant's own model number) needs the field as an option.
+  - **Tracking by import:** import doesn't set a product's tracking or take serial numbers or batches. Tracked stock comes in through Stock in or Purchases, as before.
+  - **Updating by import:** import still adds new products only.
+  - **Unit conversions:** units convert only by repack between products. There's no box-of-12 purchase conversion, and a shop unit can't be read from a scale.
+  - **Fields elsewhere:** values aren't printed on bills or stickers and aren't filters in reports (search only). There's no drag-to-reorder for fields (new ones go last). Field permissions follow `manage_products`.
+- **Built-in names still used, outside core workflows:**
+  - example catalogues and placeholder names per business type;
+  - the draft assistant's guess of Size, Colour or Storage;
+  - Colour and Size treated specially for swatches, the "pieces by size" report and the database's old colour/size columns;
+  - the list of suggested option names.
+
+  None of these stops another kind of product from being made, stocked, sold, imported or exported.
+- **The live database** needs section 3z (`20261012120000_hangtag_custom_fields_units.sql`), after 3x and 3y; report rows 36 and 91–93. Until then the app sends field values only for products that have some, so every other product still syncs.
+
 ## 2026-10-10 (third session: release readiness)
 
 ### Checklist
@@ -11,7 +73,7 @@ pushed only on the owner's word.
 |---|------|---------|--------|
 | 28 | Build (`sw.js`) | The cache name hashed the app's files byte for byte. Git stores them with LF (all 449 text files in the shell are `i/lf`) and checks them out with CRLF on Windows (`core.autocrlf=true`, set by Git for Windows) and LF on Linux, while this working tree was mixed (105 CRLF, 344 LF). So each checkout of the same commit computed its own name: on `f090c70` a fresh Windows clone gave `hangtag-e4a3197d42`, a Linux-style (LF) clone `hangtag-756745c4f5`, the committed `sw.js` said `hangtag-1b40e9a88a`, and both clones failed `npm run check` / `build.test` with "sw.js is out of date" | Fixed — `scripts/sw-cache.mjs` (the file list and hash, moved out of `build.mjs`) hashes text with CRLF read as LF and pictures byte for byte (git's own NUL test for binary). `tests/unit/sw-cache.test.mjs` computes the name from the real files as an LF and a CRLF checkout would have them: 3 failures before the fix (the two names above against `1b40e9a88a`, and the order below), 8/8 after. `sw.js` regenerated: `hangtag-756745c4f5`, one line changed |
 | 29 | Build (latent) | The file list was sorted by system path. Windows' `\` sorts after digits and capitals, `/` before them, so a folder such as `src/ui/` next to `src/ui2/` or `src/uiB.css` would be listed in another order on Linux (another `sw.js`, another test-hook module order). None of today's 437 files hit it | Fixed — sorted by URL; the same test |
-| 30 | Migrations 3x, 3y (validation) | The suites ran each migration only on top of a `schema.sql` that already holds it. The upgrade a live database goes through had not been run | Checked, no defect — `supabase/tests/upgrade-3x-3y.test.mjs` builds the previous release's database (today's `schema.sql` without 3x, 3y and their 4 report rows is exactly `9623601`'s, checked with `git diff`) with a shop, a cashier, bills (one cancelled, one with a return) and a console admin; shows its bug (a re-sent cancelled bill comes back); runs 3x then 3y, each twice, and 3y then 3x on a second copy. Report 77/77 ok, every row of the 67 tables unchanged, 3y holds for the old bills, 3x lists and opens the old shop and refuses its owner. Without 3y, 6 of its checks fail. PostgreSQL 18.3 (PGlite 0.5.8) with Supabase stand-ins; a hosted non-production project was not available (below) |
+| 30 | Migrations 3x, 3y (validation) | The suites ran each migration only on top of a `schema.sql` that already holds it. The upgrade a live database goes through had not been run | Checked, no defect — `supabase/tests/upgrade-3x-3y.test.mjs` (renamed `upgrade-live-database.test.mjs` in the fourth session, which added 3z to it) builds the previous release's database (today's `schema.sql` without 3x, 3y and their 4 report rows is exactly `9623601`'s, checked with `git diff`) with a shop, a cashier, bills (one cancelled, one with a return) and a console admin; shows its bug (a re-sent cancelled bill comes back); runs 3x then 3y, each twice, and 3y then 3x on a second copy. Report 77/77 ok, every row of the 67 tables unchanged, 3y holds for the old bills, 3x lists and opens the old shop and refuses its owner. Without 3y, 6 of its checks fail. PostgreSQL 18.3 (PGlite 0.5.8) with Supabase stand-ins; a hosted non-production project was not available (below) |
 | 31 | `extract-bill` with the real Claude API | Needs a key. There is none in this environment (the function reads `ANTHROPIC_API_KEY` from the Supabase project's secrets, not from this machine), and no Deno or Docker to serve the function locally | **Blocked** — added `npm run eval:extract-bill`: the function's own provider, request (schema, thinking, effort, fallback) and answer code on a made-up PDF bill, with only the HTTP call replaced by `fetch`. Skipped without a key. `extract-bill-provider-plumbing.test.mjs` proves its plumbing against a local stand-in for the Messages API (headers, fallback beta, streaming, JSON-schema format, a well-formed PDF, a split stream, a refused schema failing): 7/7 |
 
 ### Pushed and deployed (on the owner's word, 2026-10-10)

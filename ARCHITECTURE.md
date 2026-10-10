@@ -914,7 +914,9 @@ an `AppError`.
 
 - `sw.js` serves the saved copy first and refreshes it in the background. Supabase requests always go to the network.
 - The service worker saves the app shell plus every module and stylesheet under `src/`. Its cache name is a hash of
-  those files, so each deploy installs a complete new offline copy and removes the old one.
+  those files, so each deploy installs a complete new offline copy and removes the old one. The hash reads text with
+  CRLF as LF and lists files by URL (`scripts/sw-cache.mjs`), so a Windows checkout and a Linux one compute the same
+  `sw.js`.
 - The service worker holds no business logic. Offline behaviour for data (queueing, retries) lives in `features/sync`.
 
 ## Build

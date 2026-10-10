@@ -4,19 +4,18 @@
 //   node scripts/build.mjs --check  same checks, but fail instead of writing when sw.js is out of date (CI/tests)
 //   The deployable site is the repository root (GitHub Pages). A normal build also copies exactly those files
 //   (the offline file list + sw.js) to dist/site for hosts that serve a build folder (Vercel: vercel.json).
-import { createHash } from 'node:crypto';
-import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ESLint } from 'eslint';
+import { appFiles as listAppFiles, cacheVersion, STATIC, toUrl as urlOf } from './sw-cache.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CHECK = process.argv.includes('--check');
-const walk = (d) => readdirSync(d).flatMap((f) => { const p = path.join(d, f); return statSync(p).isDirectory() ? walk(p) : [p]; });
-const toUrl = (p) => './' + path.relative(ROOT, p).split(path.sep).join('/');
+const toUrl = (p) => urlOf(ROOT, p);
 
-const appFiles = walk(path.join(ROOT, 'src')).filter((p) => /\.(js|css)$/.test(p)).sort();
+const appFiles = listAppFiles(ROOT);
 let failed = false;
 
 // 1. The test hook reaches every module (tests/test-api.json names can live in any of them)
@@ -40,12 +39,8 @@ if (newHook !== hook) {
 }
 
 // 2. Files the service worker saves (after step 1, so the cache version covers the final files) for offline use: the app shell plus every module and stylesheet.
-const STATIC = ['index.html', 'receipt.html', 'receipt.js', 'order.html', 'order.js', 'store.html', 'store.js', 'config.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png',
-  'platform/index.html', 'platform/login/index.html'];
 const shellFiles = [...STATIC.map((f) => path.join(ROOT, f)), ...appFiles];
-const hash = createHash('sha256');
-for (const f of shellFiles) { hash.update(toUrl(f)); hash.update(readFileSync(f)); }
-const version = hash.digest('hex').slice(0, 10);
+const version = cacheVersion(ROOT, shellFiles);
 const SHELL = ['./', ...shellFiles.map(toUrl)];
 
 const swPath = path.join(ROOT, 'sw.js');

@@ -17,6 +17,7 @@ import { renderAll } from '../../../shared/ui/render.js';
 import { logger } from '../../../shared/logging/logger.js';
 import { can, isMember } from '../../shop/services/access.js';
 import { bizRepository } from '../../commerce/repositories/biz-repository.js';
+import { refreshShopUnits } from '../../products/services/shop-fields.js';
 
 /* ---------- pulls (cloud is the truth, except for work still waiting in this device's queue) ---------- */
 let seen = null;   // a member's phone: the shop's fingerprints its data matches (null: not known yet; see pullShopChanges)
@@ -246,6 +247,8 @@ async function pullNewSales(was, now){
 /* Upload everything this device has (after a restore, or loading examples). Uses the same queue as everyday work. */
 
 export async function pushLocalToSupabase(){
+  // the shop's own units and fields first: products name them (section 3z)
+  ["un", "at"].forEach(kind => Object.values((store.biz && store.biz[kind]) || {}).forEach(r => enqueue({ type:"biz", kind, id:r.id, rec:{} })));
   products().forEach(p => enqueue({ type:"prod", id:p.id }));
   Object.keys(store.imgs).forEach(id => enqueue({ type:"img", id }));
   Object.values(store.moves).forEach(m => enqueue({ type:"move", id:m.id, move:m }));
@@ -324,6 +327,7 @@ export async function pullBiz(){
     // a repack waiting to upload keeps its stock records here (pullMoves keeps them too)
     bizRepository().replace(kind, next);
   });
+  refreshShopUnits();
 }
 /* A team member's phone (no live updates): the batch's records again only when their fingerprint moved */
 let seenBiz = null;

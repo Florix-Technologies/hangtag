@@ -76,5 +76,12 @@ When the answer depends on new data, update both `agent/shop.mjs` and the fixtur
 
 - **`sync-scenarios.test.mjs`**: offline sales, offline UPI (never shown as verified), a save whose answer is lost (no duplicate), 503s and an unreachable server, two tills offline at once (distinct bill numbers), the same customer edited on both tills (both changes kept), an offline return, a double tap on Pay, and every device converging.
 - **`responsive-matrix.test.mjs`**: 33 screens, sheets and forms on four sizes. `SHOTS=1` also saves a picture of each one (`tests/.artifacts/rm-<size>-<screen>.png`) to look at by eye.
+- **`custom-fields.test.mjs`**: an owner with no template for their products (LED grow lights, a rug sold by the square foot) does everything without a code change:
+  - makes fields and a unit in Settings;
+  - adds products whose variants come from a field;
+  - imports a sheet with a column the shop had no field for, and exports the catalog;
+  - sells, renames a choice and archives a field.
+
+  Each step is checked in the database, and the new screens on a phone. The rules are in `tests/unit/attributes.test.mjs`, `product-import-fields.test.mjs` and `shop-fields-sync.test.mjs`; the database in `supabase/tests/custom-fields.test.mjs`.
 
 To add a scenario, open devices with `startShop` / `openDevice`, seed with `seedShop`, and drive the network with `device.net`. Check what the server holds (`S.sql`) and what a freshly downloaded device shows.

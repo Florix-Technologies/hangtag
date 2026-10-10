@@ -4,7 +4,7 @@
 import { store } from '../../../shared/state/store.js';
 import { vLabel, variantsOf } from '../../../domain/catalog/variants.js';
 import { COUNT_REASONS, countDiffs } from '../../../domain/inventory/stock-count.js';
-import { IMPORT_UNITS } from '../../../domain/catalog/product-import.js';
+import { decimalsOf } from '../../../domain/catalog/units.js';
 import { stockOf } from '../services/stock.js';
 import { batchesOf, expiryOf, trackingOfP } from '../services/tracking.js';
 import { EXPIRY_LABELS } from '../../../domain/inventory/tracking.js';
@@ -21,7 +21,7 @@ import { norm } from '../../../shared/utils/text.js';
 
 const MAX_ROWS=300;
 const S=()=>store.stockCount||(store.stockCount={q:"",cat:"",typed:{},review:null,reason:COUNT_REASONS[0],note:"",err:""});
-const decOf=p=>{const u=IMPORT_UNITS.find(x=>x[0]===(p&&p.unit));return u?u[2]:0};
+const decOf=p=>decimalsOf(p&&p.unit);   // Hangtag's units and the shop's own
 /* The rows of a variant: itself, or (tracked by batch) each of its batches with stock, counted on its own.
    Products tracked by serial number are counted by their serials (Stock → Adjust), not here. */
 const rowsOf=(p,v)=>trackingOfP(p)==="batch"?batchesOf(v.id,{all:true}).filter(b=>b.qty!==0).map(b=>({vid:v.id,pid:p.id,system:b.qty,dec:decOf(p),key:v.id+"|"+b.b,b:b.b,exp:b.exp}))

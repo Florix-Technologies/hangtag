@@ -13,6 +13,8 @@ import { paymentsOf } from '../../../domain/sales/payments.js';
 import { D } from '../../inventory/services/ledger.js';
 import { liveProducts } from '../../products/services/catalog.js';
 import { variantsOf, vLabel } from '../../../domain/catalog/variants.js';
+import { attrSearchText } from '../../../domain/catalog/attributes.js';
+import { shopAttrs } from '../../products/services/shop-fields.js';
 import { allBatches, serialState } from '../../inventory/services/tracking.js';
 import { purchasesList, supplierById, suppliersList } from '../../inventory/services/purchase-state.js';
 import { orderRepository } from '../../orders/repositories/order-repository.js';
@@ -88,7 +90,7 @@ function productSearch(P, exact){
   liveProducts().forEach(p => {
     const vs = variantsOf(p), hit = vs.find(v => (v.sku && norm(v.sku) === q) || (v.bc && norm(v.bc) === q) || (v.barcode && norm(v.barcode) === q));
     if(hit) exact.push(r("product", p.id, p.name, `${vLabel(hit) ? vLabel(hit) + " · " : ""}${hit.sku && norm(hit.sku) === q ? "SKU" : "barcode"} ${P.raw}`, `data-commandproduct="${p.id}"`, "box"));
-    else if(P.words.length && hasAll(P.words, p.name, p.cat, p.brand, ...vs.map(v => v.sku))) out.push(r("product", p.id, p.name, [p.cat, p.hsn && "HSN " + p.hsn].filter(Boolean).join(" · ") || "Product", `data-commandproduct="${p.id}"`, "box"));
+    else if(P.words.length && hasAll(P.words, p.name, p.cat, p.brand, p.attrs ? attrSearchText(shopAttrs(), p) : "", ...vs.map(v => v.sku))) out.push(r("product", p.id, p.name, [p.cat, p.hsn && "HSN " + p.hsn].filter(Boolean).join(" · ") || "Product", `data-commandproduct="${p.id}"`, "box"));
     else if(P.digits && P.digits.length >= 4 && P.digits.length <= 8 && String(p.hsn || "") === P.digits) out.push(r("product", p.id, p.name, "HSN " + p.hsn, `data-commandproduct="${p.id}"`, "box"));
   });
   // a serial number or a batch: where that piece is

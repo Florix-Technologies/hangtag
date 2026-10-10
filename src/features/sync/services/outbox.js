@@ -18,6 +18,7 @@ import { orderRepository } from '../../orders/repositories/order-repository.js';
 import { purchaseItemOff, purchaseItemOn } from '../../inventory/services/purchase-state.js';
 import { bizRepository } from '../../commerce/repositories/biz-repository.js';
 import { noteSubscriptionRefused, subscriptionLocked } from '../../billing/services/subscription.js';
+import { attrIdsOf } from '../../../domain/catalog/attributes.js';
 
 /* Add work for the cloud; identical product uploads are merged so the queue stays short */
 
@@ -30,8 +31,11 @@ export function enqueue(item){
     const it={...item,tries:0,err:notAllowedText("upload this")};
     toReview(it,{code:"PERMISSION"}); toast(it.err+" It's in the sync review."); renderSync(); return;
   }
-  // a product's waiting upload takes this edit too (not one being sent: it may have read the product before this edit)
+  // a product's waiting upload takes this edit too (not one being sent: it may have read the product before this edit).
+  // It waits for the shop's fields it uses that are still on their way (the database refuses a value for a field it lacks).
   if(item.type==="prod"){
+    const need=attrIdsOf(products().find(p=>p.id===item.id)).map(id=>"biz:at:"+id);
+    if(need.length) item={...item,need};
     const ex=store.sbOfflineQueue.find(q=>q.type==="prod"&&q.id===item.id&&!q.tries&&!q.sending);
     if(ex){const m=mergeProductUpload(ex,item);delete ex.fields;delete ex.vars;Object.assign(ex,m);saveSbQueue();return}
   }

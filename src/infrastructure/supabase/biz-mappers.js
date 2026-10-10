@@ -58,3 +58,17 @@ export const bankMoveRow = m => ({ id: m.id, account_id: m.account, type: m.type
   reverses: m.reverses || null, t: m.t, device_id: m.dev || store.dev });
 export const rowToBankMove = r => Object.assign({ id: r.id, account: r.account_id, type: r.type, amount: +r.amount, t: Number(r.t) || 0, dev: r.device_id || "" },
   r.to_account ? { to: r.to_account } : {}, r.reason ? { reason: r.reason } : {}, r.reverses ? { reverses: r.reverses } : {}, r.user_id ? { user: r.user_id } : {});
+
+/* ---------- the shop's own product fields and units (section 3z) ---------- */
+/* A field: its rules travel as one object (only the ones that apply to its kind) */
+export const attrRow = a => ({ id: a.id, name: a.name, type: a.type, options: Array.isArray(a.options) ? a.options : [],
+  rules: Object.fromEntries(Object.entries({ required: !!a.required, min: a.min, max: a.max, dp: a.dp, unit: a.unit || null, maxLen: a.maxLen }).filter(([k, v]) => k === "required" || (v != null && v !== ""))),
+  categories: Array.isArray(a.cats) ? a.cats : [], archived: !!a.archived, sort_order: Number.isFinite(+a.sort) ? Math.round(+a.sort) : 0 });
+export const rowToAttr = r => {
+  const x = r.rules && typeof r.rules === "object" ? r.rules : {};
+  return { id: r.id, name: r.name || "", type: r.type, options: Array.isArray(r.options) ? r.options.map(String) : [], required: !!x.required,
+    min: num(x.min), max: num(x.max), dp: num(x.dp), unit: x.unit || "", maxLen: num(x.maxLen), cats: Array.isArray(r.categories) ? r.categories.map(String) : [],
+    archived: !!r.archived, sort: Number(r.sort_order) || 0, ...(r.created_at ? { t: Date.parse(r.created_at) || 0 } : {}) };
+};
+export const unitRow = u => ({ id: u.id, label: u.label, decimals: +u.dp || 0, kind: u.kind === "measure" ? "measure" : "count", uqc: u.uqc || "OTH", archived: !!u.archived });
+export const rowToUnit = r => ({ id: r.id, label: r.label || r.id, dp: Number(r.decimals) || 0, kind: r.kind === "measure" ? "measure" : "count", uqc: r.uqc || "OTH", archived: !!r.archived });

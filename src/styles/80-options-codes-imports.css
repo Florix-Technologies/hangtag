@@ -140,3 +140,28 @@
 .cc-main,.cc-side{display:flex;flex-direction:column;min-width:0}.cc-main b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cc-main small,.cc-side small{color:var(--ink-3);font-size:12.5px}.cc-side{align-items:flex-end;text-align:right}
 @media (max-width:699px){.custtools{flex-wrap:wrap}.custtools .btn{width:100%}#custSearch,#custQ{font-size:16px;min-height:46px}}
+/* The shop's own product fields and units (section 3z): the editor's "More details", options from a field, the settings
+   sheets and the import's columns without a field */
+.edfields > summary{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;cursor:pointer;list-style:none}
+.edfields > summary::-webkit-details-marker{display:none}
+.edfields > summary h4::after{content:" ▸";color:var(--ink-3);font-weight:500}
+.edfields[open] > summary h4::after{content:" ▾"}
+.attrmulti{border:0;padding:0;margin:0;min-width:0}
+.attrmulti legend{padding:0;margin-bottom:4px}
+.chkrow{display:flex;flex-wrap:wrap;gap:4px 14px}
+.chkrow .chk{margin:2px 0}
+.attrro{display:block;padding:8px 0;color:var(--ink-2);overflow-wrap:anywhere}
+.optfield{display:flex;align-items:baseline;gap:6px;min-height:40px;padding-top:6px;overflow-wrap:anywhere}
+.optfield small{color:var(--ink-3)}
+.optfieldsugg{border-style:dashed}
+.atopts{display:flex;flex-direction:column;gap:6px;margin:4px 0 8px}
+.atoptrow{display:flex;align-items:center;gap:8px;min-width:0}
+.atoptrow input{flex:1;min-width:80px}
+.atoptrow small{flex:none}
+.im-unknown{border:1px solid var(--line-2);border-radius:12px;padding:10px 12px;margin:10px 0;background:var(--wash)}
+.im-unknown ul{margin:6px 0 8px;padding-left:18px}
+.im-unknown li{margin:2px 0;overflow-wrap:anywhere}
+.im-attr{background:var(--wash)}
+.im-export{margin:10px 0 0}
+.pv-fields{margin-top:10px}
+@media (max-width:699px){.atoptrow{flex-wrap:wrap}.atoptrow input{flex-basis:100%}}

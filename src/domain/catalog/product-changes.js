@@ -4,9 +4,10 @@
 // it (the cloud gateway maps each to its column). Pure.
 import { variantsOf } from './variants.js';
 
-export const PRODUCT_FIELDS = Object.freeze(["name", "price", "color", "cat", "brand", "desc", "cost", "archived", "hsn", "gst", "code", "opts", "tracking", "unit", "low", "expiry", "bundle", "repack"]);
-/* Nothing set: no value, an empty text, off, an empty list (as the cloud keeps them: one and the same) */
-const blank = v => v === undefined || v === null || v === "" || v === false || (Array.isArray(v) && !v.length);
+export const PRODUCT_FIELDS = Object.freeze(["name", "price", "color", "cat", "brand", "desc", "cost", "archived", "hsn", "gst", "code", "opts", "tracking", "unit", "low", "expiry", "bundle", "repack", "attrs"]);
+/* Nothing set: no value, an empty text, off, an empty list or set of values (as the cloud keeps them: one and the same) */
+const blank = v => v === undefined || v === null || v === "" || v === false || (Array.isArray(v) && !v.length)
+  || (typeof v === "object" && !Array.isArray(v) && !Object.keys(v).length);
 const same = (a, b) => (blank(a) && blank(b)) || JSON.stringify(a) === JSON.stringify(b);
 /* A variant as it is uploaded: its option values, codes, prices, on sale or not, and its place in the list */
 const variantShape = (v, k) => JSON.stringify([k, Array.isArray(v.o) ? v.o : [], v.sku || "", v.bc || "", v.price == null || v.price === "" ? null : +v.price,

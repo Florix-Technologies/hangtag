@@ -48,6 +48,8 @@ import { docTemplatesHTML, installDocTemplateEvents } from '../features/receipts
 import { automationSettingsHTML, installAutomationEvents } from '../features/automation/components/automation-view.js';
 import { diagnosticsHTML, installDiagnosticsEvents } from '../features/shop/components/diagnostics-view.js';
 import { installPlansBillingEvents, plansBillingHTML } from '../features/billing/components/plans-billing.js';
+import { shopFieldsChange, shopFieldsClick, shopFieldsInput, shopFieldsSettingsHTML, shopFieldsSubmit } from '../features/products/components/shop-fields-settings.js';
+import { addCommerceHandlers } from './events/commerce-events.js';
 
 let installed = false;
 export function installModules(){
@@ -79,6 +81,9 @@ export function installModules(){
   // Settings → Products & Inventory (Wave 2): for shops that keep expiry dates or batches
   const expires = () => hasCap("uses_expiry") || hasCap("uses_batches") || products().some(p => trackingOfP(p) === "batch");
   registerSettingsPart("inventory", { id: "expiry", order: 20, perms: ["manage_settings"], html: () => expires() ? expirySettingsHTML() : "" });
+  // Settings → Products & Inventory (section 3z): the shop's own product fields and units, for every kind of shop
+  registerSettingsPart("inventory", { id: "shop-fields", order: 10, perms: ["manage_products"], html: shopFieldsSettingsHTML });
+  addCommerceHandlers({ click: shopFieldsClick, input: shopFieldsInput, change: shopFieldsChange, submit: shopFieldsSubmit });
   // Settings → Bills & Documents: the page invoice links open (the owner's), and the quotation template for shops that make quotations
   registerSettingsPart("integrations", { id: "invoice-page", order: 20, perms: ["manage_settings"], html: invoicePageHTML });
   registerSettingsPart("billing", { id: "quotations", order: 60, perms: ["manage_settings"], html: () => hasCap("uses_quotations") ? quotationSettingsHTML() : "" });

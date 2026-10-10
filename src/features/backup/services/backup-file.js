@@ -18,7 +18,8 @@ import { toast } from '../../../shared/components/toast.js';
 import { use } from '../../../shared/di/services.js';
 import { $ } from '../../../shared/dom.js';
 import { dayKey } from '../../../shared/formatting/dates.js';
-import { persistLocal, saveCashMoves, saveCatalog, saveCustomers, saveDayCloses, saveEvents, saveDocImages, saveImgs, saveLogo, saveMoves, saveReturns, storage } from '../../../shared/state/persistence.js';
+import { refreshShopUnits } from '../../products/services/shop-fields.js';
+import { persistLocal, saveBiz, saveCashMoves, saveCatalog, saveCustomers, saveDayCloses, saveEvents, saveDocImages, saveImgs, saveLogo, saveMoves, saveReturns, storage } from '../../../shared/state/persistence.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { objOr } from '../../../shared/utils/objects.js';
 import { logger } from '../../../shared/logging/logger.js';
@@ -36,7 +37,9 @@ const hashOf=text=>use("files").sha256Hex(new Blob([text]));
 export async function buildBackup(){
   const days=Object.assign({},store.remoteDays,store.localDays);
   const data={profile:withoutSecrets(store.profile||null),settings:withoutSecrets(store.settings),catalog:store.catalog,images:store.imgs,days,moves:store.moves,
-    returns:store.returnsMap,customers:store.customers,events:store.events||{},cashMoves:store.cashMoves||{},dayCloses:store.dayCloses||{},logo:store.logo||"",docImages:docImagesOf(store.docImages)};
+    returns:store.returnsMap,customers:store.customers,events:store.events||{},cashMoves:store.cashMoves||{},dayCloses:store.dayCloses||{},logo:store.logo||"",docImages:docImagesOf(store.docImages),
+    // the shop's own product fields and units (section 3z): products name them
+    fields:Object.values((store.biz&&store.biz.at)||{}),units:Object.values((store.biz&&store.biz.un)||{})};
   const body=JSON.stringify(data);
   return {app:"hangtag",version:BACKUP_VERSION,exportedAt:new Date().toISOString(),
     shop:{owner:store.authUser&&store.authUser.id||"",name:store.profile&&store.profile.shop_name||""},
@@ -82,7 +85,8 @@ export function inspectBackup(data,file){
   const moves=keep(bm,m=>m&&m.v), br=keep(data.returns,x=>x&&x.sale&&Array.isArray(x.items)), bc=keep(data.customers,c=>c&&c.name);
   const be=keep(data.events,e=>e&&e.id&&e.name&&e.start&&e.end);
   const bcm=keep(data.cashMoves,m=>m&&m.id&&m.type&&+m.amount>0), bdc=keep(data.dayCloses,c=>c&&c.id&&c.day);
-  return {ok:true,data,file:f,cat:mig.cat,moves,returns:br,customers:bc,events:be,cashMoves:bcm,dayCloses:bdc,
+  const list=(x,ok)=>(Array.isArray(x)?x:[]).filter(ok), fields=list(data.fields,a=>a&&a.id&&a.name&&a.type), units=list(data.units,u=>u&&u.id&&u.label);
+  return {ok:true,data,file:f,cat:mig.cat,moves,returns:br,customers:bc,events:be,cashMoves:bcm,dayCloses:bdc,fields,units,
     summary:{products:bprods.length,newProducts:bprods.filter(p=>!have.has(p.id)).length,variants:bprods.reduce((a,p)=>a+p.variants.length,0),
       bills,newBills,moves:Object.keys(moves).length,newMoves:Object.keys(moves).filter(k=>!store.moves[k]).length,
       returns:Object.keys(br).length,newReturns:Object.keys(br).filter(k=>!store.returnsMap[k]).length,
@@ -90,7 +94,7 @@ export function inspectBackup(data,file){
       events:Object.keys(be).length,newEvents:Object.keys(be).filter(k=>!(store.events||{})[k]).length,cashMoves:Object.keys(bcm).length,newCashMoves:Object.keys(bcm).filter(k=>!(store.cashMoves||{})[k]).length,skipped,
       exportedAt:f.exportedAt||data.exportedAt||"",shop:f.shop&&f.shop.name||"",version:+f.version||0,fromOtherShop:!!(owner&&me&&owner!==me)}};
 }
-const SLICES=["catalog","imgs","moves","returnsMap","customers","events","cashMoves","dayCloses","localDays","logo","docImages"];
+const SLICES=["catalog","imgs","moves","returnsMap","customers","events","cashMoves","dayCloses","localDays","logo","docImages","biz"];
 /* Every slice as it is now (a deep copy), to go back to if the restore fails */
 const snapshot=()=>JSON.parse(JSON.stringify(Object.fromEntries(SLICES.map(k=>[k,store[k]]).concat([["dirty",[...store.dirty]]]))));
 function putBack(s){
@@ -99,7 +103,7 @@ function putBack(s){
 }
 /* Save every restored slice; false when this device's storage refused one */
 function saveAll(){
-  const r=[saveCatalog(),saveImgs(),saveMoves(),saveReturns(),saveCustomers(),saveEvents(),saveCashMoves(),saveDayCloses(),saveLogo(),saveDocImages(),persistLocal()];
+  const r=[saveCatalog(),saveImgs(),saveMoves(),saveReturns(),saveCustomers(),saveEvents(),saveCashMoves(),saveDayCloses(),saveLogo(),saveDocImages(),saveBiz(),persistLocal()];
   return r.every(x=>x!==false);
 }
 /* Add the backup's records this device doesn't have (replace: also products on both). Throws on a broken record. */
@@ -118,6 +122,10 @@ function mergeBackup(r,replace){
   if(!store.dayCloses) store.dayCloses={};
   Object.entries(r.dayCloses||{}).forEach(([k,c])=>{if(!store.dayCloses[k])store.dayCloses[k]=c});
   if(!store.logo&&typeof data.logo==="string"&&data.logo.indexOf("data:image/")===0) store.logo=data.logo;
+  // the shop's own fields and units: the backup's ones this device doesn't have (the full upload after the restore sends them first)
+  if(!store.biz) store.biz={};
+  [["at",r.fields],["un",r.units]].forEach(([k,list])=>{const cur=store.biz[k]||(store.biz[k]={});(list||[]).forEach(x=>{if(!cur[x.id])cur[x.id]=x})});
+  refreshShopUnits();
   // the signature and stamp: from the backup only where this device has none (like the logo)
   { const im=docImagesOf(data.docImages), cur=docImagesOf(store.docImages); store.docImages={signature:cur.signature||im.signature,stamp:cur.stamp||im.stamp}; }
   let added=0;
@@ -146,7 +154,7 @@ export async function applyRestore(){
     if(!saveAll()) throw new Error("This device's storage is full.");
   }catch(e){
     logger.error("Restore failed, putting the data back:",e);
-    putBack(before); store.restoreCheck=null; closeModal(); renderAll();
+    putBack(before); refreshShopUnits(); store.restoreCheck=null; closeModal(); renderAll();
     logBackup({type:"restore",outcome:"failed",error:String(e&&e.message||e)});
     toast("Restore failed, so nothing was changed"+(e&&e.message?": "+e.message:"."));
     return false;

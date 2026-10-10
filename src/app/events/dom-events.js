@@ -10,6 +10,7 @@ import { chosenProduct, openProductChooser, renderChooser } from '../../features
 import { openStockOp, saveStockOp, updateStockOp } from '../../features/inventory/components/stock-operation.js';
 import { renderStock } from '../../features/inventory/pages/stock-page.js';
 import { applyGroup, openGroupPreview } from '../../features/products/components/colour-groups.js';
+import { edAttrChange, edAttrInput, refreshFieldsSection } from '../../features/products/components/product-fields.js';
 import { SIZE_PRESETS, edAction, edAddOption, edAddValues, edCombos, edFieldInput, edFocusKeep, edGenCode, edRemoveOption, edRemoveValue, edRenameOption, edRenameValue, edToggleOptions,
   openEditor, renderEditor, saveEditor } from '../../features/products/components/product-editor.js';
 import { openStickers, stickerAction, stickerChange } from '../../features/products/components/stickers.js';
@@ -197,6 +198,8 @@ export function installDomEvents(){
       const vn=t.closest("[data-valren]");if(vn){const [i,j]=vn.dataset.valren.split(":"),op=store.editor.opts[+i],cur=op&&op.v[+j];const x=cur!=null?prompt(`Rename ${cur} to:`,cur):null;if(x&&x.trim()&&x.trim()!==cur)edRenameValue(+i,+j,x);return}
       const or=t.closest("[data-optrm]");if(or){edRemoveOption(+or.dataset.optrm);return}
       const os=t.closest("[data-optsugg]");if(os){edAddOption(os.dataset.optsugg);return}
+      const of=t.closest("[data-optfield]");if(of){edAddOption(null,of.dataset.optfield);return}
+      const vp=t.closest("[data-valpick]");if(vp){edAddValues(+vp.dataset.valpick,[vp.dataset.val]);return}
       const gn=t.closest("[data-edgen]");if(gn){edGenCode(gn.dataset.edgen);return}
       const ea=t.closest("[data-edact]");if(ea){edAction(ea.dataset.edact);return}
       const ps=t.closest("[data-preset]");if(ps){const [i,k]=ps.dataset.preset.split(":"),pr=SIZE_PRESETS[+k];if(pr)edAddValues(+i,pr[1]);return}
@@ -266,6 +269,7 @@ export function installDomEvents(){
       if(t.dataset.ed){store.editor[t.dataset.ed]=t.value;if(t.dataset.ed==="price"||t.dataset.ed==="cost"){const k=t.dataset.ed;$$("#modalHost [data-edf='"+k+"']").forEach(i=>{i.placeholder=t.value})}return}
       if(t.dataset.edf&&t.dataset.k!=null){edFieldInput(t);return}
       if(t.id==="optAdd"){store.editor.addName=t.value;return}
+      if(edAttrInput(t))return;
     }
   });
   document.addEventListener("submit",e=>{
@@ -317,6 +321,9 @@ export function installDomEvents(){
       const tg=t.dataset.edtoggle;if(tg){if(tg==="hasOpts")edToggleOptions(t.checked);else{store.editor.codesOn=t.checked;edFocusKeep(renderEditor)}return}
       if(t.matches("[data-edcode]")){store.editor.code=t.value==="qr"?"qr":"barcode";renderEditor();return}
       if(t.id==="edUnit"){store.editor.unit=t.value;edFocusKeep(renderEditor);return}
+      // the category decides which of the shop's fields the product shows
+      if(t.dataset.ed==="cat"){store.editor.cat=t.value;refreshFieldsSection();return}
+      { const r=edAttrChange(t); if(r){ if(r==="render") edFocusKeep(renderEditor); return } }
       if(t.id==="edTracking"){store.editor.tracking=t.value;edFocusKeep(renderEditor);return}
       if(t.dataset.edf==="active"){const c=store.editor.cells[t.dataset.k];if(c){c.active=t.checked;const tr=t.closest("tr");if(tr)tr.classList.toggle("off",!t.checked)}return}
       if(t.matches("[data-edsel]")){store.editor.sel[t.dataset.edsel]=t.checked;edFocusKeep(renderEditor);return}

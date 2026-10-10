@@ -39,8 +39,10 @@ function mergeFields(prev,item){
    variants changed by both go up — the whole product when either is a whole upload (a product the cloud may not have yet) */
 export function mergeProductUpload(prev,item){
   const delV=[...new Set([...(prev.delV||[]),...(item.delV||[])])];
-  if(!Array.isArray(prev.fields)||!Array.isArray(item.fields)){ const { fields:_f, vars:_v, ...whole }=prev; return { ...whole, delV }; }
-  return { ...prev, delV, fields:[...new Set([...prev.fields,...item.fields])], vars:[...new Set([...(prev.vars||[]),...(item.vars||[])])] };
+  // the shop's fields both versions use (section 3z): the upload waits for every one still on its way
+  const need=[...new Set([...(prev.need||[]),...(item.need||[])])], withNeed=need.length?{need}:{};
+  if(!Array.isArray(prev.fields)||!Array.isArray(item.fields)){ const { fields:_f, vars:_v, need:_n, ...whole }=prev; return { ...whole, delV, ...withNeed }; }
+  return { ...prev, delV, fields:[...new Set([...prev.fields,...item.fields])], vars:[...new Set([...(prev.vars||[]),...(item.vars||[])])], ...withNeed };
 }
 /* Serial numbers and batches (section 3n): a stock-in brings them into the cloud ("sn:<serial>", "bt:<variant>|<batch>");
    a bill, or a stock record taking them out, waits for the stock-in still on its way. Serials and batches as normalized
@@ -61,6 +63,8 @@ export function dependsOn(item){
   if(item.type==="return"&&item.ret) return ["sale:"+item.ret.sale];
   if(item.type==="void") return ["sale:"+item.id];
   if(item.type==="move"&&item.move&&item.move.p) return ["prod:"+item.move.p,...(item.move.q<0?moveKeys(item.move):[])];
+  // a product needs the shop's fields its values and options name in the cloud first (section 3z: "biz:at:<id>")
+  if(item.type==="prod"&&Array.isArray(item.need)) return item.need;
   if(item.type==="cashmove"&&item.move&&item.move.reverses) return ["cashmove:"+item.move.reverses];
   // a payment collected from a customer needs the customer in the cloud first (foreign key)
   if(item.type==="collection"&&item.col&&item.col.cust) return ["cust:"+item.col.cust];
@@ -127,7 +131,7 @@ export const UPLOAD_PERMISSIONS={
 };
 /* The commerce batch (section 3r), by kind: price lists with products, purchase orders and repacks with stock, GST
    readiness with bills */
-export const BIZ_UPLOAD_PERMISSIONS={pl:["manage_products"],po:["create_purchase"],ei:["create_sale","view_reports"],ew:["create_sale","view_reports"],rpk:["manage_inventory"],
+export const BIZ_UPLOAD_PERMISSIONS={pl:["manage_products"],at:["manage_products"],un:["manage_products"],po:["create_purchase"],ei:["create_sale","view_reports"],ew:["create_sale","view_reports"],rpk:["manage_inventory"],
   ba:["manage_settings"],bm:["view_reports","manage_settings"]};
 /* May someone with these permissions upload this item? (unknown kinds: yes) */
 export const uploadAllowed=(item,has)=>{const need=item&&(item.type==="biz"||item.type==="bizdel"?BIZ_UPLOAD_PERMISSIONS[item.kind]:UPLOAD_PERMISSIONS[item.type]);return !need||need.some(p=>has(p))};

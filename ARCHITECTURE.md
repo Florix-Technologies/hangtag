@@ -740,6 +740,60 @@ Read: `view_reports` or `manage_settings`; accounts written with `manage_setting
 row 73 checks the entries. Migration: `supabase/migrations/20261004120000_hangtag_bank_accounts.sql` (exactly section 3s plus
 its row security and grants).
 
+## Any kind of product: the shop's own fields and units (section 3z)
+
+A product is the built-in record that money and stock depend on, plus the shop's own words for everything else. No product
+type is built in. Business types only switch on default capabilities, and every shop can change them.
+
+- **Built in, structured:**
+  - name, category, brand, description;
+  - price and cost (per variant too);
+  - GST and HSN, unit, low-stock alert, barcode type;
+  - variants: up to 3 options of any name, each variant with its own SKU, barcode, price, cost and stock;
+  - tracking per product: none, serial/IMEI, batch, or batch with expiry;
+  - kits and repack conversions.
+
+  Stock is always the sum of stock records, so purchases, sales, returns, costing, expiry and serial uniqueness work the
+  same for every product.
+- **The shop's fields** (`domain/catalog/attributes.js`):
+  - a field has a name and a kind: text, whole number, decimal, date, yes/no, one choice or several choices;
+  - its rules: choices, required, lowest/highest, decimals, a unit shown after the number, longest text;
+  - its scope: the categories it applies to, or none for every product.
+
+  A product keeps its values in `attrs: { field id: value }`. The editor shows the fields of the product's category and any
+  field it already has a value for, in a folded "More details" section. A field can't take a built-in field's name (Price,
+  Stock, SKU, IMEI, Expiry…), so custom fields never replace what calculations need. A product option may take its values from
+  a field (`opts[i].a`). Variant tuples stay text, so stock, sales and returns code is unchanged.
+- **The shop's units** (`domain/catalog/units.js`): codes such as `roll` or `sqft`, with decimals (0–3), counted or measured,
+  and a GST unit code. One registry (`setShopUnits`) gives every quantity rule the shop's units.
+  - A code this device hasn't downloaded yet keeps its code, so re-saving a product never turns its unit into pieces.
+  - Conversions between units are repack conversions (one product opened into another).
+- **On the device:** fields and units are records of the commerce batch's repository (kinds `at` and `un`), synced like price
+  lists.
+  - A product's upload waits for the fields it uses (`need: ["biz:at:<id>"]`, `domain/sync/queue-rules.js`).
+  - A full upload sends units and fields first.
+  - Backups carry both.
+- **Import and export** (`domain/catalog/product-import.js`):
+  - A column named as a field imports into it.
+  - A field's value the same on every row of a product is the product's; one that differs makes its rows variants.
+  - A column the shop has no field for is listed with the kind its values suggest, and "Add as fields" makes it one.
+  - The template and the export are built from the shop's fields and option names.
+
+### Database (schema.sql section 3z)
+
+| Table / column | Relationship |
+|---|---|
+| `hangtag_attributes` | per shop; name unique among fields in use; kind fixed while used; archived (never deleted) while used |
+| `hangtag_products.attrs` | `{ field id: value }`; each key must be a field of the same shop, each value of its field's kind (trigger) |
+| `hangtag_products.options.opts[].attr` | → `hangtag_attributes.id` of the same shop |
+| `hangtag_units` | per shop; code not one of Hangtag's nine; decimals fixed and never deleted while a product uses it |
+| `unit` on products and bill, return and order lines | any unit code (`^[a-z][a-z0-9]{0,11}$`); report row 36 flags a code the shop doesn't have |
+
+Read: everyone in the shop; written with `manage_products`; the plan-ended guard as on every business table. The database
+checks each value's kind; the app also checks choices, limits and required fields. Choices aren't checked in the database
+because a field's choices can change while a till is offline. Report rows 36 and 91–93. Migration:
+`supabase/migrations/20261012120000_hangtag_custom_fields_units.sql` (exactly section 3z plus its row security).
+
 ## State
 
 One store object (`shared/state/store.js`) holds the app's state. `app/state-init.js` restores it at start-up.

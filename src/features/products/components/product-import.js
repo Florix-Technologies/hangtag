@@ -4,8 +4,14 @@
 // store.prodImport = { fileName, kind ("csv"|"xlsx"), rows (the sheet's cells), check (validateImport), err, busy, filter,
 //   skipExisting (products the shop already has are left out instead of refused) }
 import { store } from '../../../shared/state/store.js';
-import { importHelpRows, importProblemRows, importTemplateColumns, importTemplateNotes, importTemplateRows } from '../../../domain/catalog/product-import.js';
-import { checkImportRows, importProducts } from '../use-cases/import-products.js';
+import { exportProductRows, importHelpRows, importProblemRows, importTemplateColumns, importTemplateNotes, importTemplateRows } from '../../../domain/catalog/product-import.js';
+import { attrText, attrTypeLabel } from '../../../domain/catalog/attributes.js';
+import { variantsOf } from '../../../domain/catalog/variants.js';
+import { addImportFields, checkImportRows, importContext, importProducts } from '../use-cases/import-products.js';
+import { products } from '../services/catalog.js';
+import { attrById, shopAttrs } from '../services/shop-fields.js';
+import { stockOf } from '../../inventory/services/stock.js';
+import { can } from '../../shop/services/access.js';
 import { renderSync } from '../../sync/components/sync-status.js';
 import { flushSbQueue } from '../../sync/services/outbox.js';
 import { refuse } from '../../shop/services/access.js';
@@ -34,17 +40,25 @@ export function openProductImport(){
 /* The Excel template: the products sheet (notes in grey, column names in bold, wide columns, codes kept as text) and a
    column-by-column help sheet */
 function templateWorkbook(){
-  const rows=importTemplateRows(), cols=importTemplateColumns(), head=importTemplateNotes().length;
+  const ctx=importContext(), rows=importTemplateRows(ctx), cols=importTemplateColumns(ctx), head=importTemplateNotes(ctx).length;
   const textCols=cols.map(([k],j)=>["sku","bc","hsn"].includes(k)?j:-1).filter(j=>j>=0);
   return xlsxBytes([
     {name:"Products",rows,heads:[head],notes:rows.slice(0,head).map((_,i)=>i),widths:cols.map(([k,h])=>k==="name"||k==="desc"?30:Math.max(10,h.length+2)),textCols},
-    {name:"Help",rows:importHelpRows(),widths:[26,10,64,26]},
+    {name:"Help",rows:importHelpRows(ctx),widths:[26,10,64,26]},
   ]);
 }
 export async function downloadImportTemplate(kind){
   const files=use("files");
   if(kind==="xlsx") await files.saveFile("hangtag-products-template.xlsx",templateWorkbook(),XLSX_TYPE);
-  else await files.saveFile("hangtag-products-template.csv","﻿"+csvText(importTemplateRows()),"text/csv");
+  else await files.saveFile("hangtag-products-template.csv","﻿"+csvText(importTemplateRows(importContext())),"text/csv");
+}
+/* The shop's products in the template's columns (its own fields and options included), one row per variant: to edit and
+   import into another shop, or keep */
+export async function downloadProductExport(kind){
+  const rows=exportProductRows(products(),{attrs:shopAttrs(),variantsOf:p=>variantsOf(p),stockOf}), files=use("files"), day=new Date().toISOString().slice(0,10);
+  if(kind==="xlsx") await files.saveFile(`hangtag-products-${day}.xlsx`,xlsxBytes([{name:"Products",rows,heads:[0],widths:rows[0].map(h=>Math.max(10,String(h).length+2)),textCols:rows[0].map((h,j)=>/^(SKU|Barcode|HSN code)$/.test(h)?j:-1).filter(j=>j>=0)}]),XLSX_TYPE);
+  else await files.saveFile(`hangtag-products-${day}.csv`,"﻿"+csvText(rows),"text/csv");
+  return rows.length-1;
 }
 /* The chosen file given back with a "Problems" column next to each row (the import ignores that column) */
 async function downloadProblems(){
@@ -87,7 +101,7 @@ export async function chooseImportFile(file){
 /* ---------- the screen ---------- */
 const stateOf=x=>x.skip?"skip":x.errors.length?"bad":"ok";
 function helpHTML(){
-  const [head,...rows]=importHelpRows();
+  const [head,...rows]=importHelpRows(importContext());
   return `<details class="im-help"><summary>What goes in each column</summary><div class="tw"><table class="pu-lines ro im-helpt"><thead><tr>${head.map(h=>`<th>${esc(h)}</th>`).join("")}</tr></thead>
     <tbody>${rows.map(r=>`<tr>${r.map((c,i)=>`<td${i===0?' class="im-col"':""}>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div></details>`;
 }
@@ -102,10 +116,13 @@ function stepsHTML(s){
     <li><b>Fill it in</b><span class="note">One row per product. A product in several colours or sizes: one row for each, with the same product name. Only Product name and Selling price are required.</span>${helpHTML()}</li>
     <li><b>Choose your file</b><span class="note">Save it as .xlsx or .csv first. Nothing is added until you check it here and press Import.</span>
       <span class="im-btns"><label class="btn sm primary">Choose file${fileInput()}</label>${s.fileName?`<span class="note im-file">${esc(s.fileName)}</span>`:""}</span></li>
-  </ol>`;
+  </ol>
+  ${products().length?`<p class="note im-export">Your products as a file, in the same columns: <button type="button" class="link xs" data-imp="expxlsx">Export Excel</button> · <button type="button" class="link xs" data-imp="expcsv">Export CSV</button></p>`:""}`;
 }
 function rowHTML(x){
-  const st=stateOf(x), opts=x.opts.map(o=>`<span class="im-opt">${esc(o.n)}: ${esc(o.v)}</span>`).join("");
+  const st=stateOf(x), opts=x.opts.map(o=>`<span class="im-opt">${esc(o.n)}: ${esc(o.v)}</span>`).join("")
+    // the product's own field values (a value that makes variants is with the options above)
+    +Object.entries(x.fv||{}).filter(([id])=>!x.opts.some(o=>o.a===id)).map(([id,v])=>{const a=attrById(id);return a?`<span class="im-opt im-attr">${esc(a.name)}: ${esc(attrText(a,v))}</span>`:""}).join("");
   const status=st==="bad"?`<ul class="im-errs">${x.errors.map(e=>`<li>${esc(e)}</li>`).join("")}</ul>`
     :st==="skip"?`<span class="im-skip">${x.skip==="example"?"Example from the template: not imported":"Already in your shop: left out"}</span>`:`<span class="im-ok">${ICON.ok}Ready</span>`;
   const money=v=>v==null?"":esc(formatMoney(v));
@@ -124,18 +141,26 @@ function previewHTML(s){
     :`<div class="im-sum ok" role="status">${ICON.ok}<div><b>Everything looks right.</b> Check the list, then press Import.</div></div>`;
   const notes=[
     c.summary.examples?`${plural(c.summary.examples,"example row","example rows")} from the template ${c.summary.examples===1?"is":"are"} left out.`:"",
-    c.unknown&&c.unknown.length?`Columns not used: ${c.unknown.join(", ")}.`:"",
   ].filter(Boolean);
   const existing=c.existing&&c.existing.length?`<label class="im-exist"><input type="checkbox" id="impSkipEx"${s.skipExisting?" checked":""}>
     <span>${plural(c.existing.length,"product is","products are")} already in your shop (${esc(c.existing.slice(0,3).join(", "))}${c.existing.length>3?"…":""}). <b>Leave ${c.existing.length===1?"it":"them"} out and import the rest.</b> Nothing about ${c.existing.length===1?"it":"them"} changes.</span></label>`:"";
   const chips=[["all","All"],["bad","Needs fixing"],["ok","Ready"],["skip","Left out"]].filter(([k])=>k==="all"||n[k])
     .map(([k,l])=>`<button type="button" class="chipbtn" data-imp-filter="${k}" aria-pressed="${s.filter===k}">${l} <span class="count">${n[k]}</span></button>`).join("");
   return `<div class="im-cards">${box(c.summary.products,c.summary.products===1?"product":"products")}${box(c.summary.variants,c.summary.variants===1?"row (size, colour…)":"rows (sizes, colours…)")}${box(c.summary.pieces,"in stock")}${box(c.errorCount,"to fix",c.errorCount?"bad":"")}</div>
-    ${banner}${existing}${notes.length?`<p class="note">${notes.map(esc).join(" ")}</p>`:""}
+    ${banner}${existing}${unknownHTML(c)}${notes.length?`<p class="note">${notes.map(esc).join(" ")}</p>`:""}
     <div class="im-chips" role="group" aria-label="Show">${chips}</div>
     <div class="tw im-tw"><table class="pu-lines ro im"><thead><tr><th class="num">Row</th><th>Product</th><th>SKU · Barcode</th><th class="num">Price</th><th class="num">Cost</th><th class="num">Stock</th><th>Check</th></tr></thead>
       <tbody>${list.slice(0,SHOW_ROWS).map(rowHTML).join("")||`<tr><td colspan="7" class="muted">No rows here.</td></tr>`}</tbody></table></div>
     ${list.length>SHOW_ROWS?`<p class="note">Showing the first ${SHOW_ROWS} of ${list.length} rows.</p>`:""}`;
+}
+/* Columns of the file the shop has no field for: named, with what their values look like, and one tap to make them fields
+   (then the file is read again). A column a built-in feature covers (IMEI, Expiry…) says where that lives instead. */
+function unknownHTML(c){
+  const cols=c.unknownCols||[]; if(!cols.length) return "";
+  const can_=can("manage_products"), addable=cols.filter(x=>!x.why);
+  return `<div class="im-unknown" role="status"><b>${cols.length===1?"1 column isn't":`${cols.length} columns aren't`} imported: your shop has no field for ${cols.length===1?"it":"them"}.</b>
+    <ul>${cols.map(x=>`<li><b>${esc(x.name)}</b> · ${x.why?esc(x.why):`would be ${esc(attrTypeLabel(x.suggest.type).toLowerCase())}${x.suggest.options?`: ${esc(x.suggest.options.slice(0,6).join(", "))}${x.suggest.options.length>6?"…":""}`:""}`}</li>`).join("")}</ul>
+    ${addable.length&&can_?`<button type="button" class="btn xs" data-imp="addfields">Add ${addable.length===1?esc(addable[0].name)+" as a field":"these as fields"} and read the file again</button>`:addable.length?`<span class="note">Someone who manages products can add them as fields.</span>`:""}</div>`;
 }
 export function renderProductImport(){
   const s=store.prodImport; if(!s){ closeModal(); return; }
@@ -168,6 +193,14 @@ export function importClick(t){
   const a=b.dataset.imp;
   if(a==="tplcsv"||a==="tplxlsx") downloadImportTemplate(a==="tplxlsx"?"xlsx":"csv");
   else if(a==="problems") downloadProblems();
+  else if(a==="expcsv"||a==="expxlsx") downloadProductExport(a==="expxlsx"?"xlsx":"csv").then(n=>toast(`Exported ${plural(n,"row","rows")}.`));
+  else if(a==="addfields"){
+    if(!s.check) return true;
+    const r=addImportFields((s.check.unknownCols||[]).filter(x=>!x.why));
+    if(r.errors.length) s.err=r.errors.join(" "); else s.err="";
+    if(r.added.length){ recheck(s); if(s.check&&s.check.errorCount) s.filter="bad"; else s.filter="all"; renderSync(); flushSbQueue(); toast(`Added ${r.added.join(", ")}.`); }
+    renderProductImport();
+  }
   else if(a==="go") runImport();
   else return false;
   return true;

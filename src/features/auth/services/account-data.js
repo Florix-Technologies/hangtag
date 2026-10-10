@@ -12,6 +12,7 @@ import { renderAll } from '../../../shared/ui/render.js';
 import { objOr } from '../../../shared/utils/objects.js';
 import { resetAssistant } from '../../assistant/pages/assistant-page.js';
 import { resetProductDraftAssistant } from '../../products/components/product-draft-assistant.js';
+import { refreshShopUnits } from '../../products/services/shop-fields.js';
 
 /* ---------- Each account keeps its own data on this device ----------
    The app works on the plain keys below. When a different account signs in, the current data is put away
@@ -93,7 +94,7 @@ export function loadUserState(){
   store.pendingDocs = objOr(storage.get("rc_pending_docs", {}), {});
   store.quoteSends = storage.get("rc_quote_sends", []); if(!Array.isArray(store.quoteSends)) store.quoteSends = [];
   // the commerce batch (section 3r): price lists, purchase orders, GST readiness, repacks, vouchers; the bill's price list
-  store.biz = objOr(storage.get("rc_biz", {}), {}); store.cartPriceList = storage.get("rc_cartpl", null) || null; store.bizView = null;
+  store.biz = objOr(storage.get("rc_biz", {}), {}); refreshShopUnits(); store.cartPriceList = storage.get("rc_cartpl", null) || null; store.bizView = null;
   store.orderForm = null; store.collectForm = null; store.tableView = null; store.quoteDoc = null;
   store.deliveryQueue = storage.get("hangtag_delivery_queue", []); if(!Array.isArray(store.deliveryQueue)) store.deliveryQueue = [];
   store.settings = Object.assign({}, DEFAULT_SETTINGS, objOr(storage.get("rc_settings", {}), {}));

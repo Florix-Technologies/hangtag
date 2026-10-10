@@ -237,3 +237,6 @@
    from a real button, not a sliver of text */
 .bill .bi.asbtn{padding-block:5px}
 .acent .link[data-billview]{display:inline-flex;align-items:center;justify-content:center;min-width:36px;min-height:28px}
+/* option values on a touch screen: big enough to tap (rename, remove) */
+@media (pointer:coarse){.chip{padding:2px 2px 2px 8px}.chip button{width:32px;height:32px}.chip .chipname{min-height:32px;padding:0 4px}}
+@media (pointer:coarse){.vdet td.ck input[type=checkbox],.vdet th.ck input[type=checkbox]{width:24px;height:24px}}

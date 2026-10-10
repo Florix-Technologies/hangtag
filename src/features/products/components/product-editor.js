@@ -31,15 +31,20 @@ import { productFieldsFor, trackingChoiceOf, trackingChoices, trackingFromChoice
 import { shopCaps, shopType } from '../../shop/services/shop-caps.js';
 import { businessExamples } from '../../../domain/shop/capabilities.js';
 
-import { UNITS, decimalsOf, unitId, unitOf, isWeighed } from '../../../domain/catalog/units.js';
+import { allUnits, decimalsOf, unitId, unitOf, isWeighed } from '../../../domain/catalog/units.js';
+import { checkLinkedValues, variantFields } from '../../../domain/catalog/attributes.js';
+import { attrById, shopAttrs } from '../services/shop-fields.js';
+import { attrsForEditor, fieldsSectionHTML } from './product-fields.js';
 import { isKit } from '../../../domain/catalog/bundles.js';
 import { openKitEditor } from './kit-editor.js';
 import { currencySign } from '../../../shared/formatting/money.js';
 
 /* ---------- product editor ----------
    store.editor = { isNew, id, name, cat, brand, desc, price, cost, color, img, archived, hsn, gst, unit (what it is sold by: pcs, kg…), tracking (none|serial|batch|expiry: batch with expiry dates),
-                    hasOpts, opts, cells, codesOn, code, sel:{ [cellKey]: true } (rows ticked for stickers), addName, err }
-   opts/cells follow domain/catalog/options.js (editorState). A simple product has no options and one cell (key ""). */
+                    hasOpts, opts, cells, codesOn, code, sel:{ [cellKey]: true } (rows ticked for stickers), addName, err,
+                    attrs: { field id: value as typed } (the shop's own fields, components/product-fields.js), extra: [field ids added by hand], fieldsOpen }
+   opts/cells follow domain/catalog/options.js (editorState); an option may take its values from a field (op.a). A simple
+   product has no options and one cell (key ""). */
 
 export const SIZE_PRESETS=[["S–XXL",["S","M","L","XL","XXL"]],["XS–XL",["XS","S","M","L","XL"]],["28–36",["28","30","32","34","36"]],["Free size",["Free size"]]];
 export function openEditor(pid){
@@ -52,7 +57,7 @@ export function openEditor(pid){
   const e={isNew:!p,id:p?p.id:"p"+uid(),name:p?p.name:"",cat:p?p.cat||"":"",brand:p?p.brand||"":"",desc:p?p.desc||"":"",price:p?String(p.price):"",cost:p&&p.cost!=null?String(p.cost):"",
     color:p?okColor(p.color):COLORS[products().length%COLORS.length],img:undefined,archived:p?!!p.archived:false,hsn:p?p.hsn||"":"",gst:p&&p.gst!=null?String(p.gst):"",unit:unitId(p&&p.unit),
     hasOpts:!!(p&&p.opts&&p.opts.length),opts:st.opts,cells:st.cells,codesOn:!!(p&&p.code),code:p&&p.code?p.code:"barcode",sel:{},addName:"",err:"",
-    tracking:trackingChoiceOf(p)};
+    tracking:trackingChoiceOf(p),attrs:attrsForEditor(p),extra:[],fieldsOpen:null};
   store.editor=e;renderEditor();
   const n=$("#edName");if(n&&e.isNew)n.focus();
 }
@@ -63,6 +68,19 @@ const pieces=()=>edCombos().reduce((a,x)=>a+Math.max(0,Math.round(+x.cell.stock|
 
 /* Tracked by serial number or batch: its stock only moves with serials / batches (Purchases, Stock in, bills) */
 const tracked=e=>trackingFromChoice(e.tracking).tracking!=="none";
+/* "Sold by": Hangtag's units and the shop's own (weights and volumes where the shop sells by weight); the product's own
+   unit always, even one archived since */
+function unitChoices(e,fx){
+  const list=allUnits().filter(u=>!isWeighed(u.id)||fx.weight||isWeighed(e.unit)), cur=unitOf(e.unit);
+  return list.some(u=>u.id===cur.id)?list:[...list,cur];
+}
+/* Options to add: the shop's own fields that can make variants first (their values come from the field), then the usual names */
+function optionSuggestions(e){
+  const taken=n=>e.opts.some(op=>op.n.toLowerCase()===n.toLowerCase()), fields=variantFields(shopAttrs()).filter(a=>!e.opts.some(op=>op.a===a.id)&&!taken(a.name));
+  const names=OPTION_SUGGESTIONS.filter(n=>!taken(n)&&!fields.some(a=>a.name.toLowerCase()===n.toLowerCase())).slice(0,Math.max(3,8-fields.length));
+  return fields.map(a=>`<button type="button" class="btn xs ghost optfieldsugg" data-optfield="${esc(a.id)}" title="Your field: its values make the variants">${esc(a.name)}</button>`).join("")
+    +names.map(n=>`<button type="button" class="btn xs ghost" data-optsugg="${esc(n)}">${esc(n)}</button>`).join("");
+}
 /* ---------- rendering ---------- */
 function codePreview(code,type){
   if(!code)return "";
@@ -70,13 +88,18 @@ function codePreview(code,type){
   catch{return `<span class="codebad">Can't print</span>`}
 }
 function optionHTML(op,i){
-  const size=isSizeOption(op.n),colour=isColourOption(op.n);
+  const size=isSizeOption(op.n),colour=isColourOption(op.n),field=op.a?attrById(op.a):null;
+  // an option taking its values from one of the shop's fields: named as the field, its choices one tap away
+  const head=field?`<div class="f"><span class="lab">Option ${i+1}</span><span class="optfield"><b>${esc(field.name)}</b> <small>· your field</small></span></div>`
+    :`<label class="f"><span class="lab">Option ${i+1}</span><input data-optname="${i}" value="${esc(op.n)}" maxlength="${OPTION_LIMITS.nameLen}" list="optNames" autocomplete="off" aria-label="Option ${i+1} name"></label>`;
+  const picks=field&&field.type==="choice"?field.options.filter(o=>!op.v.some(x=>x.toLowerCase()===o.toLowerCase())):[];
   return `<div class="optbox" data-opt="${i}">
-    <div class="opthead"><label class="f"><span class="lab">Option ${i+1}</span><input data-optname="${i}" value="${esc(op.n)}" maxlength="${OPTION_LIMITS.nameLen}" list="optNames" autocomplete="off" aria-label="Option ${i+1} name"></label>
+    <div class="opthead">${head}
       <button type="button" class="link xs danger" data-optrm="${i}">Remove option</button></div>
     <div class="chips">${op.v.map((x,j)=>`<span class="chip">${colour?`<i style="background:${swatchOf(x)}"></i>`:""}<button type="button" class="chipname" data-valren="${i}:${j}" title="Rename ${esc(x)}">${esc(x)}</button><button type="button" data-valrm="${i}:${j}" aria-label="Remove ${esc(x)}">×</button></span>`).join("")}
-      <span class="chipadd"><input data-valadd="${i}" placeholder="+ Add ${esc((op.n||"value").toLowerCase())}" maxlength="${OPTION_LIMITS.valueLen}" autocomplete="off" aria-label="Add a value to ${esc(op.n)}"></span></div>
-    ${size?`<div class="presets"><span class="note">Quick sizes:</span>${SIZE_PRESETS.map(([l],k)=>`<button type="button" class="btn xs" data-preset="${i}:${k}">${esc(l)}</button>`).join("")}</div>`:""}
+      ${field&&field.type==="choice"?"":`<span class="chipadd"><input data-valadd="${i}" placeholder="+ Add ${esc((op.n||"value").toLowerCase())}" maxlength="${OPTION_LIMITS.valueLen}" autocomplete="off" aria-label="Add a value to ${esc(op.n)}"></span>`}</div>
+    ${picks.length?`<div class="presets"><span class="note">Add from ${esc(field.name)}:</span>${picks.map(o=>`<button type="button" class="btn xs" data-valpick="${i}" data-val="${esc(o)}">+ ${esc(o)}</button>`).join("")}</div>`:""}
+    ${size&&!field?`<div class="presets"><span class="note">Quick sizes:</span>${SIZE_PRESETS.map(([l],k)=>`<button type="button" class="btn xs" data-preset="${i}:${k}">${esc(l)}</button>`).join("")}</div>`:""}
   </div>`;
 }
 function rowHTML(x,e){
@@ -122,17 +145,20 @@ export function renderEditor(){
   const printBtns=e.isNew&&!e.name?"":simple?`<button type="button" class="btn sm" data-edact="print1">${ICON.print||""}Print sticker</button>`
     :`<button type="button" class="btn sm" data-edact="printsel"${nSel?"":" disabled"}>Print selected${nSel?` (${nSel})`:""}</button><button type="button" class="btn sm" data-edact="printall">Print all variants</button>`;
   const openSheet=$("#modalHost [data-editor] .sheet.editor"),scrollTop=openSheet?openSheet.scrollTop:0,tab=openSheet&&openSheet.querySelector(".vtab"),tabTop=tab?tab.scrollTop:0;
+  // "More details" stays as the person left it (opened or folded) when the editor is drawn again
+  const fo=openSheet&&openSheet.querySelector("#ed-fields");if(fo)e.fieldsOpen=fo.open;
+  const fieldsHTML=fieldsSectionHTML(e);
   const html=`<div class="scrim" data-modal-scrim data-editor><div class="sheet editor" role="dialog" aria-modal="true" aria-labelledby="edTitle">
     <div class="sh-head"><div class="sh-t"><h3 id="edTitle">${e.isNew?"Add product":"Edit product"}</h3><p>${e.isNew?(fx.variants?"Basic details first. Tick “multiple options” for sizes, colours, storage and so on.":"Basic details first."):esc(e.name)}</p></div><button class="iconbtn" data-edclose aria-label="Close">${ICON.x}</button></div>
     <form id="edForm" novalidate>
-    <nav class="ednav" aria-label="Product sections"><button type="button" data-edgo="basics">Basics</button><button type="button" data-edgo="price">Price &amp; Tax</button><button type="button" data-edgo="inventory">Inventory</button>${trackHTML?`<button type="button" data-edgo="tracking">Tracking</button>`:""}<button type="button" data-edgo="advanced">Advanced</button></nav>
+    <nav class="ednav" aria-label="Product sections"><button type="button" data-edgo="basics">Basics</button><button type="button" data-edgo="price">Price &amp; Tax</button>${fieldsHTML?`<button type="button" data-edgo="fields">Details</button>`:""}<button type="button" data-edgo="inventory">Inventory</button>${trackHTML?`<button type="button" data-edgo="tracking">Tracking</button>`:""}<button type="button" data-edgo="advanced">Advanced</button></nav>
     <div class="edsec" id="ed-basics"><h4>Basics</h4>
       <div class="edtop"><div class="pc-photo">${thumb({id:e.id,name:e.name||"New",color:e.color},"lg",src||null)}<label class="btn xs" for="edPhoto">${ICON.cam}${src?"Change":"Add photo"}</label><input id="edPhoto" class="sr" type="file" accept="image/*" data-edphoto>${src?`<button type="button" class="link xs danger" data-edact="edrmphoto">Remove photo</button>`:""}</div>
       <div class="pgrid grow">
         <label class="f full"><span class="lab">Product name<span class="req">*</span></span><input id="edName" data-ed="name" value="${esc(e.name)}" maxlength="80" autocomplete="off" placeholder="e.g. ${esc(businessExamples(shopType()).product)}"></label>
         <label class="f"><span class="lab">Category</span><input data-ed="cat" value="${esc(e.cat)}" list="catList" maxlength="40" autocomplete="off" placeholder="e.g. ${esc(businessExamples(shopType()).category)}"><datalist id="catList">${cats.map(c=>`<option value="${esc(c)}">`).join("")}</datalist></label>
         <label class="f"><span class="lab">Brand</span><input data-ed="brand" value="${esc(e.brand)}" maxlength="40" autocomplete="off" placeholder="Optional"></label>
-        <label class="f"><span class="lab">Sold by</span><select data-ed="unit" id="edUnit">${UNITS.filter(u=>!isWeighed(u.id)||fx.weight||isWeighed(e.unit)).map(u=>`<option value="${u.id}"${unitId(e.unit)===u.id?" selected":""}>${esc(u.label)}${u.dp?` (up to ${u.dp} decimals)`:""}</option>`).join("")}</select><span class="fhint">Kg and litres are weighed on the bill; prices are per ${esc(unitOf(e.unit).id==="pcs"?"piece":unitOf(e.unit).sym)}</span></label>
+        <label class="f"><span class="lab">Sold by</span><select data-ed="unit" id="edUnit">${unitChoices(e,fx).map(u=>`<option value="${esc(u.id)}"${unitId(e.unit)===u.id?" selected":""}>${esc(u.label)}${u.dp?` (up to ${u.dp} decimals)`:""}</option>`).join("")}</select><span class="fhint">Kg and litres are weighed on the bill; prices are per ${esc(unitOf(e.unit).id==="pcs"?"piece":unitOf(e.unit).sym)}${can("manage_products")?". Your own units (Roll, Sq ft…): Settings → Products &amp; Inventory → Units":""}</span></label>
       </div></div>
     </div>
     <div class="edsec" id="ed-price"><h4>Price &amp; Tax</h4><div class="pgrid">
@@ -141,6 +167,7 @@ export function renderEditor(){
         <label class="f"><span class="lab">GST %</span><input data-ed="gst" type="number" inputmode="decimal" min="0" max="100" step="0.01" value="${esc(e.gst)}" placeholder="e.g. 5"></label>
         <label class="f"><span class="lab">HSN code</span><input data-ed="hsn" value="${esc(e.hsn)}" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="4, 6 or 8 digits"></label>
     </div></div>
+    ${fieldsHTML}
     <div class="edsec" id="ed-inventory"><h4>Inventory</h4>
       <label class="chk"><input type="checkbox" data-edtoggle="codesOn"${e.codesOn?" checked":""}> Enable barcode / QR code</label>
       ${e.codesOn?`<div class="codetype" role="radiogroup" aria-label="Code type"><span class="lab">Code type:</span><label class="chk"><input type="radio" name="edCode" value="barcode" data-edcode${e.code!=="qr"?" checked":""}> Barcode <small>(EAN-13 for new codes)</small></label><label class="chk"><input type="radio" name="edCode" value="qr" data-edcode${e.code==="qr"?" checked":""}> QR code</label></div>
@@ -150,7 +177,7 @@ export function renderEditor(){
       ${fx.variants?`<div class="edvars">      <label class="chk"><input type="checkbox" data-edtoggle="hasOpts"${e.hasOpts?" checked":""}> This product has multiple options / variants</label>
       ${e.hasOpts?`${e.opts.map(optionHTML).join("")}
         ${e.opts.length<OPTION_LIMITS.maxOptions?`<div class="optadd"><input id="optAdd" list="optNames" value="${esc(e.addName)}" maxlength="${OPTION_LIMITS.nameLen}" placeholder="Option name, e.g. Size" autocomplete="off" aria-label="New option name"><button type="button" class="btn xs" data-edact="addopt">+ Add option</button>
-          <span class="optsugg">${OPTION_SUGGESTIONS.filter(n=>!e.opts.some(op=>op.n.toLowerCase()===n.toLowerCase())).slice(0,8).map(n=>`<button type="button" class="btn xs ghost" data-optsugg="${esc(n)}">${esc(n)}</button>`).join("")}</span></div>`:""}
+          <span class="optsugg">${optionSuggestions(e)}</span></div>`:""}
         <datalist id="optNames">${OPTION_SUGGESTIONS.map(n=>`<option value="${esc(n)}">`).join("")}</datalist>
         ${tableHTML}`:`<p class="note">Sold as one product. Tick the box for sizes, colours, storage, weight and so on — every combination becomes a variant with its own stock, SKU, code and price.</p>`}
       </div>`:""}
@@ -187,14 +214,24 @@ function apply(r,focusSel){
   if(focusSel){const x=$(focusSel);if(x)x.focus()}
   return true;
 }
-export function edAddOption(name){const e=store.editor;const r=addOption(e,name);if(apply(r,`[data-valadd="${e.opts.length}"]`))e.addName=""}
+export function edAddOption(name,attrId){
+  const e=store.editor,field=attrId?attrById(attrId):null;
+  const r=addOption(e,field?field.name:name,field?field.id:undefined);if(apply(r,`[data-valadd="${e.opts.length}"]`))e.addName="";
+}
 export function edRenameOption(i,name){apply(renameOption(store.editor,i,name))}
 export function edAddValues(i,names){
+  // an option taking its values from a field: only the field's values (a choice in its list, a number…), in its spelling
+  const op=store.editor.opts[i],field=op&&op.a?attrById(op.a):null;
+  if(field){const c=checkLinkedValues(field,Array.isArray(names)?names:String(names).split(/[,\n]/));if(c.error){toast(c.error);return}names=c.values}
   const r=addValues(store.editor,i,names);
   if(!r.error&&isSizeOption(r.opts[i].n)){const o=r.opts[i];o.v=o.v.slice().sort((a,b)=>szRank(a)-szRank(b))}
   apply(r,`[data-valadd="${i}"]`);
 }
-export function edRenameValue(i,j,name){apply(renameValue(store.editor,i,j,name))}
+export function edRenameValue(i,j,name){
+  const op=store.editor.opts[i],field=op&&op.a?attrById(op.a):null;
+  if(field){const c=checkLinkedValues(field,[name]);if(c.error){toast(c.error);return}name=c.values[0]}
+  apply(renameValue(store.editor,i,j,name));
+}
 function confirmRemoval(list,what){
   const kept=list.filter(r=>hasHistory(r.cell.id)||stockOf(r.cell.id)>0).length;
   return !kept||confirm(`${what} ${kept} variant${kept===1?" has":"s have"} stock or past sales. ${kept===1?"It":"They"} will be hidden from selling but kept in bills and reports. Remove?`);

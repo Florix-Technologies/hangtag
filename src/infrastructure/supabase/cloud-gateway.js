@@ -9,7 +9,7 @@ import { collectionRow, heldRow, orderArgs, rowToCollection, rowToHeld, rowToOrd
 import { purchaseArgs, rowToPurchase, rowToSupplier, rowToSupplierPayment, supplierPaymentRow, supplierRow } from './mappers.js';
 import { rowToSession, rowToTable, sessionRow, tableRow } from './mappers.js';
 import { einvRow, ewayRow, poArgs, priceListRow, repackArgs, rowToDelivery as rowToHookDelivery, rowToEinv, rowToEndpoint, rowToEway, rowToPO, rowToPriceList, rowToRepack,
-  rowToVoucher, bankAccountRow, bankMoveRow, rowToBankAccount, rowToBankMove } from './biz-mappers.js';
+  rowToVoucher, bankAccountRow, bankMoveRow, rowToBankAccount, rowToBankMove, attrRow, rowToAttr, unitRow, rowToUnit } from './biz-mappers.js';
 
 /* deviceKey: () => this phone's team device key or "" (sent as x-hangtag-device by every client this makes; see client.js) */
 export function createCloudGateway({ getClient, url, key, storageKey, deviceKey }){
@@ -106,8 +106,9 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
       if(h.collections) ch = on(ch, '*', 'hangtag_collections', h.collections);
       // section 3o: a restaurant's tables and sessions
       if(h.tables){ ch = on(ch, '*', 'hangtag_tables', h.tables); ch = on(ch, '*', 'hangtag_table_sessions', h.tables); }
-      // section 3r: price lists, purchase orders, vouchers
-      if(h.biz) ['hangtag_price_lists','hangtag_purchase_orders','hangtag_vouchers','hangtag_einvoices','hangtag_eway_bills','hangtag_bank_accounts','hangtag_bank_moves'].forEach(t => { ch = on(ch, '*', t, h.biz); });
+      // section 3r: price lists, purchase orders, vouchers (and 3s bank accounts, 3z the shop's own fields and units)
+      if(h.biz) ['hangtag_price_lists','hangtag_purchase_orders','hangtag_vouchers','hangtag_einvoices','hangtag_eway_bills','hangtag_bank_accounts','hangtag_bank_moves',
+        'hangtag_attributes','hangtag_units'].forEach(t => { ch = on(ch, '*', t, h.biz); });
       return ch.subscribe(onStatus);
     },
     removeChannel: ch => db().removeChannel(ch),
@@ -132,9 +133,10 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
        fields or variants of the product stays; a product the cloud doesn't have yet is saved whole */
     async patchProduct(p, index, fields, variantIds){
       const row = productRow(p, index), COLS = { name:'name', price:'price', color:'color', cat:'category', brand:'brand', desc:'description', cost:'cost_price', archived:'archived',
-        hsn:'hsn', gst:'gst_rate', code:'code_type', opts:'options', tracking:'tracking', unit:'unit', low:'low_stock', expiry:'tracks_expiry', bundle:'bundle', repack:'repack' };
+        hsn:'hsn', gst:'gst_rate', code:'code_type', opts:'options', tracking:'tracking', unit:'unit', low:'low_stock', expiry:'tracks_expiry', bundle:'bundle', repack:'repack', attrs:'attrs' };
       const patch = { updated_at:row.updated_at };
-      (fields || []).forEach(f => { const col = COLS[f]; if(col) patch[col] = col in row ? row[col] : null; });
+      // values for the shop's fields removed altogether: an empty set (the column never holds null)
+      (fields || []).forEach(f => { const col = COLS[f]; if(col) patch[col] = col in row ? row[col] : col === 'attrs' ? {} : null; });
       const r = await table('hangtag_products').update(patch).eq('id', p.id).select('id'); sbOk(r);
       const rows = variantRows(p), ids = new Set(variantIds || []);
       if(!r.data || !r.data.length){ sbOk(await table('hangtag_products').upsert(row)); if(rows.length) sbOk(await table('hangtag_variants').upsert(rows)); return; }
@@ -371,11 +373,16 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
       // bank accounts and their entries (section 3s): an account is saved again when it changes; an entry only once
       if(kind === "ba"){ sbOk(await table('hangtag_bank_accounts').upsert(bankAccountRow(rec), { onConflict: 'owner_id,id' })); return {}; }
       if(kind === "bm"){ sbOk(await table('hangtag_bank_moves').upsert(bankMoveRow(rec), { onConflict: 'owner_id,id', ignoreDuplicates: true })); return {}; }
+      // the shop's own product fields and units (section 3z): saved again whenever they change
+      if(kind === "at"){ sbOk(await table('hangtag_attributes').upsert(attrRow(rec), { onConflict: 'owner_id,id' })); return {}; }
+      if(kind === "un"){ sbOk(await table('hangtag_units').upsert(unitRow(rec), { onConflict: 'owner_id,id' })); return {}; }
       throw new AppError(ERROR_CODES.VALIDATION, "Unknown record: " + kind);
     },
-    /* A price list removed (customers on it go back to the default list) */
+    /* A price list removed (customers on it go back to the default list); a field or unit no product uses */
     async deleteBiz(kind, id){
       if(kind === "pl") await mustReach('hangtag_price_lists', 'id', q => q.delete(), q => q.eq('id', id));
+      if(kind === "at") await mustReach('hangtag_attributes', 'id', q => q.delete(), q => q.eq('id', id));
+      if(kind === "un") await mustReach('hangtag_units', 'id', q => q.delete(), q => q.eq('id', id));
     },
     /* Every record of the batch; a kind the database doesn't have yet (schema.sql not re-run) comes back null */
     async fetchBiz(){
@@ -384,7 +391,8 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
         get('hangtag_einvoices', ['created_at','sale_id'], rowToEinv), get('hangtag_eway_bills', ['created_at','sale_id'], rowToEway),
         get('hangtag_vouchers', ['t','id'], rowToVoucher), get('hangtag_repacks', ['t','id'], rowToRepack)]);
       const [ba, bm] = await Promise.all([get('hangtag_bank_accounts', ['created_at','id'], rowToBankAccount), get('hangtag_bank_moves', ['t','id'], rowToBankMove)]);
-      return { pl, po, ei, ew, gv, rpk, ba, bm };
+      const [at, un] = await Promise.all([get('hangtag_attributes', ['sort_order','id'], rowToAttr), get('hangtag_units', ['id'], rowToUnit)]);
+      return { pl, po, ei, ew, gv, rpk, ba, bm, at, un };
     },
     /* A team member's poll: fingerprints of price lists, POs, vouchers and GST records (RPC hangtag_biz_changes) */
     async bizChanges(){

@@ -14,8 +14,11 @@ import { canAny, denied, notAllowedText } from '../../shop/services/access.js';
 import { cleanTracking, trackingFromChoice } from '../../../domain/shop/capabilities.js';
 import { decimalsOf, isWeighed, roundQty, unitId } from '../../../domain/catalog/units.js';
 import { hasCap } from '../../shop/services/shop-caps.js';
+import { checkAttrs, checkLinkedValues } from '../../../domain/catalog/attributes.js';
+import { attrById, shopAttrs } from '../services/shop-fields.js';
 
-/* draft: the editor state { id, name, cat, brand, desc, price, cost, color, archived, hsn, gst, unit, tracking, hasOpts, opts, cells, codesOn, code, img }
+/* draft: the editor state { id, name, cat, brand, desc, price, cost, color, archived, hsn, gst, unit, tracking, hasOpts, opts, cells, codesOn, code, img,
+   attrs: { field id: value as typed } for the shop's fields it shows }
    (opts/cells as in domain/catalog/options.js). Every current combination is saved as a variant (off sale when unticked);
    a saved variant that is no longer a combination is kept, off sale and with its stock zeroed, when it has stock history
    or sales, and deleted otherwise. Returns { error } (nothing saved) or { created, name, activeCount, variantCount, ids }
@@ -31,6 +34,14 @@ export function saveProduct({ draft }){
   const {name,price,cost,hsn,gst}=ok;
   // the unit it is sold in: stock counts keep its decimals (12.5 kg), whole numbers for pieces
   const old=repo.get(e.id), t=Date.now(), unit=unitId(e.unit), dp=decimalsOf(unit);
+  // the shop's own fields (domain/catalog/attributes.js): the values typed, checked against their fields (a field added to
+  // this product with nothing typed counts as shown); values the editor doesn't show stay as they are
+  const typed=e.attrs&&typeof e.attrs==="object"?e.attrs:{}, oldAttrs=(old&&old.attrs)||{};
+  const shown={...(old||{}),attrs:{...oldAttrs,...Object.fromEntries(Object.keys(typed).filter(k=>!(k in oldAttrs)).map(k=>[k,""]))}};
+  const av=checkAttrs(shopAttrs(),shown,typed,String(e.cat||""));
+  if(av.error)return {error:av.error};
+  // an option taking its values from a field: each value must be one of the field's (a field not on this device yet: as typed)
+  for(const op of e.hasOpts?e.opts:[]){const a=op.a&&attrById(op.a);if(a){const r=checkLinkedValues(a,op.v);if(r.error)return {error:r.error}}}
   // tracked by serial number or batch: its stock moves only with its serials / batches (Purchases, Stock in, bills), and how
   // it is tracked changes only while it has no stock (pieces already in hand have no serials or batch to go by)
   const trk=trackingFromChoice(e.tracking), wasTrk=cleanTracking(old&&old.tracking);
@@ -60,12 +71,13 @@ export function saveProduct({ draft }){
   });
   if(bad) return {error:bad};
   if(newMoves.length&&!canAny(UPLOAD_PERMISSIONS.move)) return {error:notAllowedText("set stock")+" Leave the stock numbers as they are."};
-  const opts=e.hasOpts?e.opts.map(op=>({n:cleanOptionName(op.n),v:op.v.slice()})):[];
+  const opts=e.hasOpts?e.opts.map(op=>({n:cleanOptionName(op.n),v:op.v.slice(),...(op.a?{a:op.a}:{})})):[];
   // what the editor doesn't show stays as it is: the product's own low-stock alert (from an import), its repack conversions
   // and a kit's items
   const unseen=old?Object.fromEntries(["low","repack","bundle"].filter(k=>old[k]!=null).map(k=>[k,old[k]])):{};
   const product={...unseen,id:e.id,name,cat:String(e.cat||"").trim(),brand:String(e.brand||"").trim(),desc:String(e.desc||"").trim(),price,cost,color:okColor(e.color),archived:!!e.archived,
-    hsn,gst,code:e.codesOn?(e.code==="qr"?"qr":"barcode"):"",opts,variants,...(unit!=="pcs"?{unit}:{})};
+    hsn,gst,code:e.codesOn?(e.code==="qr"?"qr":"barcode"):"",opts,variants,...(unit!=="pcs"?{unit}:{}),
+    ...(Object.keys(av.attrs).length||old&&old.attrs?{attrs:av.attrs}:{})};
   if(trk.tracking!=="none") product.tracking=trk.tracking;   // serial | batch (none: not stored)
   if(trk.expiry) product.expiry=true;   // a batch-tracked product whose batches have expiry dates
   repo.save({product,isNew:!old,renamed:!!old&&old.name!==name,newMoves,deletedVariantIds:delV,image:e.img});

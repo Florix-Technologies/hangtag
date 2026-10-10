@@ -306,28 +306,31 @@ export function attrUsage(products,attr){
   });
   return out;
 }
-/* Choice `from` of field a renamed to `to` in every product using it: its value, and the option linked to the field with
-   its variants (they keep their ids, stock and codes: only the label changes). → the products that changed (new objects) */
-export function renameAttrValue(products,attr,from,to){
-  const id=attr&&attr.id, f=low(from), out=[];
-  if(!id||!f||!str(to))return out;
+/* Choices of field a renamed in every product using them: its value, and the option linked to the field with its variants
+   (they keep their ids, stock and codes: only the label changes). pairs: [[from, to]…], all at once (so swapping two names
+   is a swap). → the products that changed (new objects) */
+export function renameAttrValues(products,attr,pairs){
+  const id=attr&&attr.id, map=new Map((pairs||[]).filter(([f,t])=>str(f)&&str(t)).map(([f,t])=>[low(f),str(t)])), out=[];
+  if(!id||!map.size)return out;
+  const ren=x=>map.has(low(x))?map.get(low(x)):x, hit=x=>map.has(low(x));
   (products||[]).forEach(p=>{
     if(!p)return;
     let next=p;
     const v=p.attrs&&p.attrs[id];
-    if(typeof v==="string"&&low(v)===f)next={...next,attrs:{...p.attrs,[id]:to}};
-    else if(Array.isArray(v)&&v.some(x=>low(x)===f))next={...next,attrs:{...p.attrs,[id]:v.map(x=>low(x)===f?to:x)}};
+    if(typeof v==="string"&&hit(v))next={...next,attrs:{...p.attrs,[id]:ren(v)}};
+    else if(Array.isArray(v)&&v.some(hit))next={...next,attrs:{...p.attrs,[id]:v.map(ren)}};
     const opts=Array.isArray(p.opts)?p.opts:[];
-    if(opts.some(o=>o&&o.a===id&&(o.v||[]).some(x=>low(x)===f))){
+    if(opts.some(o=>o&&o.a===id&&(o.v||[]).some(hit))){
       // position in a variant's tuple: options with values only (domain/catalog/options.js)
       const pos=[];let k=0;opts.forEach(o=>{if(o&&Array.isArray(o.v)&&o.v.length){if(o.a===id)pos.push(k);k++}});
-      next={...next,opts:opts.map(o=>o&&o.a===id?{...o,v:o.v.map(x=>low(x)===f?to:x)}:o),
-        variants:(p.variants||[]).map(vr=>{const o=Array.isArray(vr.o)?vr.o:[];return pos.some(i=>low(o[i])===f)?{...vr,o:o.map((x,i)=>pos.includes(i)&&low(x)===f?to:x)}:vr})};
+      next={...next,opts:opts.map(o=>o&&o.a===id?{...o,v:o.v.map(ren)}:o),
+        variants:(p.variants||[]).map(vr=>{const o=Array.isArray(vr.o)?vr.o:[];return pos.some(i=>hit(o[i]??""))?{...vr,o:o.map((x,i)=>pos.includes(i)?ren(x):x)}:vr})};
     }
     if(next!==p)out.push(next);
   });
   return out;
 }
+export const renameAttrValue=(products,attr,from,to)=>renameAttrValues(products,attr,[[from,to]]);
 /* The values of an option linked to field a, checked: each must be a value of the field (a choice in its list, a number…)
    → { values } in the field's spelling, or { error } */
 export function checkLinkedValues(attr,values){
@@ -340,3 +343,5 @@ export function checkLinkedValues(attr,values){
   }
   return {values:out};
 }
+/* The fields product p uses (its values and the options taking their values from a field): what its upload waits for */
+export const attrIdsOf=p=>p?[...new Set([...Object.keys(p.attrs&&typeof p.attrs==="object"?p.attrs:{}),...(Array.isArray(p.opts)?p.opts:[]).map(o=>o&&o.a).filter(Boolean)])].filter(k=>ATTR_ID_RE.test(k)):[];

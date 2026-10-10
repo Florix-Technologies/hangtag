@@ -39,7 +39,7 @@ function liveOpts(opts){
   (Array.isArray(opts)?opts:[]).forEach(op=>{
     const m=new Map();
     (op&&Array.isArray(op.v)?op.v:[]).forEach(x=>{if(x==null)return;const s=String(x),k=low(s);if(s.trim()&&!m.has(k))m.set(k,s)});
-    if(m.size)out.push({n:str(op.n),v:[...m.values()],m});
+    if(m.size)out.push({n:str(op.n),v:[...m.values()],m,...(op&&op.a?{a:op.a}:{})});
   });
   return out;
 }
@@ -227,7 +227,8 @@ const own=(obj,k)=>!!obj&&Object.prototype.hasOwnProperty.call(obj,k);
 const put=(obj,k,val)=>{Object.defineProperty(obj,k,{value:val,writable:true,enumerable:true,configurable:true});return val};
 const fail=error=>({error});
 const at=(list,i)=>{const n=typeof i==="string"&&/^\d+$/.test(i)?+i:i;return Number.isInteger(n)&&n>=0&&n<list.length?n:-1};
-const tidyOpts=opts=>(Array.isArray(opts)?opts:[]).map(op=>{const l=liveOpts([op])[0];return {n:str(op&&op.n),v:l?l.v:[]}});
+// a: the shop's field the option takes its values from (domain/catalog/attributes.js), kept through every operation
+const tidyOpts=opts=>(Array.isArray(opts)?opts:[]).map(op=>{const l=liveOpts([op])[0];return {n:str(op&&op.n),v:l?l.v:[],...(op&&op.a?{a:op.a}:{})}});
 const liveCount=opts=>opts.filter(op=>op.v.length).length;
 // position of option i inside a tuple (options without values take no place)
 const posOf=(opts,i)=>opts.slice(0,i).filter(op=>op.v.length).length;
@@ -290,7 +291,7 @@ const done=(state,opts,cells,before)=>{settle(opts,cells,before);return {...stat
 export const blankCell=o=>({id:null,o:Array.isArray(o)?o.slice():[],sku:"",bc:"",price:"",cost:"",stock:"",orig:0,active:true,exists:false});
 /* Editor state for product p (null for a new product); stockOf(variantId) → pieces in hand now */
 export function editorState(p,stockOf){
-  const live=liveOpts(p&&p.opts),opts=live.map(op=>({n:op.n,v:op.v.slice()})),cells={};
+  const live=liveOpts(p&&p.opts),opts=live.map(op=>({n:op.n,v:op.v.slice(),...(op.a?{a:op.a}:{})})),cells={};
   const vs=(p&&Array.isArray(p.variants)?p.variants:[]).filter(v=>v&&typeof v==="object");
   // variants that fit claim their tuples first, so a clash in bad data never displaces one for sale
   vs.map((v,i)=>{const t=fit(live,v.o);return {v,o:t||(Array.isArray(v.o)?v.o.map(str):[]),rank:t?(v.active!==false?0:1):2,i}})
@@ -313,13 +314,15 @@ export function removedCells(state){
   const cells=state.cells||{},keys=new Set(combos(state.opts).map(tupleKey));
   return Object.keys(cells).filter(k=>!keys.has(k)&&cells[k]&&cells[k].exists).map(k=>({o:cells[k].o,key:k,cell:cells[k]}));
 }
-/* A new option goes last, with no values yet (it joins the combinations with its first value) */
-export function addOption(state,name){
+/* A new option goes last, with no values yet (it joins the combinations with its first value). attrId: the shop's field it
+   takes its values from, if any */
+export function addOption(state,name,attrId){
   const opts=tidyOpts(state.opts),n=cleanOptionName(name);
   if(opts.length>=L.maxOptions)return fail(`A product can have up to ${L.maxOptions} options.`);
   if(!n)return fail("Enter an option name.");
   if(opts.some(op=>low(cleanOptionName(op.n))===low(n)))return fail(`There's already an option called ${n}.`);
-  return {...state,opts:[...opts,{n,v:[]}],cells:copyCells(state.cells)};
+  if(attrId&&opts.some(op=>op.a===attrId))return fail(`There's already an option for ${n}.`);
+  return {...state,opts:[...opts,{n,v:[],...(attrId?{a:String(attrId)}:{})}],cells:copyCells(state.cells)};
 }
 export function renameOption(state,i,name){
   const opts=tidyOpts(state.opts);i=at(opts,i);
@@ -327,7 +330,7 @@ export function renameOption(state,i,name){
   const n=cleanOptionName(name);
   if(!n)return fail("Enter an option name.");
   if(opts.some((op,k)=>k!==i&&low(cleanOptionName(op.n))===low(n)))return fail(`There's already an option called ${n}.`);
-  opts[i]={n,v:opts[i].v};
+  opts[i]={...opts[i],n};
   return {...state,opts,cells:copyCells(state.cells)};
 }
 /* Variants whose value for option i is its FIRST value survive (the value leaves their tuple); the others are removed */
@@ -353,7 +356,7 @@ export function addValues(state,i,names){
   const cells=copyCells(state.cells);
   if(!add.length)return {...state,opts,cells};
   if(op.v.length+add.length>L.maxValues)return fail(`${op.n||"An option"} can have up to ${L.maxValues} values.`);
-  const next=opts.map((o,k)=>k===i?{n:o.n,v:[...o.v,...add]}:o),count=variantCount(next);
+  const next=opts.map((o,k)=>k===i?{...o,v:[...o.v,...add]}:o),count=variantCount(next);
   if(count>L.maxVariants)return fail(`That would make ${count} variants. A product can have up to ${L.maxVariants}.`);
   const before=liveIds(opts,state.cells);
   if(!op.v.length){
@@ -372,7 +375,7 @@ export function renameValue(state,i,j,name){
   const old=op.v[j],x=cleanOptionValue(name);
   if(!x)return fail("Enter a value.");
   if(op.v.some((y,k)=>k!==j&&low(y)===low(x)))return fail(`${op.n} already has ${x}.`);
-  const next=opts.map((o,k)=>k===i?{n:o.n,v:o.v.map((y,k2)=>k2===j?x:y)}:o),cells=copyCells(state.cells);
+  const next=opts.map((o,k)=>k===i?{...o,v:o.v.map((y,k2)=>k2===j?x:y)}:o),cells=copyCells(state.cells);
   if(x===old)return {...state,opts:next,cells};
   const n=liveCount(opts),pos=posOf(opts,i),before=liveIds(opts,state.cells),moves=[];
   Object.keys(cells).forEach(k=>{const o=cells[k].o;if(o.length===n&&low(o[pos])===low(old))moves.push([k,o.map((y,k2)=>k2===pos?x:y)])});
@@ -385,7 +388,7 @@ export function removeValue(state,i,j){
   if(i<0)return fail("That option no longer exists.");
   const op=opts[i];j=at(op.v,j);
   if(j<0)return fail("That value no longer exists.");
-  const next=opts.map((o,k)=>k===i?{n:o.n,v:o.v.filter((_,k2)=>k2!==j)}:o);
+  const next=opts.map((o,k)=>k===i?{...o,v:o.v.filter((_,k2)=>k2!==j)}:o);
   return done(state,next,copyCells(state.cells),liveIds(opts,state.cells));
 }
 /* [{ o, key, cell }]: the saved variants removeValue(state, i, j) — or removeOption(state, i) when j is omitted — would

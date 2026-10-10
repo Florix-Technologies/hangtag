@@ -10,6 +10,7 @@ import { cleanTracking } from '../../domain/shop/capabilities.js';
 import { okColor } from '../../shared/utils/colors.js';
 import { roundQty, unitId } from '../../domain/catalog/units.js';
 import { normBatch, normSerial } from '../../domain/inventory/tracking.js';
+import { cleanAttrValues } from '../../domain/catalog/attributes.js';
 
 /* ---------- row <-> app shapes ---------- */
 
@@ -81,14 +82,17 @@ export const billArgs = s => ({ sale:Object.assign(saleRow(s), { is_void:!!s.voi
 /* options column: { opts:[{name, values}], colors, sizes } — colors/sizes are copies for older app versions */
 export function optionsRow(p){
   const opts = Array.isArray(p.opts) ? p.opts : [], pick = f => { const o = opts.find(x => f(x.n)); return o ? o.v.slice() : []; };
-  return { opts: opts.map(o => ({ name:o.n, values:o.v.slice() })), colors: pick(isColourOption), sizes: pick(isSizeOption) };
+  // an option taking its values from one of the shop's fields keeps the field's id (attr; section 3z)
+  return { opts: opts.map(o => ({ name:o.n, values:o.v.slice(), ...(o.a ? { attr:o.a } : {}) })), colors: pick(isColourOption), sizes: pick(isSizeOption) };
 }
 export const productRow = (p, idx) => ({ id:p.id, name:p.name, price:+p.price||0, color:okColor(p.color), sort_order:idx, category:p.cat||null, brand:p.brand||null,
   description:p.desc||null, cost_price:p.cost==null?null:p.cost, archived:!!p.archived, hsn:p.hsn||null, gst_rate:p.gst==null||p.gst===""?null:+p.gst,
   code_type:p.code||null, options:optionsRow(p), tracking:cleanTracking(p.tracking), unit:unitId(p.unit), low_stock:p.low==null||p.low===""?null:Math.round(+p.low), tracks_expiry:!!p.expiry, updated_at:new Date().toISOString(),
   // a kit's items and a product's repack conversions (section 3r): only for products that have them
   ...(Array.isArray(p.bundle) ? { bundle:p.bundle.length ? p.bundle.map(c => ({ v:c.v, q:+c.q })) : null } : {}),
-  ...(Array.isArray(p.repack) ? { repack:p.repack.length ? p.repack.map(r => ({ f:r.f, t:r.t, per:+r.per })) : null } : {}) });
+  ...(Array.isArray(p.repack) ? { repack:p.repack.length ? p.repack.map(r => ({ f:r.f, t:r.t, per:+r.per })) : null } : {}),
+  // the shop's own fields (section 3z): only for products that have them, so an older database still takes the others
+  ...(p.attrs && typeof p.attrs === 'object' ? { attrs:cleanAttrValues(p.attrs) } : {}) });
 export const variantRows = p => variantsOf(p,true).map((v,k)=>({ id:v.id, product_id:p.id, option_values:Array.isArray(v.o)?v.o.slice():[],
   ...(cs => ({ color:cs.c, size:cs.s }))(legacyCS(p.opts, v.o)), sku:v.sku||null, barcode:v.bc||null,
   price:v.price==null?null:v.price, cost_price:v.cost==null?null:v.cost, active:v.active!==false, sort_order:k, updated_at:new Date().toISOString() }));
@@ -117,8 +121,10 @@ export function rowToProduct(p){
     color:p.color, archived:!!p.archived, hsn:p.hsn||"", gst:p.gst_rate==null?null:+p.gst_rate, code:p.code_type||"", variants:[], ...(unitId(p.unit) !== "pcs" ? { unit:p.unit } : {}),
     ...(cleanTracking(p.tracking) !== "none" ? { tracking:p.tracking } : {}), ...(p.low_stock!=null ? { low:+p.low_stock } : {}), ...(p.tracks_expiry ? { expiry:true } : {}),
     ...(Array.isArray(p.bundle) && p.bundle.length ? { bundle:p.bundle.map(c => ({ v:String(c.v), q:+c.q })) } : {}),
-    ...(Array.isArray(p.repack) && p.repack.length ? { repack:p.repack.map(r => ({ f:String(r.f), t:String(r.t), per:+r.per })) } : {}) };
-  if(Array.isArray(o.opts)) return { ...base, opts:o.opts.map(x => ({ n:String(x&&x.name||""), v:Array.isArray(x&&x.values)?x.values.map(String):[] })) };
+    ...(Array.isArray(p.repack) && p.repack.length ? { repack:p.repack.map(r => ({ f:String(r.f), t:String(r.t), per:+r.per })) } : {}),
+    ...(p.attrs && Object.keys(cleanAttrValues(p.attrs)).length ? { attrs:cleanAttrValues(p.attrs) } : {}) };
+  if(Array.isArray(o.opts)) return { ...base, opts:o.opts.map(x => ({ n:String(x&&x.name||""), v:Array.isArray(x&&x.values)?x.values.map(String):[],
+    ...(x && typeof x.attr === 'string' && x.attr ? { a:x.attr } : {}) })) };
   return { ...base, colors:Array.isArray(o.colors)?o.colors:undefined, sizes:Array.isArray(o.sizes)?o.sizes:undefined };
 }
 export const rowToVariant = v => ({ id:v.id, o:Array.isArray(v.option_values)?v.option_values.map(String):[], c:v.color||"", s:v.size||"", sku:v.sku||"", bc:v.barcode||"",

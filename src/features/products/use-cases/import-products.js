@@ -10,10 +10,27 @@ import { productRepository } from '../repositories/product-repository.js';
 import { COLORS } from '../../../shared/utils/colors.js';
 import { uid } from '../../../shared/utils/ids.js';
 import { canAny, denied } from '../../shop/services/access.js';
+import { shopAttrs } from '../services/shop-fields.js';
+import { saveAttr } from './shop-fields.js';
 
+/* The shop's fields and the option names its products use (not taken from a field): the template, the check and the export
+   read the shop's own columns */
+export const importContext = () => ({ attrs: shopAttrs(), optionNames: [...new Map(productRepository().list().flatMap(p => (p.opts || []).filter(o => o && !o.a && o.n).map(o => [o.n.toLowerCase(), o.n]))).values()] });
 /* rows: [[cell text…]…] as in the sheet → the check (domain/catalog/product-import.js validateImport). skipExisting: rows of
    products the shop already has are left out instead of refused (the merchant chose so in the preview). */
-export const checkImportRows = (rows, { skipExisting = false } = {}) => validateImport(rows, { products: productRepository().list(), variantsOf, stockAllowed: canAny(UPLOAD_PERMISSIONS.move), skipExisting });
+export const checkImportRows = (rows, { skipExisting = false } = {}) => validateImport(rows, { products: productRepository().list(), variantsOf, stockAllowed: canAny(UPLOAD_PERMISSIONS.move), skipExisting, ...importContext() });
+/* Columns of the file the shop has no field for, made fields of the kind their values suggest (the preview's "Add as
+   fields"): cols [{ name, suggest: { type, options?, dp? } }] → { added: [names], errors: ["Name: why"] } */
+export function addImportFields(cols){
+  const no=denied("manage_products","add product fields"); if(no) return { added: [], errors: [no.error] };
+  const added=[], errors=[];
+  (cols || []).forEach(c => {
+    const sg=c.suggest || { type: "text" };
+    const r=saveAttr({ name: c.name, type: sg.type, options: sg.options || [], dp: sg.dp, maxLen: sg.type === "text" ? 300 : undefined });
+    if(r.error) errors.push(`${c.name}: ${r.error}`); else added.push(r.attr.name);
+  });
+  return { added, errors };
+}
 /* rows: as checked (the file's rows) → { error, check? } or { products, variants, pieces } */
 export function importProducts(rows, { skipExisting = false } = {}){
   const no=denied("manage_products","import products"); if(no) return no;

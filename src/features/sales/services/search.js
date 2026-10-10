@@ -4,9 +4,12 @@ import { variantsOf } from '../../../domain/catalog/variants.js';
 import { liveProducts } from '../../products/services/catalog.js';
 import { norm } from '../../../shared/utils/text.js';
 import { gtinKey, parseGs1 } from '../../../domain/catalog/gs1.js';
+import { attrSearchText } from '../../../domain/catalog/attributes.js';
+import { shopAttrs } from '../../products/services/shop-fields.js';
 
 export function variantText(p, v){ return norm([...(v.o || []), v.sku, v.bc].join(" ")); }
-export function productText(p){ return norm([p.name, p.cat, p.brand].join(" ")); }
+// with the values of the shop's own fields ("cool white", "9 W"): a product is found by what it is
+export function productText(p){ return norm([p.name, p.cat, p.brand, p.attrs ? attrSearchText(shopAttrs(), p) : ""].join(" ")); }
 /* Products (not archived) matching the search and category */
 
 export function sellProducts(){

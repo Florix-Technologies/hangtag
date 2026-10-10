@@ -4,7 +4,7 @@ import { store } from '../../../shared/state/store.js';
 import { variantsOf } from '../../../domain/catalog/variants.js';
 import { addBlankLine, billDocumentLink, confirmSupplierBill, discardBillDocument, fingerprintBill, invoiceDuplicates, keepBillDocument, planSupplierBill, readSupplierBill, refreshLine } from '../use-cases/import-supplier-bill.js';
 import { suppliersList } from '../services/purchase-state.js';
-import { IMPORT_UNITS } from '../../../domain/catalog/product-import.js';
+import { importUnits } from '../../../domain/catalog/product-import.js';
 import { liveProducts, prod } from '../../products/services/catalog.js';
 import { closeModal } from '../../../shared/components/modal.js';
 import { toast } from '../../../shared/components/toast.js';
@@ -122,8 +122,8 @@ function lineHTML(l){
     ${nr && l.reasons.length ? `<p class="bi-reasons">${l.reasons.map(esc).join(" · ")}</p>` : ""}
     <div class="bi-grid">
       ${f("name", "Product", l.name, ' maxlength="120" autocomplete="off"')}
-      ${f("qty", l.dp ? "Quantity (" + esc((IMPORT_UNITS.find(u => u[0] === (prod(l.targetProductId) || l).unit) || ["", "kg"])[1]) + ")" : "Quantity", l.qty, ` type="number" inputmode="${l.dp ? "decimal" : "numeric"}" min="0" step="${l.dp ? "any" : "1"}"`)}
-      ${l.action === "new-product" ? `<label>Unit<select data-bif="unit" data-line="${id}">${IMPORT_UNITS.map(([c, lab]) => `<option value="${esc(c)}"${(l.unit || "pcs") === c ? " selected" : ""}>${esc(lab)}</option>`).join("")}</select></label>` : ""}
+      ${f("qty", l.dp ? "Quantity (" + esc((importUnits().find(u => u[0] === (prod(l.targetProductId) || l).unit) || ["", "kg"])[1]) + ")" : "Quantity", l.qty, ` type="number" inputmode="${l.dp ? "decimal" : "numeric"}" min="0" step="${l.dp ? "any" : "1"}"`)}
+      ${l.action === "new-product" ? `<label>Unit<select data-bif="unit" data-line="${id}">${importUnits().map(([c, lab]) => `<option value="${esc(c)}"${(l.unit || "pcs") === c ? " selected" : ""}>${esc(lab)}</option>`).join("")}</select></label>` : ""}
       ${f("unitCost", `Cost ${currencySign()} / piece`, l.unitCost, ' type="number" inputmode="decimal" min="0"')}
       ${f("sellPrice", `Selling price ${currencySign()}`, l.sellPrice, ' type="number" inputmode="numeric" min="0" placeholder="for new items"')}
       ${f("gst", "GST %", l.gst, ' type="number" inputmode="decimal" min="0" max="100"')}

@@ -8,6 +8,7 @@ import { printerOf } from '../domain/shop/printer-settings.js';
 import { scaleSettingsOf } from '../domain/shop/scale-settings.js';
 import { storage } from '../shared/state/persistence.js';
 import { objOr } from '../shared/utils/objects.js';
+import { setShopUnits } from '../domain/catalog/units.js';
 
 export function initState(){
   /* ================= state ================= */
@@ -50,6 +51,7 @@ export function initState(){
   store.pendingDocs = objOr(storage.get("rc_pending_docs",{}),{});
   store.quoteSends = storage.get("rc_quote_sends",[]); if(!Array.isArray(store.quoteSends)) store.quoteSends = [];
   store.biz = objOr(storage.get("rc_biz",{}),{});                  // price lists, purchase orders, GST readiness, repacks, vouchers (section 3r)
+  setShopUnits(Object.values(store.biz.un || {}));                // the shop's own units (section 3z) for every quantity rule
   store.cartPriceList = storage.get("rc_cartpl",null) || null;     // the price list chosen on the bill being rung up (null: the default)
   store.bizView = null;         // the open sheet of the commerce batch: { kind, … }   // quotations to send / sent from here   // supplier bills' originals still to upload (by import id)
   store.tableView = null;       // Tables: { sel (a table), mode: "floor" | "setup", order (an order being taken), edit, qr }

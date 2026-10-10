@@ -14,6 +14,8 @@ import { levelOf } from '../../inventory/services/stock-levels.js';
 import { serialsOf, trackingOfP } from '../../inventory/services/tracking.js';
 import { productHasSales } from '../use-cases/product-lifecycle.js';
 import { can } from '../../shop/services/access.js';
+import { attrText, fieldsFor } from '../../../domain/catalog/attributes.js';
+import { shopAttrs } from '../services/shop-fields.js';
 
 const TRACK = { none: "Not tracked by serial or batch", serial: "Serial / IMEI number of each piece", batch: "Batch or lot number" };
 export function productViewHTML(pid){
@@ -43,8 +45,14 @@ export function productViewHTML(pid){
     sub: `${p.archived ? statusChip("Archived", "muted") + " " : ""}${stockChip} <span class="note">${esc(String(Math.round(total * 1000) / 1000))} ${u.id === "pcs" ? "piece" + (total === 1 ? "" : "s") : esc(u.sym)} in stock${many ? ` · ${vs.length} variants` : ""}</span>`,
     body: `<div class="pv-top">${thumb(p, "lg", store.imgs[p.id] || null)}<div class="pv-facts">${facts}</div></div>
       ${p.desc ? `<p class="pv-desc">${esc(p.desc)}</p>` : ""}
+      ${detailsHTML(p)}
       <div class="dsec"><h4>Stock${many ? " by variant" : ""}</h4><div class="tw"><table class="tbl pv-tbl"><thead><tr><th>${many ? "Variant" : ""}</th><th>Stock</th><th>Price</th><th>SKU</th></tr></thead><tbody>${rows}</tbody></table></div>
       ${tr === "serial" ? `<p class="note" style="margin:8px 0 0"><button type="button" class="link xs" data-tab="stock" data-subview="stock:tracking" data-modal-close>See every serial number in Stock → Serials &amp; batches</button></p>` : ""}</div>`,
     foot: `${actionsMenuHTML("pv-" + p.id, items, { up: true })}${can("manage_products") ? `<button type="button" class="btn primary" data-editp="${esc(p.id)}">${UI_ICON.edit} Edit product</button>` : ""}` });
+}
+/* The shop's own fields the product has a value for (domain/catalog/attributes.js), in the fields' order */
+function detailsHTML(p){
+  const vals = p.attrs || {}, rows = fieldsFor(shopAttrs(), p).filter(a => Object.prototype.hasOwnProperty.call(vals, a.id)).map(a => [esc(a.name), esc(attrText(a, vals[a.id]) || "—")]);
+  return rows.length ? `<div class="dsec pv-fields"><h4>Details</h4>${kvHTML(rows)}</div>` : "";
 }
 export function openProductView(pid){ const h = productViewHTML(pid); if(h) $("#modalHost").innerHTML = h; }

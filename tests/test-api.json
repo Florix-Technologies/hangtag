@@ -207,7 +207,14 @@
   "savePO",
   "savePriceList",
   "setItemPrice",
-  "vRec"
+  "vRec",
+  "shopAttrs",
+  "openProductView",
+  "openProductImport",
+  "openAttrList",
+  "openAttrEditor",
+  "openUnitList",
+  "openUnitEditor"
  ],
  "state": [
   "access",

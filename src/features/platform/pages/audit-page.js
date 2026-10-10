@@ -1,6 +1,7 @@
 // Console → Audit Log: every privileged action in the console (sign-ins, attempts without a role, changes to campaigns,
-// plans, Hangtag's settings and console access), newest first, with who did it and what changed — written by the
-// database's console functions themselves (hangtag_platform_audit), never by the browser.
+// plans, Hangtag's settings and console access, and the actions on shops with their reason and outcome), newest first,
+// with who did it and what changed — written by the database's console functions themselves (hangtag_platform_audit),
+// never by the browser.
 import { use } from '../../../shared/di/services.js';
 import { esc } from '../../../shared/dom.js';
 import { ROLE_LABELS, auditChanges, auditLabel } from '../../../domain/platform/console.js';
@@ -9,7 +10,13 @@ import { errorPanelHTML, loadingHTML, when } from '../services/console-ui.js';
 const PAGE = 50;
 const rowHTML = a => `<tr${a.ok ? "" : ' class="pc-bad"'}><td class="nowrap">${esc(when(a.t))}</td><td>${esc(a.actor_email || (a.actor ? a.actor.slice(0, 8) + "…" : "System"))}${a.actor_role ? `<br><small>${esc(ROLE_LABELS[a.actor_role] || a.actor_role)}</small>` : ""}</td>
   <td>${esc(auditLabel(a.action))}</td><td>${a.target_id ? `<code>${esc(a.target_id)}</code>` : "—"}</td>
-  <td>${auditChanges(a.detail).map(c => `<div>${esc(c)}</div>`).join("") || "—"}</td></tr>`;
+  <td>${auditChanges(a.detail).map(c => `<div>${esc(c)}</div>`).join("") || (a.detail && a.detail.reason ? "" : "—")}${outcomeHTML(a)}</td></tr>`;
+/* An action on a shop: its reason, and why it wasn't done (refused for the role, or failed) */
+function outcomeHTML(a){
+  const d = a.detail || {};
+  return (d.reason ? `<div><small>Reason:</small> ${esc(d.reason)}</div>` : "")
+    + (d.outcome === "denied" ? "<div><small>Refused: the role can't do this</small></div>" : d.outcome === "failed" ? `<div><small>Not done:</small> ${esc(d.error || "")}</div>` : "");
+}
 
 export async function renderAudit(main){
   main.innerHTML = loadingHTML("Audit Log");

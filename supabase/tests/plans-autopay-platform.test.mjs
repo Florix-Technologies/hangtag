@@ -309,9 +309,15 @@ console.log('=== Phase 55: the shops\' data stays theirs ===');
   check('a staff account reads no shop\'s data (row security as before); the shop still reads its own', seen === 0 && own === 1, { seen, own });
   const promote = await tryAs(A, `SELECT public.hangtag_platform_staff_save($1, 'super_admin', true, NULL)`, [A]);
   check('a shop owner can\'t give themselves a console role', denied(promote), promote);
-  const defs = await sql(`SELECT p.proname, p.prosecdef, array_to_string(p.proconfig, ',') cfg FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace
-      AND (p.proname LIKE 'hangtag_platform%' OR p.proname LIKE 'hangtag_autopay%' OR p.proname = 'hangtag_offer_for') AND p.proname <> 'hangtag_platform_permissions'`);
-  check('every console and AutoPay function is SECURITY DEFINER with search_path = \'\'', defs.length >= 18 && defs.every((d) => d.prosecdef && /search_path=""/.test(d.cfg)), defs.filter((d) => !d.prosecdef || !/search_path=""/.test(d.cfg)));
+  // the console's own pieces (3x: the shop rows, the lists…) run inside its role-checked functions, as their caller: an app
+  // user can't call them at all
+  const defs = await sql(`SELECT p.proname, p.prosecdef, array_to_string(p.proconfig, ',') cfg,
+        has_function_privilege('authenticated', p.oid, 'EXECUTE') OR has_function_privilege('anon', p.oid, 'EXECUTE') AS callable FROM pg_proc p
+      WHERE p.pronamespace = 'public'::regnamespace AND (p.proname LIKE 'hangtag_platform%' OR p.proname LIKE 'hangtag_autopay%' OR p.proname = 'hangtag_offer_for')
+        AND p.proname <> 'hangtag_platform_permissions'`);
+  const unsafe = defs.filter((d) => !/search_path=""/.test(d.cfg) || (!d.prosecdef && d.callable));
+  check('every console and AutoPay function has search_path = \'\'; each one the app can call is SECURITY DEFINER (and checks the role); the rest are closed to the app',
+    defs.length >= 18 && defs.filter((d) => d.callable).length >= 15 && unsafe.length === 0, unsafe);
   const rep = (await db.query(`SELECT check_name, ok FROM (${NEW.slice(NEW.lastIndexOf('SELECT check_name')).replace(/;\s*$/, '')}) q`)).rows;
   const mine = rep.filter((r) => /Plans on sale|trial lasts 30|Capped offers|AutoPay: each shop|Platform Console tables|Platform Console and AutoPay|Money counted/.test(r.check_name));
   check('the report: rows 80-86 all ok', mine.length === 7 && mine.every((r) => r.ok), mine);

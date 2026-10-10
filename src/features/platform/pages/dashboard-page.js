@@ -1,5 +1,6 @@
-// Console → Dashboard: the totals the database counted (hangtag_platform_dashboard): shops, plans, AutoPay, the money the
-// payment provider captured, the offers' counters against their caps, usage. Totals only — never a shop's own rows.
+// Console → Dashboard: the totals the database counted (hangtag_platform_dashboard): customers in each list, shops, AutoPay,
+// the money the payment provider captured, the offers' counters against their caps, usage. Totals only — never a shop's own
+// rows. A customer count opens the list it counted (Customers, or Payments for payment failures).
 import { use } from '../../../shared/di/services.js';
 import { esc } from '../../../shared/dom.js';
 import { dashboardTiles, offerProgress } from '../../../domain/platform/console.js';
@@ -16,15 +17,20 @@ function offersHTML(list){
   }).join("")}</div>`;
 }
 
-export async function renderDashboard(main){
+const tileHTML = t => {
+  const body = `<span class="pc-tl">${esc(t.label)}</span><b class="pc-tv">${esc(t.money ? money(t.value) : count(t.value))}</b>${t.hint ? `<small>${esc(t.hint)}</small>` : ""}`;
+  return t.href ? `<a class="pc-tile pc-tile-link" href="${esc(t.href)}">${body}</a>` : `<div class="pc-tile">${body}</div>`;
+};
+
+export async function renderDashboard(main, { me } = {}){
   main.innerHTML = loadingHTML("Dashboard");
   let d;
   try{ d = await use("platform").dashboard(); }catch(e){ main.innerHTML = errorPanelHTML("Dashboard", e); return; }
   main.innerHTML = `<div class="pc-page">
     <div class="pc-head"><h1>Dashboard</h1><span class="note">Counted ${esc(when(d.generated_at))}</span><button type="button" class="btn sm" data-pc-dash="reload">Refresh</button></div>
-    ${dashboardTiles(d).map((g, i) => `<section class="pc-group" aria-labelledby="pcg${i}"><h2 id="pcg${i}">${esc(g.group)}</h2>
-      <div class="pc-tiles">${g.items.map(t => `<div class="pc-tile"><span class="pc-tl">${esc(t.label)}</span><b class="pc-tv">${esc(t.money ? money(t.value) : count(t.value))}</b>${t.hint ? `<small>${esc(t.hint)}</small>` : ""}</div>`).join("")}</div></section>`).join("")}
+    ${dashboardTiles(d, me && me.perms).map((g, i) => `<section class="pc-group" aria-labelledby="pcg${i}"><h2 id="pcg${i}">${esc(g.group)}</h2>
+      <div class="pc-tiles">${g.items.map(tileHTML).join("")}</div></section>`).join("")}
     <section class="pc-group" aria-labelledby="pcgOffers"><h2 id="pcgOffers">Offers</h2>${offersHTML(Array.isArray(d.offers) ? d.offers : [])}</section>
   </div>`;
-  main.querySelector('[data-pc-dash="reload"]').addEventListener("click", () => renderDashboard(main));
+  main.querySelector('[data-pc-dash="reload"]').addEventListener("click", () => renderDashboard(main, { me }));
 }

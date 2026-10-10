@@ -1,5 +1,5 @@
 // The "platform" port: the Platform Console's link to Hangtag's database. Sign-in on a session of its own (its own storage
-// key: never the shop app's session), and the console's functions (schema.sql section 3w), each of which checks the
+// key: never the shop app's session), and the console's functions (schema.sql sections 3w and 3x), each of which checks the
 // caller's console role in the database. Errors come back as a PlatformError with a code the console acts on: DENIED (the
 // role can't), REFUSED (the database explained why: its own words), AUTH (sign in again), OUTDATED (the database update
 // isn't applied), NETWORK — never an internal detail.
@@ -14,7 +14,7 @@ export function platformError(e){
   if(code === "42501" || /HANGTAG_PLATFORM_DENIED/.test(msg)) return new PlatformError("DENIED", "Your console role can't do this.");
   if(code === "P0001" || code === "P0002") return new PlatformError("REFUSED", msg.replace(/^HANGTAG_\w+:\s*/, "").slice(0, 200) || "Refused.");
   if(code === "23514" || code === "22P02" || code === "22003" || code === "22007" || code === "22008") return new PlatformError("REFUSED", "Check the values.");
-  if(code === "PGRST202" || code === "42883") return new PlatformError("OUTDATED", "The console needs the database update (schema.sql section 3w).");
+  if(code === "PGRST202" || code === "42883") return new PlatformError("OUTDATED", "The console needs the database update (schema.sql sections 3w and 3x).");
   if(code === "PGRST301" || code === "401" || /JWT|not authenticated/i.test(msg)) return new PlatformError("AUTH", "Your sign-in has ended. Sign in again.");
   if(/Failed to fetch|NetworkError|network/i.test(msg)) return new PlatformError("NETWORK", "No connection. Check the internet and try again.");
   return new PlatformError("UNKNOWN", PLAIN);
@@ -59,5 +59,23 @@ export function createPlatformGateway({ client }){
     saveSettings: patch => rpc("hangtag_platform_settings_save", { p_patch: patch }),
     staff: () => rpc("hangtag_platform_staff_list"),
     saveStaff: (userId, role, active, name) => rpc("hangtag_platform_staff_save", { p_user: userId, p_role: role, p_active: active, p_name: name || null }),
+    /* the shops (3x): { rows, total, counts, … } a page at a time, and one shop's page */
+    customers: ({ q = "", list = "all", sort = "newest", limit = 25, offset = 0 } = {}) =>
+      rpc("hangtag_platform_customers", { p_query: q || null, p_list: list, p_sort: sort, p_limit: limit, p_offset: offset }),
+    customer: owner => rpc("hangtag_platform_customer", { p_owner: owner }),
+    subscriptions: ({ q = "", list = "all", sort = "expiry", limit = 25, offset = 0 } = {}) =>
+      rpc("hangtag_platform_subscriptions", { p_query: q || null, p_list: list, p_sort: sort, p_limit: limit, p_offset: offset }),
+    subscription: owner => rpc("hangtag_platform_subscription", { p_owner: owner }),
+    payments: ({ q = "", status = "all", from = null, to = null, days = null, limit = 25, offset = 0 } = {}) =>
+      rpc("hangtag_platform_payments", { p_query: q || null, p_status: status, p_from: from || null, p_to: to || null, p_days: days || null, p_limit: limit, p_offset: offset }),
+    payment: id => rpc("hangtag_platform_payment", { p_id: id }),
+    /* An action on a shop (suspend · restore · grant · extend · sign_out). dryRun: the database's preview of exactly what it
+       would do (nothing changes). A refusal comes back as an answer, not an error (so the database keeps its audit line):
+       it becomes a PlatformError here. */
+    async customerAction(owner, action, { reason = null, args = {}, dryRun = false } = {}){
+      const r = await rpc("hangtag_platform_customer_action", { p_owner: owner, p_action: action, p_reason: reason || null, p_args: args || {}, p_dry_run: !!dryRun });
+      if(!r || r.ok !== true) throw new PlatformError(r && r.code === "DENIED" ? "DENIED" : "REFUSED", (r && r.message) || "Refused.");
+      return r;
+    },
   });
 }

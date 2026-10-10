@@ -92,7 +92,7 @@ await db.exec(NEW); await db.exec(NEW);
 console.log('=== the schema runs twice; the report has the team rows ===');
 {
   const rep = await report(db);
-  check('migration report: 73 rows, all ok on an empty database', rep.length === 73 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: 76 rows, all ok on an empty database', rep.length === 76 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   const pols = (await db.query(`SELECT count(*)::int n FROM pg_policies WHERE schemaname = 'public' AND policyname = 'Own rows only'`)).rows[0].n;
   check('no table keeps the old "Own rows only" rule', pols === 0, pols);
   const noRls = (await db.query(`SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE 'hangtag_%' AND NOT c.relrowsecurity`)).rows;
@@ -621,7 +621,7 @@ console.log('=== accounts removed ===');
 console.log('=== report after use ===');
 {
   let rep = await report(db);
-  check('migration report: every row ok with a team, devices and audit rows present', rep.length === 73 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: every row ok with a team, devices and audit rows present', rep.length === 76 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   await db.query(`INSERT INTO public.hangtag_products (owner_id, id, name) VALUES ($1, 'stray', 'Stray')`, [CA.id]);
   rep = await report(db);
   check('the report spots a member that runs a shop of its own', rep.find((r) => /no shop of their own/.test(r.check_name)).ok === false);
@@ -652,7 +652,7 @@ console.log('=== upgrade from the schema on the live database today (fixtures/le
   r = !r.err && o.o === A ? await tryAs(up, A, `UPDATE public.hangtag_products SET archived = TRUE WHERE id = 'p1' RETURNING id`) : r;
   check('…and keeps saving bills and changing products (owner_id still the owner)', !r.err && r.r.rows.length === 1, r);
   const rep = await report(up);
-  check('the report is all ok after the upgrade', rep.length === 73 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
+  check('the report is all ok after the upgrade', rep.length === 76 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');

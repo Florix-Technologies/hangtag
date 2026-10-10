@@ -7,14 +7,18 @@
 import { use } from '../../../shared/di/services.js';
 import { esc } from '../../../shared/dom.js';
 import { logger } from '../../../shared/logging/logger.js';
-import { NAV, ROLE_LABELS, guard, navFor, routeOf, staffOf } from '../../../domain/platform/console.js';
+import { NAV, ROLE_LABELS, guard, navFor, routeHash, routeOf, routeQuery, staffOf } from '../../../domain/platform/console.js';
 import { renderDashboard } from '../pages/dashboard-page.js';
+import { renderCustomers } from '../pages/customers-page.js';
+import { renderSubscriptions } from '../pages/subscriptions-page.js';
+import { renderPayments } from '../pages/payments-page.js';
 import { renderPromotions } from '../pages/promotions-page.js';
 import { renderAudit } from '../pages/audit-page.js';
 import { renderSettings } from '../pages/settings-page.js';
 import { errorPanelHTML } from '../services/console-ui.js';
 
-const PAGES = { dashboard: renderDashboard, promotions: renderPromotions, audit: renderAudit, settings: renderSettings };
+const PAGES = { dashboard: renderDashboard, customers: renderCustomers, subscriptions: renderSubscriptions, payments: renderPayments, promotions: renderPromotions,
+  audit: renderAudit, settings: renderSettings };
 const MENU_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
 const state = { surface: "", me: null, email: "", route: "", navOpen: false, busy: false };
 const host = () => document.getElementById("pc");
@@ -70,15 +74,15 @@ function laterHTML(route){
 
 function route(){
   if(!state.me || !state.me.staff) return;
-  const r = routeOf(location.hash);
-  if(location.hash !== "#/" + r){ history.replaceState(null, "", location.pathname + "#/" + r); }
+  const r = routeOf(location.hash), query = routeQuery(location.hash), canon = routeHash(r, query);
+  if(location.hash !== canon){ history.replaceState(null, "", location.pathname + canon); }
   state.route = r; state.navOpen = false;
   paint(shellHTML());
   const main = document.getElementById("pcMain");
   if(guard(r, state.me.perms) !== "ok"){ main.innerHTML = noRouteHTML(r); return; }
   const page = PAGES[r];
   if(!page){ main.innerHTML = laterHTML(r); main.focus({ preventScroll: true }); return; }
-  Promise.resolve(page(main, { me: state.me })).catch(e => { main.innerHTML = errorPanelHTML(NAV.find(x => x.id === r).label, e); });
+  Promise.resolve(page(main, { me: state.me, query })).catch(e => { main.innerHTML = errorPanelHTML(NAV.find(x => x.id === r).label, e); });
   main.focus({ preventScroll: true });
 }
 

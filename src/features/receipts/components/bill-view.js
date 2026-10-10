@@ -38,7 +38,7 @@ function billActions(s,canReturn,rets){
     {label:"Share",icon:"share",attrs:navigator.share?`data-share="${id}"`:`data-billsharepdf="${id}"`},
     {label:"Download receipt image",icon:"receipt",attrs:`data-dlreceipt="${id}"`},
     {sep:true},
-    s.void?{label:"Restore bill",icon:"refresh",attrs:`data-unvoid="${id}"`}:rets.length?null:{label:"Cancel bill",hint:"Asks for the reason",icon:"x",danger:true,attrs:`data-void="${id}"`},
+    s.void?{label:"Restore bill",icon:"refresh",attrs:`data-unvoid="${id}"`}:rets.length||s.kind==="exchange"?null:{label:"Cancel bill",hint:"Asks for the reason",icon:"x",danger:true,attrs:`data-void="${id}"`},
   ],{label:"More"});
 }
 export function openBillView(sid,paper){

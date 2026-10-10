@@ -92,7 +92,7 @@ await db.exec(NEW); await db.exec(NEW);
 console.log('=== the schema runs twice; the report has the team rows ===');
 {
   const rep = await report(db);
-  check('migration report: 76 rows, all ok on an empty database', rep.length === 76 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: 77 rows, all ok on an empty database', rep.length === 77 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   const pols = (await db.query(`SELECT count(*)::int n FROM pg_policies WHERE schemaname = 'public' AND policyname = 'Own rows only'`)).rows[0].n;
   check('no table keeps the old "Own rows only" rule', pols === 0, pols);
   const noRls = (await db.query(`SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE 'hangtag_%' AND NOT c.relrowsecurity`)).rows;
@@ -429,10 +429,11 @@ console.log('=== shop A and shop B never meet ===');
 
 console.log('=== the audit log ===');
 {
-  let r = await tryAs(db, CA, `UPDATE public.hangtag_sales SET is_void = TRUE, void_reason = $1 WHERE id = 's-ca' RETURNING id`, ['Wrong size given to the customer; ' + 'x'.repeat(150)]);
-  const v = await one(db, A, `SELECT user_id::text AS u, device_id, action, entity, entity_id, summary FROM public.hangtag_audit_log WHERE entity = 'sales' AND entity_id = 's-ca' ORDER BY id DESC LIMIT 1`);
+  // (s-ca has a return, so it can't be cancelled (section 3y): the cashier cancels its other bill)
+  let r = await tryAs(db, CA, `UPDATE public.hangtag_sales SET is_void = TRUE, void_reason = $1 WHERE id = 's-ca2' RETURNING id`, ['Wrong size given to the customer; ' + 'x'.repeat(150)]);
+  const v = await one(db, A, `SELECT user_id::text AS u, device_id, action, entity, entity_id, summary FROM public.hangtag_audit_log WHERE entity = 'sales' AND entity_id = 's-ca2' ORDER BY id DESC LIMIT 1`);
   check('a cashier cancels a bill: logged as "void" with the cashier and its device', !r.err && v && v.u === CA.id && v.device_id === CA.dev && v.action === 'void', { r, v });
-  check('…with the bill number and the reason (cut short: audit rows stay small)', v && v.summary.bill_no === 'INV-s-ca' && v.summary.void_reason.length === 80 && v.summary.changed.includes('is_void'), v && v.summary);
+  check('…with the bill number and the reason (cut short: audit rows stay small)', v && v.summary.bill_no === 'INV-s-ca2' && v.summary.void_reason.length === 80 && v.summary.changed.includes('is_void'), v && v.summary);
   const before = await count(db, A, 'hangtag_audit_log');
   await saveBill(db, A, bill('s1', 500));
   await as(db, A, `INSERT INTO public.hangtag_customers (id, name, phone) VALUES ('c1', 'Asha', '9876543210') ON CONFLICT (owner_id, id) DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone`);
@@ -584,7 +585,7 @@ console.log('=== what changed in the shop (a member\'s phone polls this instead 
   const c3 = await ch(CA);
   check('a new customer and a changed product change just those parts', c3.customers !== c1.customers && c3.catalog !== c1.catalog && c3.sales === c1.sales && c3.moves === c1.moves && c3.images === c1.images, { c1, c3 });
   await saveBill(db, A, bill('s-poll', 500));
-  await as(db, A, `UPDATE public.hangtag_sales SET is_void = TRUE, void_reason = 'Duplicate' WHERE id = 's1'`);
+  await as(db, A, `UPDATE public.hangtag_sales SET is_void = TRUE, void_reason = 'Duplicate' WHERE id = 's-poll'`);   // (s1 has a return: it can't be cancelled, section 3y)
   const c4 = await ch(CA);
   check('a new bill and a cancelled one change the bills part (count, newest, cancelled)', c4.sales !== c3.sales && c4.sales_count === c3.sales_count + 1 && Date.parse(c4.sales_since) >= Date.parse(c3.sales_since), { c3, c4 });
   const cb = await ch(CB);
@@ -621,7 +622,7 @@ console.log('=== accounts removed ===');
 console.log('=== report after use ===');
 {
   let rep = await report(db);
-  check('migration report: every row ok with a team, devices and audit rows present', rep.length === 76 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: every row ok with a team, devices and audit rows present', rep.length === 77 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   await db.query(`INSERT INTO public.hangtag_products (owner_id, id, name) VALUES ($1, 'stray', 'Stray')`, [CA.id]);
   rep = await report(db);
   check('the report spots a member that runs a shop of its own', rep.find((r) => /no shop of their own/.test(r.check_name)).ok === false);
@@ -652,7 +653,7 @@ console.log('=== upgrade from the schema on the live database today (fixtures/le
   r = !r.err && o.o === A ? await tryAs(up, A, `UPDATE public.hangtag_products SET archived = TRUE WHERE id = 'p1' RETURNING id`) : r;
   check('…and keeps saving bills and changing products (owner_id still the owner)', !r.err && r.r.rows.length === 1, r);
   const rep = await report(up);
-  check('the report is all ok after the upgrade', rep.length === 76 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
+  check('the report is all ok after the upgrade', rep.length === 77 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');

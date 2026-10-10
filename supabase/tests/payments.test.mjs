@@ -88,7 +88,7 @@ console.log('=== upgrade: existing bills and refunds get payments, transactions 
     JSON.stringify(bb.map((x) => [x.id, x.method, x.entry_type, num(x.amount_in), num(x.amount_out), x.status])) === JSON.stringify([
       ['bb:ft:s2:upi', 'upi', 'receipt', 500, 0, 'posted'], ['bb:ft:s3:card', 'card', 'receipt', 800, 0, 'cancelled'], ['bb:ft:r2', 'upi', 'refund', 0, 100, 'posted']]), bb);
   const rep = (await db.query(`SELECT check_name, value, expected, ok FROM (${NEW.slice(NEW.lastIndexOf('SELECT check_name')).replace(/;\s*$/, '')}) q`)).rows;
-  check('migration report: payments, transactions and books all add up', rep.length === 76 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: payments, transactions and books all add up', rep.length === 77 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   await db.close();
 }
 
@@ -167,13 +167,34 @@ const st = async (id) => JSON.stringify({ p: (await rows(db, A, `SELECT DISTINCT
   c: (await rows(db, A, `SELECT DISTINCT status FROM public.hangtag_cash_book WHERE sale_id='${id}'`)).map((x) => x.status),
   b: (await rows(db, A, `SELECT DISTINCT status FROM public.hangtag_bank_book WHERE sale_id='${id}'`)).map((x) => x.status) });
 check('cancelling a bill cancels its payments, transactions and book entries (kept, not deleted)', await st('b1') === JSON.stringify({ p: ['cancelled'], f: ['cancelled'], c: ['cancelled'], b: ['cancelled'] }) && await n(db, A, 'hangtag_fin_txns', `WHERE sale_id='b1'`) === 2, await st('b1'));
-await as(db, A, `UPDATE public.hangtag_sales SET is_void = false WHERE id = 'b1'`);
-check('restoring it posts them again', await st('b1') === JSON.stringify({ p: ['completed'], f: ['posted'], c: ['posted'], b: ['posted'] }), await st('b1'));
+// section 3y: the till that made the bill sends it again (the answer to its first upload was lost), not knowing it was
+// cancelled meanwhile on another till; the bill must stay cancelled, its reason kept, its money out of the books
+await as(db, A, `UPDATE public.hangtag_sales SET void_reason = 'Duplicate bill' WHERE id = 'b1'`);
+r = await save(db, A, [b1]);
+const b1Row = async () => (await rows(db, A, `SELECT is_void, void_reason FROM public.hangtag_sales WHERE id = 'b1'`))[0];
+check('a cancelled bill sent again stays cancelled, with its reason; its payments and books stay out', !r.err && (await b1Row()).is_void === true && (await b1Row()).void_reason === 'Duplicate bill'
+  && await st('b1') === JSON.stringify({ p: ['cancelled'], f: ['cancelled'], c: ['cancelled'], b: ['cancelled'] }), { err: r.err, row: await b1Row(), st: await st('b1') });
+r = await save(db, A, [{ ...b1, void: true }]);
+check('…and a bill sent as cancelled is cancelled (an upload may cancel)', !r.err && (await b1Row()).is_void === true);
+// Restore, as the app does it (cloud-gateway setSaleVoid: not cancelled, no reason): the one way back
+await as(db, A, `UPDATE public.hangtag_sales SET is_void = false, void_reason = NULL WHERE id = 'b1'`);
+check('restoring it (the app\'s Restore) posts them again', await st('b1') === JSON.stringify({ p: ['completed'], f: ['posted'], c: ['posted'], b: ['posted'] }), await st('b1'));
 await as(db, A, `INSERT INTO public.hangtag_returns (id, sale_id, t, kind, refund_amount, refund_method, value) VALUES ('rc','b2',1790000100000,'return',400,'cash',400), ('ru','b1',1790000200000,'return',300,'upi',300), ('r0','b1',1790000300000,'exchange',0,'cash',100)`);
 check('a cash refund goes out of the cash book, a UPI refund out of the bank book; a ₹0 refund posts nothing',
   num((await rows(db, A, `SELECT amount_out FROM public.hangtag_cash_book WHERE id='cb:ft:rc'`))[0].amount_out) === 400
   && num((await rows(db, A, `SELECT amount_out FROM public.hangtag_bank_book WHERE id='bb:ft:ru'`))[0].amount_out) === 300
   && await n(db, A, 'hangtag_fin_txns', `WHERE return_id='r0'`) === 0);
+// section 3y: a bill with a return can't be cancelled (its refund would drop out of the books though the cash went out):
+// a till that hasn't seen the return yet is refused; a whole-bill upload leaves it as it is
+r = await tryAs(db, A, `UPDATE public.hangtag_sales SET is_void = true, void_reason = 'Customer changed their mind' WHERE id = 'b1'`);
+check('cancelling a bill that has a return is refused by the database', /has a return or exchange, so it can't be cancelled/.test(r.err || ''), r.err);
+r = await save(db, A, [{ ...b1, void: true }]);
+check('…an upload of it marked cancelled goes through, and the bill stays as it is (its refund stays in the books)', !r.err && (await b1Row()).is_void === false
+  && num((await rows(db, A, `SELECT amount_out FROM public.hangtag_bank_book WHERE id='bb:ft:ru'`))[0].amount_out) === 300, { err: r.err, row: await b1Row() });
+await as(db, A, `INSERT INTO public.hangtag_sales (id, timestamp, subtotal, total, payment_method, kind, exchange_id, credit) VALUES ('xn1', 1790000250000, 100, 100, 'cash', 'exchange', 'x1', 100)`);
+r = await tryAs(db, A, `UPDATE public.hangtag_sales SET is_void = true, void_reason = 'Other' WHERE id = 'xn1'`);
+check('…and the new bill of an exchange can\'t be cancelled either', /can't be cancelled/.test(r.err || ''), r.err);
+await as(db, A, `DELETE FROM public.hangtag_sales WHERE id = 'xn1'`);
 await as(db, A, `DELETE FROM public.hangtag_returns WHERE id = 'rc'`);
 check('a return taken back removes its refund from the books', await n(db, A, 'hangtag_fin_txns', `WHERE id='ft:rc'`) === 0 && await n(db, A, 'hangtag_cash_book', `WHERE id='cb:ft:rc'`) === 0);
 await as(db, A, `INSERT INTO public.hangtag_sales (id, timestamp, subtotal, total, payment_method) VALUES ('old1', 1790000400000, 700, 700, 'upi')`);

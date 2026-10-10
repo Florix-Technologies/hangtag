@@ -56,7 +56,7 @@ await db.exec(NEW); await db.exec(NEW);
 console.log('=== schema runs twice; report ===');
 {
   const rep = await report(db);
-  check('migration report: 76 rows, all ok on an empty shop', rep.length === 76 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: 77 rows, all ok on an empty shop', rep.length === 77 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
 }
 
 console.log('=== verified payments ===');
@@ -184,7 +184,10 @@ console.log('=== cancelling with a reason ===');
   r = await save(db, A, [{ ...bill('c1', 800, (d) => [{ method: 'card', amount: d, ref: 'APPR1', last4: '4242' }]), void: true }]);
   check('the phone uploading the cancelled bill again keeps the reason', !r.err && (await rows(db, A, `SELECT void_reason FROM public.hangtag_sales WHERE id = 'c1'`))[0].void_reason === 'Duplicate bill', r);
   r = await save(db, A, [bill('c1', 800, (d) => [{ method: 'card', amount: d, ref: 'APPR1', last4: '4242' }])]);
-  check('restored: the reason is cleared', !r.err && (await rows(db, A, `SELECT is_void, void_reason FROM public.hangtag_sales WHERE id = 'c1'`))[0].void_reason === null, r);
+  const c1 = async () => (await rows(db, A, `SELECT is_void, void_reason FROM public.hangtag_sales WHERE id = 'c1'`))[0];
+  check('a phone that missed the cancel uploads the bill again: it stays cancelled, with its reason (section 3y)', !r.err && (await c1()).is_void === true && (await c1()).void_reason === 'Duplicate bill', { r, c1: await c1() });
+  r = await tryAs(db, A, `UPDATE public.hangtag_sales SET is_void = false, void_reason = NULL WHERE id = 'c1'`);
+  check('restored (the app\'s Restore): the reason is cleared', !r.err && (await c1()).is_void === false && (await c1()).void_reason === null, r);
 }
 
 console.log('=== report after use ===');

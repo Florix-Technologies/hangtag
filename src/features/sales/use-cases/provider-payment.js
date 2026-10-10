@@ -52,9 +52,17 @@ export function persistPending(){
 export function clearPending(){ store.payPending = null; savePayPending(); }
 
 /* Starts a QR ("upi") or card link ("card") for `amount` → the intent, or { error, unavailable } (unavailable: offer the
-   hand-checked way instead). An open intent for the same part is closed first. */
-export async function startIntent(method, amount){
-  const s = store.payState; if(!s) return { error: "Open the payment screen first." };
+   hand-checked way instead). An open intent for the same part is closed first. A second tap while this part's QR or link
+   is being made (or its old one closed) gets that same one: the provider never holds two for one part, one of which could
+   take the customer's money without it reaching the bill. */
+export function startIntent(method, amount){
+  const s = store.payState; if(!s) return Promise.resolve({ error: "Open the payment screen first." });
+  const busy = s.piBusy || (s.piBusy = {});
+  if(busy[method]) return busy[method];
+  const p = busy[method] = startIntentNow(s, method, amount).finally(() => { if(busy[method] === p) delete busy[method]; });
+  return p;
+}
+async function startIntentNow(s, method, amount){
   if(!(+amount > 0)) return { error: "Enter the amount for this part first." };
   if(!online()) return { error: "You're offline, so the payment can't be verified. Check it by hand instead.", unavailable: true };
   if(!providerReady(method)) return { error: "Verified payments aren't set up for this shop.", unavailable: true };

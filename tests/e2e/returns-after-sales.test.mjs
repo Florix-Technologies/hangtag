@@ -90,6 +90,17 @@ check('Reports: returns by reason — Wrong size 2, Damaged or faulty 1; the Kur
   && /Back on the shelf: 2 .* kept off, damaged: 1/.test(rc || ''), rc);
 const v = await run(`return await voidSale(${JSON.stringify(B1.id)},"Mistake")`);
 check('a bill with a return can\'t be cancelled — use a return instead', v && /has a return or exchange, so it can't be cancelled/.test(v.error || ''), v);
+// the exchange's new bill: its credit note paid for it, so cancelling it would leave that credit nowhere
+const XB = await run(`return D().sales.find(s=>s.kind==="exchange"&&!s.void).id`);
+const xv = await run(`return await voidSale(${JSON.stringify(XB)},"Mistake")`);
+check('the new bill of an exchange can\'t be cancelled either (its items come back as a return instead)', xv && /new bill of an exchange, so it can't be cancelled/.test(xv.error || '') && !(await run(`return D().saleById[${JSON.stringify(XB)}].void`)), xv);
+await run(`openBillView(${JSON.stringify(XB)})`); await sleep(300);
+check('…and its bill doesn\'t offer "Cancel bill"', !(await A.$(`[data-void="${XB}"]`)) && !!(await A.$('#modalHost .sheet')));
+await run('closeModal()');
+const PB = await run(`return (D().sales.find(s=>s.kind!=="exchange"&&!s.void&&!(D().retBySale[s.id]||[]).length)||{}).id||null`);
+if (PB) { await run(`openBillView(${JSON.stringify(PB)})`); await sleep(300); check('(a bill without a return or exchange does offer it)', !!(await A.$(`[data-void="${PB}"]`))); await run('closeModal()'); }
+else { await run(`addOne(${JSON.stringify(V.S)});await checkout("cash");closeSheets()`); const nb = await run('return lastSale.id'); await run(`openBillView(${JSON.stringify(nb)})`); await sleep(300);
+  check('(a bill without a return or exchange does offer it)', !!(await A.$(`[data-void="${nb}"]`))); await run('closeModal()'); }
 
 await browser.close();
 await pg.close?.();

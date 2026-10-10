@@ -109,6 +109,10 @@ export async function voidSale(sid,reason){
   const no=denied(CANCEL_BILL,"cancel bills"); if(no) return no;
   const r=D().retBySale[sid];
   if(r&&r.length){ const e="This bill has a return or exchange, so it can't be cancelled. Use a return instead."; toast(e); return {error:e}; }
+  // the new bill of an exchange: its credit note paid for it with the returned items, so cancelling it would leave that
+  // credit nowhere; its items come back as a return (the customer gets the money back)
+  const sale=D().saleById[sid];
+  if(sale&&sale.kind==="exchange"&&!sale.void){ const e="This is the new bill of an exchange, so it can't be cancelled. Take its items back as a return instead: the customer gets their money back."; toast(e); return {error:e}; }
   const why=String(reason==null?"":reason).trim().replace(/\s+/g," ");
   if(why.length<3) return {error:"Say why the bill is cancelled."};
   const id=myOpenDocId(),v=store.localDays[id].voids, s=keptSale(sid);

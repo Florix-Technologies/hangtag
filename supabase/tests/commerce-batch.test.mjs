@@ -15,6 +15,8 @@ import { poArgs, priceListRow, repackArgs } from '../../src/infrastructure/supab
 
 const NEW = fs.readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
 const MIG = fs.readFileSync(new URL('../migrations/20261003120000_hangtag_commerce_batch.sql', import.meta.url), 'utf8');
+// a later section redefines one of its functions (hangtag_save_sales, section 3y): in the real order it runs after this one
+const LATER = fs.readFileSync(new URL('../migrations/20261011120000_hangtag_billing_integrity.sql', import.meta.url), 'utf8');
 const A = '11111111-1111-1111-1111-111111111111', B = '22222222-2222-2222-2222-222222222222';
 let fails = 0;
 const check = (name, ok, info) => { if (!ok) fails++; console.log((ok ? 'PASS ' : 'FAIL ') + name + (!ok && info !== undefined ? '  ' + JSON.stringify(info).slice(0, 600) : '')); };
@@ -87,10 +89,10 @@ await db.exec(NEW); await db.exec(NEW);
 console.log('=== schema twice, then the migration twice on top ===');
 {
   let err = null;
-  try { await db.exec(MIG); await db.exec(MIG); } catch (e) { err = e.message; }
+  try { await db.exec(MIG); await db.exec(MIG); await db.exec(LATER); } catch (e) { err = e.message; }
   check('the migration file runs on a database that has the schema, and again (safe to run again)', !err, err);
   const rep = await report(db);
-  check('migration report: 76 rows, all ok (incl. price lists, POs, kits, vouchers, webhooks)', rep.length === 76 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: 77 rows, all ok (incl. price lists, POs, kits, vouchers, webhooks)', rep.length === 77 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   const sec = (await db.query(`SELECT relname FROM pg_class WHERE relname IN ('hangtag_price_lists','hangtag_purchase_orders','hangtag_einvoices','hangtag_eway_bills','hangtag_repacks',
     'hangtag_vouchers','hangtag_voucher_redemptions','hangtag_webhook_endpoints','hangtag_webhook_secrets','hangtag_webhook_events','hangtag_webhook_deliveries') AND relrowsecurity`)).rows;
   check('row security is on for every table of the batch', sec.length === 11, sec);
@@ -307,7 +309,10 @@ console.log('=== gift vouchers ===');
   check('…sending the cancelled bill again gives nothing more back', !r.err && w.b === 500, { r, w });
   r = await saveBills(db, A, [bill('gv1', [{ p: 'p1', v: 'p1:M', n: 'Earbuds', q: 1, price: 450 }], [{ method: 'voucher', amount: 300 }, { method: 'cash', amount: 150 }])]);
   w = await one(db, A, `SELECT balance::float AS b FROM public.hangtag_vouchers WHERE id = $1`, [v.id]);
-  check('restoring the bill takes it off the voucher again', !r.err && w.b === 200, { r, w });
+  check('a till that missed the cancel sends the bill again: it stays cancelled, the voucher keeps its ₹300 (section 3y)', !r.err && w.b === 500, { r, w });
+  r = await tryAs(db, A, `UPDATE public.hangtag_sales SET is_void = false, void_reason = NULL WHERE id = 'gv1'`);
+  w = await one(db, A, `SELECT balance::float AS b FROM public.hangtag_vouchers WHERE id = $1`, [v.id]);
+  check('restoring the bill (the app\'s Restore) takes it off the voucher again', !r.err && w.b === 200, { r, w });
   r = await tryAs(db, A, `SELECT public.hangtag_cancel_voucher($1, 'customer changed mind')`, [v.id]);
   check('a voucher that was used can\'t be cancelled', /was used/.test(r.err || ''), r);
   const v2 = val(await issue(A, { amount: 250, paid_method: 'cash' })).voucher;
@@ -375,7 +380,7 @@ console.log('=== what changed (team phones poll it) ===');
   const r = await tryAs(db, CA, `SELECT public.hangtag_biz_changes() AS r`);
   check('a member reads the change marks of lists, POs, vouchers and GST rows', !r.err && ['lists', 'pos', 'vouchers', 'gst'].every((k) => k in val(r)), r);
   const rep = await report(db);
-  check('the report is still all ok with everything above in the database', rep.length === 76 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
+  check('the report is still all ok with everything above in the database', rep.length === 77 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nAll checks passed');

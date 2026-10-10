@@ -394,5 +394,29 @@ const { D, invalidate } = await import('../../src/features/inventory/services/le
   check('provider not set up: remembered for the session, UPI offered by hand', asked === 1 && store.payConfig.upi === false && !PP.providerReady('upi'));
 }
 
+// a second tap on "New QR" while the old QR is being closed (or the new one made): one QR at the provider, not two
+// (the other could take the customer's money without it reaching the bill)
+{
+  const made = [], closed = [];
+  let release; const slowCancel = new Promise((ok) => { release = ok; });
+  override({ paymentGateway: {
+    async config(){ return { provider: 'razorpay', upi: true, cardLink: true }; },
+    async create(r){ made.push(r); return { id: 'n' + made.length, method: r.method, status: 'pending', amount: r.amount, qrUrl: 'https://rzp.io/q', reference: 'qr_n' + made.length }; },
+    async cancel(id){ closed.push(id); await slowCancel; return { id, method: 'upi', status: 'cancelled', amount: 500 }; },
+  } });
+  const PP = await import('../../src/features/sales/use-cases/provider-payment.js');
+  store.sbStatus = 'connected'; await PP.loadPayConfig(true);
+  store.payState = { mode: 'single', method: 'upi', pi: { upi: { id: 'old', status: 'pending', amount: 500 } }, via: { upi: 'qr' }, amt: {} };
+  const first = PP.startIntent('upi', 500), second = PP.startIntent('upi', 500);
+  release();
+  const [a, b] = await Promise.all([first, second]);
+  check('two taps while the old QR closes: it is closed once and one new QR is made, the same for both taps', closed.length === 1 && made.length === 1 && a === b && a.id === 'n1' && store.payState.pi.upi.id === 'n1', { closed, made: made.length });
+  const third = await PP.startIntent('upi', 500);
+  check('…a tap after it is done makes a new one as before (closing the open one first)', made.length === 2 && closed.length === 2 && third.id === 'n2');
+  const [u, k] = await Promise.all([PP.startIntent('card', 300), PP.startIntent('upi', 500)]);
+  check('…a card link and a UPI QR for different parts still start side by side', u.method === 'card' && k.method === 'upi' && made.length === 4);
+  store.payState = null; PP.persistPending();
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

@@ -322,8 +322,8 @@ console.log('=== the migration again, and the report ===');
   check('the migration runs again over live data: nothing lost', err === null && again.total === 8 && (await auditOf('customer.suspend', ADM)).length === 2, err);
   const rep = (await db.query(NEW.slice(NEW.lastIndexOf('SELECT check_name')))).rows;
   const mine = rep.filter((r) => r.check_name && /Platform Console: customers|reach the console only|keeps its reason/.test(r.check_name));
-  check('report: 76 rows, all ok (incl. the console\'s functions, its shop rows closed to the app, every action with its reason, before and after)',
-    rep.length === 76 && rep.every((r) => r.ok) && mine.length === 3, rep.filter((r) => !r.ok));
+  check('report: 77 rows, all ok (incl. the console\'s functions, its shop rows closed to the app, every action with its reason, before and after)',
+    rep.length === 77 && rep.every((r) => r.ok) && mine.length === 3, rep.filter((r) => !r.ok));
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nall passed');

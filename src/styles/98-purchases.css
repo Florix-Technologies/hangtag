@@ -33,13 +33,56 @@
 .pu-empty{margin:10px 0}
 .pu-tot{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:10px 0 4px;font-size:14px}
 /* product import */
-.im-steps{margin:0 0 12px;padding-left:20px;display:flex;flex-direction:column;gap:8px;font-size:14px}
-.im-steps .note{display:block;margin-top:4px}
-.im-sum{display:flex;flex-direction:column;gap:4px;padding:10px 12px;border-radius:10px;margin:8px 0;font-size:13.5px}
+.im-body{display:flex;flex-direction:column;gap:10px;min-width:0}
+.im-steps{margin:0;padding:0;list-style:none;counter-reset:im;display:flex;flex-direction:column;gap:10px;font-size:14px}
+.im-steps>li{counter-increment:im;position:relative;padding:12px 12px 12px 48px;border:1px solid var(--line);border-radius:12px;background:var(--bg);min-width:0}
+.im-steps>li::before{content:counter(im);position:absolute;left:12px;top:11px;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--wash-2);color:var(--ink);font-weight:700;font-size:13px}
+.im-steps>li>b{display:block;font-size:14.5px}
+.im-steps .note{display:block;margin-top:3px}
+.im-btns{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px}
+.im-file{overflow-wrap:anywhere}
+.im-chosen{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 12px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--bg)}
+.im-chosen-t{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 240px}
+.im-chosen .im-btns{margin-top:0}
+.im-help{margin-top:8px}
+.im-help summary{cursor:pointer;font-size:13.5px;font-weight:600;color:var(--accent-ink,var(--ink));min-height:32px;display:flex;align-items:center}
+.im-help .tw{max-height:40vh;overflow:auto;border:1px solid var(--line);border-radius:10px;margin-top:6px}
+.im-helpt td{vertical-align:top;font-size:13px}
+.im-helpt .im-col{font-weight:600;white-space:nowrap}
+.im-cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.im-card{border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.im-card b{font-size:20px;font-variant-numeric:tabular-nums;line-height:1.2}
+.im-card span{font-size:12.5px;color:var(--ink-3)}
+.im-card.bad{border-color:var(--crit);background:var(--crit-soft)}
+.im-card.bad b{color:var(--crit)}
+.im-sum{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:10px;font-size:13.5px}
+.im-sum>div{display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-width:0}
+.im-sum .ic,.im-sum svg{flex:none;margin-top:2px}
 .im-sum.ok{background:var(--accent-soft)}
 .im-sum.bad{background:var(--crit-soft);color:var(--crit)}
-.im-sum span{color:var(--ink-2)}
+.im-exist{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line-2);border-radius:10px;font-size:13.5px;cursor:pointer}
+.im-exist input{width:20px;height:20px;flex:none;margin-top:1px}
+.im-chips{display:flex;flex-wrap:wrap;gap:6px}
 .im-tw{max-height:46vh;overflow:auto;border:1px solid var(--line);border-radius:10px}
+.im-r.bad td{background:var(--crit-soft)}
+.im-r.skip td{color:var(--ink-3)}
+.im-opts{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px}
+.im-opt{font-size:11.5px;padding:1px 7px;border-radius:999px;background:var(--wash-2);color:var(--ink-2)}
 .im-errs{margin:0;padding-left:16px;color:var(--crit);font-size:12.5px}
 .im-ok{color:var(--good-ink);font-size:12.5px;display:inline-flex;align-items:center;gap:4px}
+.im-skip{font-size:12.5px;color:var(--ink-3)}
+@media (max-width:640px){
+  .im-cards{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .im-steps>li{padding-left:44px}
+  /* the preview as one card per row: no sideways scrolling on a phone */
+  .im-tw{max-height:none;border:0;overflow:visible}
+  .im thead{display:none}
+  .im,.im tbody,.im tr,.im td{display:block;width:100%}
+  .im tr{border:1px solid var(--line);border-radius:10px;margin:0 0 8px;padding:6px 10px}
+  .im-r.bad{border-color:var(--crit)}
+  .im td{border:0;padding:3px 0;text-align:left!important;white-space:normal}
+  .im td[data-l]:not([data-l="Product"]):not([data-l="Check"])::before{content:attr(data-l) ": ";color:var(--ink-3);font-size:12px}
+  .im td:empty{display:none}
+  .im-r.bad td,.im-r td{background:none}
+}
 @media (max-width:520px){.pu-lines input{width:64px}.pu-row{grid-template-columns:minmax(0,1fr) auto}.pu-row .pu-d{grid-column:1/-1}}

@@ -32,24 +32,28 @@ export function sheetName(n,used){
   used.add(s.toLowerCase()); return s;
 }
 const HEAD='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>', NS='http://schemas.openxmlformats.org', REL=NS+'/officeDocument/2006/relationships';
-/* sheets: [{ name, rows: [[cell…]…], heads?: [row indexes shown bold] (default: the first) }]. Numbers stay numbers. */
+/* sheets: [{ name, rows: [[cell…]…], heads?: [row indexes shown bold] (default: the first), notes?: [row indexes shown
+   as grey italic notes], widths?: [column widths, in characters], textCols?: [column indexes formatted as Text, so Excel
+   keeps long numbers and leading zeros as typed] }]. Numbers stay numbers. */
 export function xlsxBytes(sheets){
   const used=new Set(), named=sheets.map(s=>({...s,name:sheetName(s.name,used)}));
   const sheetXml=s=>{
-    const bold=new Set(s.heads||[0]);
+    const bold=new Set(s.heads||[0]), notes=new Set(s.notes||[]), text=new Set(s.textCols||[]), widths=s.widths||[];
+    const n=Math.max(widths.length,...[...text].map(j=>j+1),0);
+    const cols=n?`<cols>${Array.from({length:n},(_,j)=>`<col min="${j+1}" max="${j+1}" width="${widths[j]||10}"${widths[j]?' customWidth="1"':""}${text.has(j)?' style="2"':""}/>`).join("")}</cols>`:"";
     const rows=(s.rows||[]).map((r,i)=>`<row r="${i+1}">${(r||[]).map((v,j)=>{
-      const ref=col(j)+(i+1), st=bold.has(i)?' s="1"':"";
+      const ref=col(j)+(i+1), st=bold.has(i)?' s="1"':notes.has(i)?' s="3"':text.has(j)?' s="2"':"";
       if(v==null||v==="") return "";
       return typeof v==="number"&&Number.isFinite(v)?`<c r="${ref}"${st}><v>${v}</v></c>`:`<c r="${ref}" t="inlineStr"${st}><is><t xml:space="preserve">${xml(v)}</t></is></c>`;
     }).join("")}</row>`).join("");
-    return `${HEAD}<worksheet xmlns="${NS}/spreadsheetml/2006/main"><sheetData>${rows}</sheetData></worksheet>`;
+    return `${HEAD}<worksheet xmlns="${NS}/spreadsheetml/2006/main">${cols}<sheetData>${rows}</sheetData></worksheet>`;
   };
   const files=[
     {name:"[Content_Types].xml",data:`${HEAD}<Types xmlns="${NS}/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${named.map((s,i)=>`<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`},
     {name:"_rels/.rels",data:`${HEAD}<Relationships xmlns="${NS}/package/2006/relationships"><Relationship Id="rId1" Type="${REL}/officeDocument" Target="xl/workbook.xml"/></Relationships>`},
     {name:"xl/workbook.xml",data:`${HEAD}<workbook xmlns="${NS}/spreadsheetml/2006/main" xmlns:r="${REL}"><sheets>${named.map((s,i)=>`<sheet name="${xml(s.name)}" sheetId="${i+1}" r:id="rId${i+1}"/>`).join("")}</sheets></workbook>`},
     {name:"xl/_rels/workbook.xml.rels",data:`${HEAD}<Relationships xmlns="${NS}/package/2006/relationships">${named.map((s,i)=>`<Relationship Id="rId${i+1}" Type="${REL}/worksheet" Target="worksheets/sheet${i+1}.xml"/>`).join("")}<Relationship Id="rId${named.length+1}" Type="${REL}/styles" Target="styles.xml"/></Relationships>`},
-    {name:"xl/styles.xml",data:`${HEAD}<styleSheet xmlns="${NS}/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs></styleSheet>`},
+    {name:"xl/styles.xml",data:`${HEAD}<styleSheet xmlns="${NS}/spreadsheetml/2006/main"><fonts count="3"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font><font><i/><sz val="11"/><color rgb="FF5F5F5F"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="49" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs></styleSheet>`},
     ...named.map((s,i)=>({name:`xl/worksheets/sheet${i+1}.xml`,data:sheetXml(s)})),
   ];
   return zipStore(files);

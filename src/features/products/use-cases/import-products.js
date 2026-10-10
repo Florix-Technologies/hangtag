@@ -11,15 +11,17 @@ import { COLORS } from '../../../shared/utils/colors.js';
 import { uid } from '../../../shared/utils/ids.js';
 import { canAny, denied } from '../../shop/services/access.js';
 
-/* rows: [[cell text…]…], the header first → the check (domain/catalog/product-import.js validateImport) */
-export const checkImportRows = rows => validateImport(rows, { products: productRepository().list(), variantsOf, stockAllowed: canAny(UPLOAD_PERMISSIONS.move) });
+/* rows: [[cell text…]…] as in the sheet → the check (domain/catalog/product-import.js validateImport). skipExisting: rows of
+   products the shop already has are left out instead of refused (the merchant chose so in the preview). */
+export const checkImportRows = (rows, { skipExisting = false } = {}) => validateImport(rows, { products: productRepository().list(), variantsOf, stockAllowed: canAny(UPLOAD_PERMISSIONS.move), skipExisting });
 /* rows: as checked (the file's rows) → { error, check? } or { products, variants, pieces } */
-export function importProducts(rows){
+export function importProducts(rows, { skipExisting = false } = {}){
   const no=denied("manage_products","import products"); if(no) return no;
   // checked again against the catalog as it is now (it may have changed since the preview)
-  const v=checkImportRows(rows);
+  const v=checkImportRows(rows, { skipExisting });
   if(v.error) return {error:v.error};
-  if(!v.ok) return {error:`${v.errorCount} row${v.errorCount===1?" needs":"s need"} fixing first: nothing is imported until every row is right.`,check:v};
+  if(v.errorCount) return {error:`${v.errorCount} row${v.errorCount===1?" needs":"s need"} fixing first: nothing is imported until every row is right.`,check:v};
+  if(!v.ok) return {error:"There is nothing to import: every row is an example from the template or a product your shop already has.",check:v};
   const plan=importPlan(v,{ids:{product:()=>"p"+uid(),variant:()=>"v"+uid()},colors:COLORS,now:Date.now(),dev:store.dev});
   if(plan.error) return {error:plan.error};
   productRepository().addMany({products:plan.products,moves:plan.moves});

@@ -6,7 +6,6 @@
 .al.low{background:var(--warn-soft);border-color:#F6E3AE}
 .al .st{color:var(--ink-2)}
 .okline{display:flex;align-items:center;gap:8px;margin:0;color:var(--ink-2);font-size:14px}
-.sm{margin-top:14px}
 .sm-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px 12px;align-items:center;padding:14px 16px;border-top:1px solid var(--line)}
 .sm-head{display:none}
 .sm-p{display:flex;align-items:center;gap:10px;min-width:0}

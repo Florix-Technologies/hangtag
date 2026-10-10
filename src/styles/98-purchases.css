@@ -16,6 +16,9 @@
 .pu-code input{flex:1;min-width:0;padding:10px 12px;border:1px solid var(--line-2);border-radius:10px;font-size:15px;background:var(--bg);color:var(--ink)}
 .pu-code.intake{padding:10px 12px;margin:0 0 14px;flex-wrap:wrap}
 .pu-code.intake b{font-size:14px;margin-right:4px}
+/* the field keeps room to type in: on a narrow screen the title goes on its own line rather than squeezing it */
+.pu-code input{flex:1 1 180px}
+@media (max-width:599px){.pu-code.intake b{flex:1 0 100%}}
 .pu-q{margin:0 0 8px}
 .pu-hits{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
 .pu-quick{border:1px solid var(--line);border-radius:12px;padding:12px;margin:8px 0 12px;background:var(--wash)}

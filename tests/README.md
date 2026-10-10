@@ -33,6 +33,11 @@ Browser suites need Chrome, Chromium or Edge (found where Windows, macOS or Linu
   - sheets fit the screen or scroll inside;
   - on touch screens, targets are at least 24 px;
   - every control has a name a screen reader can say (its text, an aria-label, a <label> or a title; a placeholder alone is not one).
+  - no two controls, and no two cards, are drawn over each other (a field's own voice or clear button, and a chip scrolled out of its row, don't count);
+  - no control is cut off by a box that hides overflow;
+  - no text field is squeezed under 80 px.
+
+  `coveredAtEnd(page)` scrolls to the very end and reports any control still under a bar fixed to the bottom (the phone's tab bar). `layout-checks.test.mjs` runs the overlap, clipped, narrow-field and covered checks on a page made to break each once, and on look-alikes that must pass (a field's own voice button, folded content, a chip scrolled out of its row).
 - **`tenancy.mjs`**: `readLeaks` and `writeLeaks` sweep every shop table for rows of one shop that others can see, change, delete or add. Every write attempt is rolled back.
 - **`pg-rest.mjs`** and **`env.mjs`**: the PostgREST and Auth stand-in, and paths.
 
@@ -69,6 +74,6 @@ When the answer depends on new data, update both `agent/shop.mjs` and the fixtur
 ## Scenario suites (`tests/e2e`)
 
 - **`sync-scenarios.test.mjs`**: offline sales, offline UPI (never shown as verified), a save whose answer is lost (no duplicate), 503s and an unreachable server, two tills offline at once (distinct bill numbers), the same customer edited on both tills (both changes kept), an offline return, a double tap on Pay, and every device converging.
-- **`responsive-matrix.test.mjs`**: 17 screens and sheets on four sizes.
+- **`responsive-matrix.test.mjs`**: 33 screens, sheets and forms on four sizes. `SHOTS=1` also saves a picture of each one (`tests/.artifacts/rm-<size>-<screen>.png`) to look at by eye.
 
 To add a scenario, open devices with `startShop` / `openDevice`, seed with `seedShop`, and drive the network with `device.net`. Check what the server holds (`S.sql`) and what a freshly downloaded device shows.

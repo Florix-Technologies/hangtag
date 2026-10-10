@@ -103,6 +103,8 @@
 .f .err{color:var(--crit);font-weight:500;font-size:12.5px}
 .fhint{font-size:12px;font-weight:500;color:var(--ink-3);line-height:1.4}
 .chk{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:600;color:var(--ink);margin:6px 0}
+/* on a touch screen the whole label is the target (at least 40 px tall), not just its small box */
+@media (pointer:coarse){.chk{min-height:40px}}
 .chk input{width:18px;height:18px;accent-color:var(--ink);flex:none}
 .req{color:var(--crit);margin-left:2px}
 .pgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px 14px}

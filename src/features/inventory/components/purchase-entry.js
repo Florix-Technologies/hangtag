@@ -90,7 +90,7 @@ export function renderPurchaseEntry(){
       <label class="f">Invoice date<input id="puDate" type="date" value="${esc(f.invoiceDate)}" max="${esc(today)}"></label></div>
     <p class="note" style="margin:6px 0 0"><button type="button" class="link" data-sup="new:purchase">+ Add a supplier</button></p>
     <form id="purCodeForm" class="pu-code" autocomplete="off"><input id="puCode" placeholder="Scan or type a barcode or SKU" enterkeyhint="go" aria-label="Barcode or SKU"><button class="btn sm" type="submit">Add</button><button type="button" class="btn sm" data-pur="scan">Scan</button></form>
-    <div class="search pu-q"><input id="puQ" type="search" placeholder="…or search a product by name" value="${esc(f.q)}" autocomplete="off"></div>
+    <div class="search pu-q"><input id="puQ" type="search" aria-label="Search a product by name" placeholder="…or search a product by name" value="${esc(f.q)}" autocomplete="off"></div>
     ${hits.length?`<div class="pu-hits">${hits.map(h=>`<button type="button" class="chip" data-pur="addv:${esc(h.v.id)}">${esc(label(h))}</button>`).join("")}</div>`:f.q?`<p class="note">No product matches.</p>`:""}
     ${quick}
     ${f.lines.length?`<div class="tw"><table class="pu-lines"><thead><tr><th>Product</th><th>Qty</th><th>${esc(moneyLabel("Cost / pc"))}</th><th>GST %</th><th>Amount</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`:`<p class="muted pu-empty">Scan the first item, or search for it.</p>`}

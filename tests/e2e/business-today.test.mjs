@@ -1,7 +1,7 @@
 // Business today, end to end in Chrome: Home's card compares today with a usual weekday by this time and explains every
 // figure from the shop's own records. Four past same-weekdays of bills make the comparison; today sells less, and half of
 // it is a low-margin product; an old bill is still owed on; the cash is closed ₹1,000 short. The owner sees why for each
-// (the worst open by itself), each reason opens where to look, and the Agent answers the same why-questions with the same
+// (an unusual one marked, its reasons a tap away), each reason opens where to look, and the Agent answers the same why-questions with the same
 // reasons. A manager sees no money split or reconciliation; a cashier sees plain figures; it fits a phone. The database is
 // PGlite running the real schema.sql behind a PostgREST stand-in (row security on).
 import puppeteer from 'puppeteer-core';
@@ -73,8 +73,11 @@ check('customers owe ₹1,000, all of it over 7 days: marked', T['Customers owe'
 check('stock value at cost', !!T['Stock value'] && /^₹/.test(T['Stock value'].v) && /at cost/.test(T['Stock value'].s), T['Stock value']);
 check('money today: cash ₹1,900 (100%), UPI and card ₹0; reconciliation: 1 to check', T.Cash.v === '₹1,900' && /100% of money taken/.test(T.Cash.s) && T.UPI.v === '₹0' && T.Card.v === '₹0'
   && T.Reconciliation.v === '1 to check' && T.Reconciliation.s === '₹1,000 involved' && T.Reconciliation.unusual, [T.Cash, T.Reconciliation]);
+// nothing opens by itself (Home stays calm): the unusual figures are marked, and a tap shows why
+check('nothing opens by itself; the worst, reconciliation, is marked', !(await A.$('#homeBody #btWhy')) && await A.$eval('#homeBody [data-bt="reconciliation"]', (b) => b.classList.contains('unusual') && /Check|Why\?/.test(b.textContent)));
+await A.click('#homeBody [data-bt="reconciliation"]'); await sleep(300);
 let W = await why();
-check('the worst opens by itself — reconciliation: ₹1,000 short at today\'s close', /Cash was ₹1,000 short at today's close/.test(W || '') && await A.$eval('#homeBody [data-bt="reconciliation"]', (b) => b.getAttribute('aria-expanded')) === 'true', W);
+check('a tap on it — reconciliation: ₹1,000 short at today\'s close', /Cash was ₹1,000 short at today's close/.test(W || '') && await A.$eval('#homeBody [data-bt="reconciliation"]', (b) => b.getAttribute('aria-expanded')) === 'true', W);
 check('...and ₹1,000 is exactly the cash on today\'s Kurta bill (not the ₹900 one)', W.includes(`₹1,000 is exactly the cash on ${K1.no}`) && !W.includes(R1.no), W);
 await A.click(`#homeBody #btWhy [data-agentopen="bill|${K1.id}"]`); await sleep(500);
 check('...its Open bill shows that bill', await vis('.billview') && (await text('#modalHost') || '').includes(K1.no));
@@ -112,6 +115,10 @@ await run('settings=Object.assign({},settings,{taxOn:window.__tax});rememberTeam
 
 console.log('--- the morning briefing ---');
 await home();
+check('the briefing shows its first thing; the rest is folded until opened', !(await A.$eval('#homeBody .hbrief .brf-more', (d) => d.open)) && /Yesterday/.test(await text('#homeBody .hbrief .brf-more summary') || ''));
+await A.click('#homeBody .hbrief .brf-more summary'); await sleep(200);
+await run('renderAll()'); await home();
+check('...opened, it stays open while Home redraws', await A.$eval('#homeBody .hbrief .brf-more', (d) => d.open));
 const brf = await text('#homeBody .hbrief');
 check('the owner\'s Home opens with the morning briefing: first, check the cash (₹1,000 short at today\'s close)', /Your morning briefing/.test(brf || '') && /First Check the cash: it was ₹1,000 short at today's close\./i.test(brf || '')
   && !!(await A.$('#homeBody .hbrief .brf-first [data-agentopen="cashbook|"]')), brf);
@@ -141,7 +148,9 @@ console.log('--- by role ---');
 await run('window.__owner=access;access={role:"manager",perms:[...ROLE_DEFAULTS.manager],shopName:"Mehta Stores"};homeWhy=undefined;renderAll()'); await home();
 T = await tiles();
 check('manager: sales, what customers owe and stock — gross profit, cash / UPI / card and reconciliation stay the owner\'s (Reports)',Object.keys(T).join() === 'Sales,Bills,Average bill,Customers owe,Stock value' && !(await A.$('#homeBody .bt-money')), Object.keys(T));
-check('...the worst they can act on opens by itself: sales', /Sales are 52% below/.test(await why() || ''), await why());
+check('...the worst they can act on is marked (nothing opens by itself): sales', !(await A.$('#homeBody #btWhy')) && await A.$eval('#homeBody [data-bt="sales"]', (b) => b.classList.contains('unusual')));
+await A.click('#homeBody [data-bt="sales"]'); await sleep(300);
+check('...a tap shows why', /Sales are 52% below/.test(await why() || ''), await why());
 await run('access={role:"cashier",perms:[...ROLE_DEFAULTS.cashier],shopName:"Mehta Stores"};renderAll()'); await home();
 T = await tiles();
 check('cashier: my shift (my sales ₹1,900 on 2 bills, the cash I took) — not the shop\'s Business today, no why', !(await A.$('#homeBody .htoday')) && !(await A.$('#homeBody #btWhy'))

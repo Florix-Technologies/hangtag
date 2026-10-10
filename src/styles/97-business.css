@@ -1,23 +1,47 @@
 /* ================= business type, capabilities, adaptive navigation, Home ================= */
 
-/* ---------- Home (features/home/pages/home-page.js): the day at a glance ---------- */
-.hhead{align-items:center;margin-bottom:var(--sp-4)}
-.qa{display:flex;flex-wrap:wrap;gap:8px}
-.qa .qa-b{min-height:44px}
+/* ---------- Home (features/home/pages/home-page.js): the day at a glance ----------
+   One header with the main action; the day's headline figures, then the money and what is owed and in stock as compact
+   rows; what to act on in the wide column, the shop's position beside it. Reasons open on a tap, never by themselves;
+   the morning briefing shows its first thing and folds the rest. */
+#v-home .welcome{padding:0;margin:0 0 10px;border:0;background:none;gap:8px;min-height:32px}
+#v-home .welcome .avatar{width:26px;height:26px;font-size:11px}
+#v-home .welcome b{font-size:14px;font-weight:600;color:var(--ink-2)}
+#v-home .welcome .ws{display:none}
+#v-home .welcome .wx{width:32px;height:32px;opacity:.7}
+#v-home .welcome .wx:hover{opacity:1}
+#homeBody .subban{padding:8px 12px;margin:0 0 var(--sp-4);font-size:13.5px;border-radius:var(--r-md)}
+#homeBody .subban .btn{min-height:36px}
+.hhead{align-items:center;gap:14px 24px;margin-bottom:var(--sp-5)}
+.hhead .eyebrow{margin-bottom:4px}
+.hhead .vt{font-size:var(--fs-2xl);letter-spacing:-.025em}
+.hhead p{margin-top:3px}
+.qa{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.qa .qa-b{min-height:44px;gap:8px}
+.qa .qa-main{min-height:50px;padding-inline:22px;font-size:15.5px;box-shadow:var(--shadow-sm)}
 .qa .qa-b svg{width:18px;height:18px}
-@media (max-width:599px){.hhead .qa{width:100%}.qa .qa-b{flex:1 1 120px;justify-content:center}}
-.homegrid{display:grid;gap:12px;grid-template-columns:minmax(0,1fr);align-items:start}
+@media (max-width:599px){
+  .hhead{margin-bottom:var(--sp-4)}
+  .hhead .vt{font-size:var(--fs-xl)}
+  .hhead .qa{width:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+  .qa .qa-b{justify-content:center;min-width:0}
+  .qa .qa-main{grid-column:1/-1;min-height:54px}
+  .qa .qa-alt:nth-child(even):last-child{grid-column:1/-1}
+}
+.homegrid{display:grid;gap:16px;grid-template-columns:minmax(0,1fr);align-items:start}
 .homegrid>.hcard{min-width:0;margin:0}
 @media (min-width:900px){
   .homegrid{grid-template-columns:repeat(2,minmax(0,1fr))}
   .homegrid .htoday{grid-column:1/-1}
   .homegrid.wide{grid-template-columns:minmax(0,3fr) minmax(0,2fr)}
+  .homegrid.solo{grid-template-columns:minmax(0,1fr)}
 }
-.hcol{display:grid;gap:12px;align-content:start;min-width:0}
-/* Home by role (components/role-sections.js): full-width sections, a row of compact cards (the owner's GST, bank and cash,
-   team; a manager's orders, purchases, stock), and their lines — each a button to where the work is done */
-@media (min-width:900px){.homegrid .hrow,.homegrid .hshift,.homegrid .htables{grid-column:1/-1}}
-.hrow{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));min-width:0}
+.hcol{display:grid;gap:16px;align-content:start;min-width:0}
+/* Home by role (components/role-sections.js): full-width sections, compact cards (the owner's GST, bank and cash, team;
+   a manager's orders, purchases, stock: beside what to act on), and their lines — each a button to where the work is done */
+@media (min-width:900px){.homegrid>.hshift,.homegrid>.htables{grid-column:1/-1}}
+.hrow{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));min-width:0}
+.hside .hrow{grid-template-columns:minmax(0,1fr)}
 .hrow>.hcard{margin:0;min-width:0}
 .hlines{display:grid;gap:2px;margin:0 -6px}
 .hline{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"w v" "n n";align-items:baseline;column-gap:10px;row-gap:1px;padding:8px 6px;border-radius:var(--r-sm);text-align:left;font:inherit;color:inherit;background:none;border:0;width:100%;min-height:44px;min-width:0}
@@ -39,27 +63,43 @@ button.hline:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
   .homegrid.wide .hheld{order:1}.homegrid.wide .hattn{order:2}.homegrid.wide .hrow{order:3}.homegrid.wide .hagent{order:4}.homegrid.wide .hbills{order:5}
   .homegrid.wide .hcust{order:6}.homegrid.wide .htrendc{order:7}
 }
-.hcard .card-h{margin-bottom:10px;gap:8px}
-.hcard .card-h h3{display:flex;align-items:center;gap:7px;min-width:0}
+.hcard{padding:var(--sp-4) calc(var(--sp-4) + 2px)}
+.hcard .card-h{margin-bottom:12px;gap:8px}
+.hcard .card-h h3{display:flex;align-items:center;gap:7px;min-width:0;font-size:15.5px}
 .hcard .card-h h3 svg{width:18px;height:18px;color:var(--accent);flex:none}
 .hcount{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 6px;border-radius:11px;background:var(--warn-soft);color:var(--warn-ink);font-size:12px;font-weight:700}
-/* Today: one strip of figures */
-.hkpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
-.hkpi{display:flex;flex-direction:column;gap:1px;padding:10px 12px;border-radius:var(--r-md);background:var(--wash);min-width:0}
+/* Today: the headline figures, then compact rows */
+.hkpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.hkpi{display:flex;flex-direction:column;gap:2px;padding:12px 14px;border-radius:var(--r-md);background:var(--wash);min-width:0}
 .hkpi span{font-size:12.5px;font-weight:600;color:var(--ink-2)}
-.hkpi b{font-size:var(--fs-xl);font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1.25;overflow-wrap:anywhere}
+.hkpi b{font-size:var(--fs-xl);font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1.2;overflow-wrap:anywhere}
 .hkpi small{font-size:12px;color:var(--ink-3);line-height:1.35}
+.bt-hero .hkpi{padding:14px 16px;gap:4px;min-height:96px;background:var(--card);border:1px solid var(--line)}
+.bt-hero .hkpi b{font-size:var(--fs-2xl)}
+.hkpis.compact{gap:8px;grid-template-columns:repeat(auto-fit,minmax(120px,1fr))}
+.hkpis.compact .hkpi{padding:9px 11px;gap:1px}
+.hkpis.compact .hkpi b{font-size:var(--fs-lg)}
+.hkpis.compact .hkpi small{font-size:11.5px}
 .hkpi.up small{color:var(--good-ink)}.hkpi.down small{color:var(--crit)}
 .hkpi.muted b{color:var(--ink-3)}
-@media (max-width:599px){.hkpis{grid-template-columns:repeat(2,minmax(0,1fr))}.hkpi b{font-size:var(--fs-lg)}}
-/* The owner's morning briefing (components/briefing-card.js): the one thing to do first, then short sections */
+.bt-strip{display:grid;gap:12px 16px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+@media (min-width:900px){.bt-strip.two{grid-template-columns:minmax(0,2fr) minmax(0,1fr)}}
+.bt-group{min-width:0}
+@media (max-width:599px){.hkpis{grid-template-columns:repeat(2,minmax(0,1fr))}.hkpi b,.bt-hero .hkpi b{font-size:var(--fs-lg)}.bt-hero .hkpi{min-height:0;padding:12px}.hkpis.compact{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* The owner's morning briefing (components/briefing-card.js): the one thing to do first, the rest folded */
 @media (min-width:900px){.homegrid .hbrief{grid-column:1/-1}}
 @media (max-width:899px){.homegrid.wide .hbrief{order:-1}}
 .brf-acts{display:flex;gap:14px}
-.brf-first{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;padding:10px 12px;border-radius:var(--r-md);background:var(--warn-soft);border:1px solid var(--warn-line);margin-bottom:12px}
+.brf-first{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;padding:10px 12px;border-radius:var(--r-md);background:var(--warn-soft);border:1px solid var(--warn-line)}
 .brf-first.quiet{background:var(--good-soft);border-color:var(--good-line)}
 .brf-first>b{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--warn-ink)}.brf-first.quiet>b{color:var(--good-ink)}
 .brf-first>span{flex:1 1 240px;font-weight:600;line-height:1.4}
+.brf-more{margin-top:8px}
+.brf-more>summary{cursor:pointer;display:inline-flex;align-items:center;gap:8px;min-height:36px;font-size:13px;font-weight:600;color:var(--accent-ink,var(--accent));list-style:none}
+.brf-more>summary::-webkit-details-marker{display:none}
+.brf-more>summary::before{content:"";width:6px;height:6px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(-45deg);transition:transform var(--t-fast)}
+.brf-more[open]>summary::before{transform:rotate(45deg)}
+.brf-more[open]>.brf-grid{margin-top:6px}
 .brf-grid{display:grid;gap:12px 20px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
 .brf-sec h4{margin:0 0 4px;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3)}
 .brf-sec ul{margin:0;padding:0;list-style:none;display:grid;gap:5px}
@@ -67,16 +107,17 @@ button.hline:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .brf-sec li>.link{flex:none;white-space:nowrap}
 @media (max-width:599px){.brf-sec li{flex-direction:column;gap:1px}}
 /* Business today: each figure a button that opens why it is what it is; an unusual one is marked; the reasons below */
-.bt-basis{margin:-4px 0 10px;font-size:12.5px;color:var(--ink-3)}
-.bt-sub{margin:14px 0 8px;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3)}
+.bt-basis{margin:-6px 0 12px;font-size:12.5px;color:var(--ink-3)}
+.bt-sub{margin:0 0 8px;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3)}
 button.hkpi{position:relative;text-align:left;border:1px solid transparent;cursor:pointer;font:inherit;color:inherit;min-height:44px}
-button.hkpi:hover{border-color:var(--line)}
+.bt-hero button.hkpi{border-color:var(--line)}
+button.hkpi:hover{border-color:var(--line-2)}
 button.hkpi:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.hkpi.unusual{border-color:var(--warn-line);background:var(--warn-soft)}
-.hkpi.unusual.bad{border-color:var(--crit-line);background:var(--crit-soft)}
-.hkpi.on{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.hkpi.unusual{border-color:var(--warn-line)!important;background:var(--warn-soft)}
+.hkpi.unusual.bad{border-color:var(--crit-line)!important;background:var(--crit-soft)}
+.hkpi.on{border-color:var(--accent)!important;box-shadow:inset 0 0 0 1px var(--accent)}
 .hkpi.warn small{color:var(--warn-ink)}.hkpi.bad small{color:var(--crit-ink)}.hkpi.ok small{color:var(--good-ink)}
-.bt-flag{position:absolute;top:9px;right:10px;font-style:normal;font-size:11px;font-weight:700;color:var(--warn-ink)}
+.bt-flag{position:absolute;top:9px;right:10px;font-style:normal;font-size:11px;font-weight:700;color:var(--warn-ink);padding:1px 6px;border-radius:999px;background:var(--bg)}
 .hkpi.bad .bt-flag{color:var(--crit-ink)}
 .bt-money .hkpi>span:first-child{display:inline-flex;align-items:center;gap:6px}
 .bt-money .bt-cash>span:first-child::before,.bt-money .bt-upi>span:first-child::before,.bt-money .bt-card>span:first-child::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--c)}

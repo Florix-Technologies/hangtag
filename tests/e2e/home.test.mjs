@@ -69,8 +69,17 @@ check('Today: ₹5,000 from 3 bills (the cancelled one left out), ₹1,667 a bil
 check('gross profit: ₹2,100 at 42% (cost prices known for every sale)', K['Gross profit'].v === '₹2,100' && /^42% margin$/.test(K['Gross profit'].s), K['Gross profit']);
 check('the same sales figure as Reports for today', await run('const x=periodData(dayKey(Date.now()),dayKey(Date.now()),"");return kstats(x.live,x.rets).rev===5000'));
 check('cash, UPI and card taken today (owner), under Money today', K.Cash && K.Cash.v === '₹2,000' && K.UPI.v === '₹1,000' && K.Card.v === '₹0' && await vis('#homeBody .bt-money'), [K.Cash, K.UPI, K.Card]);
-check('...and reconciliation: the UPI checked by hand is one thing to check, and it opens by itself with why', K.Reconciliation && K.Reconciliation.v === '1 to check' && /1 UPI payment \(₹1,000\) checked only by hand/.test(await text('#homeBody #btWhy') || ''), [K.Reconciliation, await text('#homeBody #btWhy')]);
+check('...and reconciliation: the UPI checked by hand is one thing to check, marked — nothing opens by itself (Home stays calm)', K.Reconciliation && K.Reconciliation.v === '1 to check' && !(await A.$('#homeBody #btWhy'))
+  && await A.$eval('#homeBody [data-bt="reconciliation"]', (b) => b.classList.contains('unusual') && /Why\?|Check/.test(b.textContent)), [K.Reconciliation, await text('#homeBody #btWhy')]);
+await A.click('#homeBody [data-bt="reconciliation"]'); await sleep(300);
+check('...a tap on it shows why', /1 UPI payment \(₹1,000\) checked only by hand/.test(await text('#homeBody #btWhy') || ''), await text('#homeBody #btWhy'));
+await A.click('#homeBody [data-bt="reconciliation"]'); await sleep(200);
+check('...the four headline figures first (sales, bills, average bill, gross profit), the money and what is owed and in stock after them',
+  JSON.stringify(await A.$$eval('#homeBody .bt-hero .hkpi span:first-child', (l) => l.map((s) => s.textContent))) === '["Sales","Bills","Average bill","Gross profit"]'
+  && (await A.$$('#homeBody .bt-money .hkpi')).length === 4 && (await A.$$('#homeBody .bt-more .hkpi')).length === 2);
+check('the main action stands out: New sale is the larger, primary button', await A.$eval('#homeBody .qa .qa-main', (b) => b.classList.contains('primary') && /New sale/.test(b.textContent) && b.getBoundingClientRect().height >= 48));
 
+await A.screenshot({ path: H.ARTIFACTS + '/home_desktop.png', fullPage: true });
 console.log('--- needs attention ---');
 const at = await attn();
 check('needs attention, worst first: sold out, then UPI to verify, held bill and dues', at[0] === 'stock' && ['upi', 'held', 'dues'].every((k) => at.includes(k)) && !at.includes('orders'), at);
@@ -137,6 +146,7 @@ await run('access=window.__owner;renderAll()'); await home();
 
 console.log('--- phone ---');
 await A.setViewport({ width: 375, height: 812 }); await sleep(500); await home();
+await A.screenshot({ path: H.ARTIFACTS + '/home_phone.png', fullPage: true });
 const fit = await A.evaluate(() => ({ over: document.documentElement.scrollWidth - document.documentElement.clientWidth, wide: [...document.querySelectorAll('#homeBody *')].filter((e) => e.getBoundingClientRect().right > 376).map((e) => e.className).slice(0, 5),
   order: [...document.querySelectorAll('#homeBody .hcard')].sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top).map((c) => [...c.classList].find((x) => x !== 'card' && x !== 'hcard')),
   cols: getComputedStyle(document.querySelector('#homeBody .hkpis')).gridTemplateColumns.split(' ').length }));

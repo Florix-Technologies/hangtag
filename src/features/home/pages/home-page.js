@@ -38,17 +38,18 @@ const card = (title, link, body, cls = "", aria = "") => `<section class="card h
 const linkTo = (attr, label) => `<button class="link xs" type="button" ${attr}>${esc(label)} ${UI_ICON.chevron}</button>`;
 
 /* Business today (reports/services/business-today.js): the day's figures against a usual <weekday> by this time, each a
-   button that opens WHY it is what it is — an unusual figure is marked, and the worst of them opens by itself. What it
+   button that opens WHY it is what it is — an unusual figure is marked, and its reasons open on a tap. What it
    shows is the role's (role-workspace.js businessScope): the owner sales, gross profit (when cost prices cover enough of
    the sales), what customers owe, the stock's value, cash / UPI / card and reconciliation; a manager sales, what customers
    owe and the stock; anyone else who sells plain sales, bills and the average bill. */
-const MONEY_KEYS = ["cash", "upi", "card", "reconciliation"];
+const MONEY_KEYS = ["cash", "upi", "card", "reconciliation"], HERO_KEYS = ["sales", "bills", "avgBill", "profit"];
 const ASK = { sales: x => x.change < 0 ? "Why are sales down today?" : x.change > 0 ? "Why are sales up today?" : "Explain today's sales", bills: () => "Explain today's sales",
   avgBill: () => "Why is the average bill different today?", profit: () => "Explain today's margin", cash: () => "Explain today's payments", upi: () => "Explain today's payments",
   card: () => "Explain today's payments", receivables: () => "Explain what customers owe", stock: () => "Explain the stock value", reconciliation: () => "Why doesn't the money reconcile?" };
 const figureValue = x => x.display != null ? esc(x.display) : x.value == null ? "—" : x.key === "bills" ? esc(String(x.value)) : inr(x.value);
-/* The figure whose reasons show: the one tapped; untouched, the most pressing unusual one; "" when closed */
-const openFigure = V => { const w = store.homeWhy; return w === undefined ? (V.unusual[0] || "") : V.figures.some(x => x.key === w) ? w : ""; };
+/* The figure whose reasons show: the one tapped ("" when closed). Nothing opens by itself: an unusual figure is marked
+   ("Why?" / "Check") and Needs attention lists what to do, so Home stays calm and the reasons are one tap away */
+const openFigure = V => { const w = store.homeWhy; return w && V.figures.some(x => x.key === w) ? w : ""; };
 function whyHTML(V, key){
   const byKey = Object.fromEntries(V.figures.map(x => [x.key, x])), base = byKey[key] && byKey[key].opens ? byKey[byKey[key].opens] : byKey[key];
   if(!base) return "";
@@ -67,19 +68,23 @@ function todayHTML(role){
     const cls = `hkpi bt-${esc(x.key)}${x.tone ? " " + esc(x.tone) : ""}${x.unusual ? " unusual" : ""}`;
     return reports ? `<button type="button" class="${cls}${open === x.key ? " on" : ""}" data-bt="${esc(x.key)}" aria-expanded="${open === x.key}" aria-controls="btWhy">${inner}</button>` : `<div class="${cls}">${inner}</div>`;
   };
-  const main = V.figures.filter(x => !MONEY_KEYS.includes(x.key)), money = V.figures.filter(x => MONEY_KEYS.includes(x.key));
+  const hero = V.figures.filter(x => HERO_KEYS.includes(x.key)), money = V.figures.filter(x => MONEY_KEYS.includes(x.key)),
+    more = V.figures.filter(x => !HERO_KEYS.includes(x.key) && !MONEY_KEYS.includes(x.key));
   let channels = [];
   try{ channels = salesByChannel(dayKey(Date.now()), dayKey(Date.now()), ""); }catch{ channels = []; }
   const chan = channels.length > 1 ? `<p class="hchan">${channels.map(c => `<span data-channel="${esc(c.key)}">${esc(c.label)} <b>${inr(c.sales)}</b></span>`).join("")}</p>` : "";
+  const group = (cls, title, list) => list.length ? `<div class="bt-group ${cls}-g"><h4 class="bt-sub">${esc(title)}</h4><div class="hkpis compact ${cls}">${list.map(tile).join("")}</div></div>` : "";
   const body = `${V.comparison ? `<p class="bt-basis">Compared with ${esc(V.comparison.label)}${V.comparison.kind === "usual" ? ` (the last ${V.comparison.days} ${esc(fmtDate(Date.now(), { weekday: "long" }))}s)` : ""}.</p>` : ""}
-    <div class="hkpis">${main.map(tile).join("")}</div>${chan}
-    ${money.length ? `<h4 class="bt-sub">Money today</h4><div class="hkpis bt-money">${money.map(tile).join("")}</div>` : ""}${open ? whyHTML(V, open) : ""}`;
+    <div class="hkpis bt-hero">${hero.map(tile).join("")}</div>${chan}
+    ${money.length || more.length ? `<div class="bt-strip${money.length && more.length ? " two" : ""}">${group("bt-money", "Money today", money)}${group("bt-more", "Owed to you and in stock", more)}</div>` : ""}${open ? whyHTML(V, open) : ""}`;
   return card(reports ? "Business today" : "Today", moduleShown("report") ? linkTo('data-tab="report"', "Reports") : "", body, "htoday", reports ? "Business today" : "Today");
 }
 /* A figure tapped: its reasons open (tapped again, or Close: they close) */
 let installed = false;
 export function installHomeEvents(){
   if(installed) return; installed = true;
+  // the morning briefing unfolded or folded: kept that way while Home redraws
+  document.addEventListener("toggle", e => { if(e.target && e.target.matches && e.target.matches("#homeBody .brf-more")) store.homeBriefOpen = e.target.open; }, true);
   document.addEventListener("click", e => {
     // the morning briefing: shared as text (the share sheet, else WhatsApp), or hidden until tomorrow
     const br = e.target && e.target.closest ? e.target.closest("[data-brief]") : null;
@@ -139,15 +144,15 @@ export function homeHTML(){
   const p = (store.access && store.access.shopName) ? { shop_name: store.access.shopName } : (store.profile || {}), now = Date.now(), role = currentRole();
   const acts = homeActions();
   let h = `<div class="viewhead hhead"><div><div class="eyebrow">${esc(fmtDate(now, { weekday: "long", day: "numeric", month: "long" }))}</div>
-    <h2 class="vt">${esc(p.shop_name || "Your shop")}</h2><p>${esc(shopTypeLabel())}</p></div>${acts.length ? `<div class="qa" role="group" aria-label="Quick actions">${acts.map((a, i) => `<button type="button" class="btn ${i === 0 ? "primary" : ""} qa-b" ${a.attr}>${NAV_ICONS[a.icon] || ""}<span>${esc(a.label)}</span></button>`).join("")}</div>` : ""}</div>`;
+    <h2 class="vt">${esc(p.shop_name || "Your shop")}</h2><p>${esc(shopTypeLabel())}</p></div>${acts.length ? `<div class="qa" role="group" aria-label="Quick actions">${acts.map((a, i) => `<button type="button" class="btn ${i === 0 ? "primary qa-main" : "qa-alt"} qa-b" ${a.attr}>${NAV_ICONS[a.icon] || ""}<span>${esc(a.label)}</span></button>`).join("")}</div>` : ""}</div>`;
   h += subscriptionBannerHTML();   // the free trial's days left, or a paid plan ending within a week (owner and managers)
   // what this role's day is about (domain/shop/role-workspace.js): full-width sections first, then two columns
   const SEC = homeSections(role, currentPerms()), has = k => SEC.includes(k), sells = canAny(["create_sale", "view_reports"]), reports = can("view_reports");
-  const top = [has("briefing") && can("view_reports") && watchSettings().briefing === "notify" ? briefingHTML(now) : "", has("business") && sells ? todayHTML(role) : "", has("shift") ? shiftHTML(now) : "", has("tables") ? tablesHTML() : "",
-    has("owner") ? ownerRowHTML(now, () => { if(store.prefs.tab === "home") renderHome(); }) : "", has("ops") ? opsRowHTML(now) : ""].join("");
+  const top = [has("briefing") && can("view_reports") && watchSettings().briefing === "notify" ? briefingHTML(now) : "", has("business") && sells ? todayHTML(role) : "", has("shift") ? shiftHTML(now) : "", has("tables") ? tablesHTML() : ""].join("");
   const left = [has("held") ? heldHTML(now) : "", has("attention") ? attentionHTML() : "", has("bills") && sells ? billsHTML() : ""].join("");
-  const right = [has("agent") && reports ? insightsHTML() : "", has("trend") && reports ? trendHTML() : "", has("customers") && moduleShown("customers") ? customersHTML() : ""].join("");
-  h += `<div class="homegrid wide">${top}<div class="hcol">${left}</div>${right ? `<div class="hcol">${right}</div>` : ""}</div>`;
+  const right = [has("owner") ? ownerRowHTML(now, () => { if(store.prefs.tab === "home") renderHome(); }) : "", has("ops") ? opsRowHTML(now) : "",
+    has("agent") && reports ? insightsHTML() : "", has("trend") && reports ? trendHTML() : "", has("customers") && moduleShown("customers") ? customersHTML() : ""].join("");
+  h += `<div class="homegrid wide${left && right ? "" : " solo"}">${top}${left ? `<div class="hcol hmain">${left}</div>` : ""}${right ? `<div class="hcol hside">${right}</div>` : ""}</div>`;
   // the line takes the state's tone only: the header's sync chip (class "sync") hides its words on a phone
   const S = syncSummary();
   h += `<p class="hsync ${esc(S.cls.replace(/\bsync\b/, "").trim())}"><i></i><span><b>Sync:</b> ${esc(S.txt)}${store.lastSyncAt ? ` · last fully synced ${esc(agoText(store.lastSyncAt))}` : ""}</span><button class="link xs" type="button" data-act="syncpanel">Details</button></p>`;

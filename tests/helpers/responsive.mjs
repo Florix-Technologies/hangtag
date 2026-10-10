@@ -7,7 +7,8 @@
 export async function layoutIssues(page, { touch = false, minTap = 24, scope = 'body', names = true } = {}){
   return page.evaluate(({ touch, minTap, scope, names }) => {
     const out = [], W = document.documentElement.clientWidth, H = window.innerHeight;
-    const shown = (el) => { const r = el.getBoundingClientRect(), s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none' && +s.opacity !== 0; };
+    // (folded away, e.g. inside a closed <details>, which Chrome lays out but doesn't show, counts as not shown)
+    const shown = (el) => { const r = el.getBoundingClientRect(), s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none' && +s.opacity !== 0 && (!el.checkVisibility || el.checkVisibility()); };
     const label = (el) => {
       const ds = Object.keys(el.dataset || {})[0], txt = (el.innerText || el.value || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim().slice(0, 30);
       return `${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''}${typeof el.className === 'string' && el.className.trim() ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.') : ''}${ds ? `[data-${ds.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())}]` : ''}${txt ? ` “${txt}”` : ''}`;

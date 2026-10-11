@@ -9,9 +9,10 @@
     "build": "node scripts/build.mjs",
     "check": "node scripts/build.mjs --check",
     "lint": "eslint src",
-    "test": "node tests/run.mjs tests/unit supabase/tests tests/eval tests/e2e",
+    "test": "node tests/run.mjs tests/unit supabase/tests tests/eval tests/e2e && npm run test:db:pg17",
     "test:unit": "node tests/run.mjs tests/unit",
     "test:db": "node tests/run.mjs supabase/tests",
+    "test:db:pg17": "node --import ./tests/helpers/postgres17.mjs tests/run.mjs supabase/tests",
     "test:e2e": "node tests/run.mjs tests/e2e",
     "test:eval": "node tests/run.mjs tests/eval",
     "eval:agent:provider": "node tests/eval/agent-provider.eval.mjs",
@@ -25,6 +26,7 @@
     "eslint": "^9.39.5",
     "globals": "^17.12.0",
     "jsqr": "^1.4.0",
+    "pglite-pg17": "npm:@electric-sql/pglite@0.4.6",
     "puppeteer-core": "^25.12.0",
     "supabase": "^2.118.0"
   }

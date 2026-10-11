@@ -27,7 +27,8 @@ const TIMEOUT = +process.env.TEST_TIMEOUT_MS || 20 * 60 * 1000;
 function runFile(file) {
   return new Promise((resolve) => {
     const t0 = Date.now();
-    const child = spawn(process.execPath, [file], { stdio: ['ignore', 'pipe', 'pipe'] });
+    // the runner's own Node flags go to each file (e.g. --import ./tests/helpers/postgres17.mjs for test:db:pg17)
+    const child = spawn(process.execPath, [...process.execArgv, file], { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', timedOut = false;
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { out += d; });

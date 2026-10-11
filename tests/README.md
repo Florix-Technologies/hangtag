@@ -5,9 +5,10 @@ Every suite is a plain Node script that prints `PASS …` / `FAIL …` lines and
 
 | Command | What runs |
 |---|---|
-| `npm test` | everything below except the real-provider evaluations |
+| `npm test` | everything below except the real-provider evaluations (the database suites twice: PostgreSQL 18 and 17) |
 | `npm run test:unit` | `tests/unit` — pure rules and services in Node |
 | `npm run test:db` | `supabase/tests` — the real `schema.sql` in PGlite (row security, RPCs, triggers, the check report) |
+| `npm run test:db:pg17` | the same suites on PostgreSQL 17, the live Supabase project's major version (the default PGlite is 18, so SQL only 18 has would pass `test:db`): `tests/helpers/postgres17.mjs` points `@electric-sql/pglite` at `pglite-pg17`. `postgres-versions.test.mjs` fails when the live project moves to another major version |
 | `npm run test:eval` | `tests/eval` — the Agent evaluations (Node and in-app) |
 | `npm run test:e2e` | `tests/e2e` — the app in Chrome against PGlite behind a PostgREST stand-in |
 | `npm run eval:agent:provider` | the Agent against a **real** AI provider (needs `HANGTAG_EVAL_ANTHROPIC_KEY`; costs money; skipped without a key) |

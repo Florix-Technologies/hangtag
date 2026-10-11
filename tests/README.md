@@ -13,6 +13,7 @@ Every suite is a plain Node script that prints `PASS …` / `FAIL …` lines and
 | `npm run test:e2e` | `tests/e2e` — the app in Chrome against PGlite behind a PostgREST stand-in |
 | `npm run eval:agent:provider` | the Agent against a **real** AI provider (needs `HANGTAG_EVAL_ANTHROPIC_KEY`; costs money; skipped without a key) |
 | `npm run eval:extract-bill` | bill reading (`extract-bill`) against the **real** Claude API: the function's own request and reading of the answer, on a made-up PDF bill (same key; costs money; skipped without a key; its plumbing is proven without one by `extract-bill-provider-plumbing.test.mjs`) |
+| `npm run preflight:live` | not a test: a read-only check of a Supabase project (the linked one, or `-- --project-ref <ref>`) before a release. For every Edge Function: deployed, not older than its code, deployed with the JWT setting its README gives, and the secrets `supabase/functions/deploy.json` lists for it set (names only; values and digests are never printed). Exit code 1 when something needs doing. `tests/unit/release-preflight.test.mjs` keeps `deploy.json` in step with the settings the functions' code reads |
 
 Browser suites need Chrome, Chromium or Edge (found where Windows, macOS or Linux installs it, or set `CHROME_PATH`) and serve the app on `localhost:3210`. Without a browser they are reported as skipped, not failed (`TEST_STRICT=1` fails instead).
 

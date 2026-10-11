@@ -1,0 +1,58 @@
+{
+  "$comment": "What each Edge Function needs on a Supabase project (names only, never values): jwt = deployed with JWT verification (false = --no-verify-jwt); required = it can't do its job without them; anyOf = at least one complete group (a provider or channel); optional = tuning. SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY come with every project. Read by scripts/preflight-live.mjs; tests/unit/release-preflight.test.mjs fails when a function reads a setting that isn't listed here.",
+  "agent": {
+    "jwt": true,
+    "required": ["ANTHROPIC_API_KEY", "AGENT_ALLOWED_USERS"],
+    "optional": ["AGENT_MODEL", "AGENT_MAX_TOKENS", "AGENT_RATE_PER_MINUTE", "AGENT_RATE_PER_DAY", "AGENT_SHOP_RATE_PER_MINUTE", "AGENT_SHOP_RATE_PER_DAY"]
+  },
+  "delivery-status": {
+    "jwt": false,
+    "anyOf": [["RESEND_WEBHOOK_SECRET"], ["TWILIO_AUTH_TOKEN"], ["WHATSAPP_APP_SECRET", "WHATSAPP_VERIFY_TOKEN"]],
+    "optional": ["DELIVERY_STATUS_URL"]
+  },
+  "extract-bill": {
+    "jwt": true,
+    "required": ["ANTHROPIC_API_KEY"],
+    "optional": ["EXTRACT_MODEL", "EXTRACT_EFFORT", "EXTRACT_PROVIDER", "EXTRACT_RATE_PER_MINUTE", "EXTRACT_RATE_PER_DAY", "EXTRACT_SHOP_RATE_PER_MINUTE", "EXTRACT_SHOP_RATE_PER_DAY"]
+  },
+  "payment-gateway": {
+    "jwt": true,
+    "required": ["RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "PAYMENT_ALLOWED_USERS"],
+    "optional": ["RAZORPAY_WEBHOOK_SECRET", "PAYMENT_CARD_LINK"]
+  },
+  "payment-webhook": {
+    "jwt": false,
+    "required": ["RAZORPAY_WEBHOOK_SECRET"]
+  },
+  "receipt": {
+    "jwt": false
+  },
+  "send-receipt": {
+    "jwt": true,
+    "required": ["SEND_ALLOWED_USERS"],
+    "anyOf": [
+      ["RESEND_API_KEY", "EMAIL_FROM"],
+      ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_SMS_FROM"],
+      ["WHATSAPP_TOKEN", "WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_TEMPLATE"],
+      ["WHATSAPP_PROVIDER", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_WHATSAPP_FROM", "TWILIO_WHATSAPP_CONTENT_SID"]
+    ],
+    "optional": ["EMAIL_PROVIDER", "EMAIL_REPLY_TO", "SMS_PROVIDER", "RECEIPT_URL", "DELIVERY_STATUS_URL", "WHATSAPP_API_VERSION", "WHATSAPP_LINK_PARAM",
+      "WHATSAPP_TEMPLATE_LANG", "WHATSAPP_QUOTE_TEMPLATE", "TWILIO_WHATSAPP_QUOTE_CONTENT_SID"]
+  },
+  "subscription": {
+    "jwt": true,
+    "required": ["SUBSCRIPTION_RAZORPAY_KEY_ID", "SUBSCRIPTION_RAZORPAY_KEY_SECRET", "SUBSCRIPTION_WEBHOOK_SECRET", "APP_URL"],
+    "optional": ["SUBSCRIPTION_PROVIDER", "SUBSCRIPTION_RAZORPAY_AUTOPAY_PLAN_ID"]
+  },
+  "subscription-webhook": {
+    "jwt": false,
+    "required": ["SUBSCRIPTION_WEBHOOK_SECRET"]
+  },
+  "team": {
+    "jwt": false
+  },
+  "webhook-dispatch": {
+    "jwt": false,
+    "required": ["WEBHOOK_DISPATCH_SECRET"]
+  }
+}

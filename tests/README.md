@@ -77,6 +77,7 @@ When the answer depends on new data, update both `agent/shop.mjs` and the fixtur
 ## Scenario suites (`tests/e2e`)
 
 - **`sync-scenarios.test.mjs`**: offline sales, offline UPI (never shown as verified), a save whose answer is lost (no duplicate), 503s and an unreachable server, two tills offline at once (distinct bill numbers), the same customer edited on both tills (both changes kept), an offline return, a double tap on Pay, and every device converging.
+- **`vercel-site.test.mjs`**: what Vercel serves. Exactly the files of `dist/site` (`siteFiles` in `scripts/sw-cache.mjs`), with `vercel.json`'s headers, on its own port (3219), Supabase blocked (`config.js` names the live project). The shop app, the receipt, order and store pages and the Platform Console open with no Content-Security-Policy violation, page error or missing file, and the service worker installs every file under the committed cache name. The other browser suites load the repository through a test page with a loosened policy, so they can't see any of this.
 - **`responsive-matrix.test.mjs`**: 33 screens, sheets and forms on four sizes. `SHOTS=1` also saves a picture of each one (`tests/.artifacts/rm-<size>-<screen>.png`) to look at by eye.
 - **`custom-fields.test.mjs`**: an owner with no template for their products (LED grow lights, a rug sold by the square foot) does everything without a code change:
   - makes fields and a unit in Settings;

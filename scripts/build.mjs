@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ESLint } from 'eslint';
-import { appFiles as listAppFiles, cacheVersion, STATIC, toUrl as urlOf } from './sw-cache.mjs';
+import { appFiles as listAppFiles, cacheVersion, siteFiles, STATIC, toUrl as urlOf } from './sw-cache.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CHECK = process.argv.includes('--check');
@@ -88,16 +88,16 @@ if (lintErrors || lintWarnings) {
 console.log(`lint ${lintErrors ? 'failed' : 'ok'}: ${lint.length} files, ${lintErrors} errors, ${lintWarnings} warnings`);
 
 // 6. Deployable copy for Vercel (dist/site): the app shell and every module/stylesheet the service worker lists, plus
-//    sw.js and the maskable icon the manifest names. Nothing else (no tests, scripts, supabase/ or node_modules).
+//    sw.js and the maskable icon the manifest names (siteFiles). Nothing else (no tests, scripts, supabase/ or node_modules).
 if (!CHECK && !failed) {
-  const SITE = path.join(ROOT, 'dist', 'site');
+  const SITE = path.join(ROOT, 'dist', 'site'), site = siteFiles(ROOT);
   rmSync(SITE, { recursive: true, force: true });
-  for (const f of [...shellFiles, path.join(ROOT, 'sw.js'), path.join(ROOT, 'icon-maskable-512.png')]) {
+  for (const f of site) {
     const to = path.join(SITE, path.relative(ROOT, f));
     mkdirSync(path.dirname(to), { recursive: true });
     cpSync(f, to);
   }
-  console.log(`site ok: dist/site (${shellFiles.length + 2} files)`);
+  console.log(`site ok: dist/site (${site.length} files)`);
 }
 
 process.exit(failed ? 1 : 0);

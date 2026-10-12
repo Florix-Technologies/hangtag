@@ -34,6 +34,7 @@ import { businessExamples } from '../../../domain/shop/capabilities.js';
 import { allUnits, decimalsOf, unitId, unitOf, isWeighed } from '../../../domain/catalog/units.js';
 import { checkLinkedValues, variantFields } from '../../../domain/catalog/attributes.js';
 import { attrById, shopAttrs } from '../services/shop-fields.js';
+import { unitLock } from '../services/unit-lock.js';
 import { attrsForEditor, fieldsSectionHTML } from './product-fields.js';
 import { isKit } from '../../../domain/catalog/bundles.js';
 import { openKitEditor } from './kit-editor.js';
@@ -57,7 +58,7 @@ export function openEditor(pid){
   const e={isNew:!p,id:p?p.id:"p"+uid(),name:p?p.name:"",cat:p?p.cat||"":"",brand:p?p.brand||"":"",desc:p?p.desc||"":"",price:p?String(p.price):"",cost:p&&p.cost!=null?String(p.cost):"",
     color:p?okColor(p.color):COLORS[products().length%COLORS.length],img:undefined,archived:p?!!p.archived:false,hsn:p?p.hsn||"":"",gst:p&&p.gst!=null?String(p.gst):"",unit:unitId(p&&p.unit),
     hasOpts:!!(p&&p.opts&&p.opts.length),opts:st.opts,cells:st.cells,codesOn:!!(p&&p.code),code:p&&p.code?p.code:"barcode",sel:{},addName:"",err:"",
-    tracking:trackingChoiceOf(p),attrs:attrsForEditor(p),extra:[],fieldsOpen:null};
+    tracking:trackingChoiceOf(p),attrs:attrsForEditor(p),extra:[],fieldsOpen:null,unitLock:unitLock(p)};
   store.editor=e;renderEditor();
   const n=$("#edName");if(n&&e.isNew)n.focus();
 }
@@ -158,7 +159,7 @@ export function renderEditor(){
         <label class="f full"><span class="lab">Product name<span class="req">*</span></span><input id="edName" data-ed="name" value="${esc(e.name)}" maxlength="80" autocomplete="off" placeholder="e.g. ${esc(businessExamples(shopType()).product)}"></label>
         <label class="f"><span class="lab">Category</span><input data-ed="cat" value="${esc(e.cat)}" list="catList" maxlength="40" autocomplete="off" placeholder="e.g. ${esc(businessExamples(shopType()).category)}"><datalist id="catList">${cats.map(c=>`<option value="${esc(c)}">`).join("")}</datalist></label>
         <label class="f"><span class="lab">Brand</span><input data-ed="brand" value="${esc(e.brand)}" maxlength="40" autocomplete="off" placeholder="Optional"></label>
-        <label class="f"><span class="lab">Sold by</span><select data-ed="unit" id="edUnit">${unitChoices(e,fx).map(u=>`<option value="${esc(u.id)}"${unitId(e.unit)===u.id?" selected":""}>${esc(u.label)}${u.dp?` (up to ${u.dp} decimals)`:""}</option>`).join("")}</select><span class="fhint">Kg and litres are weighed on the bill; prices are per ${esc(unitOf(e.unit).id==="pcs"?"piece":unitOf(e.unit).sym)}${can("manage_products")?". Your own units (Roll, Sq ft…): Settings → Products &amp; Inventory → Units":""}</span></label>
+        <label class="f"><span class="lab">Sold by</span><select data-ed="unit" id="edUnit"${e.unitLock?" disabled":""}>${unitChoices(e,fx).map(u=>`<option value="${esc(u.id)}"${unitId(e.unit)===u.id?" selected":""}>${esc(u.label)}${u.dp?` (up to ${u.dp} decimals)`:""}</option>`).join("")}</select><span class="fhint">${e.unitLock?`It ${esc(e.unitLock)}, so its unit stays: to sell it in another unit, add a new product and move the stock across with Repack. `:""}Kg and litres are weighed on the bill; prices are per ${esc(unitOf(e.unit).id==="pcs"?"piece":unitOf(e.unit).sym)}${can("manage_products")?". Your own units (Roll, Sq ft…): Settings → Products &amp; Inventory → Units":""}</span></label>
       </div></div>
     </div>
     <div class="edsec" id="ed-price"><h4>Price &amp; Tax</h4><div class="pgrid">

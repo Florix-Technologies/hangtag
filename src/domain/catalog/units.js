@@ -93,6 +93,13 @@ export function roundQty(q,dp=QTY_DP){
   const f=10**dp, r=Math.round(Math.abs(n)*f*(1+Number.EPSILON))/f;
   return (n<0?-r:r)||0;
 }
+/* A typed quantity with more decimals than its unit keeps (12.5 pieces, 2.555 m) → the message for the person; "" when it
+   fits. Such a quantity is refused, never rounded, so a count is never silently changed. */
+export function qtyPlacesError(raw,unit){
+  const u=unitOf(unit), n=+String(raw==null?"":raw).trim().replace(",","."), f=10**u.dp;
+  if(!Number.isFinite(n)||Math.abs(n*f-Math.round(n*f))<=1e-6) return "";
+  return u.dp?`Use at most ${u.dp} decimal place${u.dp===1?"":"s"} for ${u.sym}.`:`Use whole numbers for ${u.id===DEFAULT_UNIT?"pieces":u.sym}.`;
+}
 /* Quantities added up exactly (in thousandths) */
 export const sumQty=list=>(list||[]).reduce((a,x)=>a+Math.round(roundQty(x)*1000),0)/1000;
 /* a − b, exactly */

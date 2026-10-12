@@ -1,5 +1,5 @@
 // Stock in and stock adjustment: which moves a form entry makes, and when it is refused.
-import { decimalsOf, roundQty } from '../catalog/units.js';
+import { decimalsOf, qtyPlacesError, roundQty } from '../catalog/units.js';
 import { checkBatchNo, checkExpiry, incomingSerialError, normBatch, normSerial, parseSerials, serialAvailable } from './tracking.js';
 
 /* A stock-in's note: who it came from, their reference, when it arrived (when not today) and the note typed */
@@ -10,7 +10,8 @@ export function stockInNote({supplier,ref,received,note,today}){
 /* op: { kind:"in"|"adjust", productId, values:{ variantId: typed quantity }, costRaw, reason, note, now, deviceId, unit? (the
    product's: kg and litres keep 3 decimals, metres 2, everything else whole numbers) }
    currentStock(variantId) gives stock on hand (an adjustment types the counted number; stock in types pieces received).
-   newId() makes a move id. Returns { error } or { moves, cost } (cost: the per-piece cost entered for stock in, or null). */
+   newId() makes a move id. Returns { error } or { moves, cost } (cost: the per-piece cost entered for stock in, or null).
+   A quantity with more decimals than the unit keeps is refused, not rounded; a count left as it is never is. */
 export function buildStockMoves(op,currentStock,newId){
   const adj=op.kind==="adjust";
   const costRaw=adj?"":String(op.costRaw||"").trim(), cost=costRaw===""?null:Math.round(+costRaw);
@@ -20,6 +21,8 @@ export function buildStockMoves(op,currentStock,newId){
     if(raw===""||raw==null) continue;
     const n=+String(raw).trim().replace(",","."), v=roundQty(n,decimalsOf(op.unit));
     if(!Number.isFinite(n)||v<0) return {error:"Quantities can't be negative."};
+    if(adj&&roundQty(n)===roundQty(currentStock(vid))) continue;
+    const er=qtyPlacesError(raw,op.unit); if(er) return {error:er};
     const q=adj?roundQty(v-currentStock(vid)):v; if(!q) continue;
     moves.push({id:newId(),v:vid,p:op.productId,type:adj?"ADJUST":"RESTOCK",q,cost:adj?null:cost,note:adj?[op.reason,op.note].filter(Boolean).join(" · "):op.note,t:op.now,dev:op.deviceId});
   }
@@ -56,13 +59,16 @@ export function buildTrackedMoves(op,rows,ctx,newId){
         if(raw===""||raw==null) continue;
         const n=+String(raw).trim().replace(",","."), v=roundQty(n,dp);
         if(!Number.isFinite(n)||v<0) return {error:"Quantities can't be negative."};
-        const cur=ctx.batchOf(vid,b), q=roundQty(v-(cur?cur.qty:0)); if(!q) continue;
+        const cur=ctx.batchOf(vid,b); if(roundQty(n)===roundQty(cur?cur.qty:0)) continue;
+        const er=qtyPlacesError(raw,op.unit); if(er) return {error:`Batch ${b}: ${er}`};
+        const q=roundQty(v-(cur?cur.qty:0)); if(!q) continue;
         moves.push({...base,id:newId(),v:vid,type:"ADJUST",q,cost:null,note,b:normBatch(b)});
       } else {
         const vid=key, r=row||{}; if(r.q===""||r.q==null) continue;
         const n=+String(r.q).trim().replace(",","."), q=roundQty(n,dp);
         if(!Number.isFinite(n)||q<0) return {error:"Quantities can't be negative."};
-        if(!q) continue;
+        if(!n) continue;
+        const er=qtyPlacesError(r.q,op.unit); if(er) return {error:er};
         const c=checkBatchNo(r.b); if(c.error) return {error:c.error};
         const known=ctx.batchOf(vid,c.b), x=checkExpiry(r.exp,{required:!!op.expiry,today:op.today,known:known&&known.exp||null}); if(x.error) return {error:x.error};
         moves.push({...base,id:newId(),v:vid,type:"RESTOCK",q,cost,note,b:c.b,...(x.exp?{exp:x.exp}:{})});

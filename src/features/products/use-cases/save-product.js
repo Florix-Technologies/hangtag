@@ -12,7 +12,8 @@ import { okColor } from '../../../shared/utils/colors.js';
 import { UPLOAD_PERMISSIONS } from '../../../domain/sync/queue-rules.js';
 import { canAny, denied, notAllowedText } from '../../shop/services/access.js';
 import { cleanTracking, trackingFromChoice } from '../../../domain/shop/capabilities.js';
-import { decimalsOf, isWeighed, roundQty, unitId } from '../../../domain/catalog/units.js';
+import { isWeighed, qtyPlacesError, roundQty, unitId, unitOf } from '../../../domain/catalog/units.js';
+import { unitLock } from '../services/unit-lock.js';
 import { hasCap } from '../../shop/services/shop-caps.js';
 import { checkAttrs, checkLinkedValues } from '../../../domain/catalog/attributes.js';
 import { attrById, shopAttrs } from '../services/shop-fields.js';
@@ -32,8 +33,8 @@ export function saveProduct({ draft }){
   const ok=validateProductDraft(e,combos,kept,takenCodes(repo.list(),e.id,variantsOf));
   if(ok.error)return {error:ok.error};
   const {name,price,cost,hsn,gst}=ok;
-  // the unit it is sold in: stock counts keep its decimals (12.5 kg), whole numbers for pieces
-  const old=repo.get(e.id), t=Date.now(), unit=unitId(e.unit), dp=decimalsOf(unit);
+  // the unit it is sold in: stock counts keep its decimals (12.5 kg), whole numbers for pieces (a count with more is refused)
+  const old=repo.get(e.id), t=Date.now(), unit=unitId(e.unit);
   // the shop's own fields (domain/catalog/attributes.js): the values typed, checked against their fields (a field added to
   // this product with nothing typed counts as shown); values the editor doesn't show stay as they are
   const typed=e.attrs&&typeof e.attrs==="object"?e.attrs:{}, oldAttrs=(old&&old.attrs)||{};
@@ -52,12 +53,20 @@ export function saveProduct({ draft }){
   if(trk.expiry&&!(old&&old.expiry)&&!hasCap("uses_expiry")) return capOff("uses_expiry","Expiry dates");
   if(isWeighed(unit)&&!(old&&isWeighed(unitId(old.unit)))&&!hasCap("uses_weight")) return capOff("uses_weight","Selling by weight");
   if(old&&trk.tracking!==wasTrk&&variantsOf(old,true).some(v=>stockOf(v.id)!==0)) return {error:`How ${old.name} is tracked can change only while it has no stock. It has ${variantsOf(old,true).reduce((a,v)=>a+Math.max(0,stockOf(v.id)),0)} in hand: sell or adjust it to 0 first.`};
+  // its unit is pinned once it has history (services/unit-lock.js): what was counted in one unit is never read in another
+  if(old&&unitId(old.unit)!==unit){
+    const why=unitLock(old), said=u=>unitOf(u).id==="pcs"?"pieces":unitOf(u).sym, was=said(unitId(old.unit)), now=said(unit);
+    if(why) return {error:`${old.name} ${why}, so it stays sold by ${was}: what was counted in ${was} can't be read as ${now}. To sell it by ${now}, add a new product sold by ${now} and move the stock across with Repack.`,field:"unit"};
+  }
   const variants=[], newMoves=[], delV=[], ids={}; let bad=null;
   const fields=cell=>({sku:String(cell.sku||"").trim(),bc:cleanCode(cell.bc),price:numOrNull(cell.price),cost:numOrNull(cell.cost)});
   combos.forEach(({o,key,cell})=>{
     const id=cell.id||("v"+uid());ids[key]=id;
     variants.push({id,o:o.slice(),...fields(cell),active:cell.active!==false});
-    const want=cell.stock===""||cell.stock==null?0:roundQty(+cell.stock,dp), cur=cell.exists?stockOf(id):0, dq=roundQty(want-cur);
+    const typed=cell.stock===""||cell.stock==null?null:cell.stock, cur=cell.exists?stockOf(id):0;
+    // a changed count with more decimals than the unit keeps is refused, not rounded (12.5 typed for pieces isn't saved as 13)
+    if(typed!=null&&roundQty(+typed)!==roundQty(cur)){const er=qtyPlacesError(typed,unit);if(er)bad=bad||`Stock of ${o.length?o.join(" / "):name}: ${er}`;}
+    const want=typed==null?0:roundQty(+typed), dq=roundQty(want-cur);
     if(dq&&trk.tracking!=="none") bad=bad||`Stock of a product tracked by ${trk.tracking==="serial"?"serial number":"batch"} comes in through Purchases or Stock in: leave the stock boxes as they are.`;
     if(dq) newMoves.push({id:(cell.exists?"m":"open:")+(cell.exists?uid():id),v:id,p:e.id,type:cell.exists?"ADJUST":"OPENING",q:dq,cost:null,note:cell.exists?"Changed in the product editor":"Opening stock",t,dev:store.dev});
   });

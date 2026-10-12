@@ -20,8 +20,9 @@ import { refuse } from '../../shop/services/access.js';
 import { decimalsOf, qtyText, roundQty, sumQty, unitOf } from '../../../domain/catalog/units.js';
 import { currencySign } from '../../../shared/formatting/money.js';
 
-/* A typed count in the product's unit (2.5 kg), rounded like the saved record will be */
-const typedQty=raw=>roundQty(+String(raw).replace(",",".")||0,decimalsOf((prod(store.stockOp.pid)||{}).unit));
+/* A typed count in the product's unit (2.5 kg), as typed: one with more decimals than the unit keeps is refused when saved,
+   never rounded, and a count left as it is (even 12.5 pieces from before) is no change */
+const typedQty=raw=>roundQty(+String(raw).replace(",",".")||0);
 const unitWord=()=>{const u=unitOf((prod(store.stockOp&&store.stockOp.pid)||{}).unit);return u.id==="pcs"?"pieces":u.sym};
 
 export function openStockOp(kind,pid){

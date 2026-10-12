@@ -62,6 +62,13 @@ const TOTE = await A.run(`const p=products().find(p=>p.name==="Tote");return {pi
 check('saved: rice is sold by the kg with 10.5 kg in stock; the tote by the piece', RICE.unit === 'kg' && TOTE.unit === 'pcs' && await A.run(`return stockOf(${JSON.stringify(RICE.vid)})===10.5`), RICE);
 const cp = (await q(`SELECT unit FROM public.hangtag_products WHERE id = $1`, [RICE.pid]))[0], cm = (await q(`SELECT sum(qty) AS q FROM public.hangtag_stock_moves WHERE variant_id = $1`, [RICE.vid]))[0];
 check('in the cloud: unit kg, opening stock 10.500', cp && cp.unit === 'kg' && +cm.q === 10.5, { cp, cm });
+// PLAN.md I1: with stock in kg, its unit is pinned (10.5 kg is never re-read as pieces); the form says why
+await A.run(`openEditor(${JSON.stringify(RICE.pid)})`); await sleep(200);
+const pinned = await A.P.$eval('#edUnit', (s) => ({ disabled: s.disabled, hint: s.parentElement.innerText })).catch((e) => String(e));
+const forced = await A.run(`editor.unit="pcs";return saveProduct({draft:editor})`);
+check('rice has stock: "Sold by" is locked with the reason, and a forced change to pieces is refused', pinned.disabled === true && /has stock records, so its unit stays/.test(pinned.hint)
+  && /stays sold by kg/.test(forced.error || '') && await A.run(`return products().find(p=>p.id===${JSON.stringify(RICE.pid)}).unit==="kg"`), { pinned, forced });
+await A.run(`closeModal()`);
 
 console.log('--- selling by weight ---');
 await A.P.click(`.tile[data-pid="${RICE.pid}"]`).catch(async () => { await A.run(`openPicker(${JSON.stringify(RICE.pid)})`); });

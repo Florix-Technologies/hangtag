@@ -116,6 +116,25 @@ check('dal has no history: its unit can change', !r.err && (await one(`SELECT un
 const lock = await fn('hangtag_product_unit_lock');
 check('the lock also looks at bill, return and order lines and repacks', ['hangtag_sale_items', 'hangtag_return_items', 'hangtag_order_items', 'hangtag_repacks'].every((t) => lock.includes('public.' + t)));
 
+// AUDIT.md item 55, re-checked: a saved record's serials, batch and expiry never change (section 3n's
+// hangtag_tracking_shape), a serial record's quantity is its serial count, and batch quantities are read from the records,
+// so the registers can't drift. A quantity correction by the owner or a role with stock adjustments is allowed and
+// logged by design (team-tenancy covers the log); "Combine colours" re-points records when it merges products.
+console.log('=== saved stock records: corrections allowed, registers kept in step ===');
+const resend = (id, v, p, type, qty, sn, note) => tryAs(`INSERT INTO public.hangtag_stock_moves (id, variant_id, product_id, type, qty, t, serials, note) VALUES ($1, $2, $3, $4, $5, 1, $6, $7)
+  ON CONFLICT (owner_id, id) DO UPDATE SET variant_id = EXCLUDED.variant_id, product_id = EXCLUDED.product_id, type = EXCLUDED.type, qty = EXCLUDED.qty,
+    serials = EXCLUDED.serials, note = EXCLUDED.note`, [id, v, p, type, qty, sn, note]);
+r = await resend('open:rice', 'rice:', 'rice', 'OPENING', 12.5, null, null);
+check('the same record sent again (the app\'s upload, repeated) is taken', !r.err, r);
+r = await resend('open:rice', 'rice:', 'rice', 'OPENING', 13, null, 'Recounted');
+check('the owner may correct a saved record\'s quantity (a logged correction, by design)', !r.err && +(await one(`SELECT qty FROM public.hangtag_stock_moves WHERE id = 'open:rice'`)).qty === 13, r);
+r = await resend('m4', 'ph:', 'ph', 'RESTOCK', 1, ['SN9'], null);
+let reg = (await as(`SELECT serial, status, move_id FROM public.hangtag_serials ORDER BY serial`)).rows;
+check('a saved record\'s serials can\'t change, so the register still has SN1 from it (no SN9)', refused(r, /The serial numbers of a saved record don't change/)
+  && JSON.stringify(reg) === JSON.stringify([{ serial: 'SN1', status: 'IN_STOCK', move_id: 'm4' }]), { r, reg });
+r = await resend('m4', 'ph:', 'ph', 'RESTOCK', 2, ['SN1'], null);
+check('…nor its quantity apart from its serials (one serial per piece)', refused(r, /2 piece\(s\) but 1 serial number\(s\)/), r);
+
 rep = await report();
 check('the report is still all ok with all of it in the database', rep.length === REPORT_ROWS && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
 

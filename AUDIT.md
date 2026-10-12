@@ -4,6 +4,105 @@ The running checklist of the code audit: what was checked, what was fixed (each 
 Newest session first. Production data and services were never touched (no migration run, no function deployed); code is
 pushed only on the owner's word.
 
+## 2026-10-11 and 12 (fifth session: release verification, then the plan for import updates and unit conversions)
+
+### State at the start (inspected, nothing discarded)
+- `ux-productization` was clean, 7 commits ahead of `origin/ux-productization` (`f090c70`, pushed 2026-10-10): `1eb8788`, `97df853`, `ed806ad`, `b1f66cc` (third session) and `63b48d9`, `dd2216a`, `760f2e0` (fourth session). This session adds 5 more (under Committed), so 12 are local.
+- Local `main` is 1 ahead of `origin/main` (`4e4b215`, Wave 2, already part of this branch's history). Other local branches and the old workflow worktrees were left as they are.
+
+### Checklist
+| # | Area | Finding | Status |
+|---|------|---------|--------|
+| 41 | `extract-bill`, the request | Checked against the current Messages API reference:<br>- model `claude-opus-5-5`, adaptive thinking;<br>- effort set explicitly (Opus 5.5 defaults to medium);<br>- JSON through `output_config.format`, not the deprecated `output_format`;<br>- the fallback header `server-side-fallback-2026-07-01` with `fallbacks: "default"` (the matching pair);<br>- streaming with `finalMessage()`;<br>- refusals and truncation handled;<br>- the PDF block before the text | No defect |
+| 42 | `extract-bill`, the real API | No Anthropic credentials on this machine: `ANTHROPIC_API_KEY` and `HANGTAG_EVAL_ANTHROPIC_KEY` unset; no Anthropic CLI or profile | **Blocked** — `HANGTAG_EVAL_ANTHROPIC_KEY=<key> npm run eval:extract-bill`, once a key is available |
+| 43 | The live project's Edge Functions (read-only: the functions list and secret names through the Supabase CLI, no values) | - **No `ANTHROPIC_API_KEY` secret.** Bill reading answers 503 "Reading bills isn't set up yet" whatever version is deployed. The Agent's AI is off too; it also needs `AGENT_ALLOWED_USERS`.<br>- **Stale deploys.** `extract-bill` v1 (2026-10-02) predates its fixes (items 16–20), and every deployed function predates the 2026-10-10 changes (pinned imports and more).<br>- **Wrong JWT setting.** `team` and `webhook-dispatch` run with JWT verification, though their READMEs deploy them with `--no-verify-jwt`: a phone redeeming a team QR has no session yet, and `webhook-dispatch` checks its own secret.<br>- **Not deployed:** `subscription` and `subscription-webhook`.<br>- **No provider secrets** for payments or the webhooks (UPI is checked by hand without them) | Found. The fixes are secrets and deploys on the live project, left to the owner (release order below) |
+| 44 | Release preflight | Nothing could see how a project is set up | Added — `supabase/functions/deploy.json` lists, per function, the JWT setting and the required, provider and optional secrets (names only). `npm run preflight:live` is read-only and exits 1 while anything is needed. `tests/unit/release-preflight.test.mjs` (41) keeps `deploy.json` in step with the settings the code reads. Its first live run read the CLI's epoch-millisecond times as text and so never found a stale deploy; two checks for that failed before the fix |
+| 45 | Migrations on the live version | The live project runs PostgreSQL 17.6, but every database suite ran on PGlite's 18.3, so SQL only 18 has would pass and then fail live | Fixed — `npm run test:db:pg17` runs the suites on `pglite-pg17` (PGlite 0.4.6, PostgreSQL 17.5) through a resolve hook, and `npm test` runs it too. All 28 suites pass on 17.5, including 3x, 3y and 3z on the previous release's database. `postgres-versions.test.mjs` fails when the live project moves to another major version. A table defaulting to `uuidv7()` passes on 18.3 and fails on 17.5 |
+| 46 | Hosted staging | The Supabase account has four projects: `hangtag` (the live one, linked), `ecommerce` (another app) and two paused ones. None is a Hangtag staging database, and there's no Docker here for a local Supabase | **Blocked** — needs a staging project (the owner's call: it may need a paid plan or pausing a project). Runbook below |
+| 47 | What Vercel serves | Every browser suite loads the repository through a test page with a loosened Content-Security-Policy | Added — `tests/e2e/vercel-site.test.mjs` (15) serves `dist/site`'s files with `vercel.json`'s headers, Supabase blocked. Checks:<br>- the shop app, the receipt, order and store pages and the Platform Console open with no CSP violation, page error or missing file;<br>- the service worker installs all 458 files under the committed cache name.<br>Vercel's build was reproduced from a fresh LF clone of `b818098`: `npm ci` and `npm run build` left `git status` clean with the same `hangtag-2af8ebe5c8`, and the test passed in that clone |
+| 48 | Receipt and order pages (found by 47) | No icon link, so each receipt or order link a customer opened also asked for `/favicon.ico`, which the site doesn't have | Fixed — both name `icon.svg`, as `store.html` does |
+| 49 | Vercel Preview | The commits are local, and a Preview needs a push, which needs the owner's word. Previews run `config.js`, which names the live Supabase project, so signing in on a Preview uses live data (and the fields screens need 3z there) | **Blocked** on the owner's word to push. Until then, item 47 and the clone build stand in for it |
+| 50 | The shop's own units in the database (3z, not yet released; found while auditing the importer) | The database knew only Hangtag's nine units:<br>- a supplier bill refused 24.5 sq ft ("too many decimal places"): every unit of the shop's own was taken as whole numbers;<br>- a quotation or order saved 2.5 rolls: units outside the nine weren't checked at all;<br>- the online store refused 2.5 sq ft, and its + button stepped a shop's unit by 0.001, because the page never learned the unit's decimals | Fixed in 3z, before its release:<br>- `hangtag_unit_decimals(owner, unit)` gives Hangtag's nine as `units.js` keeps them, the shop's unit as saved (archived too), and 3 for an unknown code (as the app reads one);<br>- `hangtag_save_order`, `hangtag_import_stock` and `hangtag_place_mobile_order` are re-created in 3z as exact copies, with only that check changed;<br>- the store's catalog gives the shop's units (`units`: id, label, decimals), and `store.js` hands them to `setShopUnits`;<br>- report row 93 checks all of it (10).<br>8 checks: `custom-fields` 4, `mobile-store` (database) 2, the store's unit test 1, the store in Chrome 1. The 4 run before the fix failed (3 in `custom-fields`, 1 in `mobile-store`); the Chrome check fails with the old `store.js` |
+| 51 | The online store's Add (found by 50) | Add puts the unit's smallest step in the cart: 0.001 kg, 0.01 m, and now 0.01 sq ft for a shop's 2-decimal unit, so a customer has to type the quantity. Released behaviour (Wave 12), not part of 3z | Found, not fixed: the owner's call (Add could put 1, or what is left when that's less) |
+| 52 | Changing a product's unit | A product with stock can change unit, and its stock is then re-rounded into the new unit with an ADJUST: switching 12.5 kg to pcs writes +0.5 (`save-product.js:60-62`). The database doesn't stop it either | Confirmed in the code. Plan I1 (the app) and I3 (the database) |
+| 53 | Two devices adding the same new serial | `hangtag_track_move` inserts a new serial with `ON CONFLICT … DO UPDATE` and no status check (`schema.sql:3238-3242`). If another device added the serial in between, the second insert silently takes it over | Confirmed in the code, not raced in a test. Plan I2 |
+| 54 | The same supplier bill on two devices | The duplicate-file and duplicate-invoice checks are plain SELECTs with no lock, and the file-hash index isn't unique (`schema.sql:668`). Two devices confirming the same bill at once can both add its stock | Confirmed in the code, not raced. Plan I2 |
+| 55 | A saved stock record sent again | Stock records are upserted by id, and a role with `manage_inventory` may update one (`schema.sql:1881-1883`). The serial and batch registers follow only inserts and deletes (`AFTER INSERT OR DELETE`, `schema.sql:3278`), so a rewritten quantity or serial list leaves them out of step | Confirmed in the code. Plan I14: new stock paths insert only |
+| 56 | Stock records of the wrong shape | Only `hangtag_import_stock` checks that a serial-tracked line has serials, and a batch line its batch. `hangtag_save_purchase` and the outbox insert whatever they are sent | Confirmed in the code. Plan I4 |
+| 57 | A product edit after a delete elsewhere | `patchProduct` falls back to a whole upsert when the row is missing (`cloud-gateway.js:142`). An edit queued on one device brings back a product deleted on another | Confirmed in the code. Plan I10 |
+| 58 | Checking a product before updating it | `updated_at` on products and variants is whatever the client sends; no trigger sets it. So it can't tell an update from a file whether the product changed since. The audit's first design assumed it could, and its own verifier refuted that | Confirmed in the code. Plan I3 adds the trigger; I10 uses it |
+| 59 | Supplier bills in boxes | `extract-bill` returns each line's printed unit (`core.js:33,56`), but the review lines drop it (`bill-import.js:42-57`). "5 box @ ₹600" becomes 5 of a pcs product at ₹600 each, and "Update cost prices" can then set a wrong cost | Confirmed in the code. Plan I19 (such a line needs its base quantity first), then I24–I26 (conversions, packs) |
+| 60 | Repacking into a whole-number unit | `repackOutput` rounds the output to the target unit's decimals (`repack.js:19`). Opening 1 kg into pieces at 2.5 a kg makes 3 pieces on the device | Confirmed in the code, not run. Plan I20 |
+| 61 | Bill and return lines | `saleItemRows` doesn't send the unit sold (`mappers.js:66-70`). The database fills it from the product's current unit, so a bill uploaded after a unit change gets the new unit | Confirmed in the code. Plan I21 |
+| 62 | Smaller findings (reported by the audit, not re-checked) | - Opening stock from a product file has no cost (`product-import.js:348`).<br>- "Received today" counts opening stock that has a cost (`business-today.js:96`).<br>- Serial and batch history calls any record with an import id "Purchased" (`tracking.js:110,147`).<br>- Purchase line money rounds differently from sales (`purchase.js:47-49` against `paise.js:9`).<br>- Low-stock levels are whole numbers (`stock-levels.js:5`, `mappers.js:90`) | Plan I12 and I22 |
+
+### The plan for the next feature
+`PLAN.md`: 30 increments in dependency order, for updating products from a file (variants, fields, opening stock, batches and expiry, serials) and for unit conversions (box to piece, kg to g) that don't corrupt stock or cost. Each increment lists its scope, database change, safety and tests. Items 52–62 above map onto them.
+- **Order:**
+  1. stop today's corruption (I1, I19, I20);
+  2. database guards (I2, I3);
+  3. updating from a file (I5–I11);
+  4. stock from files (I12–I18);
+  5. units and costing (I21–I26).
+- **Not started.** Per the brief, it waits until the release blockers below are cleared, or the owner says to go ahead.
+
+### Release order (dependency order; the owner's steps change the live project)
+1. **Staging** (when a project exists): the runbook below. Until then, items 45 and 30 stand in for it.
+2. **Live database** (owner, SQL editor):
+   - run the report at the end of `schema.sql` first;
+   - then run whichever of 3u, 3v, 3w it flags, followed by 3x, 3y and 3z, in that order;
+   - run the report again: 80 rows, every one ok.
+3. **Secrets** (owner): `npx supabase secrets set ANTHROPIC_API_KEY=… --project-ref wcorlmgkwcahyfastjoz`, plus `AGENT_ALLOWED_USERS` if the Agent's AI is wanted. Payment, subscription and webhook secrets are needed only when those go live.
+4. **Functions** (owner):
+   - redeploy every function, `team`, `webhook-dispatch`, `payment-webhook`, `delivery-status` and `receipt` with `--no-verify-jwt` as their READMEs say;
+   - deploy `subscription` and `subscription-webhook` when subscriptions go live.
+5. **Check:** `npm run preflight:live` should leave only providers deliberately not set up. Then `HANGTAG_EVAL_ANTHROPIC_KEY=… npm run eval:extract-bill` with the same key.
+6. **Push** `ux-productization` (owner's word). Vercel builds a Preview; open it signed in to Vercel and don't make changes there while it runs on live data.
+7. **Promote** the Preview to Production in the Vercel dashboard (owner). Live updates need 3z first, because the app's realtime channel names the two new tables. That ordering is not verified here: there's no hosted Realtime to test against.
+
+### Staging runbook (for when a staging project exists)
+- **Never run `supabase db push` in this checkout.** `supabase/migrations` also holds the unapplied Phase 1 design (`20260925180000_phase1_foundation.sql`), which it would apply. Paste files into the SQL editor instead.
+- **Keep this checkout linked to the live project.** Run CLI commands for staging with `--project-ref <staging-ref>` rather than re-linking.
+- **Steps:**
+  1. Load the schema the live app was built on: `git show 6af8cc2:supabase/schema.sql` (the Vercel Production build).
+  2. Add a shop with products, a bill and a return through a local copy of the app whose `config.js` names staging.
+  3. Run the migrations in order, then each one a second time (they must be re-runnable): `20261007120000_hangtag_return_reasons.sql` (3u), `20261008120000_hangtag_delivery_reports.sql` (3v), `20261009120000_hangtag_plans_autopay_platform.sql` (3w), `20261010120000_hangtag_platform_operations.sql` (3x), `20261011120000_hangtag_billing_integrity.sql` (3y), `20261012120000_hangtag_custom_fields_units.sql` (3z).
+  4. Run the report from the current `schema.sql`: 80 rows, every one ok.
+  5. Check that the shop's data is unchanged, and that a field and a unit can be made and used by the app.
+- **What staging adds over items 30 and 45:** Supabase's real roles and grants, PostgREST's schema cache picking up `attrs`, the realtime publication, and 17.6 itself.
+
+### Test results (run, not assumed)
+- `npm run check`: `sw.js` current (458 files, `hangtag-740e26b846`), 420 modules, 0 architecture violations, bundle ok, lint 0 errors / 0 warnings.
+- `npm test` passed:
+  - **163/163 test files** (79 unit, 28 database, 4 eval, 52 browser) on Windows with Chrome;
+  - then **28/28 database suites again on PostgreSQL 17.5**.
+- **New suites:** unit `release-preflight` 41, database `postgres-versions` 3, browser `vercel-site` 15.
+- **Grown for item 50:** `custom-fields` (database) 44 → 48, `mobile-store` (database) 16 → 18, `mobile-store` (unit) 5 → 6, `store` (browser) 40 → 41.
+- **Tests that failed first:**
+  - the preflight's two checks of the CLI's epoch-millisecond times (item 44);
+  - `vercel-site` on `/favicon.ico` (item 48);
+  - the unit decimals (item 50): 3 checks in `custom-fields` and 1 in `mobile-store`, and the Chrome store check against the old `store.js`.
+  - The first full run after item 50 failed 3 database suites: `bank-accounts`, `commerce-batch`, `subscriptions`. Each runs an older migration on top of `schema.sql`, which brings back the older store catalog or checkout, and report row 93 now notices. They now run the 3z migration after it, as `commerce-batch` already did for 3y ("in the real order it runs after this one").
+- **Not run:** the real Anthropic API (item 42), a hosted staging project (item 46), a Vercel Preview (item 49), a real phone.
+
+### Committed (local, not pushed)
+On `ux-productization` after `760f2e0`:
+- `b3a4d44`: the database suites on PostgreSQL 17 (item 45);
+- `3e5fc91`: the read-only release preflight (items 43–44);
+- `b818098`: what Vercel serves, and the receipt and order page icons (items 47–48);
+- `d23941f`: the shop-unit decimals in the database and the store (item 50);
+- this log and `PLAN.md`, in the commit after it.
+
+### Release blockers (each needs the owner)
+1. **An Anthropic key.** With it, `HANGTAG_EVAL_ANTHROPIC_KEY=… npm run eval:extract-bill` checks the real API (item 42). The same key is the `ANTHROPIC_API_KEY` secret the live project lacks (item 43).
+2. **A staging project** (item 46), or the decision to release without one; items 30 and 45 stand in.
+3. **The word to push** `ux-productization`, so Vercel builds a Preview (item 49). 12 commits are local.
+4. **The live project, in the release order above:**
+   - the schema sections the report flags, up to 3z;
+   - the secrets;
+   - the function deploys, with the JWT settings their READMEs give.
+5. **Not a blocker:** item 51, the store's Add, is a product decision.
+
 ## 2026-10-10 (fourth session: any kind of product, without code changes)
 
 ### Checklist

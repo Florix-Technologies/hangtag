@@ -4,6 +4,76 @@ The running checklist of the code audit: what was checked, what was fixed (each 
 Newest session first. Production data and services were never touched (no migration run, no function deployed); code is
 pushed only on the owner's word.
 
+## 2026-10-12 (sixth session: the roadmap, release fixes for stock and units, function sign-in)
+
+The owner's brief:
+- **Part A:** production readiness first.
+- **Part B:** universal products and inventory.
+- **Part C:** products and services, with a laptop repair as the first scenario.
+
+`PLAN.md` now holds all three. `RELEASE.md` is the owner's runbook for the live project.
+
+### State at the start
+- `ux-productization` had 12 local commits (`1eb8788` … `db47975`).
+- The owner said "push the current work".
+- Local `main` (1 ahead, `4e4b215`, already in this branch) was left alone: it deploys to GitHub Pages.
+
+### Checklist
+| # | Area | Finding | Status |
+|---|------|---------|--------|
+| 63 | Pushing the local commits (A2) | The 87 files and 4,936 added lines were reviewed before pushing:<br>- no keys or tokens, only placeholders such as `<key>` and `sk-ant-…`;<br>- `.env.local`, the Google client secret and `supabase/.temp/` are git-ignored and untracked;<br>- `config.js` has only the URL and the publishable key;<br>- no logs or build output | Pushed `f090c70..db47975` to `ux-productization` (not `main`). Vercel built the Preview (status "success") |
+| 64 | A product's unit (items 52, 58) | — | Fixed `7a372f9` (I1):<br>- the unit is pinned once the product has stock records, bills, an open order or an open purchase order, and the editor locks "Sold by" with the reason;<br>- a changed count with more decimals than its unit is refused in the stock box, Stock in, Adjust and batch counts, never rounded;<br>- an unchanged 12.5 pieces from before is no change.<br>Tests: `unit-safety` 24, `units-weighing` (browser) +1 |
+| 65 | Repack (item 60) | — | Fixed `451ded6` (I20):<br>- the output is q × per exactly; one the target's unit can't hold is refused, with the nearest amounts in stock that fit;<br>- per is kept to 3 decimals, as the database keeps it.<br>Tests: +5, including a sweep of 3,240 plans: every one accepted fits `hangtag_repacks_qty_check`, and every suggestion is accepted |
+| 66 | Supplier bills in boxes (item 59) | — | Fixed `93308e2` (I19):<br>- the review keeps the bill's unit; a line in another unit than its product's needs the base quantity, and the plan refuses it until that is entered;<br>- stock is the base quantity at the cost spread over it, while the purchase keeps the bill's own quantity and cost, so its money stays exact;<br>- one new product, one unit.<br>Tests: `bill-import` unit suite +8, browser +5 (a "5 box" bill end to end) |
+| 67 | Races and the database's own guards (items 53, 54, 58; 52 at the database) | — | Fixed `ea09567`, section 3za (migration `20261013120000_hangtag_stock_guards.sql`):<br>- a new serial's insert takes a row only from a write-off, and is refused when another device's insert won;<br>- supplier bills lock on their file and invoice number before the duplicate check, and keep field values;<br>- products and variants keep a database-maintained `updated_at`;<br>- the database refuses a unit change under history;<br>- report rows 94 and 95; `REPORT_ROWS` = 82 in one place (`supabase/tests/report-rows.mjs`).<br>Tests: `stock-guards` (20, on PostgreSQL 18 and 17). PGlite has one session, so the races are checked in the functions' text, as row 94 checks them live |
+| 68 | Saved stock records (item 55, re-checked) | **Item 55 was wrong:**<br>- section 3n's `hangtag_tracking_shape` already refuses a change of a saved record's serials, batch or expiry;<br>- a serial record's quantity must equal its serial count;<br>- batch quantities are read from the records.<br>A quantity correction by the owner or a manager is allowed and logged by design, and "Combine colours" re-points records. A guard refusing every change was tried: three suites failed on exactly those designed paths, so it was not kept | Corrected. `0b60613` pins the right behaviour in `stock-guards` (+4). PLAN.md's T3 is dropped |
+| 69 | `team` and `webhook-dispatch` sign-in (A5) | **The app's key is a publishable key (`sb_publishable_…`), not a JWT.** With JWT verification on, as on the live project, the gateway refuses both before they run:<br>- a phone redeeming a team QR (it has no session yet);<br>- the scheduler calling the dispatcher with its secret.<br>Both are designed for `--no-verify-jwt` and check callers themselves. `team` lets only `enroll_redeem` run without a session; its single-use, expiring token is marked used in one conditional update. Every other action needs `getUser()`, and managing the team also needs `hangtag_role()` = owner. `webhook-dispatch` compared its secret with a plain string comparison | `7dff39f`: both gates are explicit and tested; the dispatcher now compares in constant time and refuses everything while its secret is unset. Live redeploy with `--no-verify-jwt`: owner (`RELEASE.md` §5). Not tested against deployed functions: deploying is the owner's step, and nothing was sent to the live project |
+| 70 | A browser suite crashed once in a full run | `business-capabilities`: "Node is detached from document". Home re-rendered between finding a button and clicking it | Fixed `4c6726a`: the shared click helper looks the element up again on that error only. 3 runs of 3 then passed (48 checks) |
+| 71 | The Vercel Preview (A6) | Built from `db47975`. It sits behind Vercel's sign-in, the browser tools weren't connected here, and a Preview uses live data | **Not inspected.** Items 47 and 72 stand in; the owner opens it (`RELEASE.md` §1) |
+| 72 | Production's app on the new database (the rollback in `RELEASE.md`) | `6af8cc2` (Vercel Production) ran its own 44 browser suites against today's `schema.sql` (3x to 3za and everything before): **43 of 44 passed.** `subscription` failed 13 checks, every one on a number section 3w changed on purpose: a 30-day trial instead of 7, a 12-month plan, new prices. The old app showed the database's new values correctly; no check failed on an error | Supports rolling the app back without the database (`RELEASE.md` §6). 3w's new defaults are what the old app shows if it is restored |
+| 73 | Staging (A4) | Unchanged: no staging project, and creating one is a billing decision | **Blocked.** Planned once it exists: Previews pointed at staging through Vercel environment variables (PLAN.md R1), so testing a Preview never touches live data |
+| 74 | The real Claude API (A3) | Unchanged: no key here | **Blocked.** How to set `ANTHROPIC_API_KEY` safely (an env file outside the repository, a spend limit, rotation): `RELEASE.md` §4 |
+| 75 | The roadmap | Parts A–C with dependencies, acceptance criteria, risks and tests. **Services:** catalog items with no stock. **Repairs:** a job record of its own (asset, complaint, diagnosis, technician, status machine, append-only history), whose money goes through quotation → sales order → bill. The laptop scenario is mapped step by step | `PLAN.md`. A design workflow was started for Part C; its agents hit the session usage limit before returning anything, so the design was done directly from the code |
+
+Items 56, 57, 61 and 62 stay open, in PLAN.md as I4, I10, I21, I12 and I22.
+
+### Test results (run, not assumed)
+- **Each fix:** its own suites ran before it was committed:
+  - unit-safety, bill-import, commerce-batch;
+  - every database suite, on both PostgreSQL versions for `stock-guards`;
+  - the unit, bill-import and store browser suites.
+- **Full suite on `7a372f9`** (I1, in a clean Windows checkout): **164/164** test files, then **28/28** database suites on PostgreSQL 17.5.
+- **Full suite on `93308e2`** (I19): 163/164; the one failure was item 70, fixed and re-run.
+- **Full suite on the final code (`0b60613`)**, in a clean Windows checkout: `npm run check` clean (`sw.js` current, `hangtag-80042738a2`, 0 architecture violations, lint 0/0). **165/165** test files (80 unit, 29 database, 4 eval, 52 browser), then **29/29** database suites on PostgreSQL 17.5.
+- **Not run:**
+  - the real Anthropic API;
+  - a hosted staging database;
+  - the deployed Edge Functions (nothing was sent to the live project);
+  - the Preview itself;
+  - a real phone.
+
+### Committed
+On `ux-productization` after `db47975` (pushed), all local:
+- `7a372f9` I1;
+- `451ded6` I20;
+- `93308e2` I19;
+- `ea09567` 3za;
+- `7dff39f` function gates;
+- `4c6726a` click helper;
+- `0b60613` item 68;
+- then this log, `PLAN.md` and `RELEASE.md`.
+
+### Release blockers (each needs the owner)
+1. **An Anthropic key:** for the real check and for the live secret (item 74).
+2. **A staging project,** or the decision to release without one (item 73).
+3. **The word to push** the commits above, for a Preview with them.
+4. **The live project, in `RELEASE.md`'s order:**
+   - backups;
+   - sections up to 3za, with the report at 82 rows ok;
+   - secrets;
+   - function deploys, `team` and `webhook-dispatch` with `--no-verify-jwt`;
+   - promotion.
+
 ## 2026-10-11 and 12 (fifth session: release verification, then the plan for import updates and unit conversions)
 
 ### State at the start (inspected, nothing discarded)
@@ -27,7 +97,7 @@ pushed only on the owner's word.
 | 52 | Changing a product's unit | A product with stock can change unit, and its stock is then re-rounded into the new unit with an ADJUST: switching 12.5 kg to pcs writes +0.5 (`save-product.js:60-62`). The database doesn't stop it either | Confirmed in the code. Plan I1 (the app) and I3 (the database) |
 | 53 | Two devices adding the same new serial | `hangtag_track_move` inserts a new serial with `ON CONFLICT … DO UPDATE` and no status check (`schema.sql:3238-3242`). If another device added the serial in between, the second insert silently takes it over | Confirmed in the code, not raced in a test. Plan I2 |
 | 54 | The same supplier bill on two devices | The duplicate-file and duplicate-invoice checks are plain SELECTs with no lock, and the file-hash index isn't unique (`schema.sql:668`). Two devices confirming the same bill at once can both add its stock | Confirmed in the code, not raced. Plan I2 |
-| 55 | A saved stock record sent again | Stock records are upserted by id, and a role with `manage_inventory` may update one (`schema.sql:1881-1883`). The serial and batch registers follow only inserts and deletes (`AFTER INSERT OR DELETE`, `schema.sql:3278`), so a rewritten quantity or serial list leaves them out of step | Confirmed in the code. Plan I14: new stock paths insert only |
+| 55 | A saved stock record sent again | Stock records are upserted by id, and a role with `manage_inventory` may update one (`schema.sql:1881-1883`). The serial and batch registers follow only inserts and deletes (`AFTER INSERT OR DELETE`, `schema.sql:3278`), so a rewritten quantity or serial list leaves them out of step | ~~Confirmed in the code.~~ **Corrected in item 68: not a defect.** Section 3n already freezes a saved record's serials and batch, and a quantity correction is a logged, designed capability |
 | 56 | Stock records of the wrong shape | Only `hangtag_import_stock` checks that a serial-tracked line has serials, and a batch line its batch. `hangtag_save_purchase` and the outbox insert whatever they are sent | Confirmed in the code. Plan I4 |
 | 57 | A product edit after a delete elsewhere | `patchProduct` falls back to a whole upsert when the row is missing (`cloud-gateway.js:142`). An edit queued on one device brings back a product deleted on another | Confirmed in the code. Plan I10 |
 | 58 | Checking a product before updating it | `updated_at` on products and variants is whatever the client sends; no trigger sets it. So it can't tell an update from a file whether the product changed since. The audit's first design assumed it could, and its own verifier refuted that | Confirmed in the code. Plan I3 adds the trigger; I10 uses it |

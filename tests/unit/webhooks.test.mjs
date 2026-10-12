@@ -1,6 +1,7 @@
 // Outbound webhooks (supabase/functions/webhook-dispatch/core.js): HMAC signing a receiver can verify, the same bytes on
 // every retry, back-off and when to give up, safe addresses only, and the app's rules agreeing with the function's.
-import { MAX_ATTEMPTS, WEBHOOK_EVENTS, afterAttempt, checkEvents, checkUrl, deliveryHeaders, eventBody, outcome, privateAddress, retryDelay, signature, verifySignature } from '../../supabase/functions/webhook-dispatch/core.js';
+import { MAX_ATTEMPTS, WEBHOOK_EVENTS, afterAttempt, checkEvents, checkUrl, deliveryHeaders, dispatchAuthorized, eventBody, outcome, privateAddress, retryDelay, signature, verifySignature } from '../../supabase/functions/webhook-dispatch/core.js';
+import fs from 'node:fs';
 import * as app from '../../src/domain/shop/webhooks.js';
 import { createHmac } from 'node:crypto';
 
@@ -27,6 +28,19 @@ check('private ranges', privateAddress('192.168.1.1') && privateAddress('172.20.
 check('events: known ones only, at least one', !!checkEvents([]).error && !!checkEvents(['sale.deleted']).error && checkEvents(['sale.completed', 'sale.completed']).events.length === 1);
 check('the app\'s rules agree with the function\'s', JSON.stringify(app.WEBHOOK_EVENTS) === JSON.stringify(WEBHOOK_EVENTS)
   && ['https://a.example.com/x', 'http://a.example.com', 'https://127.0.0.1/', 'https://a.local/x', 'https://[fe80::1]/'].every(u => JSON.stringify(app.checkUrl(u)) === JSON.stringify(checkUrl(u))));
+
+// who may run the dispatcher (deployed without JWT verification: the dispatch secret is its only gate)
+{
+  const S = 'whd_9f8e7d6c5b4a39281706f5e4d3c2b1a0';
+  check('the dispatcher runs only for "Bearer <WEBHOOK_DISPATCH_SECRET>" exactly, and never while the secret isn\'t set',
+    dispatchAuthorized('Bearer ' + S, S) && !dispatchAuthorized(null, S) && !dispatchAuthorized('', S) && !dispatchAuthorized('Bearer ' + S + 'x', S)
+    && !dispatchAuthorized('Bearer ' + S.slice(0, -1), S) && !dispatchAuthorized('bearer ' + S, S) && !dispatchAuthorized(S, S) && !dispatchAuthorized('Bearer ', '')
+    && !dispatchAuthorized('Bearer undefined', undefined) && !dispatchAuthorized('Bearer sb_publishable_abc123', S));
+  const src = fs.readFileSync(new URL('../../supabase/functions/webhook-dispatch/index.ts', import.meta.url), 'utf8');
+  check('…and the function checks it before anything else (no database call, no secret read first)',
+    src.indexOf('dispatchAuthorized(req.headers.get("authorization"), env.WEBHOOK_DISPATCH_SECRET)') > 0
+    && src.indexOf('dispatchAuthorized(') < src.indexOf('createClient(env.SUPABASE_URL'));
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

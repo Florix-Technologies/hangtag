@@ -9,7 +9,7 @@
 // Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (provided by Supabase), WEBHOOK_DISPATCH_SECRET (set it yourself).
 // Deploy with JWT verification off (the dispatch secret is the guard): supabase functions deploy webhook-dispatch --no-verify-jwt
 import { createClient } from "npm:@supabase/supabase-js@2.117.2";
-import { TIMEOUT_MS, afterAttempt, checkUrl, deliveryHeaders, eventBody, privateAddress, signature } from "./core.js";
+import { TIMEOUT_MS, afterAttempt, checkUrl, deliveryHeaders, dispatchAuthorized, eventBody, privateAddress, signature } from "./core.js";
 
 const reply = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
@@ -24,8 +24,7 @@ async function resolvesPrivate(host: string): Promise<boolean> {
 
 Deno.serve(async (req) => {
   const env = Deno.env.toObject();
-  const want = env.WEBHOOK_DISPATCH_SECRET || "";
-  if (!want || (req.headers.get("authorization") || "") !== `Bearer ${want}`) return reply(401, { ok: false, error: "unauthorized" });
+  if (!dispatchAuthorized(req.headers.get("authorization"), env.WEBHOOK_DISPATCH_SECRET)) return reply(401, { ok: false, error: "unauthorized" });
   if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) return reply(503, { ok: false, error: "not_configured" });
   const db = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
   const { data: due, error } = await db.rpc("hangtag_webhook_claim", { p_limit: 25 });

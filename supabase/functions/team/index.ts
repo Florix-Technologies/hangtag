@@ -12,7 +12,7 @@
 //   (hangtag_end_sessions) and move access_reset_at on: a phone is added again only after a later password sign-in.
 import { createClient } from "npm:@supabase/supabase-js@2.117.2";
 import { BAN_FOREVER, LIMITS, accessResetPatch, deviceRow, enrollmentRow, freshSession, jwtClaims, latest, memberRow, newDeviceId, newDeviceKey,
-  newPassword, newToken, publicMember, redeemable, revokePatch, sha256Hex, shopCode, staffEmail, validateRequest } from "./core.js";
+  newPassword, newToken, publicMember, redeemable, revokePatch, sessionBearer, sha256Hex, shopCode, staffEmail, validateRequest } from "./core.js";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -96,7 +96,7 @@ Deno.serve(async (req) => {
 
     // ---------- everything else: a signed-in caller ----------
     const auth = req.headers.get("Authorization");
-    if (!auth || !/^Bearer\s+\S+\.\S+\.\S+$/i.test(auth)) return refuse(401, "unauthorized", "Sign in first.");
+    if (!sessionBearer(auth)) return refuse(401, "unauthorized", "Sign in first.");
     const deviceKey = req.headers.get("x-hangtag-device");
     const db = createClient(url, anon, { global: { headers: { Authorization: auth, ...(deviceKey ? { "x-hangtag-device": deviceKey } : {}) } },
       auth: { persistSession: false, autoRefreshToken: false } });

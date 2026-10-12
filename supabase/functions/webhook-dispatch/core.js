@@ -16,6 +16,16 @@ export const MAX_ATTEMPTS = 8;
 const BACKOFF = [60, 300, 900, 3600, 10800, 21600, 43200];
 export const retryDelay = attempts => BACKOFF[Math.min(Math.max(1, attempts) - 1, BACKOFF.length - 1)];
 export const TIMEOUT_MS = 10000;
+/* Whether a call may run the dispatcher: "Bearer <WEBHOOK_DISPATCH_SECRET>" exactly, compared in constant time; never
+   while the secret isn't set. The function is deployed without JWT verification, so this is its only gate. */
+export function dispatchAuthorized(header, secret){
+  const want = String(secret || "");
+  if(!want) return false;
+  const a = new TextEncoder().encode(String(header || "")), b = new TextEncoder().encode("Bearer " + want);
+  let diff = a.length ^ b.length;
+  for(let i = 0; i < Math.max(a.length, b.length); i++) diff |= (a[i] || 0) ^ (b[i] || 0);
+  return diff === 0;
+}
 const hex = buf => Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
 /* "sha256=<hex>" of HMAC-SHA256(secret, "<timestamp>.<body>") — WebCrypto, the same in Deno and Node */
 export async function signature(secret, timestamp, body){

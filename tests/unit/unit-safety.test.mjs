@@ -7,7 +7,8 @@ import { saveProduct } from '../../src/features/products/use-cases/save-product.
 import { unitLock } from '../../src/features/products/services/unit-lock.js';
 import { recordStockOperation, recordTrackedStockOperation } from '../../src/features/inventory/use-cases/record-stock-operation.js';
 import { buildStockMoves, buildTrackedMoves } from '../../src/domain/inventory/stock-operation.js';
-import { qtyPlacesError } from '../../src/domain/catalog/units.js';
+import { decimalsOf, qtyPlacesError, roundQty } from '../../src/domain/catalog/units.js';
+import { repackPlan, repackRecord } from '../../src/domain/inventory/repack.js';
 import { DEFAULT_SETTINGS } from '../../src/domain/shop/settings.js';
 
 let passed = 0, failed = 0;
@@ -120,6 +121,38 @@ const m = buildStockMoves({ kind: 'adjust', productId: 'rice', values: { a: '1.2
 check('the domain records only the changed count, unrounded (1 → 1.25 kg)', !m.error && m.moves.length === 1 && m.moves[0].q === 0.25, m);
 check('qtyPlacesError: 12.5 pcs, 2.555 m refused; 0.1 + 0.2 kg and "1,25" kg fine',
   !!qtyPlacesError('12.5', 'pcs') && !!qtyPlacesError('2.555', 'm') && qtyPlacesError(0.1 + 0.2, 'kg') === '' && qtyPlacesError('1,25', 'kg') === '');
+
+console.log('=== repack never makes stock (I20) ===');
+const rice = { p: 'rice', v: 'rice:', unit: 'kg', name: 'Rice', tracking: 'none', cost: 60 }, packet = { p: 'pk', v: 'pk:', unit: 'pcs', name: 'Rice packet', tracking: 'none' };
+let rp = repackPlan({ id: 'a', from: rice, to: packet, q: 1, per: 2.5, available: 5, t: 1 });
+check('1 kg at 2.5 packets a kg is refused (it rounded to 3 packets before), with the nearest amounts that fit',
+  !rp.moves && /would make 2\.5 pieces/.test(rp.error || '') && /Open 0\.8 kg \(makes 2 pieces\) or 1\.2 kg \(makes 3 pieces\)/.test(rp.error) && JSON.stringify(rp.near) === '[{"q":0.8,"out":2},{"q":1.2,"out":3}]', rp);
+rp = repackPlan({ id: 'a', from: rice, to: packet, q: 1, per: 2.5, available: 1.1, t: 1 });
+check('…only amounts in stock are suggested', JSON.stringify(rp.near) === '[{"q":0.8,"out":2}]', rp);
+rp = repackPlan({ id: 'a', from: rice, to: packet, q: 2, per: 2.5, available: 5, t: 1 });
+check('2 kg makes exactly 5 packets', !rp.error && rp.in === 5 && rp.moves[1].q === 5 && rp.moves[0].q === -2, rp);
+const sack = { p: 's', v: 's:', unit: 'pcs', name: 'Sack', tracking: 'none', cost: 100 }, loose = { p: 'l', v: 'l:', unit: 'kg', name: 'Loose', tracking: 'none' };
+rp = repackPlan({ id: 'b', from: sack, to: loose, q: 3, per: 0.3333, available: 5, t: 1 });
+check('a per of 0.3333 is planned as the 0.333 the database keeps (3 → 0.999 kg), and recorded so',
+  !rp.error && rp.per === 0.333 && rp.in === 0.999 && repackRecord({ id: 'b', from: sack, to: loose, per: 0.3333, t: 1 }, rp).per === 0.333, rp);
+// every plan accepted satisfies hangtag_repacks_qty_check (to_qty <= from_qty × per + 0.001 and > from_qty × per − 1) with
+// to_qty exactly from_qty × per on the target's grid; every refusal suggests only amounts that are accepted
+let sweep = 0, bad = [];
+const UNITS = ['pcs', 'm', 'kg'];
+for (const fu of UNITS) for (const tu of UNITS) for (const per of [0.001, 0.125, 0.333, 0.5, 2.5, 12, 24, 25, 0.04]) {
+  const step = 10 ** -decimalsOf(fu);
+  for (let k = 1; k <= 40; k++) {
+    const q = roundQty(k * step * (fu === 'pcs' ? 1 : 37)), from = { ...rice, unit: fu, name: 'A' }, to = { ...packet, unit: tu, name: 'B' };
+    const r = repackPlan({ id: 'x', from, to, q, per, available: 1000, t: 1 }); sweep++;
+    if (!r.error) {
+      const exact = Math.round(q * 1000) * Math.round(per * 1000) / 1e6;
+      if (!(r.in === roundQty(exact) && Math.abs(r.in - exact) < 1e-9 && r.in <= q * per + 0.001 && r.in > q * per - 1 && !qtyPlacesError(r.in, tu))) bad.push({ fu, tu, per, q, in: r.in });
+    } else if (r.near) {
+      for (const n of r.near) { const again = repackPlan({ id: 'y', from, to, q: n.q, per, available: 1000, t: 1 }); if (again.error || again.in !== n.out) bad.push({ fu, tu, per, q, near: n, err: again.error }); }
+    }
+  }
+}
+check(`a sweep of ${sweep} plans (3 × 3 units, 9 conversions, 40 amounts): every one accepted fits the database's check exactly, every suggestion is accepted`, bad.length === 0, bad.slice(0, 5));
 
 resetPorts();
 console.log(`\n${passed} passed, ${failed} failed`);

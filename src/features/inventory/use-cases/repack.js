@@ -45,8 +45,8 @@ export function repackStock(x){
   // remembered on the source product for next time (only someone who may edit products changes the product)
   if(x.remember !== false && can("manage_products")){
     const list = cleanRepacks(f.p.repack), at = list.findIndex(r => r.f === x.fromV && r.t === x.toV);
-    if(at < 0 || list[at].per !== +x.per){
-      const next = at < 0 ? [...list, { f: x.fromV, t: x.toV, per: +x.per }] : list.map((r, i) => i === at ? { ...r, per: +x.per } : r);
+    if(at < 0 || list[at].per !== plan.per){
+      const next = at < 0 ? [...list, { f: x.fromV, t: x.toV, per: plan.per }] : list.map((r, i) => i === at ? { ...r, per: plan.per } : r);
       productRepository().save({ product: { ...f.p, repack: next }, isNew: false, renamed: false, newMoves: [], deletedVariantIds: [], image: undefined });
     }
   }

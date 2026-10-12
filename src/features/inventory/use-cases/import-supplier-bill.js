@@ -12,7 +12,7 @@ import { billFileType, blankReviewLine, newReviewLines, planImport, prepareLines
 import { lineMoney, lineTrackingError } from '../../../domain/inventory/purchase.js';
 import { normBatch, parseSerials } from '../../../domain/inventory/tracking.js';
 import { toRupees } from '../../../domain/sales/paise.js';
-import { decimalsOf, isWeighed } from '../../../domain/catalog/units.js';
+import { allUnits, decimalsOf, isWeighed, unitId } from '../../../domain/catalog/units.js';
 import { prod, products } from '../../products/services/catalog.js';
 import { batchOf, expiryKept, serialState, today, trackingOfP } from '../services/tracking.js';
 import { supplierById } from '../services/purchase-state.js';
@@ -96,11 +96,14 @@ export async function invoiceDuplicates(invoiceNo){
   if(!String(invoiceNo || "").trim()) return [];
   try{ return await use("inventoryImportService").findDuplicates({ invoiceNo }); }catch(e){ logger.warn("Duplicate check failed:", e); return []; }
 }
-/* The decimals a line's quantity may have: its product's unit (an existing product), else the unit chosen on the line;
-   how its product is tracked (serial number, batch with or without expiry dates) */
+/* The unit a line's stock is counted in (prodUnit) and the decimals it may have: its product's unit (an existing
+   product), else the unit chosen on the line (a new product: the bill's own unit until another is chosen); how its
+   product is tracked (serial number, batch with or without expiry dates) */
 function withUnit(l){
-  const p = l.targetProductId && prod(l.targetProductId);
-  l.dp = decimalsOf(p ? p.unit : l.unit);
+  const p = l.action !== "new-product" && l.targetProductId && prod(l.targetProductId);
+  if(l.unit == null && l.billUnit && allUnits().some(u => u.id === l.billUnit)) l.unit = l.billUnit;
+  l.prodUnit = unitId(p ? p.unit : l.unit);
+  l.dp = decimalsOf(l.prodUnit);
   l.tracking = p ? trackingOfP(p) : "none";
   l.expiry = !!(p && expiryKept(p));
   l.reasons = reviewReasons(l); l.needsReview = l.reasons.length > 0;
@@ -151,8 +154,10 @@ export function purchaseFields(b, plan){
   const sup = b.supplierId && supplierById(b.supplierId);
   if(!sup) return null;
   let tx = 0, tax = 0;
-  const lines = (plan.lines || []).map(l => { const m = lineMoney({ q: l.q, cost: l.cost, gst: l.gst }); tx += m.tx; tax += m.tax;
-    return { p: l.p, v: l.v, n: l.n, vl: l.vl, sku: l.sku, q: l.q, cost: l.cost, gst: l.gst, tx: toRupees(m.tx), tax: toRupees(m.tax), total: toRupees(m.total) }; });
+  // a line printed in another unit (5 box): its money is the bill's own (5 × ₹600), its stock the base quantity (60 pieces)
+  const lines = (plan.lines || []).map(l => { const m = lineMoney(l.bq != null ? { q: l.bq, cost: l.bc, gst: l.gst } : { q: l.q, cost: l.cost, gst: l.gst }); tx += m.tx; tax += m.tax;
+    return { p: l.p, v: l.v, n: l.n, vl: l.vl, sku: l.sku, q: l.q, cost: l.cost, gst: l.gst, tx: toRupees(m.tx), tax: toRupees(m.tax), total: toRupees(m.total),
+      ...(l.u ? { u: l.u } : {}), ...(l.bq != null ? { bq: l.bq, bu: l.bu, bc: l.bc } : {}) }; });
   return { kind: "purchase", supplierId: sup.id, supplier: sup.name, gstin: sup.gstin || b.gstin || "", lines, sub: toRupees(tx), tax: toRupees(tax), total: toRupees(tx + tax) };
 }
 /* Saves the bill in one step. Throws an AppError (CONFLICT with details.kind for a likely repeat, unless allowDuplicate;
@@ -172,7 +177,8 @@ export async function confirmSupplierBill(b, plan, { allowDuplicate = false } = 
     supplier: pf ? pf.supplier : b.supplier, gstin: pf ? pf.gstin : b.gstin, invoiceNo: b.invoiceNo, invoiceDate: b.invoiceDate,
     amount: pf ? pf.total : totals.length ? Math.round(totals.reduce((a, x) => a + x, 0) * 100) / 100 : null,
     lines: pf ? pf.lines : used.map(l => ({ name: l.name, brand: l.brand || null, options: l.options, qty: l.qty, cost: l.unitCost, price: l.sellPrice, sku: l.sku || null, barcode: l.barcode || null,
-      hsn: l.hsn || null, gst: l.gst, action: l.action, product: l.targetProductId || null, variant: l.targetVariantId || null, confidence: l.confidence })),
+      hsn: l.hsn || null, gst: l.gst, action: l.action, product: l.targetProductId || null, variant: l.targetVariantId || null, confidence: l.confidence,
+      ...(l.billUnit ? { unit: l.billUnit } : {}), ...(l.billUnit && l.billUnit !== l.prodUnit && l.baseQty != null ? { base_qty: l.baseQty } : {}) })),
     extraction: b.ext ? { provider: b.ext.provider || null, model: b.ext.model || null, warnings: b.ext.warnings || [] } : { provider: "manual" },
     documentPath: b.doc && b.doc.cloud ? b.doc.path : null, purchase: pf, allowDuplicate };
   const res = await use("inventoryImportService").commit(plan, meta);

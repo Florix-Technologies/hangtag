@@ -51,6 +51,9 @@ const extractBill = async (r) => {
   if (body.file_name === 'notconfigured.pdf') return r.respond({ status: 503, contentType: 'application/json', headers: CORS, body: JSON.stringify({ ok: false, error: 'not_configured', message: 'no key' }) });
   // section 8: the function's streamed answer (spaces while it reads, then the JSON), and a refusal inside one
   if (body.file_name === 'streamed.pdf') return r.respond({ status: 200, contentType: 'application/json', headers: CORS, body: '    ' + String.fromCharCode(10) + ' ' + JSON.stringify(PHOTO) });
+  // section 9: a line printed in boxes of a product counted in pieces
+  if (body.file_name === 'boxes.pdf') return r.respond({ status: 200, contentType: 'application/json', headers: CORS, body: JSON.stringify({ ...head, invoice: { number: 'BX-9', date: '2026-10-01' }, warnings: [],
+    lines: [L({ name: 'Tote Bag', brand: null, quantity: 5, unit: 'box', unit_price: 600, total_price: 3000, mrp: null, hsn: null, gst_rate: 12 })] }) });
   if (body.file_name === 'refused.pdf') return r.respond({ status: 200, contentType: 'application/json', headers: CORS, body: '   ' + JSON.stringify({ ok: false, error: 'busy', message: 'The reading service is busy. Try again in a minute.' }) });
   // section 7: the reading fails once (the provider is busy), then works
   if (body.file_hash === trackedHash) {
@@ -272,6 +275,33 @@ await run('const f=new File([new TextEncoder().encode("%PDF-1.4 untyped %%EOF")]
 check('a PDF the file picker gave no type is still read as a PDF, and kept as one', await until('billImport&&billImport.step==="review"', 30000)
   && fnCalls.slice(sent).some((c) => c.name === 'untyped.PDF' && c.type === 'application/pdf') && /\.pdf$/.test(await run('return billImport.doc.path')), fnCalls.slice(sent));
 await run('discardBillDocument(billImport.importId);billImport=null;closeModal()');
+
+// ---------- 9. a line printed in another unit (PLAN.md I19): 5 box of a product counted in pieces ----------
+const PDF5 = H.ARTIFACTS + '/boxes.pdf';
+fs.writeFileSync(PDF5, '%PDF-1.4\n% boxes\n%%EOF\n');
+releaseStorage();
+await A.click('.vh-acts [data-act="billimport"]'); await sleep(200);
+await (await A.$('.bi-pick input[accept^="application/pdf"]')).uploadFile(PDF5);
+await until('billImport&&billImport.step==="review"', 30000);
+const bx = await run('const l=billImport.lines[0];return {id:l.id,billUnit:l.billUnit,prodUnit:l.prodUnit,action:l.action,reasons:l.reasons}');
+check('a "5 box" line of the tote (counted in pieces): the bill\'s unit is kept, and the line asks for the pieces that arrived',
+  bx.billUnit === 'box' && bx.prodUnit === 'pcs' && bx.action === 'existing' && !!(await A.$(`#bi-${bx.id} [data-bif="baseQty"]`))
+  && /Quantity on the bill \(box\)/.test(await A.$eval(`#bi-${bx.id}`, (e) => e.textContent)) && bx.reasons.includes('The bill counts this in box: enter how many pieces arrived'), bx);
+await A.click('[data-bi="tosummary"]'); await sleep(400);
+check('…without them the summary refuses it (no 5 pieces at ₹600 each)', !(await A.$('[data-bi="commit"]')) && /The bill gives 5 box: enter how many pieces that is/.test(await A.$eval('.bi-errs', (e) => e.textContent)));
+await A.click('[data-bi="back"]'); await sleep(200);
+await A.type(`#bi-${bx.id} [data-bif="baseQty"]`, '60'); await A.click('#biT'); await sleep(200);
+await A.click('[data-bi="tosummary"]'); await sleep(400);
+const bsum = await A.$$eval('.bi-sum div', (x) => x.map((e) => e.textContent));
+check('60 pieces entered: the summary adds 60 pieces to 1 existing product', JSON.stringify(await A.$$eval('.bi-sum b', (x) => x.map((e) => +e.textContent))) === '[0,0,1,60]' && bsum.some((t) => /Stock to add \(pieces\)/.test(t)), bsum);
+const toteStock = await run(`return stockOf(products().find(p=>p.name==="Tote Bag").variants[0].id)`);
+await A.click('[data-bi="commit"]');
+const boxImp = await run('return billImport.importId');
+check('confirm → stock added', await until('billImport&&billImport.step==="done"', 15000) && /Stock added: 60 pieces/.test(await A.$eval('.billimp', (e) => e.textContent)));
+const bm = await q1(`SELECT qty::float AS q, cost_price AS c FROM public.hangtag_stock_moves WHERE import_id = '${boxImp}'`);
+check('…60 pieces at ₹50 each in the cloud and on this device (not 5 at ₹600)', bm.length === 1 && bm[0].q === 60 && bm[0].c === 50
+  && await run(`return stockOf(products().find(p=>p.name==="Tote Bag").variants[0].id)===${toteStock + 60}`), { bm, toteStock });
+await run('billImport=null;closeModal()');
 
 await browser.close(); await pg.db.close();
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');

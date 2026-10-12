@@ -5,6 +5,8 @@ import { variantsOf } from '../../../domain/catalog/variants.js';
 import { addBlankLine, billDocumentLink, confirmSupplierBill, discardBillDocument, fingerprintBill, invoiceDuplicates, keepBillDocument, planSupplierBill, readSupplierBill, refreshLine } from '../use-cases/import-supplier-bill.js';
 import { suppliersList } from '../services/purchase-state.js';
 import { importUnits } from '../../../domain/catalog/product-import.js';
+import { unitGap, unitWord } from '../../../domain/inventory/bill-import.js';
+import { qtyText, unitOf } from '../../../domain/catalog/units.js';
 import { liveProducts, prod } from '../../products/services/catalog.js';
 import { closeModal } from '../../../shared/components/modal.js';
 import { toast } from '../../../shared/components/toast.js';
@@ -48,7 +50,7 @@ function shell(title, sub, body, foot){
   $("#modalHost").innerHTML = `<div class="scrim" data-modal-scrim data-billimp><div class="sheet billimp" role="dialog" aria-modal="true" aria-labelledby="biT">${inner}</div></div>`;
 }
 const dupHTML = (list, what) => `<div class="bi-warn" role="alert"><b>This bill may already have been imported.</b><br>${list.slice(0, 3).map(d =>
-  `${esc(what)} added ${esc(fmtDate(d.t))}${d.invoiceNo ? " · " + esc(d.invoiceNo) : ""}${d.supplier ? " · " + esc(d.supplier) : ""}${d.units ? " · " + d.units + " pcs" : ""}`).join("<br>")}</div>`;
+  `${esc(what)} added ${esc(fmtDate(d.t))}${d.invoiceNo ? " · " + esc(d.invoiceNo) : ""}${d.supplier ? " · " + esc(d.supplier) : ""}${d.units ? " · " + d.units + " units" : ""}`).join("<br>")}</div>`;
 
 export function renderBillImport(){
   const b = B(); if(!b) return;
@@ -70,7 +72,7 @@ export function renderBillImport(){
     `<div class="sh-acts"><button class="btn sm" data-bi="another">Choose another file</button><button class="btn sm" data-bi="manual">Enter the lines by hand</button><button class="btn sm primary" data-bi="retry">Try reading again</button></div>`);
   if(b.step === "review") return renderReview();
   if(b.step === "summary") return renderSummary();
-  if(b.step === "done") return shell("Stock added", "", `<div class="bi-busy">${ICON.ok}<b>Stock added: ${b.result.units} piece${b.result.units === 1 ? "" : "s"}${b.invoiceNo ? " from " + esc(b.invoiceNo) : ""}.</b>
+  if(b.step === "done") return shell("Stock added", "", `<div class="bi-busy">${ICON.ok}<b>Stock added: ${esc(stockText(b.result.units, b.result.unitList || ["pcs"]))}${b.invoiceNo ? " from " + esc(b.invoiceNo) : ""}.</b>
       <span class="note">${b.result.products ? `${b.result.products} new product${b.result.products === 1 ? "" : "s"} · ` : ""}${b.result.variants ? `${b.result.variants} new variant${b.result.variants === 1 ? "" : "s"} · ` : ""}${b.result.purchase ? `Recorded as a purchase from ${esc(b.result.purchase)} (Inventory → Purchases).` : "It shows in Stock history as “Supplier bill”."}</span></div>`,
     `<div class="sh-acts"><button class="btn sm primary" data-bi="close">Done</button></div>`);
 }
@@ -112,9 +114,14 @@ function trackHTML(l){
     <label>Expiry${l.expiry ? "" : " <small>(optional)</small>"}<input type="date" data-bif="bexp" data-line="${id}" value="${esc(l.bexp || "")}"></label></div>`;
   return "";
 }
+const cap = w => w.charAt(0).toUpperCase() + w.slice(1);
+const per = u => unitOf(u).id === "pcs" ? "piece" : unitOf(u).sym;
+/* How much stock: "60 pieces", "12.5 kg"; across several units, "… units" */
+const stockText = (n, units) => units.length === 1 && unitOf(units[0]).id !== "pcs" ? qtyText(n, units[0]) : units.length > 1 ? `${n} units` : `${n} piece${n === 1 ? "" : "s"}`;
+const planUnits = plan => [...new Set(((plan && plan.lines) || []).map(x => x.u || "pcs"))];
 function lineHTML(l){
   if(l.include === false) return `<div class="bi-line skip" id="bi-${esc(l.id)}"><div class="bi-top"><span>${esc(l.name || "Line")} · removed</span><button type="button" class="btn xs" data-bi="restore" data-line="${esc(l.id)}">Undo</button></div></div>`;
-  const nr = l.needsReview && !l.confirmed, id = esc(l.id);
+  const nr = l.needsReview && !l.confirmed, id = esc(l.id), gap = unitGap(l, l.prodUnit);
   const f = (key, lab, val, extra = "") => `<label${key === "name" ? ' class="name"' : ""}>${lab}<input data-bif="${key}" data-line="${id}" value="${esc(val == null ? "" : val)}"${extra}></label>`;
   const conf = l.confidence == null ? "" : `<span class="bi-badge">${Math.round(l.confidence * 100)}% sure</span>`;
   return `<div class="bi-line${nr ? " nr" : l.confirmed ? " ok" : ""}" id="bi-${id}">
@@ -122,9 +129,11 @@ function lineHTML(l){
     ${nr && l.reasons.length ? `<p class="bi-reasons">${l.reasons.map(esc).join(" · ")}</p>` : ""}
     <div class="bi-grid">
       ${f("name", "Product", l.name, ' maxlength="120" autocomplete="off"')}
-      ${f("qty", l.dp ? "Quantity (" + esc((importUnits().find(u => u[0] === (prod(l.targetProductId) || l).unit) || ["", "kg"])[1]) + ")" : "Quantity", l.qty, ` type="number" inputmode="${l.dp ? "decimal" : "numeric"}" min="0" step="${l.dp ? "any" : "1"}"`)}
+      ${gap ? f("qty", "Quantity on the bill (" + esc(unitWord(l.billUnit)) + ")", l.qty, ` type="number" inputmode="decimal" min="0" step="any"`)
+        + f("baseQty", esc(cap(unitWord(l.prodUnit))) + " that arrived", l.baseQty, ` type="number" inputmode="${l.dp ? "decimal" : "numeric"}" min="0" step="${l.dp ? "any" : "1"}" placeholder="e.g. how many in ${esc(String(l.qty == null ? "" : l.qty))} ${esc(unitWord(l.billUnit))}"`)
+        : f("qty", l.dp ? "Quantity (" + esc((importUnits().find(u => u[0] === (prod(l.targetProductId) || l).unit) || ["", "kg"])[1]) + ")" : "Quantity", l.qty, ` type="number" inputmode="${l.dp ? "decimal" : "numeric"}" min="0" step="${l.dp ? "any" : "1"}"`)}
       ${l.action === "new-product" ? `<label>Unit<select data-bif="unit" data-line="${id}">${importUnits().map(([c, lab]) => `<option value="${esc(c)}"${(l.unit || "pcs") === c ? " selected" : ""}>${esc(lab)}</option>`).join("")}</select></label>` : ""}
-      ${f("unitCost", `Cost ${currencySign()} / piece`, l.unitCost, ' type="number" inputmode="decimal" min="0"')}
+      ${f("unitCost", `Cost ${currencySign()} / ${esc(per(gap ? l.billUnit : l.prodUnit))}`, l.unitCost, ' type="number" inputmode="decimal" min="0"')}
       ${f("sellPrice", `Selling price ${currencySign()}`, l.sellPrice, ' type="number" inputmode="numeric" min="0" placeholder="for new items"')}
       ${f("gst", "GST %", l.gst, ' type="number" inputmode="decimal" min="0" max="100"')}
       ${f("hsn", "HSN", l.hsn, ' inputmode="numeric" maxlength="8"')}
@@ -162,7 +171,7 @@ function renderReview(){
       ${nr ? `<button type="button" class="btn xs" data-bi="confirmall">Confirm all ${nr}</button>` : ""}</div>
     <div class="bi-lines" id="biLines">${list.length ? list.map(lineHTML).join("") : `<p class="note">No lines here.</p>`}</div>
     <p><button type="button" class="btn xs ghost" data-bi="addline">+ Add a line</button></p>`,
-    `<span class="note">${Math.round(inc.reduce((a, l) => a + (Number.isFinite(l.qty) && l.qty > 0 ? l.qty : 0), 0) * 1000) / 1000} units on ${inc.length} line${inc.length === 1 ? "" : "s"}</span>
+    `<span class="note">${inc.length} line${inc.length === 1 ? "" : "s"}</span>
     <div class="sh-acts"><button class="btn sm" data-bi="cancel">Cancel</button><button class="btn sm primary" data-bi="tosummary"${inc.length ? "" : " disabled"}>Review summary</button></div>`);
 }
 function rerenderLine(l){
@@ -178,7 +187,7 @@ function renderSummary(){
   const box = (n, lab) => `<div><b>${n}</b>${lab}</div>`;
   shell("Summary", `${esc(b.supplier || "Supplier bill")}${b.invoiceNo ? " · " + esc(b.invoiceNo) : ""}`,
     `${plan.errors.length ? `<div class="bi-warn" role="alert"><b>Fix these first:</b><ul class="bi-errs">${plan.errors.map(e => `<li>${esc(names.get(e.lineId))}: ${esc(e.message)}</li>`).join("")}</ul></div>` : ""}
-    <div class="bi-sum">${box(s.productsToCreate, "Products to create")}${box(s.variantsToCreate, "Variants to create")}${box(s.existingMatched, "Existing products matched")}${box(s.units, "Stock to add (units)")}</div>
+    <div class="bi-sum">${box(s.productsToCreate, "Products to create")}${box(s.variantsToCreate, "Variants to create")}${box(s.existingMatched, "Existing products matched")}${box(s.units, planUnits(b.plan).length === 1 ? "Stock to add (" + esc(unitWord(planUnits(b.plan)[0])) + ")" : "Stock to add (units)")}</div>
     ${b.invDups && b.invDups.length ? dupHTML(b.invDups, "This invoice was") : ""}
     ${b.conflict ? dupHTML(b.conflict, "It was") + `<p class="note">Add it anyway only if this really is a new delivery.</p>` : ""}
     ${b.err ? `<p class="autherr" role="alert">${esc(b.err)}</p>` : ""}`,
@@ -243,9 +252,9 @@ async function commit(allowDuplicate){
   try{
     const res = await confirmSupplierBill(b, b.plan, { allowDuplicate });
     const sup = b.supplierId && suppliersList(true).find(s => s.id === b.supplierId);
-    b.result = { units: b.plan.summary.units, products: b.plan.summary.productsToCreate, variants: b.plan.summary.variantsToCreate, status: res && res.status, purchase: sup ? sup.name : "" };
+    b.result = { units: b.plan.summary.units, unitList: planUnits(b.plan), products: b.plan.summary.productsToCreate, variants: b.plan.summary.variantsToCreate, status: res && res.status, purchase: sup ? sup.name : "" };
     b.step = "done"; renderAll(); renderBillImport();
-    toast(`Stock added: ${b.plan.summary.units} piece${b.plan.summary.units === 1 ? "" : "s"}${b.invoiceNo ? " from " + b.invoiceNo : ""}.`);
+    toast(`Stock added: ${stockText(b.plan.summary.units, planUnits(b.plan))}${b.invoiceNo ? " from " + b.invoiceNo : ""}.`);
   }catch(e){
     logger.warn("Import failed:", e);
     b.step = "summary";
@@ -297,7 +306,7 @@ export function billImportInput(t){
   const b = B(); if(!b) return false;
   if(t.dataset.bih){ b[t.dataset.bih] = t.value; return true; }
   if(t.dataset.bif){ const l = lineOf(t.dataset.line); if(!l) return true;
-    const k = t.dataset.bif; l[k] = ["qty", "unitCost", "sellPrice", "gst"].includes(k) ? numOr(t.value) : t.value; if(k === "sellPrice" && l.sellPrice != null) l.sellPrice = Math.round(l.sellPrice); return true; }
+    const k = t.dataset.bif; l[k] = ["qty", "baseQty", "unitCost", "sellPrice", "gst"].includes(k) ? numOr(t.value) : t.value; if(k === "sellPrice" && l.sellPrice != null) l.sellPrice = Math.round(l.sellPrice); return true; }
   if(t.dataset.biopt){ const [id, i, part] = t.dataset.biopt.split(":"), l = lineOf(id); if(l && l.options[+i]) l.options[+i][part] = t.value.trim(); return true; }
   return false;
 }

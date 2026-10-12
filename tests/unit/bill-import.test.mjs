@@ -1,6 +1,7 @@
 // Supplier bill import planning (src/domain/inventory/bill-import.js): review lines, matching, the plan and applying it.
 // Run: npm run test:unit
 import { applyPlan, billFileType, buildIndex, matchLine, newReviewLines, planImport, prepareLines, reviewReasons } from '../../src/domain/inventory/bill-import.js';
+import { lineMoney } from '../../src/domain/inventory/purchase.js';
 
 let passed = 0, failed = 0;
 function check(name, ok, info) {
@@ -103,6 +104,40 @@ check('bill file type: from the picker, else from the name; anything else is not
   && billFileType({ type: '', name: 'Bill.PDF' }) === 'application/pdf' && billFileType({ type: 'application/octet-stream', name: 'scan.jpeg' }) === 'image/jpeg'
   && billFileType({ type: 'image/jpg', name: 'a' }) === 'image/jpeg' && billFileType({ type: '', name: 'IMG_1.HEIC' }) === 'image/heic'
   && billFileType({ type: 'image/png', name: 'x.pdf' }) === 'image/png' && billFileType({ type: 'text/plain', name: 'notes.txt' }) === '' && billFileType(null) === '');
+
+// ---------- the printed unit (PLAN.md I19): "5 box @ ₹600" never becomes 5 pieces at ₹600 each ----------
+{
+  const box = (o) => L({ name: 'Tote Bag', brand: '', sku: 'TOTE', quantity: 5, unit_price: 600, total_price: 3000, mrp: null, unit: 'box', ...o });
+  const ready = (raw, fix) => { const x = prepareLines(newReviewLines(ex(raw), { uid }), catalog()); x.forEach((l) => { l.prodUnit = 'pcs'; l.dp = 0; if (fix) fix(l); }); return x; };
+  let ls = ready([box()]);
+  check('the bill\'s unit is kept on the line (it was dropped)', ls[0].billUnit === 'box' && ls[0].baseQty === null, ls[0]);
+  check('a box line of a product counted in pieces needs its pieces', reviewReasons(ls[0]).some((r) => r === 'The bill counts this in box: enter how many pieces arrived'), reviewReasons(ls[0]));
+  let p = planImport(ls, catalog(), ctx);
+  check('…and the plan refuses it until they are entered: no stock, no 5 pieces at ₹600',
+    p.moves.length === 0 && p.errors.some((e) => e.message === 'The bill gives 5 box: enter how many pieces that is.'), p.errors);
+  ls = ready([box()], (l) => { l.baseQty = 60; });
+  p = planImport(ls, catalog(), ctx);
+  check('60 pieces entered: stock +60 at ₹50 a piece; the purchase line keeps the bill\'s 5 box at ₹600',
+    !p.errors.length && p.moves.length === 1 && p.moves[0].q === 60 && p.moves[0].cost === 50 && p.summary.units === 60
+    && p.lines[0].q === 60 && p.lines[0].cost === 50 && p.lines[0].bq === 5 && p.lines[0].bu === 'box' && p.lines[0].bc === 600, { moves: p.moves, lines: p.lines, errors: p.errors });
+  ls = ready([box({ quantity: 3, unit_price: 100, total_price: 300 })], (l) => { l.baseQty = 36; });
+  p = planImport(ls, catalog(), ctx);
+  const exactMoney = lineMoney({ q: p.lines[0].bq, cost: p.lines[0].bc, gst: 0 }).tx, perPieceMoney = lineMoney({ q: p.lines[0].q, cost: p.lines[0].cost, gst: 0 }).tx;
+  check('3 box at ₹100 = 36 pieces at ₹8.3333; the bill\'s money stays ₹300.00 (36 × ₹8.33 would be ₹299.88)',
+    p.lines[0].cost === 8.3333 && p.moves[0].cost === 8 && exactMoney === 30000 && perPieceMoney === 29988, { line: p.lines[0], exactMoney, perPieceMoney });
+  ls = ready([box({ unit: 'pcs', quantity: 4, unit_price: 180, total_price: 720 })]);
+  p = planImport(ls, catalog(), ctx);
+  check('a line in pieces of a product in pieces: as before', !p.errors.length && p.moves[0].q === 4 && p.moves[0].cost === 180 && !('bq' in p.lines[0]), p);
+  ls = ready([box({ unit: '', quantity: 4, unit_price: 180, total_price: 720 })]);
+  p = planImport(ls, catalog(), ctx);
+  check('a line with no printed unit: as before', ls[0].billUnit === '' && !p.errors.length && p.moves[0].q === 4, p);
+  // new products take the line's unit: two lines of one new product in different units are refused
+  ls = prepareLines(newReviewLines(ex([L({ name: 'Basmati', brand: '', quantity: 2, unit_price: 900, mrp: 1200, unit: 'kg' }), L({ name: 'Basmati', brand: '', quantity: 3, unit_price: 90, mrp: 120, unit: 'pcs' })]), { uid }), catalog());
+  ls.forEach((l) => { l.unit = l.billUnit; l.dp = l.unit === 'kg' ? 3 : 0; });
+  p = planImport(ls, catalog(), ctx);
+  check('two lines of one new product in kg and pieces: refused ("choose the same unit"), not added up', p.moves.length === 0
+    && p.errors.some((e) => /Other lines of Basmati are in kg: choose the same unit/.test(e.message)), p.errors);
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

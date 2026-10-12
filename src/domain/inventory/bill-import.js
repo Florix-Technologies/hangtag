@@ -3,6 +3,7 @@
 import { tupleKey } from '../catalog/options.js';
 import { COLORS } from '../../shared/utils/colors.js';
 import { normBatch } from './tracking.js';
+import { UNIT_CODE_RE, decimalsOf, unitId, unitOf } from '../catalog/units.js';
 
 export const REVIEW_CONFIDENCE = 0.8;
 
@@ -25,13 +26,26 @@ const money = v => { const n = num(v); return n == null || n < 0 ? null : Math.r
 /* A quantity: above 0, whole for pieces; dp: the decimals its unit allows (kg, litres: 3) */
 const isQty = (q, dp) => Number.isFinite(q) && q > 0 && Math.abs(q * 10 ** (dp || 0) - Math.round(q * 10 ** (dp || 0))) < 1e-6;
 
+/* ---------- units ---------- */
+/* The unit a bill prints on a line (extract-bill gives Hangtag's codes: pcs, box, kg…), or "" when it prints none */
+const billUnitOf = s => { const c = low(clean(s, 12)).replace(/\s+/g, ""); return UNIT_CODE_RE.test(c) ? c : ""; };
+/* The unit a line's stock is counted in: its product's (an existing one), else the one chosen for the new product */
+export const lineUnit = (l, p) => unitId(p ? p.unit : l.unit);
+/* A line printed in another unit than its stock's (5 box of a product counted in pieces): its stock is the base quantity
+   the merchant enters (how many pieces the 5 boxes are), never the printed number */
+export const unitGap = (l, unit) => !!(l && l.billUnit && unit && l.billUnit !== unit);
+export const unitWord = u => unitOf(u).id === "pcs" ? "pieces" : unitOf(u).sym;
+
 /* ---------- review lines ---------- */
 /* Why a line needs a second look (empty list = looks fine). Recomputed after every edit. */
 export function reviewReasons(l){
   const r = [];
   if(!clean(l.name)) r.push("No product name");
+  // l.prodUnit (set once the line is matched): the unit its stock is counted in
+  const gap = unitGap(l, l.prodUnit), qdp = gap ? decimalsOf(l.billUnit) : l.dp;
   if(l.qty == null) r.push("No quantity");
-  else if(!isQty(l.qty, l.dp)) r.push(l.dp ? `Quantity above 0, at most ${l.dp} decimals` : "Quantity should be a whole number, 1 or more");
+  else if(!isQty(l.qty, qdp)) r.push(qdp ? `Quantity above 0, at most ${qdp} decimals` : "Quantity should be a whole number, 1 or more");
+  if(gap && !isQty(l.baseQty, l.dp)) r.push(`The bill counts this in ${unitWord(l.billUnit)}: enter how many ${unitWord(l.prodUnit)} arrived`);
   if(l.confidence != null && l.confidence < REVIEW_CONFIDENCE) r.push(`Not sure it was read correctly (${Math.round(l.confidence * 100)}%)`);
   if(l.qty != null && l.unitCost != null && l.total != null && Math.abs(l.qty * l.unitCost - l.total) > Math.max(1, l.total * 0.01))
     r.push("Quantity × price doesn't match the line total");
@@ -47,7 +61,7 @@ export function newReviewLines(extraction, { uid }){
       options: (Array.isArray(x.options) ? x.options : []).map(o => ({ n: clean(o && o.name, 24), v: clean(o && o.value, 40) })).filter(o => o.n && o.v),
       qty: num(x.quantity), unitCost: num(x.unit_price), total: num(x.total_price), mrp: num(x.mrp),
       sellPrice: money(x.mrp), sku: clean(x.sku, 40), barcode: clean(x.barcode, 64), hsn: clean(x.hsn, 8), gst: num(x.gst_rate),
-      confidence: num(x.confidence), note: clean(x.notes, 300),
+      confidence: num(x.confidence), note: clean(x.notes, 300), billUnit: billUnitOf(x.unit), baseQty: null,
       match: null, action: "", targetProductId: "", targetVariantId: "",
     };
     l.reasons = reviewReasons(l); l.needsReview = l.reasons.length > 0;
@@ -149,16 +163,28 @@ export function planImport(lines, products, ctx){
   let k = 0, units = 0;
   // lines: what each stock-in record is for (its bill line, GST) — a supplier bill recorded as a purchase needs them
   const planLines = [];
+  // a line printed in another unit than its stock's: the stock is the base quantity entered, at the printed cost spread over
+  // it (5 box at ₹600 = 60 pieces at ₹50); the purchase keeps the bill's own figures, so its money is exactly the bill's
+  const unitFor = l => lineUnit(l, l.action === "new-product" ? null : byId.get(l.targetProductId));
+  const gapOf = l => unitGap(l, unitFor(l)), qOf = l => gapOf(l) ? l.baseQty : l.qty;
+  const costOf = l => l.unitCost == null ? null : gapOf(l) ? Math.round((+l.unitCost) * l.qty / l.baseQty * 10000) / 10000 : +l.unitCost;
   const addMove = (l, p, v) => {
     // a line of a product tracked by serial number or batch carries them (checked before planning: use-cases/import-supplier-bill.js)
-    moves.push({ id: "imp:" + importId + ":" + (k++), v: v.id, p: p.id, type: "RESTOCK", q: l.qty, cost: money(l.unitCost), note: clean(note, 200), t: now, dev: deviceId, imp: importId,
+    moves.push({ id: "imp:" + importId + ":" + (k++), v: v.id, p: p.id, type: "RESTOCK", q: qOf(l), cost: money(costOf(l)), note: clean(note, 200), t: now, dev: deviceId, imp: importId,
       ...(Array.isArray(l.sn) && l.sn.length ? { sn: l.sn.slice() } : {}), ...(l.batch && l.batch.no ? { b: normBatch(l.batch.no), ...(l.batch.exp ? { exp: l.batch.exp } : {}) } : {}) });
-    planLines.push({ lineId: l.id, p: p.id, v: v.id, n: clean(l.name, 120) || p.name, vl: (v.o || []).join(" / "), sku: v.sku || "", q: l.qty, cost: l.unitCost == null ? 0 : +l.unitCost, gst: l.gst == null ? 0 : +l.gst });
-    units = Math.round((units + l.qty) * 1000) / 1000;
+    const gap = gapOf(l), u = unitFor(l);
+    planLines.push({ lineId: l.id, p: p.id, v: v.id, n: clean(l.name, 120) || p.name, vl: (v.o || []).join(" / "), sku: v.sku || "", q: qOf(l), cost: costOf(l) == null ? 0 : costOf(l), gst: l.gst == null ? 0 : +l.gst,
+      ...(u !== "pcs" ? { u } : {}), ...(gap ? { bq: l.qty, bu: l.billUnit, bc: l.unitCost == null ? 0 : +l.unitCost } : {}) });
+    units = Math.round((units + qOf(l)) * 1000) / 1000;
   };
   const used = lines.filter(l => l.include !== false && l.action !== "skip");
   used.forEach(l => {
-    if(!isQty(l.qty, l.dp)) err(l, l.dp ? `Enter a quantity above 0 (at most ${l.dp} decimals).` : "Quantity should be a whole number, 1 or more.");
+    const u = unitFor(l), bdp = decimalsOf(l.billUnit);
+    if(gapOf(l)){
+      if(!isQty(l.qty, bdp)) err(l, bdp ? `Enter a quantity above 0 (at most ${bdp} decimals).` : "Quantity should be a whole number, 1 or more.");
+      else if(!isQty(l.baseQty, decimalsOf(u))) err(l, `The bill gives ${l.qty} ${unitWord(l.billUnit)}: enter how many ${unitWord(u)} that is.`);
+    }
+    else if(!isQty(l.qty, l.dp)) err(l, l.dp ? `Enter a quantity above 0 (at most ${l.dp} decimals).` : "Quantity should be a whole number, 1 or more.");
     if(l.needsReview && !l.confirmed) err(l, "Check this line and tap Confirm, or remove it.");
     if(!l.action) err(l, l.decisionNote || "Choose: add stock to an existing product, or create a new one.");
   });
@@ -194,7 +220,7 @@ export function planImport(lines, products, ctx){
       t.forEach((x, i) => { if(!cur.opts[i].v.some(y => low(y) === low(x))) cur.opts[i].v.push(x); });
       updated.set(p0.id, cur);
       v = { id: "v" + uid(), o: t, sku, bc, price: money(l.sellPrice) != null && money(l.sellPrice) !== +p0.price ? money(l.sellPrice) : null,
-            cost: money(l.unitCost) != null && money(l.unitCost) !== p0.cost ? money(l.unitCost) : null, active: true };
+            cost: money(costOf(l)) != null && money(costOf(l)) !== p0.cost ? money(costOf(l)) : null, active: true };
       fresh.set(key, v); newVariants.push({ productId: p0.id, variant: v });
     }
     touched.add(p0.id); addMove(l, p0, v);
@@ -218,7 +244,10 @@ export function planImport(lines, products, ctx){
     if(!good.length) return;
     const first = good[0], price = good.map(l => money(l.sellPrice)).find(x => x != null);
     if(price == null){ good.forEach(l => err(l, "Enter a selling price for this new product.")); return; }
-    const cost = good.map(l => money(l.unitCost)).find(x => x != null) ?? null;
+    // one product, one unit: lines of it counted in different units would add up to nonsense
+    const pu = unitId(first.unit), mixed = good.filter(l => unitId(l.unit) !== pu);
+    if(mixed.length){ mixed.forEach(l => err(l, `Other lines of ${clean(first.name)} are in ${unitWord(pu)}: choose the same unit for every line of one product.`)); return; }
+    const cost = good.map(l => money(costOf(l))).find(x => x != null) ?? null;
     const opts = names.map(n => ({ n, v: [] })), variants = [], byTuple = new Map();
     const pid = "p" + uid(), pname = clean(first.name, 80);
     let failed = false;
@@ -233,7 +262,7 @@ export function planImport(lines, products, ctx){
       if(!v){
         const sku = clean(l.sku, 40), bc = clean(l.barcode, 64);
         if(!claim(l, sku, bc, label({ name: pname }, { o: t }))){ failed = true; return; }
-        const vp = money(l.sellPrice), vc = money(l.unitCost);
+        const vp = money(l.sellPrice), vc = money(costOf(l));
         v = { id: "v" + uid(), o: t, sku, bc, price: vp != null && vp !== price ? vp : null, cost: vc != null && vc !== cost ? vc : null, active: true };
         byTuple.set(tupleKey(t), v); variants.push(v);
       }else if((l.sku && v.sku && low(l.sku) !== low(v.sku)) || (l.barcode && v.bc && l.barcode !== v.bc)){

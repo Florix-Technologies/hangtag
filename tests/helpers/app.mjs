@@ -120,7 +120,15 @@ function deviceOf(page, net, label){
     texts: (sel) => page.$$eval(sel, (l) => l.map((e) => e.innerText.replace(/\s+/g, ' ').trim())).catch(() => []),
     vis: (sel) => page.$eval(sel, (e) => !e.hidden && getComputedStyle(e).display !== 'none' && getComputedStyle(e).visibility !== 'hidden' && e.getClientRects().length > 0).catch(() => false),
     exists: async (sel) => !!(await page.$(sel)),
-    async click(sel, wait = 250){ await page.click(sel); await sleep(wait); },
+    async click(sel, wait = 250){
+      // the app re-renders by itself (sync status, live updates): a node replaced between finding and clicking it is
+      // found again (twice at most); a selector that matches nothing still fails at once
+      for(let i = 0; ; i++){
+        try{ await page.click(sel); break; }
+        catch(e){ if(i >= 2 || !/detached|not attached/i.test(String(e && e.message))) throw e; await sleep(100); }
+      }
+      await sleep(wait);
+    },
     async type(sel, v, wait = 120){ await page.$eval(sel, (e, v) => { e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); }, v); await sleep(wait); },
     async choose(sel, v, wait = 150){ await page.$eval(sel, (e, v) => { e.value = v; e.dispatchEvent(new Event('change', { bubbles: true })); }, v); await sleep(wait); },
     /* a workspace, drawn */

@@ -4,6 +4,7 @@
 // linkage and duplicates are decided again by the database; the order is the shop's ordinary sales order (one commerce
 // engine). Money is written by the app's one formatter in the shop's region. Everything shown is set as text.
 import { checkMobileCustomer, mobileCartTotal, mobileOrderItems, mobileQty, mobileQtyStep, mobileStoreLink } from './src/domain/commerce/mobile-store.js';
+import { setShopUnits } from './src/domain/catalog/units.js';
 import { configureMoney, inrx } from './src/shared/formatting/money.js';
 import { regionOf } from './src/shared/formatting/regions.js';
 
@@ -298,7 +299,8 @@ async function start(){
   try{
     const result = await rpc('hangtag_mobile_catalog', { p_token: link.token });
     if(!result || !result.ok){ closedMessage = (result && result.message) || 'This store is not open right now.'; if(result && result.shop) closedShop = { shop: result.shop, city: result.city }; if(!orderInLink) fail(closedMessage); return; }
-    menu = result; configureMoney(regionOf(menu.region)); trimCart();
+    // the shop's own units in the catalog (an older database gives none: such a unit then takes up to 3 decimals)
+    menu = result; setShopUnits(menu.units); configureMoney(regionOf(menu.region)); trimCart();
     document.title = (menu.shop || 'Shop') + ' · Order online';
     if(orderInLink){ render(); return; }
     render();

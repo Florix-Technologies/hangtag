@@ -123,6 +123,18 @@ check('the order reaches the shop\'s Orders', await until(`Object.values(orders|
 await run('setTab("store");renderAll()'); await sleep(300);
 check('the Store area lists it as Received (as the customer sees it), with the customer and the amount', /Asha Verma/.test(await text('#v-store') || '') && /Received/.test(await text('#v-store .olist') || '') && /₹998/.test(await text('#v-store .olist') || ''), await text('#v-store .olist'));
 
+console.log('--- the shop\'s own units on the storefront (section 3z) ---');
+await pg.as(`INSERT INTO public.hangtag_units (id, label, decimals) VALUES ('roll', 'Roll', 0), ('sqft', 'Sq ft', 2)`, []);
+await pg.as(`INSERT INTO public.hangtag_products (id, name, price, unit, category) VALUES ('twine', 'Jute twine', 60, 'roll', 'Home'), ('rug', 'Jute rug', 120, 'sqft', 'Home')`, []);
+await pg.as(`INSERT INTO public.hangtag_variants (id, product_id, option_values, active) VALUES ('twine:', 'twine', '[]', true), ('rug:', 'rug', '[]', true)`, []);
+await pg.as(`INSERT INTO public.hangtag_stock_moves (id, variant_id, product_id, type, qty, t) VALUES ('open:twine', 'twine:', 'twine', 'OPENING', 10, 1), ('open:rug', 'rug:', 'rug', 'OPENING', 40, 1)`, []);
+const U = await open(storeUrl, { width: 375, session: false });
+await waitFor(U, () => document.querySelectorAll('.pc').length === 5);
+for (const n of ['Jute twine', 'Jute rug']) { await U.evaluate((n) => [...document.querySelectorAll('.pc')].find((c) => c.querySelector('.pc-name').textContent === n).querySelector('.add').click(), n); await sleep(150); }
+const steps = await U.evaluate(() => Object.fromEntries(['Jute twine', 'Jute rug'].map((n) =>
+  [n, ([...document.querySelectorAll('.pc')].find((c) => c.querySelector('.pc-name').textContent === n).querySelector('.stepper input') || {}).step])));
+check('the storefront steps a unit of the shop\'s own by its decimals: a roll by 1, sq ft by 0.01', steps['Jute twine'] === '1' && steps['Jute rug'] === '0.01', steps);
+
 console.log('--- the status link, and closing the store ---');
 const T = await open(statusUrl, { width: 375, session: false });
 check('the status link opens the order\'s status (stages, items, total, call the shop)', await waitFor(T, () => /Your order|Order received/.test(document.body.innerText))

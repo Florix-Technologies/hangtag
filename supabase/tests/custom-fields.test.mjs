@@ -1,12 +1,14 @@
 // The shop's own product fields and units in the database (schema.sql section 3z, migration 20261012120000): fields of
 // every kind with their checks, product values checked against their field, options taking their values from a field,
 // a field or unit in use kept (archived, not removed; its kind and decimals fixed), a shop's own units on products and
-// on bill lines, each shop's fields and units its own, a cashier reading but not changing them, the account removed
-// with all of it, the team's poll seeing changes, and the report all ok. PGlite with Supabase stand-ins.
+// on bill lines, supplier bills and quotations taking a quantity with the decimals of the shop's unit, each shop's
+// fields and units its own, a cashier reading but not changing them, the account removed with all of it, the team's
+// poll seeing changes, and the report all ok. PGlite with Supabase stand-ins.
 // Run: node supabase/tests/custom-fields.test.mjs
 import { PGlite } from '@electric-sql/pglite';
 import crypto from 'crypto';
 import fs from 'fs';
+import { orderArgs } from '../../src/infrastructure/supabase/mappers.js';
 
 const NEW = fs.readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
 const A = 'dddddddd-0000-0000-0000-000000000001', B = 'dddddddd-0000-0000-0000-000000000002';
@@ -147,6 +149,28 @@ const bill = { sale: { id: 'b1', timestamp: 1790000000000, subtotal: 5512, disco
 bill.sale.subtotal = bill.sale.total = 4900;
 r = await tryAs(A, `SELECT public.hangtag_save_sales($1::jsonb)`, [JSON.stringify([bill])]);
 check('a bill of 12.25 sq ft is saved with its unit', !r.err && (await rows(A, `SELECT unit, quantity FROM public.hangtag_sale_items WHERE sale_id = 'b1'`))[0].unit === 'sqft', r);
+// the decimals a quantity may have come from its unit: the shop's own, Hangtag's, or 3 for a code the shop never made
+// (as the app reads one). Supplier bills, quotations and orders, and the online store check quantities with them.
+r = await tryAs(A, `SELECT public.hangtag_unit_decimals($1, 'sqft') sq, public.hangtag_unit_decimals($1, 'roll') ro, public.hangtag_unit_decimals($1, 'kg') kg,
+  public.hangtag_unit_decimals($1, 'm') m, public.hangtag_unit_decimals($1, 'pcs') pcs, public.hangtag_unit_decimals($1, 'tonne') other`, [A]);
+check('a quantity\'s decimals: the shop\'s own unit\'s (sq ft 2, roll 0), Hangtag\'s (kg 3, m 2, pcs 0), 3 for a code the shop never made',
+  !r.err && JSON.stringify(r.r.rows[0]) === JSON.stringify({ sq: 2, ro: 0, kg: 3, m: 2, pcs: 0, other: 3 }), r);
+await as(A, `INSERT INTO public.hangtag_variants (id, product_id, option_values) VALUES ('rug:v', 'rug', '[]'), ('tape:v', 'tape', '[]')`);
+const supplierBill = (id, v, p, qty) => tryAs(A, `SELECT public.hangtag_import_stock($1::jsonb, '[]'::jsonb, '[]'::jsonb, $2::jsonb, false) AS r`,
+  [JSON.stringify({ id, file_hash: 'hash-' + id, file_name: id + '.pdf', file_type: 'application/pdf', supplier_name: 'Loom House', invoice_no: id, invoice_date: '2026-10-01', line_count: 1 }),
+    JSON.stringify([{ id: id + ':0', variant_id: v, product_id: p, qty, cost_price: 300, t: 1790000001000, device_id: 'till' }])]);
+r = await supplierBill('sb1', 'rug:v', 'rug', 24.5);
+check('a supplier bill of 24.5 sq ft (a unit of 2 decimals) is taken in', !r.err && r.r.rows[0].r.status === 'imported', r);
+const fine = await supplierBill('sb2', 'rug:v', 'rug', 24.555), half = await supplierBill('sb3', 'tape:v', 'tape', 2.5);
+check('…24.555 sq ft, and 2.5 of a unit of whole numbers (roll), are refused', refused(fine, /decimal places/) && refused(half, /decimal places/), { fine, half });
+await as(A, `INSERT INTO public.hangtag_customers (id, name, phone) VALUES ('c1', 'Asha', '9876543210')`);
+const quote = (id, line) => { const a = orderArgs({ id, kind: 'quote', no: 'QT-261001-' + id.toUpperCase().padStart(6, '0'), status: 'draft', cust: { id: 'c1', name: 'Asha', phone: '9876543210' },
+  billDisc: null, notes: '', validUntil: '2026-10-30', source: 'staff', saleIds: [], version: 0, t: 1790000000000, updatedT: 1790000000000, dev: 'till',
+  items: [{ ln: 0, fq: 0, gst: null, ...line }] });
+  return tryAs(A, `SELECT public.hangtag_save_order($1::jsonb, $2::jsonb) AS r`, [JSON.stringify(a.p_order), JSON.stringify(a.p_items)]); };
+const q1 = await quote('qa', { p: 'rug', v: 'rug:v', name: 'Hand-knotted rug', vl: '', q: 12.25, u: 'sqft', price: 450 });
+const q2 = await quote('qb', { p: 'tape', v: 'tape:v', name: 'Kraft tape', vl: '', q: 2.5, u: 'roll', price: 90 });
+check('a quotation of 12.25 sq ft is saved; 2.5 rolls is refused', !q1.err && refused(q2, /quantity its unit cannot use/), { q1, q2 });
 r = await tryAs(A, `UPDATE public.hangtag_units SET decimals = 3 WHERE id = 'sqft'`);
 const lab = await tryAs(A, `UPDATE public.hangtag_units SET label = 'Square feet' WHERE id = 'sqft'`);
 check('a unit in use keeps its decimals; its name can change', refused(r, /decimals can't change/) && !lab.err, { r, lab });
@@ -186,7 +210,7 @@ const after = (await rows(MGR, `SELECT public.hangtag_biz_changes() c`))[0].c;
 check('a member\'s poll sees the fields and units change', before.fields && before.units && before.fields !== after.fields && before.units === after.units, { before, after });
 // every product has its variants (the report checks them): one per Wattage of the lamp, one plain variant for the others
 await as(A, `INSERT INTO public.hangtag_variants (id, product_id, option_values) VALUES ('lamp:100', 'lamp', '["100 W"]'), ('lamp:200', 'lamp', '["200 W"]')`);
-for (const [who, p] of [[A, 'lp'], [A, 'old'], [A, 'rug'], [A, 'tape'], [B, 'bp']]) await as(who, `INSERT INTO public.hangtag_variants (id, product_id, option_values) VALUES ('${p}:v', '${p}', '[]')`);
+for (const [who, p] of [[A, 'lp'], [A, 'old'], [B, 'bp']]) await as(who, `INSERT INTO public.hangtag_variants (id, product_id, option_values) VALUES ('${p}:v', '${p}', '[]')`);   // (the rug's and the tape's came with their supplier bills)
 for (const who of [A, B]) await as(who, `UPDATE public.hangtag_products SET options = '{"opts":[]}' WHERE NOT options ? 'opts'`);   // as the app writes them
 const rep = await report();
 check('report: 80 rows, all ok (36: products in known units, 91–93: fields, values and units)', rep.length === 80 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));

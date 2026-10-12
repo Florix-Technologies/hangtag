@@ -9,6 +9,8 @@ import fs from 'fs';
 
 const NEW = fs.readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
 const MIG = fs.readFileSync(new URL('../migrations/20261004120000_hangtag_bank_accounts.sql', import.meta.url), 'utf8');
+// a later section redefines one of its functions (the store's catalog, section 3z): in the real order it runs after this one
+const LATER = fs.readFileSync(new URL('../migrations/20261012120000_hangtag_custom_fields_units.sql', import.meta.url), 'utf8');
 const A = '11111111-1111-1111-1111-111111111111', B = '22222222-2222-2222-2222-222222222222';
 const MGR = { id: '33333333-3333-3333-3333-333333333333', key: 'dev-key-manager-000000000000000000', dev: 'dev-manager-1', role: 'manager', username: 'meera' };
 const CSH = { id: '44444444-4444-4444-4444-444444444444', key: 'dev-key-cashier-000000000000000000', dev: 'dev-cashier-1', role: 'cashier', username: 'ravi' };
@@ -43,6 +45,7 @@ await db.query(`INSERT INTO auth.users (id, email) VALUES ($1, 'owner@a.test'), 
 await db.exec(NEW);
 await db.exec(MIG);   // the migration runs on top of schema.sql (and again: safe to run twice)
 await db.exec(MIG);
+await db.exec(LATER);
 for (const m of [MGR, CSH]) {
   await db.exec('SET ROLE service_role');
   await db.query(`INSERT INTO public.hangtag_members (user_id, shop_id, name, username, role, status, created_by) VALUES ($1, $2, $3, $4, $5, 'active', $2)`, [m.id, A, 'Staff', m.username, m.role]);

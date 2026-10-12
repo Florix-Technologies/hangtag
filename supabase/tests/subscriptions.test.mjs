@@ -19,6 +19,8 @@ import { billArgs } from '../../src/infrastructure/supabase/mappers.js';
 const NEW = fs.readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
 const MIG = fs.readFileSync(new URL('../migrations/20261006120000_hangtag_plans_subscriptions.sql', import.meta.url), 'utf8');
 const MIG_W = fs.readFileSync(new URL('../migrations/20261009120000_hangtag_plans_autopay_platform.sql', import.meta.url), 'utf8');
+// section 3z redefines the store's catalog, which this migration also defines: in the real order it runs after both
+const MIG_Z = fs.readFileSync(new URL('../migrations/20261012120000_hangtag_custom_fields_units.sql', import.meta.url), 'utf8');
 const A = '11111111-1111-1111-1111-111111111111', B = '22222222-2222-2222-2222-222222222222';
 const A2 = '55555555-5555-5555-5555-555555555555';   // a second account made later with A's email (other case and spaces)
 const NEWSHOP = '66666666-6666-6666-6666-666666666666';
@@ -81,7 +83,8 @@ await db.query(`INSERT INTO auth.users (id, email) VALUES ($1, 'Owner@A.test'), 
 await db.exec(NEW);
 await db.exec(MIG);   // the migration runs on top of schema.sql, and again: safe to run twice
 await db.exec(MIG);
-await db.exec(MIG_W);   // then section 3w's (its functions are the current ones)
+await db.exec(MIG_W);   // then section 3w's and 3z's (their functions are the current ones)
+await db.exec(MIG_Z);
 /* this test's own prices and trial (only where section 3w's defaults replaced them) */
 async function fixtures() {
   await db.query(`UPDATE public.hangtag_plans p SET price = v.price FROM (VALUES ('m1', 999, 499), ('m3', 2499, 1349), ('m6', 4499, 2499)) v(code, now_price, price)
@@ -165,7 +168,7 @@ console.log('=== plans and prices come from the database ===');
   await sql(db, `UPDATE public.hangtag_plans SET price = 599 WHERE code = 'm1'`);
   const p2 = (await one(db, A, `SELECT public.hangtag_subscription_plans() AS p`)).p;
   check('a price changed in the database is what the app gets', +p2[0].price === 599, p2[0]);
-  await db.exec(MIG); await db.exec(MIG_W); await fixtures();
+  await db.exec(MIG); await db.exec(MIG_W); await db.exec(MIG_Z); await fixtures();
   check('running the migrations again keeps the changed price', +(await sql(db, `SELECT price FROM public.hangtag_plans WHERE code = 'm1'`))[0].price === 599);
   await sql(db, `UPDATE public.hangtag_plans SET price = 499 WHERE code = 'm1'`);
   const r = await tryAs(db, A, `UPDATE public.hangtag_plans SET price = 1 WHERE code = 'm1'`);
@@ -388,7 +391,7 @@ console.log('=== the migration on a database with shops already set up ===');
   await db.exec(MIG);
   const s = (await sql(db, `SELECT * FROM public.hangtag_subscriptions WHERE owner_id = $1`, [B]))[0];
   check('an existing shop without a plan record gets a trial (this test\'s 7 days) from when the migration runs', s && days(s.trial_started_at, s.trial_ends_at) === 7 && Math.abs(new Date(s.trial_started_at) - Date.now()) < 120000, s);
-  await db.exec(MIG_W); await fixtures();
+  await db.exec(MIG_W); await db.exec(MIG_Z); await fixtures();
   // rows 80 and 81 check section 3w's default plans and trial, which this test replaced with its own
   const all = await report(db), rep = all.filter((r) => !/^(Plans on sale: Monthly|The free trial lasts 30 days)/.test(r.check_name));
   check('migration report: every row ok (74-77: plans, every set-up shop has a record, every business table locked, promo uses on paid payments)', rep.length === all.length - 2 && rep.length >= 65 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));

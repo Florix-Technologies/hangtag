@@ -145,6 +145,23 @@ console.log('=== private status and duplicate billing ===');
   check('ordinary POS billing is unchanged once no mobile quantity remains reserved', ordinary === true, ordinary);
 }
 
+console.log('=== the shop\'s own units (section 3z) ===');
+{
+  await as(db, A, `INSERT INTO public.hangtag_units (id, label, decimals, kind, uqc) VALUES ('sqft', 'Sq ft', 2, 'measure', 'SQF'), ('roll', 'Roll', 0, 'count', 'ROL')`);
+  await as(db, A, `INSERT INTO public.hangtag_products(id,name,price,unit,options) VALUES('rug','Jute rug',120,'sqft','{"opts":[]}'::jsonb),('twine','Jute twine',60,'roll','{"opts":[]}'::jsonb)`);
+  await as(db, A, `INSERT INTO public.hangtag_variants(id,product_id,option_values,price,active) VALUES('rug:','rug','[]',120,true),('twine:','twine','[]',60,true)`);
+  await as(db, A, `INSERT INTO public.hangtag_stock_moves(id,variant_id,product_id,type,qty,t) VALUES('open:rug','rug:','rug','OPENING',40,1),('open:twine','twine:','twine','OPENING',10,1)`);
+  await as(db, A, `INSERT INTO public.hangtag_units (id, label, decimals) VALUES ('bale', 'Bale', 1)`);
+  const units = value(await attempt(db, null, `SELECT public.hangtag_mobile_catalog($1) result`, [ta]))?.units;
+  check('the store\'s catalog gives the shop\'s own units its products use, with their decimals (not one no product here uses)',
+    JSON.stringify(units) === JSON.stringify([{ dp:0, id:'roll', label:'Roll' }, { dp:2, id:'sqft', label:'Sq ft' }]), units);
+  const order = (v, q, key) => attempt(db, null, `SELECT public.hangtag_place_mobile_order($1,$2::jsonb,$3::jsonb,$4,$5,$6,$7) result`,
+    [ta, JSON.stringify([{ v, q }]), JSON.stringify({ name:'Meera Iyer', phone:'+91 98765 11111' }), 'ck_' + key.padEnd(32, '0'), '', 'upi', 'assisted']);
+  const rug = await order('rug:', 2.5, 'unitsrug'), twine = await order('twine:', 1.5, 'unitstwine');
+  check('the store takes 2.5 sq ft (a unit of the shop\'s with 2 decimals) and refuses 1.5 rolls (whole numbers)',
+    !rug.err && value(rug)?.ok === true && !!twine.err && /valid quantity/.test(twine.err), { rug, twine });
+}
+
 console.log('=== explicit switch-off ===');
 {
   await as(db, A, `UPDATE public.hangtag_meta SET value='{"caps":{"uses_mobile_store":false},"capsAt":2}'::jsonb WHERE key='settings'`);

@@ -15,8 +15,10 @@ import { poArgs, priceListRow, repackArgs } from '../../src/infrastructure/supab
 
 const NEW = fs.readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
 const MIG = fs.readFileSync(new URL('../migrations/20261003120000_hangtag_commerce_batch.sql', import.meta.url), 'utf8');
-// a later section redefines one of its functions (hangtag_save_sales, section 3y): in the real order it runs after this one
-const LATER = fs.readFileSync(new URL('../migrations/20261011120000_hangtag_billing_integrity.sql', import.meta.url), 'utf8');
+// later sections redefine some of its functions (hangtag_save_sales, section 3y; the store's catalog and checkout, 3z): in
+// the real order they run after this one
+const LATER = fs.readFileSync(new URL('../migrations/20261011120000_hangtag_billing_integrity.sql', import.meta.url), 'utf8')
+  + '\n' + fs.readFileSync(new URL('../migrations/20261012120000_hangtag_custom_fields_units.sql', import.meta.url), 'utf8');
 const A = '11111111-1111-1111-1111-111111111111', B = '22222222-2222-2222-2222-222222222222';
 let fails = 0;
 const check = (name, ok, info) => { if (!ok) fails++; console.log((ok ? 'PASS ' : 'FAIL ') + name + (!ok && info !== undefined ? '  ' + JSON.stringify(info).slice(0, 600) : '')); };

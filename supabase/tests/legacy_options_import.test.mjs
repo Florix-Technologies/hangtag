@@ -4,6 +4,7 @@
 // Run: npm run test:db
 import { PGlite } from '@electric-sql/pglite';
 import fs from 'fs';
+import { REPORT_ROWS } from './report-rows.mjs';
 const NEW = fs.readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
 const V5 = fs.readFileSync(new URL('./fixtures/legacy/schema_v5.sql', import.meta.url), 'utf8');
 const A = '11111111-1111-1111-1111-111111111111', B = '22222222-2222-2222-2222-222222222222';
@@ -73,7 +74,7 @@ console.log('=== upgrade from the colour + size version ===');
     && (await db.query(`SELECT sum(qty)::int AS q FROM public.hangtag_stock_moves WHERE variant_id='t1'`)).rows[0].q === 5);
   check('a safety copy of products and variants was made', (await db.query(`SELECT count(*)::int AS n FROM public.hangtag_backup_v3_variants`)).rows[0].n === 7);
   const rep = await report(db);
-  check('migration report: every row ok', rep.length === 80 && rep.every((r) => r.ok), rep.map((r) => `${r.check_name}: ${r.value}/${r.expected}`));
+  check('migration report: every row ok', rep.length === REPORT_ROWS && rep.every((r) => r.ok), rep.map((r) => `${r.check_name}: ${r.value}/${r.expected}`));
   await db.exec(NEW);
   const again = (await db.query(`SELECT id, option_values, active FROM public.hangtag_variants ORDER BY id`)).rows;
   check('running the script again changes nothing', JSON.stringify(again.map((r) => [r.id, r.option_values, r.active])) === JSON.stringify(Object.values(v).sort((a, b) => a.id.localeCompare(b.id)).map((r) => [r.id, r.option_values, r.active])));

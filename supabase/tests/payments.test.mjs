@@ -9,6 +9,7 @@ import { computeCheckout } from '../../src/domain/sales/checkout-totals.js';
 import { paymentId, settlePayments } from '../../src/domain/sales/payments.js';
 import { bankBook, cashBook, financialTransactions } from '../../src/domain/finance/books.js';
 import { billArgs } from '../../src/infrastructure/supabase/mappers.js';
+import { REPORT_ROWS } from './report-rows.mjs';
 
 const NEW = fs.readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
 const V5 = fs.readFileSync(new URL('./fixtures/legacy/schema_v5.sql', import.meta.url), 'utf8');
@@ -88,7 +89,7 @@ console.log('=== upgrade: existing bills and refunds get payments, transactions 
     JSON.stringify(bb.map((x) => [x.id, x.method, x.entry_type, num(x.amount_in), num(x.amount_out), x.status])) === JSON.stringify([
       ['bb:ft:s2:upi', 'upi', 'receipt', 500, 0, 'posted'], ['bb:ft:s3:card', 'card', 'receipt', 800, 0, 'cancelled'], ['bb:ft:r2', 'upi', 'refund', 0, 100, 'posted']]), bb);
   const rep = (await db.query(`SELECT check_name, value, expected, ok FROM (${NEW.slice(NEW.lastIndexOf('SELECT check_name')).replace(/;\s*$/, '')}) q`)).rows;
-  check('migration report: payments, transactions and books all add up', rep.length === 80 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: payments, transactions and books all add up', rep.length === REPORT_ROWS && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   await db.close();
 }
 

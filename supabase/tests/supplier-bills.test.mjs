@@ -7,6 +7,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import fs from 'fs';
 import crypto from 'crypto';
+import { REPORT_ROWS } from './report-rows.mjs';
 
 const NEW = fs.readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
 const A = '11111111-1111-1111-1111-111111111111', B = '22222222-2222-2222-2222-222222222222';
@@ -143,7 +144,7 @@ console.log('=== capabilities and shops ===');
   r = await imp(null, { id: 'anon1' }, [mv('anon1:0', 'cloth:', 'cloth', 1)]);
   check('signed out: nothing', !!r.err, r);
   const rep = await report(db);
-  check('the migration report: every row ok (incl. bill originals in the shop\'s own folder)', rep.length === 80 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
+  check('the migration report: every row ok (incl. bill originals in the shop\'s own folder)', rep.length === REPORT_ROWS && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');

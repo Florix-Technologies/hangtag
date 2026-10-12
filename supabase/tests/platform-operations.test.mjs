@@ -8,6 +8,7 @@
 // Run: node supabase/tests/platform-operations.test.mjs
 import { PGlite } from '@electric-sql/pglite';
 import fs from 'fs';
+import { REPORT_ROWS } from './report-rows.mjs';
 
 const NEW = fs.readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
 const MIG_X = fs.readFileSync(new URL('../migrations/20261010120000_hangtag_platform_operations.sql', import.meta.url), 'utf8');
@@ -323,7 +324,7 @@ console.log('=== the migration again, and the report ===');
   const rep = (await db.query(NEW.slice(NEW.lastIndexOf('SELECT check_name')))).rows;
   const mine = rep.filter((r) => r.check_name && /Platform Console: customers|reach the console only|keeps its reason/.test(r.check_name));
   check('report: 80 rows, all ok (incl. the console\'s functions, its shop rows closed to the app, every action with its reason, before and after)',
-    rep.length === 80 && rep.every((r) => r.ok) && mine.length === 3, rep.filter((r) => !r.ok));
+    rep.length === REPORT_ROWS && rep.every((r) => r.ok) && mine.length === 3, rep.filter((r) => !r.ok));
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nall passed');

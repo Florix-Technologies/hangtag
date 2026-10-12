@@ -11,6 +11,7 @@ import { computeCheckout } from '../../src/domain/sales/checkout-totals.js';
 import { paymentId, settlePayments } from '../../src/domain/sales/payments.js';
 import { financialTransactions } from '../../src/domain/finance/books.js';
 import { billArgs, collectionRow, heldRow, orderArgs, rowToCollection, rowToOrder, rowToOrderItem } from '../../src/infrastructure/supabase/mappers.js';
+import { REPORT_ROWS } from './report-rows.mjs';
 
 const NEW = fs.readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
 const A = '11111111-1111-1111-1111-111111111111', B = '22222222-2222-2222-2222-222222222222';
@@ -94,7 +95,7 @@ await db.exec(NEW); await db.exec(NEW);
 console.log('=== schema runs twice; report ===');
 {
   const rep = await report(db);
-  check('migration report: 80 rows (45-49 are credit and orders), all ok on an empty shop', rep.length === 80 && rep.every((r) => r.ok) && rep.some((r) => /on account, for a saved customer/.test(r.check_name)), rep.filter((r) => !r.ok));
+  check('migration report: all rows ok (45-49 are credit and orders) on an empty shop', rep.length === REPORT_ROWS && rep.every((r) => r.ok) && rep.some((r) => /on account, for a saved customer/.test(r.check_name)), rep.filter((r) => !r.ok));
   const pub = (await db.query(`SELECT count(*)::int n FROM pg_class WHERE relname IN ('hangtag_collections','hangtag_held_carts','hangtag_orders','hangtag_order_items') AND relrowsecurity`)).rows[0].n;
   check('row security is on for the four new tables', pub === 4, pub);
 }
@@ -331,7 +332,7 @@ console.log('=== quotations: their saved total and the messages sent for them (s
 console.log('=== the report after all of it ===');
 {
   const rep = await report(db);
-  check('every row ok (credit bills for saved customers, collections posted, refunds to the account within the bill, bills from orders that exist, orders with lines)', rep.length === 80 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
+  check('every row ok (credit bills for saved customers, collections posted, refunds to the account within the bill, bills from orders that exist, orders with lines)', rep.length === REPORT_ROWS && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
   await db.query(`UPDATE public.hangtag_sales SET order_id = 'missing' WHERE id = 'b9'`);
   const bad = (await report(db)).find((x) => /made from an order/.test(x.check_name));
   check('…and a bill pointing at an order that doesn\'t exist shows up', bad && !bad.ok, bad);

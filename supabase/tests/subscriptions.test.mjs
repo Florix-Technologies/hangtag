@@ -19,8 +19,10 @@ import { billArgs } from '../../src/infrastructure/supabase/mappers.js';
 const NEW = fs.readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
 const MIG = fs.readFileSync(new URL('../migrations/20261006120000_hangtag_plans_subscriptions.sql', import.meta.url), 'utf8');
 const MIG_W = fs.readFileSync(new URL('../migrations/20261009120000_hangtag_plans_autopay_platform.sql', import.meta.url), 'utf8');
-// section 3z redefines the store's catalog, which this migration also defines: in the real order it runs after both
-const MIG_Z = fs.readFileSync(new URL('../migrations/20261012120000_hangtag_custom_fields_units.sql', import.meta.url), 'utf8');
+// section 3z redefines the store's catalog, which this migration also defines (and 3za, 3z's supplier bills): in the real
+// order they run after both
+const MIG_Z = fs.readFileSync(new URL('../migrations/20261012120000_hangtag_custom_fields_units.sql', import.meta.url), 'utf8')
+  + '\n' + fs.readFileSync(new URL('../migrations/20261013120000_hangtag_stock_guards.sql', import.meta.url), 'utf8');
 const A = '11111111-1111-1111-1111-111111111111', B = '22222222-2222-2222-2222-222222222222';
 const A2 = '55555555-5555-5555-5555-555555555555';   // a second account made later with A's email (other case and spaces)
 const NEWSHOP = '66666666-6666-6666-6666-666666666666';

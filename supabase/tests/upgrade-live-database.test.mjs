@@ -1,19 +1,22 @@
 // Upgrading a live database to this release: migrations 20261010120000 (section 3x, the Platform Console's operations),
-// 20261011120000 (section 3y, billing integrity) and 20261012120000 (section 3z, the shop's own product fields and units)
-// on a database that has the previous release's schema.sql and real data on it, as the SQL Editor would run them: each
-// twice, in the documented order and in another. Afterwards the report says ok on all 80 rows, every row that was there
-// is still there unchanged, and the sections' rules hold for the bills, returns, products and shops made before.
-// The previous release's schema.sql (9623601) is today's without sections 3x, 3y and 3z, their report rows and their
+// 20261011120000 (section 3y, billing integrity), 20261012120000 (section 3z, the shop's own product fields and units) and
+// 20261013120000 (section 3za, stock and catalog write guards, after 3z) on a database that has the previous release's
+// schema.sql and real data on it, as the SQL Editor would run them: each twice, in the documented order and in another.
+// Afterwards the report says ok on every row, every row that was there is still there unchanged, and the sections' rules
+// hold for the bills, returns, products and shops made before.
+// The previous release's schema.sql (9623601) is today's without sections 3x to 3za, their report rows and their
 // row-security entries, and with the fixed list of units 3z replaced: it is cut from today's file, not kept as a copy.
 // Run: node supabase/tests/upgrade-live-database.test.mjs
 import { PGlite } from '@electric-sql/pglite';
 import fs from 'fs';
+import { REPORT_ROWS } from './report-rows.mjs';
 
 const read = (f) => fs.readFileSync(new URL(f, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const NEW = read('../schema.sql');
 const MIG_X = read('../migrations/20261010120000_hangtag_platform_operations.sql');
 const MIG_Y = read('../migrations/20261011120000_hangtag_billing_integrity.sql');
 const MIG_Z = read('../migrations/20261012120000_hangtag_custom_fields_units.sql');
+const MIG_ZA = read('../migrations/20261013120000_hangtag_stock_guards.sql');
 const section = (id) => { const m = new RegExp(`-- (?:={78}|-{78})\\n-- ${id}\\. `).exec(NEW); if (!m) throw new Error(`schema.sql has no section ${id}`); return m.index; };
 // the previous release: everything before 3x, then sections 4–6 (indexes, row security, realtime) without 3z's tables;
 // not the report. Its units were a fixed list (3z made them any unit code).
@@ -101,10 +104,10 @@ const before = await snapshot(db);
 console.log('\n=== the upgrade: 3x, 3y, then 3z, each twice ===');
 {
   let err = null;
-  try { for (const m of [MIG_X, MIG_X, MIG_Y, MIG_Y, MIG_Z, MIG_Z]) await db.exec(m); } catch (e) { err = e.message; }
+  try { for (const m of [MIG_X, MIG_X, MIG_Y, MIG_Y, MIG_Z, MIG_Z, MIG_ZA, MIG_ZA]) await db.exec(m); } catch (e) { err = e.message; }
   check('the three migrations run on the previous release, and again', err === null, err);
   const rep = (await db.query(REPORT)).rows;
-  check('the report: 80 rows, all ok (87–90: 3x and 3y; 36 and 91–93: 3z)', rep.length === 80 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
+  check('the report: all rows ok (87–90: 3x and 3y; 36 and 91–93: 3z)', rep.length === REPORT_ROWS && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
   const after = (await snapshot(db, before.cols)).rows, was = before.rows;
   const lost = Object.keys(was).filter((t) => !after[t] || after[t].n !== was[t].n || after[t].h !== was[t].h);
   check(`every row of the ${Object.keys(was).length} tables that were there is still there, unchanged`, lost.length === 0, lost.map((t) => [t, was[t], after[t]]));
@@ -147,9 +150,9 @@ console.log('\n=== another order: 3z, 3y, then 3x ===');
 {
   const db2 = await liveDatabase();
   let err = null;
-  try { for (const m of [MIG_Z, MIG_Y, MIG_X]) await db2.exec(m); } catch (e) { err = e.message; }
+  try { for (const m of [MIG_Z, MIG_ZA, MIG_Y, MIG_X]) await db2.exec(m); } catch (e) { err = e.message; }
   const rep = err ? [] : (await db2.query(REPORT)).rows;
-  check('3z and 3y before 3x work too (each needs only section 3r): the report is all ok', err === null && rep.length === 80 && rep.every((x) => x.ok), err || rep.filter((x) => !x.ok));
+  check('3z and 3y before 3x work too (each needs only section 3r): the report is all ok', err === null && rep.length === REPORT_ROWS && rep.every((x) => x.ok), err || rep.filter((x) => !x.ok));
   r = await upload(db2, billOf('u2'));
   check('…and the cancelled bill sent again stays cancelled', !r.err && (await bill(db2, 'u2')).is_void === true, r);
 }

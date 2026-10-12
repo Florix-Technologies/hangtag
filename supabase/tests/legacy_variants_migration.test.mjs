@@ -1,5 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import fs from 'fs';
+import { REPORT_ROWS } from './report-rows.mjs';
 const NEW = fs.readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
 const V1 = fs.readFileSync(new URL('./fixtures/legacy/schema_v1.sql', import.meta.url), 'utf8');
 const V4 = fs.readFileSync(new URL('./fixtures/legacy/schema_v4.sql', import.meta.url), 'utf8');   // the version on the live database now
@@ -55,7 +56,7 @@ async function lastResult(db, sql) { const res = await db.exec(sql); return res[
   const rep1 = await lastResult(db, NEW);
   check('upgrade runs', true);
   const bad1 = rep1.rows.filter(r => !r.ok);
-  check('migration report: every check ok', rep1.rows.length === 80 && !bad1.length, rep1.rows.map(r => `${r.check_name}: ${r.value}/${r.expected}`));
+  check('migration report: every check ok', rep1.rows.length === REPORT_ROWS && !bad1.length, rep1.rows.map(r => `${r.check_name}: ${r.value}/${r.expected}`));
   const rep2 = await lastResult(db, NEW);
   check('runs a second time with the same report (safe to re-run)', JSON.stringify(rep2.rows) === JSON.stringify(rep1.rows));
   const bk = (await db.query(`SELECT (SELECT count(*) FROM public.hangtag_backup_v2_sizes)::int s, (SELECT count(*) FROM public.hangtag_backup_v2_sale_items)::int i`)).rows[0];

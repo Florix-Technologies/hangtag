@@ -8,6 +8,7 @@ import fs from 'fs';
 import { computeCheckout } from '../../src/domain/sales/checkout-totals.js';
 import { paymentId, settlePayments } from '../../src/domain/sales/payments.js';
 import { billArgs, cashMoveRow, dayCloseRow } from '../../src/infrastructure/supabase/mappers.js';
+import { REPORT_ROWS } from './report-rows.mjs';
 
 const NEW = fs.readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
 const A = '11111111-1111-1111-1111-111111111111', B = '22222222-2222-2222-2222-222222222222';
@@ -56,7 +57,7 @@ await db.exec(NEW); await db.exec(NEW);
 console.log('=== schema runs twice; report ===');
 {
   const rep = await report(db);
-  check('migration report: 80 rows, all ok on an empty shop', rep.length === 80 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: all rows ok on an empty shop', rep.length === REPORT_ROWS && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
 }
 
 console.log('=== verified payments ===');

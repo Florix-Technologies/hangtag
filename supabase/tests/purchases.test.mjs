@@ -9,6 +9,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { buildPurchase, checkSupplierPayment, supplierAccount } from '../../src/domain/inventory/purchase.js';
 import { purchaseArgs, rowToPurchase, rowToSupplierPayment, supplierPaymentRow, supplierRow } from '../../src/infrastructure/supabase/mappers.js';
+import { REPORT_ROWS } from './report-rows.mjs';
 
 const NEW = fs.readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
 const A = '11111111-1111-1111-1111-111111111111', B = '22222222-2222-2222-2222-222222222222';
@@ -75,7 +76,7 @@ await db.exec(NEW); await db.exec(NEW);
 console.log('=== schema runs twice; report ===');
 {
   const rep = await report(db);
-  check('migration report: 80 rows (purchases 40-44), all ok on an empty database', rep.length === 80 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: all rows ok (purchases 40-44) on an empty database', rep.length === REPORT_ROWS && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   const cols = (await db.query(`SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'hangtag_stock_imports'`)).rows.map((r) => r.column_name);
   check('supplier bills become purchases: kind, supplier, time, money, payment, status, note and who recorded it',
     ['kind', 'supplier_id', 't', 'subtotal', 'tax_amount', 'total_amount', 'paid_amount', 'payment_method', 'status', 'note', 'user_id'].every((c) => cols.includes(c)), cols);
@@ -278,7 +279,7 @@ console.log('=== low-stock level per product ===');
 console.log('=== report and account removal ===');
 {
   const rep = await report(db);
-  check('migration report: every row ok with purchases, payments, reversals and cancels in it', rep.length === 80 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: every row ok with purchases, payments, reversals and cancels in it', rep.length === REPORT_ROWS && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   const r40 = rep.find((r) => /lines add up to their total/.test(r.check_name));
   check('…the purchase rows count what they should', r40 && +r40.value === 6 && +r40.expected === 6, r40);
   await db.query(`DELETE FROM auth.users WHERE id = $1`, [B]);

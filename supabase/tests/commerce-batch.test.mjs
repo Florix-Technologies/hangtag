@@ -12,13 +12,15 @@ import { buildPurchase } from '../../src/domain/inventory/purchase.js';
 import { paymentId } from '../../src/domain/sales/payments.js';
 import { billArgs, orderArgs, purchaseArgs } from '../../src/infrastructure/supabase/mappers.js';
 import { poArgs, priceListRow, repackArgs } from '../../src/infrastructure/supabase/biz-mappers.js';
+import { REPORT_ROWS } from './report-rows.mjs';
 
 const NEW = fs.readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
 const MIG = fs.readFileSync(new URL('../migrations/20261003120000_hangtag_commerce_batch.sql', import.meta.url), 'utf8');
-// later sections redefine some of its functions (hangtag_save_sales, section 3y; the store's catalog and checkout, 3z): in
-// the real order they run after this one
+// later sections redefine some of its functions (hangtag_save_sales, section 3y; the store's catalog and checkout, 3z;
+// supplier bills again, 3za): in the real order they run after this one
 const LATER = fs.readFileSync(new URL('../migrations/20261011120000_hangtag_billing_integrity.sql', import.meta.url), 'utf8')
-  + '\n' + fs.readFileSync(new URL('../migrations/20261012120000_hangtag_custom_fields_units.sql', import.meta.url), 'utf8');
+  + '\n' + fs.readFileSync(new URL('../migrations/20261012120000_hangtag_custom_fields_units.sql', import.meta.url), 'utf8')
+  + '\n' + fs.readFileSync(new URL('../migrations/20261013120000_hangtag_stock_guards.sql', import.meta.url), 'utf8');
 const A = '11111111-1111-1111-1111-111111111111', B = '22222222-2222-2222-2222-222222222222';
 let fails = 0;
 const check = (name, ok, info) => { if (!ok) fails++; console.log((ok ? 'PASS ' : 'FAIL ') + name + (!ok && info !== undefined ? '  ' + JSON.stringify(info).slice(0, 600) : '')); };
@@ -94,7 +96,7 @@ console.log('=== schema twice, then the migration twice on top ===');
   try { await db.exec(MIG); await db.exec(MIG); await db.exec(LATER); } catch (e) { err = e.message; }
   check('the migration file runs on a database that has the schema, and again (safe to run again)', !err, err);
   const rep = await report(db);
-  check('migration report: 80 rows, all ok (incl. price lists, POs, kits, vouchers, webhooks)', rep.length === 80 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: all rows ok (incl. price lists, POs, kits, vouchers, webhooks)', rep.length === REPORT_ROWS && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   const sec = (await db.query(`SELECT relname FROM pg_class WHERE relname IN ('hangtag_price_lists','hangtag_purchase_orders','hangtag_einvoices','hangtag_eway_bills','hangtag_repacks',
     'hangtag_vouchers','hangtag_voucher_redemptions','hangtag_webhook_endpoints','hangtag_webhook_secrets','hangtag_webhook_events','hangtag_webhook_deliveries') AND relrowsecurity`)).rows;
   check('row security is on for every table of the batch', sec.length === 11, sec);
@@ -382,7 +384,7 @@ console.log('=== what changed (team phones poll it) ===');
   const r = await tryAs(db, CA, `SELECT public.hangtag_biz_changes() AS r`);
   check('a member reads the change marks of lists, POs, vouchers and GST rows', !r.err && ['lists', 'pos', 'vouchers', 'gst'].every((k) => k in val(r)), r);
   const rep = await report(db);
-  check('the report is still all ok with everything above in the database', rep.length === 80 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
+  check('the report is still all ok with everything above in the database', rep.length === REPORT_ROWS && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nAll checks passed');

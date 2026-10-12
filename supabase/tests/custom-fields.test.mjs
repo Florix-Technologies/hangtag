@@ -9,6 +9,7 @@ import { PGlite } from '@electric-sql/pglite';
 import crypto from 'crypto';
 import fs from 'fs';
 import { orderArgs } from '../../src/infrastructure/supabase/mappers.js';
+import { REPORT_ROWS } from './report-rows.mjs';
 
 const NEW = fs.readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
 const A = 'dddddddd-0000-0000-0000-000000000001', B = 'dddddddd-0000-0000-0000-000000000002';
@@ -213,7 +214,7 @@ await as(A, `INSERT INTO public.hangtag_variants (id, product_id, option_values)
 for (const [who, p] of [[A, 'lp'], [A, 'old'], [B, 'bp']]) await as(who, `INSERT INTO public.hangtag_variants (id, product_id, option_values) VALUES ('${p}:v', '${p}', '[]')`);   // (the rug's and the tape's came with their supplier bills)
 for (const who of [A, B]) await as(who, `UPDATE public.hangtag_products SET options = '{"opts":[]}' WHERE NOT options ? 'opts'`);   // as the app writes them
 const rep = await report();
-check('report: 80 rows, all ok (36: products in known units, 91–93: fields, values and units)', rep.length === 80 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
+check('report: all rows ok (36: products in known units, 91–93: fields, values and units)', rep.length === REPORT_ROWS && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
 await as(A, `INSERT INTO public.hangtag_products (id, name, price, unit) VALUES ('ghost', 'Ghost', 1, 'tonne')`);
 const flagged = (await report()).find((x) => /known unit/.test(x.check_name));
 check('…a product in a unit code the shop never made is flagged (row 36)', flagged && !flagged.ok, flagged);

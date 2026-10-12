@@ -17,6 +17,8 @@ Every suite is a plain Node script that prints `PASS …` / `FAIL …` lines and
 
 Browser suites need Chrome, Chromium or Edge (found where Windows, macOS or Linux installs it, or set `CHROME_PATH`) and serve the app on `localhost:3210`. Without a browser they are reported as skipped, not failed (`TEST_STRICT=1` fails instead).
 
+The database suites check the report at the end of `schema.sql` against `supabase/tests/report-rows.mjs` (`REPORT_ROWS`): when a section adds report rows, change that one number. A suite that runs an older migration on top of `schema.sql` also runs the later migrations that re-create its functions, in their real order (3y, 3z and 3za re-create functions of earlier sections).
+
 ## Shared helpers (`tests/helpers`)
 
 - **`report.mjs`**: the reporter. It provides `check(name, ok, info)`, `section(title)`, `problem(text)` (a failure outside a check, such as a page error) and `done(cleanup)`.

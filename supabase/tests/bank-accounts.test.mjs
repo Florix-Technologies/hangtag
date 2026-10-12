@@ -6,11 +6,14 @@
 import { PGlite } from '@electric-sql/pglite';
 import crypto from 'node:crypto';
 import fs from 'fs';
+import { REPORT_ROWS } from './report-rows.mjs';
 
 const NEW = fs.readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
 const MIG = fs.readFileSync(new URL('../migrations/20261004120000_hangtag_bank_accounts.sql', import.meta.url), 'utf8');
-// a later section redefines one of its functions (the store's catalog, section 3z): in the real order it runs after this one
-const LATER = fs.readFileSync(new URL('../migrations/20261012120000_hangtag_custom_fields_units.sql', import.meta.url), 'utf8');
+// later sections redefine some of its functions (the store's catalog, section 3z; supplier bills again, 3za): in the real
+// order they run after this one
+const LATER = fs.readFileSync(new URL('../migrations/20261012120000_hangtag_custom_fields_units.sql', import.meta.url), 'utf8')
+  + '\n' + fs.readFileSync(new URL('../migrations/20261013120000_hangtag_stock_guards.sql', import.meta.url), 'utf8');
 const A = '11111111-1111-1111-1111-111111111111', B = '22222222-2222-2222-2222-222222222222';
 const MGR = { id: '33333333-3333-3333-3333-333333333333', key: 'dev-key-manager-000000000000000000', dev: 'dev-manager-1', role: 'manager', username: 'meera' };
 const CSH = { id: '44444444-4444-4444-4444-444444444444', key: 'dev-key-cashier-000000000000000000', dev: 'dev-cashier-1', role: 'cashier', username: 'ravi' };
@@ -115,7 +118,7 @@ console.log('=== entries ===');
 console.log('=== the report ===');
 {
   const rep = await report(db);
-  check('migration report: 80 rows, all ok with bank accounts and entries', rep.length === 80 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
+  check('migration report: all rows ok with bank accounts and entries', rep.length === REPORT_ROWS && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
 }
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');
 process.exit(fails ? 1 : 0);

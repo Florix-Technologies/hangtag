@@ -8,6 +8,7 @@ import { PGlite } from '@electric-sql/pglite';
 import fs from 'fs';
 import crypto from 'crypto';
 import { BUSINESS_TYPE_KEYS, CAP_KEYS, keepNewerCaps } from '../../src/domain/shop/capabilities.js';
+import { REPORT_ROWS } from './report-rows.mjs';
 
 const NEW = fs.readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
 const A = '11111111-1111-1111-1111-111111111111', B = '22222222-2222-2222-2222-222222222222';
@@ -63,7 +64,7 @@ await db.exec(NEW); await db.exec(NEW);
 console.log('=== the schema runs twice; older profiles keep their type ===');
 {
   const rep = await report(db);
-  check('migration report: 80 rows, all ok', rep.length === 80 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: all rows ok', rep.length === REPORT_ROWS && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   check('report rows 30-32 are the business type, tracking and capability checks', rep.some((r) => /type of business/.test(r.check_name)) && rep.some((r) => /serial number or batch/.test(r.check_name))
     && rep.some((r) => /capabilities are all on or off/.test(r.check_name)));
   const types = Object.fromEntries((await db.query(`SELECT id::text, business_type FROM public.hangtag_profiles`)).rows.map((r) => [r.id, r.business_type]));
@@ -124,7 +125,7 @@ console.log('=== capabilities in the synced settings ===');
   r = await tryAs(db, A, `INSERT INTO public.hangtag_meta (key, value) VALUES ('logo', '"data:image/png;base64,AAAA"') ON CONFLICT (owner_id, key) DO UPDATE SET value = EXCLUDED.value RETURNING key`);
   check('other settings rows (the logo) are untouched by the rule', !r.err, r);
   const rep = await report(db);
-  check('the report stays all ok with choices saved', rep.length === 80 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
+  check('the report stays all ok with choices saved', rep.length === REPORT_ROWS && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
   // the app's download rule matches the database's
   const kept = { caps: { uses_tables: true }, capsAt: 2000 };
   check('app and database agree: an older copy keeps the newer choices, a newer copy wins',

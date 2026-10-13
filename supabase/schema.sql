@@ -9975,4 +9975,12 @@ SELECT check_name, value, expected, value = expected AS ok FROM (
            (SELECT count(*) FROM pg_trigger t WHERE (t.tgrelid = 'public.hangtag_products'::regclass AND t.tgname IN ('zz_hangtag_touch', 'hangtag_product_unit_lock'))
                OR (t.tgrelid = 'public.hangtag_variants'::regclass AND t.tgname = 'zz_hangtag_touch'))::bigint,
            3::bigint
+    UNION ALL
+    -- Policies are OR-ed: one that is always true opens a shop table to every account, whatever the others say. The first,
+    -- one-shop version had six ("Public access to …"); run again on 2026-10-13, it opened the live shops to each other.
+    SELECT 96, 'Shop tables open to every account (a policy that is always true)',
+           (SELECT count(*) FROM pg_policies p WHERE p.schemaname = 'public' AND p.permissive = 'PERMISSIVE'
+               AND (btrim(COALESCE(p.qual, '')) IN ('true', '(true)') OR btrim(COALESCE(p.with_check, '')) IN ('true', '(true)'))
+               AND EXISTS (SELECT 1 FROM information_schema.columns c WHERE c.table_schema = 'public' AND c.table_name = p.tablename AND c.column_name = 'owner_id'))::bigint,
+           0::bigint
 ) r ORDER BY n;

@@ -28,6 +28,12 @@ export function healthNow(){
 const CLOUD_WORDS = { connected: "Connected", connecting: "Connecting", error: "Not reachable", update: "Database update needed", local: "On this device only", off: "Off" };
 const moduleShownAgent = () => { try{ return moduleShown("assistant"); }catch{ return false; } };
 const row = (label, value, tone) => `<div class="diag-kv${tone ? " " + tone : ""}"><span>${esc(label)}</span><b>${value}</b></div>`;
+/* An entry's technical detail under it: where (file:line), its code and HTTP status — each when there is one (a database
+   event has a code but no file) */
+export const entryDetail = e => {
+  const parts = [e.file ? esc(e.file) + (e.line ? ":" + e.line : "") : "", e.code ? esc(e.code) : "", e.status ? esc(String(e.status)) : ""].filter(Boolean);
+  return parts.length ? `<small>${parts.join(" · ")}</small>` : "";
+};
 
 export function diagnosticsHTML(){
   const H = healthNow(), S = diagnosticsSummary(), list = getDiagnostics().slice(-20).reverse();
@@ -53,7 +59,7 @@ export function diagnosticsHTML(){
   const T = getTraces().slice(-5).reverse();
   const traces = moduleShownAgent() ? `<h6 class="diag-h">Agent chain <span class="note">${T.length ? "the latest questions: request → tool → result → action → approval → outcome" : "no questions yet on this device"}</span></h6>
     ${T.length ? `<ol class="diag-chains">${T.map(t => `<li data-trace="${esc(t.id)}"><span class="dg-when">${esc(new Date(t.at).toLocaleTimeString())} · ${esc(t.source)}</span><span class="dg-chain">${chain(t)}</span></li>`).join("")}</ol>` : ""}` : "";
-  const problems = list.length ? `<ol class="diag-list">${list.map(e => `<li class="${esc(e.level)}" data-diag-entry><span class="dg-when">${esc(dayKey(Date.parse(e.at)) === dayKey(Date.now()) ? new Date(e.at).toLocaleTimeString() : e.at.slice(0, 10))}</span><span class="dg-what"><b>${esc(e.level === "warn" ? "Warning" : e.level === "info" ? "Note" : "Problem")}</b>${e.count > 1 ? ` <span class="dg-count">×${e.count}</span>` : ""} · ${esc(e.message)}${e.file ? `<small>${esc(e.file)}${e.line ? ":" + e.line : ""}${e.code ? " · " + esc(e.code) : ""}${e.status ? " · " + e.status : ""}</small>` : ""}</span></li>`).join("")}</ol>`
+  const problems = list.length ? `<ol class="diag-list">${list.map(e => `<li class="${esc(e.level)}" data-diag-entry><span class="dg-when">${esc(dayKey(Date.parse(e.at)) === dayKey(Date.now()) ? new Date(e.at).toLocaleTimeString() : e.at.slice(0, 10))}</span><span class="dg-what"><b>${esc(e.level === "warn" ? "Warning" : e.level === "info" ? "Note" : "Problem")}</b>${e.count > 1 ? ` <span class="dg-count">×${e.count}</span>` : ""} · ${esc(e.message)}${entryDetail(e)}</span></li>`).join("")}</ol>`
     : `<p class="note" style="margin:0">No technical problems recorded on this device.</p>`;
   return `<div class="setblk" id="diagBlk"><h5>Diagnostics &amp; health</h5><p class="note" style="margin:0 0 10px">How this device is doing, and the technical problems it noticed lately. Kept on this device only, without customer, bill or money details — copy or download it when support asks.</p>
     <p class="note diag-private" style="margin:0 0 10px">Never sent anywhere by itself: nothing leaves this device unless you copy or download the report.</p>

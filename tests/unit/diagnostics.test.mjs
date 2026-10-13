@@ -53,5 +53,17 @@ console.error = orig;
 check('the logger prints and records the cleaned message only (never the raw object)', printed.length === 1 && /^\[Hangtag\] Payment check failed for \[number\]/.test(printed[0]) && !/Riya|9876543210/.test(printed[0])
   && /Payment check failed/.test(getDiagnostics().at(-1).message), printed);
 
+// 2026-10-13 report: "erro[amount]js:20" — the amount filter took the "rs." of errors.js for rupees
+check('an amount is hidden only after ₹, or Rs / INR starting a word, and only with a number', ['AppError: x at errors.js:20', 'orders.js suppliers.js users. Errors.']
+  .every((t) => sanitizeDiagnosticText(t) === t) && sanitizeDiagnosticText('paid Rs.1,250.50, Rs 99, INR 1,250, ₹ 500, rs.75 and ₹1,250.50') === 'paid [amount], [amount], [amount], [amount], [amount] and [amount]',
+  sanitizeDiagnosticText('paid Rs.1,250.50, Rs 99, INR 1,250, ₹ 500, rs.75 and ₹1,250.50'));
+// …and the five "Problem · error" lines showed no code: a database event has a code but no file
+{
+  const { entryDetail } = await import('../../src/features/shop/components/diagnostics-view.js');
+  check('each problem shows its code and HTTP status, with or without a file', entryDetail({ code: 'PGRST116' }) === '<small>PGRST116</small>'
+    && entryDetail({ file: 'shared/errors.js', line: 20, code: 'UNKNOWN', status: 406 }) === '<small>shared/errors.js:20 · UNKNOWN · 406</small>'
+    && entryDetail({ status: 503 }) === '<small>503</small>' && entryDetail({}) === '' && entryDetail({ code: '<b>' }) === '<small>&lt;b&gt;</small>');
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

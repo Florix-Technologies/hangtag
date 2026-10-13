@@ -44,7 +44,8 @@ export function sanitizeDiagnosticText(value){
     .replace(/(?:\+?\d[\d\s().-]{7,}\d)/g, "[number]")
     .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, "[network]")
     .replace(/\b(customer|supplier|product|bill|shop|user|owner|name|phone|email)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^,;]+)/gi, "$1=[redacted]")
-    .replace(/(?:₹|Rs\.?|INR)\s*[\d,.]+/gi, "[amount]")
+    // an amount: ₹ / Rs / INR starting a word, then a number (never "rs." inside a word such as errors.js)
+    .replace(/(?:₹\s*|\b(?:Rs\.?|INR)\s*)\d(?:[\d,]*\d)?(?:\.\d+)?/gi, "[amount]")
     .replace(/\s+/g, " ").trim();
   return s.slice(0, MAX_TEXT);
 }

@@ -9,22 +9,40 @@ Live project: `wcorlmgkwcahyfastjoz` (PostgreSQL 17). Vercel Production: `6af8cc
 
 ## 0. What this release contains
 - **App:** everything on `ux-productization` since `6af8cc2`; the Vercel Preview of the branch's tip is the candidate.
-- **Database:** sections 3u, 3v and 3w, if the live report flags them; then 3x, 3y, 3z and 3za. Each is a file in
-  `supabase/migrations/`, safe to run twice:
-
-  | Section | File |
-  |---|---|
-  | 3u | `20261007120000_hangtag_return_reasons.sql` |
-  | 3v | `20261008120000_hangtag_delivery_reports.sql` |
-  | 3w | `20261009120000_hangtag_plans_autopay_platform.sql` |
-  | 3x | `20261010120000_hangtag_platform_operations.sql` |
-  | 3y | `20261011120000_hangtag_billing_integrity.sql` |
-  | 3z | `20261012120000_hangtag_custom_fields_units.sql` |
-  | 3za | `20261013120000_hangtag_stock_guards.sql` |
-
-  **Never run `supabase db push` in this checkout.** `supabase/migrations` also holds the unapplied Phase 1 design
-  (`20260925180000_phase1_foundation.sql`), which it would apply. Paste files into the SQL Editor instead.
+- **Database:** the whole `supabase/schema.sql`, run once in the SQL Editor. It is in order, safe to run again, and
+  brings every table, function and policy to the release's version.
+  - **Don't run the section files in `supabase/migrations/` by hand on the live project.** An older file run after a
+    newer one puts older versions of its functions back. The two files of 2026-09-23, as they were until 2026-10-13,
+    reopened every shop's rows to every account (the first) and could renumber every bill's lines (the second); both now
+    leave a current database alone, but they still belong only to a database from before shops were kept apart.
+  - **Never run `supabase db push` in this checkout.** It would apply every file it hasn't recorded. The live project's
+    migration history has only the three September files: the two above and the Phase 1 design
+    (`20260925180000_phase1_foundation.sql`, applied on 2026-09-25; its own tables, which no Hangtag table uses).
 - **Edge Functions:** every function redeployed from the release commit. `npm run preflight:live` lists what is out of date.
+
+## 0a. The live database on 2026-10-13 (read at 21:17 IST, catalog and query statistics only)
+Between 20:39 and 20:45 IST the whole `schema.sql` ran, then the section files newest-first (3za … 3r), then the
+first migration of 2026-09-23. Rebuilt the same way on PGlite, the result matches the live project's 162 functions
+exactly (`supabase/tests/live-recovery.test.mjs` rehearses it and the way back):
+- **Six tables open to every signed-in account.** The first migration's "Public access to …" policies came back on
+  `hangtag_meta`, `hangtag_sales`, `hangtag_sale_items`, `hangtag_products`, `hangtag_images` and `hangtag_sizes`
+  (`USING (true) WITH CHECK (true)`; policies are OR-ed, so any account reads and changes every shop's rows there). The
+  app's single-row reads of the shop's settings and logo now get one row per shop and are refused (`PGRST116`), so every
+  download stops there ("Pull from Supabase failed" since 20:49), and new bills and products of other shops reach every
+  connected device.
+- **18 functions in older versions** (3r, 3t, 3w, 3z instead of 3t … 3za): among them the bill-cancel guard (3y), the
+  supplier-bill and serial locks (3za), the plan rules (3w) and the store closing when a plan ends (3t).
+
+**Close the six tables first** (SQL Editor; seconds; changes no row):
+```
+DROP POLICY IF EXISTS "Public access to hangtag_products" ON public.hangtag_products;
+DROP POLICY IF EXISTS "Public access to hangtag_sizes" ON public.hangtag_sizes;
+DROP POLICY IF EXISTS "Public access to hangtag_images" ON public.hangtag_images;
+DROP POLICY IF EXISTS "Public access to hangtag_sales" ON public.hangtag_sales;
+DROP POLICY IF EXISTS "Public access to hangtag_sale_items" ON public.hangtag_sale_items;
+DROP POLICY IF EXISTS "Public access to hangtag_meta" ON public.hangtag_meta;
+```
+Then run the whole `schema.sql` (step 3). The report's row 96 counts tables open to every account: it must be 0.
 
 ## 1. Before anything changes (read-only)
 1. `npm run preflight:live` reports, per function:
@@ -54,11 +72,13 @@ Live project: `wcorlmgkwcahyfastjoz` (PostgreSQL 17). Vercel Production: `6af8cc
   `npx supabase db dump --linked` is an alternative on a machine with Docker.
 
 ## 3. Database (SQL Editor)
-1. Run the flagged earlier sections (3u, 3v, 3w), in that order. Then run 3x, 3y, 3z and 3za, in that order.
-2. After each file, run the report again. Rows that belong to sections not yet run stay not ok until their turn. After
-   3za, **all 82 rows are ok**.
-3. If a file fails, it stops at the failing statement. The others are unaffected and can be run again. Copy the error,
-   stop, and don't continue to the app.
+1. Paste the whole `supabase/schema.sql` of the release commit and run it once. It ends with the report.
+2. **All 83 rows are ok**, row 96 (tables open to every account) included.
+3. If it fails, it stops at the failing statement and what ran before it stays. Copy the error, stop, and don't continue
+   to the app. Running it again after the cause is fixed is safe.
+4. The report doesn't check every function's version. To be sure, compare the live catalog with `schema.sql` as on
+   2026-10-13: read-only queries of `pg_proc`, `pg_policies` and the rest, through `supabase db query --linked` (the CLI
+   creates a short-lived login role, `cli_login_postgres`, to connect).
 - **Rollback.** The sections only add:
   - tables, columns and functions;
   - looser unit checks;
@@ -66,7 +86,8 @@ Live project: `wcorlmgkwcahyfastjoz` (PostgreSQL 17). Vercel Production: `6af8cc
 
   The app now in Production keeps working on the new database (`supabase/tests/upgrade-live-database.test.mjs` runs the
   sections on the previous release's database). So the usual rollback is the app's (step 6), not the database's.
-  Restoring the backup is the last resort: it loses everything written since it was taken.
+  Restoring the backup is the last resort: it loses everything written since it was taken. Never roll back by running
+  an older section file: that is what put older functions back on 2026-10-13.
 
 ## 4. Secrets
 Set them from a file outside the repository, so no value lands in the shell history or the repository:
@@ -119,7 +140,9 @@ npx supabase functions deploy <name> --project-ref wcorlmgkwcahyfastjoz
 ## 7. After the release
 Use a test product and a test customer, and cancel what you create afterwards:
 1. The report: all rows ok. `npm run preflight:live`: nothing unexpected.
-2. Sign in on a computer and on a phone; both sync.
+2. Sign in on a computer and on a phone; both sync. In Settings → Advanced → Diagnostics & health, "Last full sync"
+   moves to now and no new "Pull … failed" appears. Each device shows only its own shop's products and bills (a full
+   download replaces what other shops' rows reached it while tables were open).
 3. Read a real supplier bill. A line in boxes of a product counted in pieces asks for the pieces. Cancel without
    saving.
 4. Make a field and a unit (Settings → Products & Inventory), use them on the test product, then archive them.

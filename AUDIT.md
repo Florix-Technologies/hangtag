@@ -1,8 +1,52 @@
 # Hangtag audit log
 
 The running checklist of the code audit: what was checked, what was fixed (each with a regression test), what is left.
-Newest session first. Production data and services were never touched (no migration run, no function deployed); code is
-pushed only on the owner's word.
+Newest session first. The audit never changed production data or services (no migration run, no function deployed). On
+2026-10-13 the live project's catalog and query statistics were read through the Supabase CLI, which creates a
+short-lived login role (`cli_login_postgres`) to connect. Code is pushed only on the owner's word.
+
+## 2026-10-13 (seventh session: the Diagnostics & Health report — reliability before features)
+
+The owner's brief: stop the Cashfree work and all new features; start from the latest Diagnostics & Health report
+(printed 21:01 IST, app build `hangtag-80042738a2` = `acee306`, a Preview); find the real causes in code, configuration
+and deployed state; no production change without the owner's word.
+
+The paused work (Cashfree sandbox plan payments, the shop's own UPI QR picture) is on the local branch
+`paused/cashfree-sandbox` (`e62d23c`), not pushed. `ux-productization` went back to `acee306`.
+
+### How the deployed state was read (read-only)
+- `npm run preflight:live`: functions, their JWT setting and secret names (names only).
+- Public REST probes with the publishable key: zero rows asked, no function run.
+- `supabase db query --linked`: function bodies as MD5 fingerprints, columns, triggers, policies, indexes, constraints,
+  and `pg_stat_statements`. No table row was read. The CLI's connection creates `cli_login_postgres` (21:16 IST).
+- `supabase migration list --linked`: the live migration history.
+
+### Checklist
+| # | Area | Finding | Status |
+|---|------|---------|--------|
+| 76 | "Pull from Supabase failed", "Pull settings failed" (5 from 20:49) | **Confirmed.** At 20:44:53 IST the first migration (`20260923102731`) ran again on the live project and put back its six "Public access to …" policies (`USING (true) WITH CHECK (true)`) on `hangtag_meta`, `_sales`, `_sale_items`, `_products`, `_images`, `_sizes`. Policies are OR-ed, so the app's single-row reads of the shop's `settings` and `logo` get one row per shop: PostgREST refuses (`PGRST116`), the app reports UNKNOWN, and every download stops at the settings | Repository: the first migration no longer makes those policies on a database that keeps shops apart; report row 96 counts tables open to everyone. Test: `supabase/tests/live-recovery.test.mjs`. **Live: needs the owner** (`RELEASE.md` §0a: six `DROP POLICY` lines, then the whole `schema.sql`) |
+| 77 | Security: every shop's rows open to every account | **Confirmed, critical.** Since 20:44 IST any signed-in account can read and change every shop's settings, bills, bill lines, products, pictures and sizes. Realtime also delivers other shops' new bills and products to every connected device; `onRemoteSaleEvent` adds a bill without checking its shop. Devices replace their copy at the next full download, which today stops at the settings (item 76) | **Live: needs the owner** (as item 76). The app's own check of the shop on live events: proposed, not made (not the cause; a wrong shop check would hide a team member's own bills) |
+| 78 | 18 functions in older versions | **Confirmed.** After the whole `schema.sql` (20:39:56) the section files ran newest-first (3za … 3r). Each older file put its older functions back: `hangtag_save_sales` (3r: no 3y cancel guard), `hangtag_import_stock` (3z: no 3za locks), the subscription functions (3t instead of 3w), `hangtag_mobile_catalog` (3r: the store doesn't close when a plan ends; no 3z units), the console dashboard (3w). Rebuilt that way on PGlite, all 162 live functions match byte for byte | **Live: needs the owner:** the whole `schema.sql` once. Rehearsed in `live-recovery.test.mjs`: every function current again, no open table, report all 83 ok, **every shop row unchanged** |
+| 79 | "database update needed ×4" (10:41, 14:16, 20:09) | **Confirmed.** Sections 3y, 3z and 3za first reached the live database at 20:39:56 (statement statistics); before that the `acee306` app asked for their tables and functions | Their tables exist now; what is left is item 78 |
+| 80 | `fn:subscription` "connection failed" | **Confirmed.** `subscription` (and `subscription-webhook`) aren't deployed. Supabase answers the browser's preflight with 404 and doesn't allow `content-type`, so the browser reports a network failure. Only when the owner opens Plans & Billing; the app then shows online payment as not available | No code change. Owner's choice: deploy `subscription` (it answers "not set up" without payment keys), or leave it until subscriptions go live |
+| 81 | Bill reading `NOT_CONFIGURED` | **Confirmed.** The live project has no `ANTHROPIC_API_KEY` secret, and `extract-bill` (v1, 2026-10-02) predates its fixes of 10-10 | No code change and no other provider. **Owner:** the key (`RELEASE.md` §4), then redeploy `extract-bill` |
+| 82 | Slow calls (`hangtag_subscription_status` 786 ms, `hangtag_profiles` 715 ms, `auth:token` 845 ms) | **Not the database or the network.** Inside the database `hangtag_subscription_status` takes 18 ms on average (589 calls since 2026-09-23, max 84 ms); profile reads 1–2.5 ms, the last-seen update 4 ms. The project is in ap-south-1 (Mumbai); from this computer a TCP connection takes ~20 ms and a whole request 0.07–0.23 s. 76 status checks a day is the design (on connect, back on screen, every 10 minutes). **Hypothesis:** the app's timer counts until its own thread takes the answer, and these calls run when the app starts or comes back | No change. Measuring the network time alone (Resource Timing) would settle it |
+| 83 | Diagnostics: "erro[amount]js:20" | **Confirmed.** The amount filter took "rs." (of errors.js) for rupees: any "rs." or "inr." inside a word was mangled | Fixed: ₹, or Rs / INR starting a word, then a number. Test: `tests/unit/diagnostics.test.mjs` |
+| 84 | Diagnostics: "Problem · error" with no code | **Confirmed.** The panel showed an entry's code and HTTP status only when it had a source file. Database events have none, so the five errors hid `PGRST116` | Fixed: code and status shown for every entry. Test: `tests/unit/diagnostics.test.mjs` |
+| 85 | The line-number migration of 2026-09-23 | Run again on a current database, it would number every bill's lines anew by their random ids (and bring back an index across shops). It ran once, on 2026-09-23 (statistics), not on 10-13 | Guarded: it changes nothing once the per-shop line key exists. Test: `live-recovery.test.mjs` |
+| 86 | `RELEASE.md` | It told the owner to run the section files. That way can't remove the six policies (only `schema.sql`'s last part does), and it said the Phase 1 design was unapplied: the live migration history shows it applied on 2026-09-25 | Rewritten: the whole `schema.sql`, never older files; §0a with today's state and the containment |
+| 87 | The live database's load | Supabase Realtime's change polling is 96% of the database's execution time (1.34 million calls since 2026-09-23). The app listens to about 25 tables | Observation only. It slows nothing measurable today (item 82) |
+
+Not done (each needs the owner's word): the six `DROP POLICY` lines and the whole `schema.sql` on the live project;
+the functions' redeploys and secrets (`npm run preflight:live`: 11 of 11 need something); a push for a Preview of these
+fixes. A Preview uses the live database, so the database part can only be seen there after the owner's run.
+
+### Test results (run, not assumed)
+- `npm test`: **166/166 files passed** (unit, database, eval, browser), then **30/30 database files on PostgreSQL 17.5**.
+- New: `supabase/tests/live-recovery.test.mjs` (21 checks, on both versions). Changed: `tests/unit/diagnostics.test.mjs`
+  (+2 checks; both fail on the code before the fix).
+- `npm run check`: clean, `sw.js` cache `hangtag-45f5fb3c06`.
+- Nothing was verified on a Preview or on the live project after the fixes: neither has them yet.
 
 ## 2026-10-12 (sixth session: the roadmap, release fixes for stock and units, function sign-in)
 

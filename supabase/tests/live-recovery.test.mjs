@@ -63,6 +63,11 @@ async function as(db, id, sql, params) {
 const one = async (db, id, sql, params) => (await as(db, id, sql, params)).rows[0];
 const report = async (db) => (await db.query(`SELECT check_name, value, expected, ok FROM (${NEW.slice(NEW.lastIndexOf('SELECT check_name')).replace(/;\s*$/, '')}) q`)).rows;
 const row96 = (rep) => rep.find((r) => /open to every account/.test(r.check_name));
+/* the checks the runbook runs on the live project (supabase/checks/): each file's last result set */
+const CHECKS = new URL('../checks/', import.meta.url);
+const runCheck = async (db, name) => (await db.exec(fs.readFileSync(new URL(name, CHECKS), 'utf8'))).at(-1).rows;
+/* RELEASE.md's repair: the whole schema.sql in one explicit transaction, never waiting long for a lock */
+const REPAIR = `BEGIN;\nSET LOCAL lock_timeout = '10s';\n${NEW}\nCOMMIT;`;
 /* every Hangtag function's body, as a fingerprint */
 const functions = async (db) => Object.fromEntries((await db.query(`SELECT p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' AS k,
   md5(replace(p.prosrc, chr(13), '')) AS v FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname LIKE 'hangtag%'`)).rows.map((r) => [r.k, r.v]));
@@ -101,6 +106,7 @@ for (const [owner, name] of [[A, 'Shop A'], [B, 'Shop B']]) {
     await as(db, owner, `INSERT INTO public.hangtag_stock_moves (id, variant_id, product_id, type, qty, t) VALUES ($1, $2, $3, 'OPENING', 10, 1)`, ['open:p' + i, 'p' + i + ':', 'p' + i]);
   }
   await as(db, owner, `INSERT INTO public.hangtag_images (product_id, image_data) VALUES ('p0', 'data:image/png;base64,AA==')`);
+  await as(db, owner, `INSERT INTO public.hangtag_sizes (product_id, size, stock) VALUES ('p0', 'M', 0)`);   // the old size list (kept, no stock)
   await as(db, owner, `INSERT INTO public.hangtag_meta (key, value) VALUES ('settings', $1), ('logo', '{"data":"data:image/png;base64,AA=="}')`, [JSON.stringify({ prefix: name === 'Shop A' ? 'A-' : 'B-' })]);
   const saved = await as(db, owner, `SELECT public.hangtag_save_sales($1::jsonb) AS r`, [JSON.stringify([billArgs(bill('s1'))])]);
   if (!saved.rows[0]) throw new Error('bill not saved');
@@ -156,11 +162,21 @@ console.log('=== (2) the incident: the section files newest-first, then the firs
   check('the report says so: row 96 counts the 6 open tables, and the section rows name the older functions', +row96(rep).value === 6 && !row96(rep).ok
     && bad.length > 1, bad);
   check('the incident itself changed no shop row', changedTables(DATA0, await data(db, TABLES)).length === 0, changedTables(DATA0, await data(db, TABLES)));
+  // the runbook's checks see it too
+  const fv = await runCheck(db, '2026-10-13-function-versions.sql');
+  check('checks/2026-10-13-function-versions.sql: 18 functions OLDER VERSION, the 3 indexes STILL THERE', fv.filter((r) => r.state === 'OLDER VERSION').length === 18
+    && fv.filter((r) => r.state === 'STILL THERE').length === 3 && fv.length === 21, fv.filter((r) => r.state !== 'OLDER VERSION'));
+  check('checks/open-policies.sql: the six "Public access" policies', (await runCheck(db, 'open-policies.sql')).length === 6);
+  const probe = await runCheck(db, 'shop-isolation-probe.sql');
+  check('checks/shop-isolation-probe.sql: each shop sees and changes the other\'s rows', probe.filter((r) => /^ALLOWED/.test(r.result)).length > 0
+    && probe.some((r) => r.probe === '1 read' && /other shops' rows visible: [1-9]/.test(r.result)), probe.slice(0, 6));
 }
 
-console.log('=== (3) the way back: schema.sql once more ===');
+console.log('=== (3) the way back: schema.sql once more, as RELEASE.md runs it ===');
 {
-  await db.exec(NEW);
+  const dry = (await runCheck(db, 'schema-dry-run.sql'))[0].dryrun;
+  check('checks/schema-dry-run.sql before it: every one of the 26 data changes would touch 0 rows', Object.keys(dry).length === 26 && Object.values(dry).every((n) => +n === 0), dry);
+  await db.exec(REPAIR);
   const rep = await report(db);
   check('every function is as on a fresh database again', changedFunctions(FRESH, await functions(db)).length === 0, changedFunctions(FRESH, await functions(db)));
   check('no "Public access" policy is left; report row 96 is 0', (await openPolicies(db)).length === 0 && +row96(rep).value === 0);
@@ -168,6 +184,15 @@ console.log('=== (3) the way back: schema.sql once more ===');
   const moved = changedTables(DATA0, await data(db, TABLES));
   check('every row of every shop table is exactly as before (bills, lines, payments, products, stock, settings…)', moved.length === 0, moved);
   check('…bill lines keep their numbers', JSON.stringify(await lines()) === JSON.stringify(LINES0));
+  const fv = await runCheck(db, '2026-10-13-function-versions.sql');
+  check('checks/2026-10-13-function-versions.sql: all 21 ok', fv.length === 21 && fv.every((r) => r.state === 'ok'), fv.filter((r) => r.state !== 'ok'));
+  check('checks/open-policies.sql: none', (await runCheck(db, 'open-policies.sql')).length === 0);
+  const probe = await runCheck(db, 'shop-isolation-probe.sql');
+  const want = { '1 read': /other shops' rows visible: 0; own rows visible: [1-9]/, '2 change other shop': /^blocked \(0 rows\)$/, '3 delete other shop': /^blocked \(0 rows\)$/,
+    '4 add as other shop': /^blocked by row security \(42501\)$/, '5 change own row': /^works \(1 row\)$/ };
+  check('checks/shop-isolation-probe.sql: no shop reads, changes, deletes or adds the other\'s rows; each changes its own', probe.length === 60
+    && probe.every((r) => want[r.probe] && want[r.probe].test(r.result)), probe.filter((r) => !(want[r.probe] && want[r.probe].test(r.result))));
+  check('…and the probe itself left every shop row as it was', changedTables(DATA0, await data(db, TABLES)).length === 0);
 }
 
 console.log('=== (4) each shop sees only its own rows again ===');

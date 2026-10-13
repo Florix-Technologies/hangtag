@@ -33,16 +33,29 @@ exactly (`supabase/tests/live-recovery.test.mjs` rehearses it and the way back):
 - **18 functions in older versions** (3r, 3t, 3w, 3z instead of 3t … 3za): among them the bill-cancel guard (3y), the
   supplier-bill and serial locks (3za), the plan rules (3w) and the store closing when a plan ends (3t).
 
-**Close the six tables first** (SQL Editor; seconds; changes no row):
+**Contained on the owner's word, 2026-10-13 23:45:55 IST (18:15:55 UTC)**, through `supabase db query --linked`:
 ```
-DROP POLICY IF EXISTS "Public access to hangtag_products" ON public.hangtag_products;
-DROP POLICY IF EXISTS "Public access to hangtag_sizes" ON public.hangtag_sizes;
-DROP POLICY IF EXISTS "Public access to hangtag_images" ON public.hangtag_images;
-DROP POLICY IF EXISTS "Public access to hangtag_sales" ON public.hangtag_sales;
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+DROP POLICY IF EXISTS "Public access to hangtag_products"   ON public.hangtag_products;
+DROP POLICY IF EXISTS "Public access to hangtag_sizes"      ON public.hangtag_sizes;
+DROP POLICY IF EXISTS "Public access to hangtag_images"     ON public.hangtag_images;
+DROP POLICY IF EXISTS "Public access to hangtag_sales"      ON public.hangtag_sales;
 DROP POLICY IF EXISTS "Public access to hangtag_sale_items" ON public.hangtag_sale_items;
-DROP POLICY IF EXISTS "Public access to hangtag_meta" ON public.hangtag_meta;
+DROP POLICY IF EXISTS "Public access to hangtag_meta"       ON public.hangtag_meta;
+COMMIT;
 ```
-Then run the whole `schema.sql` (step 3). The report's row 96 counts tables open to every account: it must be 0.
+Verified on the live project afterwards:
+- **Policies:** the six tables keep exactly their 24 shop policies, identical to `schema.sql`. No policy anywhere in the database is always true, and report row 96's count is 0.
+- **Access, as two shops' owners** (`supabase/checks/shop-isolation-probe.sql`):
+  - other shops' rows visible: 0 in every table (before: A saw 103 other products, 49 bills, 121 bill lines, 17 settings rows);
+  - changing or deleting the other shop's rows: 0 rows;
+  - adding a row as the other shop: refused by row security;
+  - changing an own row: works.
+- **Settings and logo:** each shop reads exactly 1 `settings` and 1 `logo` row (the read the app makes).
+- **Signed out:** 401 on all six tables (no privilege, as before).
+
+Still to do: the 18 functions (step 3).
 
 ## 1. Before anything changes (read-only)
 1. `npm run preflight:live` reports, per function:
@@ -72,13 +85,42 @@ Then run the whole `schema.sql` (step 3). The report's row 96 counts tables open
   `npx supabase db dump --linked` is an alternative on a machine with Docker.
 
 ## 3. Database (SQL Editor)
-1. Paste the whole `supabase/schema.sql` of the release commit and run it once. It ends with the report.
-2. **All 83 rows are ok**, row 96 (tables open to every account) included.
-3. If it fails, it stops at the failing statement and what ran before it stays. Copy the error, stop, and don't continue
-   to the app. Running it again after the cause is fixed is safe.
-4. The report doesn't check every function's version. To be sure, compare the live catalog with `schema.sql` as on
-   2026-10-13: read-only queries of `pg_proc`, `pg_policies` and the rest, through `supabase db query --linked` (the CLI
-   creates a short-lived login role, `cli_login_postgres`, to connect).
+The whole `supabase/schema.sql` of the release commit, once, in one transaction. On the live project of 2026-10-13
+(compared with `schema.sql` object by object, read-only) it changes:
+- the bodies of the 18 older functions;
+- the three redundant indexes the first migration put back (dropped).
+
+Every other table, column, default, trigger, policy, grant and function is re-applied as it already is.
+
+**Before** (read-only; each file in `supabase/checks/` says what to expect):
+1. `schema-dry-run.sql`: all 26 numbers 0. On 2026-10-13 at 23:50 IST they were. Then `schema.sql` changes no shop's
+   rows. A number that isn't 0 names the rows it would change: stop and look.
+2. `2026-10-13-function-versions.sql`: 18 OLDER VERSION and 3 STILL THERE. That was the live baseline on 2026-10-13.
+3. Note the backup point (step 2).
+
+**Run** (a quiet minute; the run of 20:39 took about a second): paste this, the whole `schema.sql` where it says so:
+```
+BEGIN;
+SET LOCAL lock_timeout = '10s';
+-- the whole supabase/schema.sql here
+COMMIT;
+```
+One explicit transaction: if any statement fails, or a table stays locked for 10 s, nothing at all changes. Copy the
+error, stop, and run it again later.
+
+**After** (read-only):
+1. The report (the final `SELECT check_name …` of `schema.sql`, run on its own): **all 83 rows ok**, row 96 0.
+2. `2026-10-13-function-versions.sql`: all 21 ok.
+3. `open-policies.sql`: no row.
+4. `shop-isolation-probe.sql`: what its header says (it changes nothing: every write is rolled back).
+5. `schema-dry-run.sql`: still all 0.
+
+All of this was rehearsed on PGlite, on PostgreSQL 17 and 18, from the live project's state: `supabase/tests/live-recovery.test.mjs`.
+
+**Stays as it is** (older and harmless, not from 2026-10-13):
+- the owner foreign keys of six tables carry older names (`hangtag_sales_owner_fkey` …), with the same definition;
+- `hangtag_sales_money_check` prints `subtotal` without a cast;
+- `hangtag_payments_provider_fee_check` is missing, but the payments' shape check already refuses a negative fee.
 - **Rollback.** The sections only add:
   - tables, columns and functions;
   - looser unit checks;

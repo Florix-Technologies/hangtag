@@ -45,6 +45,28 @@ The database suites check the report at the end of `schema.sql` against `supabas
   `coveredAtEnd(page)` scrolls to the very end and reports any control still under a bar fixed to the bottom (the phone's tab bar). `layout-checks.test.mjs` runs the overlap, clipped, narrow-field and covered checks on a page made to break each once, and on look-alikes that must pass (a field's own voice button, folded content, a chip scrolled out of its row).
 - **`tenancy.mjs`**: `readLeaks` and `writeLeaks` sweep every shop table for rows of one shop that others can see, change, delete or add. Every write attempt is rolled back.
 - **`pg-rest.mjs`** and **`env.mjs`**: the PostgREST and Auth stand-in, and paths.
+- **`isolation.cjs`**: the network isolation below.
+
+## Network isolation (every test)
+
+Tests reach this computer only, never the live Supabase project. `tests/helpers/isolation.cjs` is installed by the runner for
+every file (`--import tests/helpers/isolation-hook.mjs`) and by `env.cjs`, which every browser test loads:
+
+- **Node:** a socket to anything but this computer is refused before it connects (`ETESTISOLATION`): fetch, http, https,
+  WebSocket clients and database drivers.
+- **Chrome:** every launch gets `--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1, EXCLUDE [::1],
+  EXCLUDE cdn.jsdelivr.net, EXCLUDE fonts.googleapis.com, EXCLUDE fonts.gstatic.com` and `--no-proxy-server`. No other host
+  name resolves (IP literals included), so nothing reaches another host — WebSockets included, which request interception
+  never sees. A test can't set its own proxy or name resolution, and a browser started without the rules is refused.
+- **Tripwire:** every browser target is watched over CDP. A response from the network or a WebSocket handshake from any
+  other host is a violation, and so is a Supabase request that left the test's own handlers (it is then refused at name
+  resolution). The app's realtime socket is the exception: the stand-in has no realtime, so it is refused and counted.
+- A violation is printed (`ISOLATION VIOLATION …`) and the file exits with 1. The runner shows each browser file's count:
+  `· isolated: 303 answered here, 2 refused, 0 violations`.
+
+Writing a browser test: answer every Supabase request (the stand-in's `pg.handle(r)`) or abort it, never `r.continue()` one. A
+page that has to run the app without request interception (a service-worker test: interception bypasses the worker) is
+declared with `iso.noBackend(page)`. Proven by `tests/unit/test-isolation.test.mjs` and `tests/e2e/network-isolation.test.mjs`.
 
 ## The Agent evaluation (`tests/eval`)
 

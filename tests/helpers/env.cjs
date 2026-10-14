@@ -6,6 +6,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
+// every test that loads these settings reaches this computer only, its browser included (see isolation.cjs)
+require('./isolation.cjs').install({ browser: true });
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const PORT = 3210;                                   // the tests expect the app at http://localhost:3210/

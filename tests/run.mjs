@@ -10,7 +10,10 @@ import { spawn } from 'node:child_process';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { cpus } from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import env from './helpers/env.mjs';
+
+const ISOLATION = pathToFileURL(path.join(import.meta.dirname, 'helpers', 'isolation-hook.mjs')).href;
 
 const isTest = (f) => /\.test\.(mjs|cjs|js)$/.test(f);
 const collect = (p) => statSync(p).isDirectory()
@@ -27,8 +30,10 @@ const TIMEOUT = +process.env.TEST_TIMEOUT_MS || 20 * 60 * 1000;
 function runFile(file) {
   return new Promise((resolve) => {
     const t0 = Date.now();
-    // the runner's own Node flags go to each file (e.g. --import ./tests/helpers/postgres17.mjs for test:db:pg17)
-    const child = spawn(process.execPath, [...process.execArgv, file], { stdio: ['ignore', 'pipe', 'pipe'] });
+    // the runner's own Node flags go to each file (e.g. --import ./tests/helpers/postgres17.mjs for test:db:pg17), then the
+    // network isolation (tests/helpers/isolation.cjs: this computer only; Chrome's too for a file that drives a browser)
+    const child = spawn(process.execPath, [...process.execArgv, '--import', ISOLATION, file],
+      { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, HANGTAG_TEST_BROWSER: usesBrowser(file) ? '1' : '' } });
     let out = '', timedOut = false;
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { out += d; });
@@ -43,8 +48,10 @@ function report({ file, code, out, timedOut, secs, skipNote }) {
   const status = skipNote || code === 77 ? 'SKIP' : timedOut ? 'TIME' : code === 0 ? 'ok  ' : 'FAIL';
   if (status === 'SKIP') skipped++; else if (status !== 'ok  ') failed++;
   const note = skipNote || (code === 77 ? (out.trim().split('\n').pop() || 'environment') : '');
+  // a browser file's network isolation (tests/helpers/isolation.cjs): what the test answered itself, what was refused, violations
+  const iso = /\[isolation\].*answered by the test: (\d+) · refused at name resolution: (\d+).* · violations: (\d+)/.exec(out);
   console.log(`${status}  ${file}  (${status === 'SKIP' ? `skipped: ${note}` : `${pass} passed${fail ? `, ${fail} failed` : ''}`}, ${secs.toFixed(1)} s)`
-    + (timedOut ? `  — stopped after ${TIMEOUT / 60000} min` : ''));
+    + (iso ? ` · isolated: ${iso[1]} answered here, ${iso[2]} refused, ${iso[3]} violations` : '') + (timedOut ? `  — stopped after ${TIMEOUT / 60000} min` : ''));
   if (status === 'FAIL' || status === 'TIME' || process.env.VERBOSE) console.log(out.split('\n').filter((l) => !/^PASS /.test(l)).slice(-40).map((l) => '      ' + l).join('\n'));
 }
 

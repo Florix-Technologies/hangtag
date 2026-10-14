@@ -9,7 +9,7 @@ async function page(ctx,label,path='/',w=1180,h=900){
   const p=await ctx.newPage();await p.setViewport({width:w,height:h});
   p.on('pageerror',e=>{fails++;console.log(`[${label} pageerror]`,e.message)});
   await p.setRequestInterception(true);
-  p.on('request',r=>{const u=r.url();if(u.startsWith('http://localhost:3210/')&&(u==='http://localhost:3210/'||u.includes('/?')||u.includes('/#')||u.endsWith('index.html')))r.respond({status:200,contentType:'text/html',body:hooked});else r.continue()});
+  p.on('request',r=>{const u=r.url();if(u.startsWith('http://localhost:3210/')&&(u==='http://localhost:3210/'||u.includes('/?')||u.includes('/#')||u.endsWith('index.html')))r.respond({status:200,contentType:'text/html',body:hooked});else if(u.includes('.supabase.co/'))r.abort();else r.continue()});
   await p.goto('http://localhost:3210'+path,{waitUntil:'networkidle0'});await sleep(500);
   return p;
 }

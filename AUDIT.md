@@ -5,6 +5,28 @@ Newest session first. The audit never changed production data or services (no mi
 2026-10-13 the live project's catalog and query statistics were read through the Supabase CLI, which creates a
 short-lived login role (`cli_login_postgres`) to connect. Code is pushed only on the owner's word.
 
+## 2026-10-14 (ninth session: the diagnostics fix pushed; the tests cut off from the live project)
+
+The owner's brief: push `2827a20` once checked; make the browser tests unable to reach the live project (fail closed, with
+regression tests, never running browser tests against it while doing so); a Preview of the diagnostics change; the
+remaining diagnostics, the historical kept apart from the current. No production change.
+
+| # | Area | Finding | Status |
+|---|------|---------|--------|
+| 100 | `2827a20` | Its diff is the diagnostics (3 files), `sw.js`'s cache name, AUDIT.md and the described tests. Every operation the diagnostics keep is a literal app table name (4 × `table:hangtag_meta`, and `sbFetchAll`'s literal tables), and only `table:`/`rpc:` + `hangtag_` + letters is kept | **Pushed** (`40cf202..2827a20`, 16:29 UTC). Preview `hangtag-7v182xuei-florixtechnologies-projects.vercel.app` (Vercel: success). Not yet tested in the Preview: the owner signs in |
+| 101 | Browser tests reached the live project | **Confirmed.** Realtime WebSockets from every owner-mode test (request interception never sees them), and HTTP from five files that passed Supabase requests through: `accounts-isolation`, `offline-queue-sw`, `signin-tabs`, `shop-setup-settings`, `google-signin` (auth settings, profiles, sign-in methods, the status check, Edge Functions, the Google sign-in redirect, and one deliberate fetch of the auth settings) | Fixed: `tests/helpers/isolation.cjs` (`tests/README.md`, "Network isolation"). The five answer or refuse every Supabase request themselves. The Google check now checks the app's part (the sign-in address it sends the browser to); the service-worker check uses another origin on this computer. Tests: `tests/unit/test-isolation.test.mjs`, `tests/e2e/network-isolation.test.mjs` |
+| 102 | The proposed `MAP *.supabase.co 127.0.0.1` | Not enough. It sends those names to this computer (anything listening on 443 here would answer) instead of refusing them; it leaves every other host open (`supabase.co` itself, `supabase.com`, payment providers, IP literals); and a proxy resolves names itself, past the rule | Used instead: no name resolves except this computer and three static hosts (`MAP * ~NOTFOUND` + 6 `EXCLUDE`, IP literals included), `--no-proxy-server`, and the tripwire. This computer has no proxy |
+| 103 | `fn:subscription` | **Current.** Still not deployed: 9 functions are live, neither `subscription` nor `subscription-webhook`; the preflight answers 404 (15:36 UTC). In Chrome (isolated, preflight answered 404 as live): the call never leaves, "connection failed (fn:subscription)" is noted as a warning, and Plans & Billing still shows the plan, the trial and the prices, with "Online payment isn't set up yet. Contact Hangtag support to choose a plan." | Left undeployed: the owner's word, after reviewing the function |
+| 104 | `auth:token` ×6 | **Historical; cause not established.** There is no downloaded report on this computer, only the 13:45 print, which dates the six 10-13 without times | Needs the owner: "Download report" in the browser that recorded them (before using the new Preview at the same address), and the Auth logs for 10-13 15:30–18:30 UTC (a Free plan keeps them 1 day) |
+
+### Test results (run, not assumed)
+- With every test isolated: `npm test` **170/170 files**, then **30/30 database files on PostgreSQL 17**; `npm run check` clean.
+- The first isolated run failed 5 browser files on their requests to the live project (item 101), 4 of them with every
+  check passing; after their fix, all pass. The tripwire is itself tested: a test-only name mapped to this computer is
+  caught (HTTP and WebSocket); a public host and the live project's REST, Auth, Functions, Storage and realtime addresses
+  are refused at name resolution — checked in that order, the live addresses only after the public host was refused.
+- No browser test ran against the live project while this was built.
+
 ## 2026-10-14 (eighth session: the remaining production errors, diagnosed)
 
 The owner's brief: find the cause of each remaining code in the report printed 2026-10-14 13:45 IST (`PGRST116`,

@@ -5,11 +5,14 @@ let fails=0;const check=(name,ok,info)=>{if(!ok)fails++;console.log((ok?'PASS ':
 const html=H.indexHtml();
 const hooked=H.hookedHtml();
 const SHOT=H.ARTIFACTS+'/';
+const authorizeUrls=[];   // the project's sign-in addresses the app sent the browser to (answered here, never the real project)
 async function page(ctx,label,w=1100,h=820){
   const p=await ctx.newPage();await p.setViewport({width:w,height:h});
   p.on('pageerror',e=>{fails++;console.log(`[${label} pageerror]`,e.message)});
   await p.setRequestInterception(true);
-  p.on('request',r=>{const u=r.url();if(u.startsWith('http://localhost:3210/')&&(u==='http://localhost:3210/'||u.includes('/?')||u.endsWith('index.html')))r.respond({status:200,contentType:'text/html',body:hooked});else r.continue()});
+  p.on('request',r=>{const u=r.url();if(u.startsWith('http://localhost:3210/')&&(u==='http://localhost:3210/'||u.includes('/?')||u.endsWith('index.html')))r.respond({status:200,contentType:'text/html',body:hooked});
+    else if(/\.supabase\.co\/auth\/v1\/authorize\?/.test(u)&&r.isNavigationRequest()){authorizeUrls.push(u);r.respond({status:200,contentType:'text/html',body:'<!doctype html><title>Sign in (stand-in)</title><p>The sign-in page of the project would be here.</p>'})}
+    else if(u.includes('.supabase.co/'))r.abort();else r.continue()});
   await p.goto('http://localhost:3210/',{waitUntil:'networkidle0'});await sleep(500);
   return p;
 }
@@ -49,11 +52,14 @@ const ls=(p,k)=>p.evaluate(k=>localStorage.getItem(k),k);
     await run(A,`setAuthBusy(false);authSettings={external:{google:false}}`);
     await A.click('[data-provider="google"]');await sleep(300);
     check('Google switched off: plain message, no redirect',/Google sign-in isn't switched on/.test(await txt(A,'#authErr')||''));
-    // real Google redirect goes to Google (it is switched on in this project)
+    // a real click sends the browser to the project's sign-in with Google, back to this page (what Supabase and Google do
+    // then needs the real services: not checked here)
     await run(A,`authSettings=null;setAuthBusy(false);location.reload()`).catch(()=>{});
     await A.waitForSelector('[data-provider="google"]',{visible:true,timeout:15000});
     const [nv]=await Promise.all([A.waitForNavigation({timeout:15000}).catch(()=>null),A.click('[data-provider="google"]')]);
-    check('real click reaches Google sign-in',A.url().startsWith('https://accounts.google.com/')||A.url().includes('/auth/v1/authorize'),A.url().slice(0,60));
+    const az=authorizeUrls.length?new URL(authorizeUrls[authorizeUrls.length-1]):null;
+    check('real click goes to the sign-in with Google of the project, coming back to this page',!!az&&az.pathname==='/auth/v1/authorize'&&az.searchParams.get('provider')==='google'
+      &&az.searchParams.get('redirect_to')==='http://localhost:3210/'&&A.url().includes('/auth/v1/authorize'),az&&{path:az.pathname,provider:az.searchParams.get('provider'),redirect_to:az.searchParams.get('redirect_to')});
     await ctx.close();
 
     // ---------- each account keeps its own data on this device ----------

@@ -37,6 +37,8 @@ const CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'*'
       if(u.startsWith(SB+'/rest/v1/hangtag_profiles')&&r.method()==='GET'){const prof={id:uid,email,full_name:'Test '+uid,shop_name:'Test Shop',phone:'9876543210',city:'Pune',state:'Maharashtra'};const obj=/vnd.pgrst.object/.test(r.headers()['accept']||'');return r.respond({status:200,contentType:'application/json',headers:CORS,body:JSON.stringify(obj?prof:[prof])});}
       if(u.startsWith(SB+'/rest/v1/'))return r.respond({status:200,contentType:'application/json',headers:Object.assign({'content-range':'*/0'},CORS),body:r.method()==='HEAD'?'':'[]'});
       if(u.startsWith(SB+'/realtime'))return r.abort();
+      // anything else of the project (its Edge Functions): refused here, never the real project
+      if(u.startsWith(SB+'/'))return r.abort();
       r.continue();
     });
     if(preOwner)await p.evaluateOnNewDocument(o=>{if(location.hostname==='localhost'&&!sessionStorage.__seeded){sessionStorage.__seeded=1;localStorage.setItem('hangtag_data_owner',JSON.stringify(o))}},preOwner);

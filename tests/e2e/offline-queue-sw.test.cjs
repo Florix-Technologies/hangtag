@@ -1,4 +1,5 @@
 const H=require('../helpers/env.cjs');
+const iso=require('../helpers/isolation.cjs');const http=require('http');
 const puppeteer=require('puppeteer-core');const fs=require('fs');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 let fails=0;const check=(name,ok,info)=>{if(!ok)fails++;console.log((ok?'PASS ':'FAIL ')+name+(info!==undefined?'  '+JSON.stringify(info):''))};
@@ -9,6 +10,9 @@ const expiredSession=JSON.stringify({access_token:'x.y.z',token_type:'bearer',ex
 // seed localStorage before any app script runs
 async function page(ctx,label,{path='/',seed=null,onReq=null,hook=true}={}){
   const p=await ctx.newPage();await p.setViewport({width:1100,height:800});
+  // a service-worker page runs the app without request interception (it would bypass the worker): it has no backend, and its
+  // Supabase requests are refused at name resolution (tests/helpers/isolation.cjs); any contact would still be a violation
+  if(!hook&&!onReq)iso.noBackend(p);
   p.on('pageerror',e=>{fails++;console.log(`[${label} pageerror]`,e.message)});
   if(seed)await p.evaluateOnNewDocument(s=>{if(location.hostname==='localhost'){for(const [k,v] of Object.entries(s))localStorage.setItem(k,v)}},seed);
   if(hook||onReq){
@@ -17,6 +21,7 @@ async function page(ctx,label,{path='/',seed=null,onReq=null,hook=true}={}){
       if(onReq&&onReq(r))return;
       const u=r.url();
       if(hook&&u.startsWith('http://localhost:3210/')&&(u==='http://localhost:3210/'||u.includes('/?')||u.endsWith('index.html')))return r.respond({status:200,contentType:'text/html',body:hooked});
+      if(u.includes('.supabase.co/'))return r.abort();   // no Supabase request leaves the test
       r.continue();
     });
   }
@@ -133,13 +138,17 @@ const FAKE_DB=`
     await A.reload({waitUntil:'networkidle0'});await sleep(800);
     check('service worker controls the page',await A.evaluate(()=>!!navigator.serviceWorker.controller));
     await A.goto('http://localhost:3210/?code=abc123',{waitUntil:'networkidle0'});await sleep(1500);
-    await A.evaluate(async()=>{await fetch('https://wcorlmgkwcahyfastjoz.supabase.co/auth/v1/settings',{headers:{apikey:'sb_publishable_p0yGTC8iUv654ZiP9WCS-A_S0oinXAl'}}).catch(()=>{});});
+    // an answer from another origin (as Supabase's are) — here a server on this computer, never the real project — must not be saved
+    const other=http.createServer((q,s)=>{s.writeHead(200,{'content-type':'application/json','access-control-allow-origin':'*'});s.end('{"external":{}}')});
+    await new Promise(r=>other.listen(0,'127.0.0.1',r));const OTHER='http://127.0.0.1:'+other.address().port;
+    const otherAnswer=await A.evaluate(async(o)=>{try{const r=await fetch(o+'/auth/v1/settings');return r.status}catch(e){return 'failed'}},OTHER);
     await sleep(800);
     const keys=await A.evaluate(async()=>{const out=[];for(const n of await caches.keys()){const c=await caches.open(n);for(const r of await c.keys())out.push(n+' '+r.url)}return out});
     const CACHE=/const CACHE = "([^"]+)"/.exec(fs.readFileSync(H.ROOT+'/sw.js','utf8'))[1];
     check('cache name is the current build ('+CACHE+')',keys.every(k=>k.startsWith(CACHE+' ')),[...new Set(keys.map(k=>k.split(' ')[0]))]);
     check('no ?code= page saved',!keys.some(k=>k.includes('?code')),keys.filter(k=>k.includes('localhost')));
-    check('no Supabase answers saved',!keys.some(k=>k.includes('supabase.co')));
+    check('no answer from another origin saved (one came: '+otherAnswer+'), nor any from Supabase',otherAnswer===200&&!keys.some(k=>k.includes(OTHER)||k.includes('supabase.co')),keys.filter(k=>!k.includes('localhost:3210')&&!k.includes('jsdelivr')&&!k.includes('fonts.g')));
+    other.close();
     check('app page and Supabase library saved for offline',keys.some(k=>k.endsWith('localhost:3210/'))&&keys.some(k=>k.includes('cdn.jsdelivr.net')));
     check('every app module and stylesheet saved for offline',['/src/app/main.js','/src/features/sales/use-cases/checkout.js','/src/styles/20-sell.css'].every(f=>keys.some(k=>k.endsWith(f))),keys.filter(k=>k.includes('/src/')).length);
     await ctx.close();

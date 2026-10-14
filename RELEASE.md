@@ -117,6 +117,26 @@ error, stop, and run it again later.
 
 All of this was rehearsed on PGlite, on PostgreSQL 17 and 18, from the live project's state: `supabase/tests/live-recovery.test.mjs`.
 
+**Preflight of 2026-10-14 (06:32–06:38 UTC, read-only, on the live project):**
+- **Which database:** `wcorlmgkwcahyfastjoz`, PostgreSQL 17.6, system identifier 7678071634733212629.
+- **Dry run:** all 26 numbers 0.
+- **Catalog:** exactly as after the containment: the 18 functions, the 3 indexes, the older drift and nothing else.
+- **Migration history:** only the three September files.
+- **Data fingerprint:** 61 shop tables, 4,205 rows. Take it again right before the run.
+- **Size:** the Management API took an 830 KB script, larger than the 819 KB repair.
+
+**What runs:** `supabase/schema.sql` of `ee76f74` (819,383 bytes, sha256 `56cb6eaa62ef4d37…`), between `BEGIN;` +
+`SET LOCAL lock_timeout = '10s';` and `COMMIT;`.
+- **Constraints:** 49 of its 85 `ADD CONSTRAINT` re-check existing rows: the same constraints the 20:39 run validated, enforced on every write since. The other 36 are `NOT VALID`.
+- **Column types:** its 5 `ALTER COLUMN … TYPE` name the type the columns already have (`numeric(12,2)`), so no table is rewritten.
+- **Locks:** exclusive locks on Hangtag tables are held until `COMMIT`, about a second as on 2026-10-13. The app's requests wait for them.
+
+**Recovery:**
+- **No platform backup:** the live project has none. 0 physical backups, point-in-time recovery off.
+- **Data:** the repair changes no row (dry run). A `pg_dump` before it (step 2) is still the prudent copy.
+- **Undo:** `supabase/checks/2026-10-13-repair-undo.sql` puts back exactly what the repair replaces. That is the 18 functions as captured from the live project on 2026-10-14, and the 3 indexes. It is rehearsed: byte for byte the live versions again, no row changed. It brings back the older functions' gaps, so it is only for a repaired function that is proven to break the app, and only on the owner's word.
+- **Checks to add for the proof after the run:** `data-fingerprint.sql` (the same before and after) and `sync-read-isolation.sql` (a full sync as two owners reads no other shop's row).
+
 **Stays as it is** (older and harmless, not from 2026-10-13):
 - the owner foreign keys of six tables carry older names (`hangtag_sales_owner_fkey` …), with the same definition;
 - `hangtag_sales_money_check` prints `subtotal` without a cast;

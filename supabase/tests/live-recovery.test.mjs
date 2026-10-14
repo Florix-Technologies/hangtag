@@ -176,7 +176,11 @@ console.log('=== (3) the way back: schema.sql once more, as RELEASE.md runs it =
 {
   const dry = (await runCheck(db, 'schema-dry-run.sql'))[0].dryrun;
   check('checks/schema-dry-run.sql before it: every one of the 26 data changes would touch 0 rows', Object.keys(dry).length === 26 && Object.values(dry).every((n) => +n === 0), dry);
+  const fpBefore = await runCheck(db, 'data-fingerprint.sql');
   await db.exec(REPAIR);
+  const fpAfter = await runCheck(db, 'data-fingerprint.sql');
+  check(`checks/data-fingerprint.sql: the same before and after, for every one of the ${fpBefore.length} shop tables`,
+    fpBefore.length === TABLES.length && JSON.stringify(fpBefore) === JSON.stringify(fpAfter), fpAfter.filter((r, i) => JSON.stringify(r) !== JSON.stringify(fpBefore[i])));
   const rep = await report(db);
   check('every function is as on a fresh database again', changedFunctions(FRESH, await functions(db)).length === 0, changedFunctions(FRESH, await functions(db)));
   check('no "Public access" policy is left; report row 96 is 0', (await openPolicies(db)).length === 0 && +row96(rep).value === 0);
@@ -193,6 +197,24 @@ console.log('=== (3) the way back: schema.sql once more, as RELEASE.md runs it =
   check('checks/shop-isolation-probe.sql: no shop reads, changes, deletes or adds the other\'s rows; each changes its own', probe.length === 60
     && probe.every((r) => want[r.probe] && want[r.probe].test(r.result)), probe.filter((r) => !(want[r.probe] && want[r.probe].test(r.result))));
   check('…and the probe itself left every shop row as it was', changedTables(DATA0, await data(db, TABLES)).length === 0);
+  const RESTRICTED = /^hangtag_(backup_v\d+_\w+|subscriptions|trial_claims|promo_redemptions|webhook_secrets):42501$/;
+  const sync = await runCheck(db, 'sync-read-isolation.sql');
+  check('checks/sync-read-isolation.sql: a full sync as either owner reads no other shop\'s row, in any shop table; refusals only where the app never reads directly',
+    sync.length === 2 && sync.every((r) => +r.rows_of_other_shops === 0 && +r.rows_visible > 0 && +r.tables === TABLES.length
+      && String(r.errors || '').split(', ').filter(Boolean).every((e) => RESTRICTED.test(e))), sync);
+}
+
+console.log('=== (5) the repair\'s undo (checks/2026-10-13-repair-undo.sql, captured from the live project) ===');
+{
+  // the incident's functions are the live project's, byte for byte: the undo must give exactly them back, then the repair again
+  await db.exec(fs.readFileSync(new URL('2026-10-13-repair-undo.sql', CHECKS), 'utf8'));
+  const fv = await runCheck(db, '2026-10-13-function-versions.sql');
+  check('after the undo: the 18 functions are the live project\'s pre-repair versions again, the 3 indexes back', fv.filter((r) => r.state === 'OLDER VERSION').length === 18
+    && fv.filter((r) => r.state === 'STILL THERE').length === 3, fv.filter((r) => r.state === 'ok'));
+  check('…and they are byte for byte the bodies the incident left (the same 18 as the live project)', JSON.stringify(changedFunctions(FRESH, await functions(db))) === JSON.stringify(LIVE_OLDER));
+  check('…it changed no shop row', changedTables(DATA0, await data(db, TABLES)).length === 0);
+  await db.exec(REPAIR);
+  check('the repair applies again on top of it: all 21 ok', (await runCheck(db, '2026-10-13-function-versions.sql')).every((r) => r.state === 'ok'));
 }
 
 console.log('=== (4) each shop sees only its own rows again ===');

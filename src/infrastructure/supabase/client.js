@@ -5,6 +5,7 @@
 // without a second client (two clients would refresh the same session against each other). No key: no header.
 
 import { recordEvent, recordLatency } from '../../shared/logging/diagnostics.js';
+import { createNetworkTiming } from './network-timing.js';
 
 export const DEVICE_HEADER = "x-hangtag-device";
 export const SLOW_MS = 3000;   // a call slower than this is noted (by its operation name and a duration band)
@@ -20,18 +21,28 @@ export function apiOp(url){
   }catch{ return "other"; }
 }
 /* fetch that times every call (the 24-hour latency by operation) and notes slow calls, server errors and failed connections
-   (never the address's values, the body or the answer) */
-export function withTiming(fetchImpl, clock = () => (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now())){
+   (never the address's values, the body or the answer). This timer runs until the page's thread takes the answer, so a
+   slow call is noted with the network's own time as the browser measured it, and whether the page was hidden meanwhile
+   (a busy or hidden page makes a quick answer look slow); a failed connection with the latter (network-timing.js). */
+export function withTiming(fetchImpl, clock = () => (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now()),
+  timing = createNetworkTiming({ opOf: apiOp })){
   return async (input, init) => {
-    const t0 = clock(), url = typeof input === "string" ? input : (input && input.url) || "", op = apiOp(url);
+    const t0 = clock(), url = typeof input === "string" ? input : (input && input.url) || "", op = apiOp(url), hidden0 = timing.hidden();
     try{
       const res = await fetchImpl(input, init), ms = clock() - t0;
       recordLatency(op, ms, !(res && res.status >= 500));
       if(res && res.status >= 500) recordEvent("api", "server-error", { op, status: res.status, ms });
-      else if(ms > SLOW_MS) recordEvent("api", "slow-call", { op, status: res && res.status, ms }, "warn");
+      else if(ms > SLOW_MS){
+        const status = res && res.status, hidden = hidden0 || timing.hiddenSince(t0);
+        // noted once the browser has told the network time (or not, within 10 s)
+        timing.network(op, t0).then((net) => recordEvent("api", "slow-call", { op, status, ms, net, hidden }, "warn"));
+      }
       return res;
     }catch(e){
-      if(!(e && e.name === "AbortError")){ recordLatency(op, clock() - t0, false); recordEvent("api", "connection-failed", { op, ms: clock() - t0 }, "warn"); }
+      if(!(e && e.name === "AbortError")){
+        recordLatency(op, clock() - t0, false);
+        recordEvent("api", "connection-failed", { op, ms: clock() - t0, hidden: hidden0 || timing.hiddenSince(t0) }, "warn");
+      }
       throw e;
     }
   };

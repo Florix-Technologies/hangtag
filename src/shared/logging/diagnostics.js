@@ -96,14 +96,17 @@ const safeOp = v => { const s = text(v).toLowerCase().replace(/[^a-z0-9_:.-]/g, 
 /* a duration as a band, never the exact time */
 export const durationBand = ms => { const n = +ms; return !Number.isFinite(n) || n < 0 ? "" : n < 1000 ? "under 1 s" : n < 3000 ? "1–3 s" : n < 10000 ? "3–10 s" : n < 30000 ? "10–30 s" : "30 s or more"; };
 /* A structured event: the category, what happened (kind: "upload-failed", "slow-call" …) and allowlisted technical fields —
-   op (an operation name), code, status, ms (kept only as a band), count. Nothing else is read from fields. */
+   op (an operation name), code, status, ms (kept only as a band), count, net (the network's own time of a call, also only
+   as a band) and hidden (true: the page was hidden meanwhile). Nothing else is read from fields. */
 export function recordEvent(category, kind, fields = {}, level){
   const cat = Object.prototype.hasOwnProperty.call(DIAG_CATEGORIES, category) ? category : "app", what = safeToken(kind, "event");
   const f = fields && typeof fields === "object" ? fields : {}, op = safeOp(f.op), band = durationBand(f.ms);
+  const net = typeof f.net === "number" ? durationBand(f.net) : "", hidden = f.hidden === true;
   const n = Number.isInteger(+f.count) && +f.count > 1 ? Math.min(9999, +f.count) : 0;
-  const message = `${what.replace(/-/g, " ")}${op ? " (" + op + ")" : ""}${band ? " · " + band : ""}${n ? " · " + n + " items" : ""}`;
+  const message = `${what.replace(/-/g, " ")}${op ? " (" + op + ")" : ""}${band ? " · " + band : ""}${net ? " · network " + net : ""}${hidden ? " · page hidden" : ""}`
+    + `${n ? " · " + n + " items" : ""}`;
   return recordDiagnostic({ level: ["error", "warn", "info"].includes(level) ? level : "error", source: cat, kind: what, category: cat, op,
-    message, code: f.code, status: f.status });
+    message, code: f.code, status: f.status, net, hidden });
 }
 /* input: technical fields only; unknown object fields are never retained. */
 export function recordDiagnostic(input = {}){
@@ -120,6 +123,8 @@ export function recordDiagnostic(input = {}){
   if(input.op){ const op = safeOp(input.op); if(op) entry.op = op; }
   const code = safeCode(input.code || (error && error.code)); if(code) entry.code = code;
   const status = +(input.status || (error && (error.status || error.statusCode))); if(Number.isInteger(status) && status >= 100 && status <= 599) entry.status = status;
+  if(BAND_WORDS.includes(input.net)) entry.net = input.net;
+  if(input.hidden === true) entry.hidden = true;
   const list = read().slice(), previous = list[list.length - 1];
   if(previous && previous.level === entry.level && previous.source === entry.source && previous.kind === entry.kind && previous.message === entry.message && now - Date.parse(previous.at) < 60000){
     list[list.length - 1] = { ...previous, at: entry.at, count: Math.min(999, (previous.count || 1) + 1) };

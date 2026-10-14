@@ -58,6 +58,56 @@ const d = getDiagnostics();
 check('a slow call, a server error and a failed connection are noted by operation; a quick or refused call is not', d.length === 3 && d.map((x) => x.kind).join() === 'slow-call,server-error,connection-failed'
   && d[1].status === 503 && d.every((x) => x.category === 'api') && !/INV-1|eq\./.test(JSON.stringify(d)), d);
 
+console.log('=== a slow call: the network\'s own time, and a hidden page ===');
+// the app's timer runs until the page's thread takes the answer: a busy or hidden page makes a quick answer look slow
+clearDiagnostics();
+const e3 = recordEvent('api', 'slow-call', { op: 'rpc:hangtag_subscription_status', ms: 5200, status: 200, net: 180, hidden: true }, 'warn');
+check('a slow call with the network\'s own time and a hidden page: both as words (a band, a flag), never the exact times',
+  e3.message === 'slow call (rpc:hangtag_subscription_status) · 3–10 s · network under 1 s · page hidden' && e3.net === 'under 1 s' && e3.hidden === true
+  && !/5200|180/.test(JSON.stringify(e3)), e3);
+const e4 = recordEvent('api', 'slow-call', { op: 'rpc:x', ms: 4000, net: '9876543210', hidden: 'yes' }, 'warn');
+check('…a network time that isn\'t a number, or a "hidden" that isn\'t true, is left out', e4.message === 'slow call (rpc:x) · 3–10 s' && !('net' in e4) && !('hidden' in e4), e4);
+clearDiagnostics();
+{
+  let t3 = 0; const clock3 = () => t3;
+  const timing = (net, hidden) => ({ hidden: () => false, hiddenSince: () => hidden, network: async () => net });
+  const busyPage = withTiming(async () => { t3 += 4000; return { status: 200 }; }, clock3, timing(120, false));
+  const hiddenSlow = withTiming(async () => { t3 += 6000; return { status: 200 }; }, clock3, timing(5800, true));
+  const unknown = withTiming(async () => { t3 += 3500; return { status: 200 }; }, clock3, timing(null, false));
+  const asleep = withTiming(async () => { throw new TypeError('Failed to fetch'); }, clock3, timing(null, true));
+  await busyPage('https://p.supabase.co/rest/v1/rpc/hangtag_subscription_status?x=eq.9876543210');
+  await hiddenSlow('https://p.supabase.co/rest/v1/rpc/hangtag_subscription_status');
+  await unknown('https://p.supabase.co/rest/v1/hangtag_sales');
+  await asleep('https://p.supabase.co/auth/v1/token?grant_type=refresh_token').catch(() => {});
+  await new Promise((r) => setTimeout(r, 0));
+  const m = getDiagnostics().map((x) => x.message);
+  check('withTiming: a slow call the network answered quickly (a busy page), one slow on the network while the page was hidden, one the browser didn\'t time, and a failed connection while hidden',
+    m.length === 4 && m[0] === 'slow call (rpc:hangtag_subscription_status) · 3–10 s · network under 1 s' && m[1] === 'slow call (rpc:hangtag_subscription_status) · 3–10 s · network 3–10 s · page hidden'
+    && m[2] === 'slow call (table:hangtag_sales) · 3–10 s' && m[3] === 'connection failed (auth:token) · under 1 s · page hidden' && !/9876543210|eq\./.test(JSON.stringify(getDiagnostics())), m);
+}
+{
+  // the browser's side, with a stand-in window: Resource Timing entries as they come, and the page's visibility
+  const { createNetworkTiming } = await import('../../src/infrastructure/supabase/network-timing.js');
+  const on = {}; let vis = 'visible', nowMs = 1000, deliver = null;
+  const win = { document: { get visibilityState() { return vis; }, addEventListener: (k, f) => { on[k] = f; } }, performance: { now: () => nowMs },
+    PerformanceObserver: class { constructor(cb) { deliver = cb; } observe() {} } };
+  const nt = createNetworkTiming({ opOf: apiOp, win });
+  const waiting = nt.network('rpc:hangtag_subscription_status', 1000, 500);
+  deliver({ getEntries: () => [{ initiatorType: 'script', name: 'https://p.supabase.co/rest/v1/rpc/hangtag_subscription_status', startTime: 1001, duration: 9 },
+    { initiatorType: 'fetch', name: 'https://p.supabase.co/rest/v1/rpc/hangtag_subscription_status?p=eq.9876543210', startTime: 1002, duration: 140 }] });
+  const got = await waiting, later = await nt.network('rpc:hangtag_subscription_status', 1003, 50), none = await nt.network('rpc:hangtag_save_sales', 1000, 50);
+  check('the network time of a call: the browser\'s own (a fetch of that operation, started then), also when asked after it came; none when it doesn\'t come in time',
+    got === 140 && later === 140 && none === null, { got, later, none });
+  nowMs = 2000;
+  const before = nt.hiddenSince(1500);
+  vis = 'hidden'; nowMs = 2100; on.visibilitychange(); vis = 'visible'; nowMs = 2200; on.visibilitychange();
+  check('…and the page\'s visibility: a call since 1500 saw the page hidden (at 2100), one since 2150 didn\'t', before === false && nt.hiddenSince(1500) === true
+    && nt.hiddenSince(2150) === false && nt.hidden() === false);
+  const plain = createNetworkTiming({ opOf: apiOp, win: null });
+  check('…in Node (no page): nothing is known, nothing is waited for', plain.hidden() === false && plain.hiddenSince(0) === false && (await plain.network('rpc:x', 0)) === null);
+}
+clearDiagnostics();
+
 console.log('=== database errors ===');
 clearDiagnostics();
 toAppError({ code: '23505', message: 'duplicate key value violates unique constraint Key (phone)=(9876543210)' });

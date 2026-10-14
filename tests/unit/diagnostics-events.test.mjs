@@ -69,6 +69,39 @@ check('the SQLSTATE only (a unique violation), never the database\'s message; a 
   db.length === 1 && db[0].category === 'database' && db[0].code === '23505' && db[0].kind === 'unique-violation' && !/9876543210|Riya|phone/.test(JSON.stringify(db)), db);
 clearDiagnostics();
 
+// 2026-10-13: "Problem · error PGRST116" said neither what it meant nor which read failed (supabase-js raises it itself, after
+// the server answered 200, when a single-row read gets several rows)
+toAppError({ code: 'PGRST116', message: 'JSON object requested, multiple (or no) rows returned', details: 'Results contain 9 rows, application/vnd.pgrst.object+json requires 1 row' },
+  'table:hangtag_meta');
+let ev = getDiagnostics();
+check('a single-row read that got several rows: "more than one row (table:hangtag_meta)", a problem; never the rows or the message',
+  ev.length === 1 && ev[0].category === 'database' && ev[0].code === 'PGRST116' && ev[0].kind === 'more-than-one-row' && ev[0].op === 'table:hangtag_meta' && ev[0].level === 'error'
+  && /more than one row \(table:hangtag_meta\)/.test(ev[0].message) && !/9 rows|JSON object|requires/.test(JSON.stringify(ev)), ev);
+clearDiagnostics();
+{
+  const { sbFetchAll } = await import('../../src/infrastructure/supabase/query.js');
+  const missing = { from: () => { const q = { select: () => q, order: () => q,
+    range: async () => ({ data: null, error: { code: 'PGRST205', message: "Could not find the table 'public.hangtag_units' in the schema cache" } }) }; return q; } };
+  let err = null; try { await sbFetchAll(missing, 'hangtag_units', ['id']); } catch (e) { err = e; }
+  ev = getDiagnostics();
+  check('…a table the database doesn\'t have, read in bulk: "database update needed (table:hangtag_units)", and the read still refuses as before',
+    err && err.code === 'OUTDATED_DATABASE' && ev.length === 1 && ev[0].kind === 'database-update-needed' && ev[0].op === 'table:hangtag_units' && ev[0].code === 'PGRST205'
+    && ev[0].level === 'warn' && !/schema cache/.test(JSON.stringify(ev)), { err: err && err.code, ev });
+}
+clearDiagnostics();
+toAppError({ code: '23505', message: 'x' });
+check('…a caller that names no operation records the code as before (no operation field)', getDiagnostics().length === 1 && !('op' in getDiagnostics()[0])
+  && getDiagnostics()[0].code === '23505', getDiagnostics());
+clearDiagnostics();
+toAppError({ code: '42501', message: 'new row violates row-level security policy for table "hangtag_sales"' }, 'table:hangtag_sales');
+toAppError({ code: '23505', message: 'x' }, 'table:9876543210');
+toAppError({ code: '23503', message: 'x' }, 'table:hangtag_customers?phone=eq.9876543210');
+ev = getDiagnostics();
+check('…a refusal by row security stays a problem, with its table; an operation not in the app\'s own shape (a number, a filter) is never kept',
+  ev.length === 3 && ev[0].kind === 'permission-denied' && ev[0].level === 'error' && ev[0].op === 'table:hangtag_sales' && !('op' in ev[1]) && !('op' in ev[2])
+  && !/9876543210|phone/.test(JSON.stringify(ev)), ev);
+clearDiagnostics();
+
 Object.assign(console, quiet);
 console.log(fails ? `\n${fails} FAILED` : '\nall passed');
 process.exit(fails ? 1 : 0);

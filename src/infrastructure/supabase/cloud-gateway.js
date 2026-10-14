@@ -217,24 +217,24 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
     fetchDayCloses: async () => (await sbFetchAll(db(), 'hangtag_day_closes', ['day','id'])).map(rowToDayClose),
     /* The saved settings object, or null */
     async fetchSettings(){
-      const { data } = sbOk(await table('hangtag_meta').select('value').eq('key','settings').maybeSingle());
+      const { data } = sbOk(await table('hangtag_meta').select('value').eq('key','settings').maybeSingle(), 'table:hangtag_meta');
       return data ? data.value : null;
     },
     /* The shop logo (data URL), "" when there is none */
     /* { signature, stamp }: the pictures the shop keeps for its A4 documents ("" when none) */
     async fetchDocImages(){
-      const { data } = sbOk(await table('hangtag_meta').select('key,value').in('key', ['doc_signature','doc_stamp']));
+      const { data } = sbOk(await table('hangtag_meta').select('key,value').in('key', ['doc_signature','doc_stamp']), 'table:hangtag_meta');
       const out = { signature:'', stamp:'' };
       (data || []).forEach(r => { const v = r.value && r.value.data; if(typeof v === 'string' && /^data:image\//.test(v)) out[r.key.slice(4)] = v; });
       return out;
     },
     /* Every device's automation log, as one list */
     async fetchAutomationLogs(){
-      const { data } = sbOk(await table('hangtag_meta').select('key,value').like('key', 'autolog:%'));
+      const { data } = sbOk(await table('hangtag_meta').select('key,value').like('key', 'autolog:%'), 'table:hangtag_meta');
       return (data || []).flatMap(r => r.value && Array.isArray(r.value.entries) ? r.value.entries : []);
     },
     async fetchLogo(){
-      const { data } = sbOk(await table('hangtag_meta').select('value').eq('key','logo').maybeSingle());
+      const { data } = sbOk(await table('hangtag_meta').select('value').eq('key','logo').maybeSingle(), 'table:hangtag_meta');
       return data && data.value && typeof data.value.data === 'string' ? data.value.data : "";
     },
     /* A quotation's messages to its customer (send-receipt with order_id), newest first */

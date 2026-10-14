@@ -3,22 +3,27 @@ import { AppError, ERROR_CODES as C } from '../../shared/errors/app-error.js';
 import { recordEvent } from '../../shared/logging/diagnostics.js';
 
 const DB_KIND = { "23505": "unique-violation", "23503": "missing-reference", "42501": "permission-denied", "40001": "changed-elsewhere",
-  "42883": "database-update-needed", "42P01": "database-update-needed", "42703": "database-update-needed", PGRST202: "database-update-needed", PGRST205: "database-update-needed" };
-/* A database error worth counting in diagnostics (SQLSTATE or PostgREST code; not a rule's message for people, not the plan lock) */
-function noteDatabase(code){
+  "42883": "database-update-needed", "42P01": "database-update-needed", "42703": "database-update-needed", PGRST202: "database-update-needed", PGRST205: "database-update-needed",
+  // a single-row read (maybeSingle) that got several rows: supabase-js says so itself, after the server answered 200
+  PGRST116: "more-than-one-row" };
+/* the operation is kept only in the app's own shape, a table or RPC named hangtag_ + letters and underscores: never a number, an id or a value */
+const DB_OP = /^(?:table|rpc):hangtag_[a-z_]{1,50}$/;
+/* A database error worth counting in diagnostics (SQLSTATE or PostgREST code; not a rule's message for people, not the plan lock),
+   with the operation it came from when the caller knows it (op: "table:hangtag_meta"), so the report says where */
+function noteDatabase(code, op){
   if(!(/^[0-9A-Z]{5}$/.test(code) || /^PGRST\d+$/.test(code)) || ["P0001", "23514", "HT402"].includes(code)) return;
-  recordEvent("database", DB_KIND[code] || "error", { code }, DB_KIND[code] && code !== "42501" ? "warn" : "error");
+  recordEvent("database", DB_KIND[code] || "error", { code, op: DB_OP.test(op) ? op : undefined }, DB_KIND[code] && !["42501", "PGRST116"].includes(code) ? "warn" : "error");
 }
 
 const NETWORK = /failed to fetch|networkerror|network request failed|load failed|fetch failed|timed? ?out|econn|enotfound/i;
 const AUTH = /jwt|token (has )?expired|not authenticated|invalid claim|refresh token/i;
 const OUTDATED = /PGRST20[25]|42P01|42703|42883|does not exist|schema cache/i;
 
-export function toAppError(e){
+export function toAppError(e, op){
   if(e instanceof AppError) return e;
   const code = String((e && (e.code || e.status)) || ""), msg = String((e && e.message) || e || "");
   const make = (c, text) => new AppError(c, text, { cause: e, details: { code } });
-  noteDatabase(code);
+  noteDatabase(code, op);
   if(NETWORK.test(msg)) return make(C.NETWORK, "No internet connection. It will try again.");
   // the shop's plan has ended (schema.sql section 3t): kept and sent again after renewal, never a refusal to review
   if(code === "HT402" || /HANGTAG_SUBSCRIPTION_INACTIVE/.test(msg)) return make(C.SUBSCRIPTION, "This shop's Hangtag plan has ended. Renew it in Plans & Billing; your changes are kept until then.");

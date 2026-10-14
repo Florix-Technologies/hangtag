@@ -1,15 +1,16 @@
 // Supabase query helpers: error handling and paging (for the gateway).
 import { toAppError } from './errors.js';
 
-/* supabase-js returns {error} instead of throwing — turn it into a throw (an AppError) so callers can queue a retry */
-export const sbOk=r=>{if(r&&r.error)throw toAppError(r.error);return r};
+/* supabase-js returns {error} instead of throwing — turn it into a throw (an AppError) so callers can queue a retry. op: the
+   table or RPC the request was for ("table:hangtag_meta"), noted with a database error so the diagnostics say where. */
+export const sbOk=(r,op)=>{if(r&&r.error)throw toAppError(r.error,op);return r};
 /* Supabase returns at most 1000 rows per request, so page through the whole table */
 export async function sbFetchAll(client,table,orders){
   const out=[],N=1000;
   for(let from=0;;from+=N){
     let q=client.from(table).select('*');
     orders.forEach(o=>{q=q.order(o,{ascending:true})});
-    const {data}=sbOk(await q.range(from,from+N-1));
+    const {data}=sbOk(await q.range(from,from+N-1),'table:'+table);
     out.push(...(data||[]));
     if(!data||data.length<N)break;
   }

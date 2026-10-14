@@ -95,9 +95,11 @@ clearDiagnostics();
   const waiting = nt.network('rpc:hangtag_subscription_status', 1000, 500);
   deliver({ getEntries: () => [{ initiatorType: 'script', name: 'https://p.supabase.co/rest/v1/rpc/hangtag_subscription_status', startTime: 1001, duration: 9 },
     { initiatorType: 'fetch', name: 'https://p.supabase.co/rest/v1/rpc/hangtag_subscription_status?p=eq.9876543210', startTime: 1002, duration: 140 }] });
-  const got = await waiting, later = await nt.network('rpc:hangtag_subscription_status', 1003, 50), none = await nt.network('rpc:hangtag_save_sales', 1000, 50);
+  const got = await waiting;
+  deliver({ getEntries: () => [{ initiatorType: 'fetch', name: 'https://p.supabase.co/rest/v1/rpc/hangtag_subscription_status', startTime: 1500, duration: 80 }] });
+  const later = await nt.network('rpc:hangtag_subscription_status', 1501, 50), none = await nt.network('rpc:hangtag_save_sales', 1000, 50);
   check('the network time of a call: the browser\'s own (a fetch of that operation, started then), also when asked after it came; none when it doesn\'t come in time',
-    got === 140 && later === 140 && none === null, { got, later, none });
+    got === 140 && later === 80 && none === null, { got, later, none });
   nowMs = 2000;
   const before = nt.hiddenSince(1500);
   vis = 'hidden'; nowMs = 2100; on.visibilitychange(); vis = 'visible'; nowMs = 2200; on.visibilitychange();
@@ -105,6 +107,45 @@ clearDiagnostics();
     && nt.hiddenSince(2150) === false && nt.hidden() === false);
   const plain = createNetworkTiming({ opOf: apiOp, win: null });
   check('…in Node (no page): nothing is known, nothing is waited for', plain.hidden() === false && plain.hiddenSince(0) === false && (await plain.network('rpc:x', 0)) === null);
+
+  // two calls of one operation: a timing goes to one call only, the closest; started together, neither gets one
+  const w2 = { document: { visibilityState: 'visible', addEventListener() {} }, performance: { now: () => 0 }, addEventListener: (k, f) => { w2[k] = f; },
+    PerformanceObserver: class { constructor(cb) { w2.deliver = cb; } observe() {} } };
+  const t2 = createNetworkTiming({ opOf: apiOp, win: w2 });
+  const URL_T = 'https://p.supabase.co/rest/v1/hangtag_table_sessions';
+  t2.begin('table:hangtag_table_sessions', 1000); t2.begin('table:hangtag_table_sessions', 1000.5);   // started together
+  const a = t2.network('table:hangtag_table_sessions', 1000, 50), b = t2.network('table:hangtag_table_sessions', 1000.5, 50);
+  w2.deliver({ getEntries: () => [{ initiatorType: 'fetch', name: URL_T, startTime: 1000.2, duration: 3600 }, { initiatorType: 'fetch', name: URL_T, startTime: 1000.6, duration: 150 }] });
+  const [na, nb] = await Promise.all([a, b]);
+  t2.begin('table:hangtag_table_sessions', 5000); t2.begin('table:hangtag_table_sessions', 5400);   // apart: each has its own
+  const c = t2.network('table:hangtag_table_sessions', 5000, 200), d2 = t2.network('table:hangtag_table_sessions', 5400, 200);
+  w2.deliver({ getEntries: () => [{ initiatorType: 'fetch', name: URL_T, startTime: 5401, duration: 90 }, { initiatorType: 'fetch', name: URL_T, startTime: 5001, duration: 3700 }] });
+  const [nc, nd] = await Promise.all([c, d2]);
+  t2.begin('rpc:hangtag_save_sales', 9000);
+  w2.deliver({ getEntries: () => [{ initiatorType: 'fetch', name: 'https://p.supabase.co/rest/v1/rpc/hangtag_save_sales', startTime: 9001, duration: 120 }] });
+  const once = await t2.network('rpc:hangtag_save_sales', 9000, 30), again = await t2.network('rpc:hangtag_save_sales', 9002, 30);
+  check('two calls of one operation: started together, neither gets a network time (a guess could blame the page for the network); apart, each gets its own; a timing is used once',
+    na === null && nb === null && nc === 3700 && nd === 90 && once === 120 && again === null, { na, nb, nc, nd, once, again });
+  t2.begin('rpc:hangtag_subscription_status', 20000);
+  const left = t2.network('rpc:hangtag_subscription_status', 20000, 60000);
+  w2.pagehide();
+  check('…leaving the page: a call still waiting is noted at once (without a network time), not lost', (await left) === null);
+}
+clearDiagnostics();
+{
+  // the entry is stamped with the time the answer came, though noted once the network time is known
+  let t4 = 0; const before = Date.now();
+  const late = { hidden: () => false, hiddenSince: () => false, begin() {}, network: () => new Promise((r) => setTimeout(() => r(200), 120)) };
+  await withTiming(async () => { t4 += 3500; return { status: 200 }; }, () => t4, late)('https://p.supabase.co/rest/v1/rpc/hangtag_subscription_status');
+  const answered = Date.now();
+  await new Promise((r) => setTimeout(r, 200));
+  const e5 = getDiagnostics().find((x) => x.kind === 'slow-call');
+  check('…a slow call noted later is stamped with the time its answer came', !!e5 && Date.parse(e5.at) >= before && Date.parse(e5.at) <= answered, { at: e5 && e5.at, before, answered });
+  // the notes never stand in the way of the call: a timing that throws leaves the answer (or the failure) as it was
+  const broken = { hidden() { throw new Error('x'); }, hiddenSince() { throw new Error('x'); }, begin() { throw new Error('x'); }, network() { throw new Error('x'); } };
+  const okRes = await withTiming(async () => { t4 += 4000; return { status: 200, ok: true }; }, () => t4, broken)('https://p.supabase.co/rest/v1/hangtag_sales').catch((e) => 'rejected: ' + e.message);
+  const failed = await withTiming(async () => { throw new TypeError('Failed to fetch'); }, () => t4, broken)('https://p.supabase.co/auth/v1/token').catch((e) => e.name);
+  check('…and a timing that fails never breaks a call: the answer comes back, a failure stays the same failure', okRes && okRes.status === 200 && failed === 'TypeError', { okRes, failed });
 }
 clearDiagnostics();
 

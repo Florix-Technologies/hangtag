@@ -26,25 +26,34 @@ export function apiOp(url){
    (a busy or hidden page makes a quick answer look slow); a failed connection with the latter (network-timing.js). */
 export function withTiming(fetchImpl, clock = () => (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now()),
   timing = createNetworkTiming({ opOf: apiOp })){
+  // the notes never stand in the call's way: an error in them is dropped, the answer (or the failure) goes back as it came
+  const safe = (fn, dflt) => { try{ return fn(); }catch{ return dflt; } };
   return async (input, init) => {
-    const t0 = clock(), url = typeof input === "string" ? input : (input && input.url) || "", op = apiOp(url), hidden0 = timing.hidden();
-    try{
-      const res = await fetchImpl(input, init), ms = clock() - t0;
+    const t0 = clock(), url = typeof input === "string" ? input : (input && input.url) || "", op = apiOp(url);
+    const hidden0 = safe(() => timing.hidden(), false);
+    safe(() => timing.begin && timing.begin(op, t0));
+    let res;
+    try{ res = await fetchImpl(input, init); }
+    catch(e){
+      if(!(e && e.name === "AbortError")) safe(() => {
+        const ms = clock() - t0;
+        recordLatency(op, ms, false);
+        recordEvent("api", "connection-failed", { op, ms, hidden: hidden0 || safe(() => timing.hiddenSince(t0), false) }, "warn");
+      });
+      throw e;
+    }
+    safe(() => {
+      const ms = clock() - t0, at = Date.now();
       recordLatency(op, ms, !(res && res.status >= 500));
       if(res && res.status >= 500) recordEvent("api", "server-error", { op, status: res.status, ms });
       else if(ms > SLOW_MS){
-        const status = res && res.status, hidden = hidden0 || timing.hiddenSince(t0);
-        // noted once the browser has told the network time (or not, within 10 s)
-        timing.network(op, t0).then((net) => recordEvent("api", "slow-call", { op, status, ms, net, hidden }, "warn"));
+        const status = res && res.status, hidden = hidden0 || safe(() => timing.hiddenSince(t0), false);
+        // noted once the browser has told the network time (or not), stamped with the time the answer came
+        Promise.resolve(timing.network(op, t0)).catch(() => null)
+          .then((net) => safe(() => recordEvent("api", "slow-call", { op, status, ms, net, hidden, at }, "warn")));
       }
-      return res;
-    }catch(e){
-      if(!(e && e.name === "AbortError")){
-        recordLatency(op, clock() - t0, false);
-        recordEvent("api", "connection-failed", { op, ms: clock() - t0, hidden: hidden0 || timing.hiddenSince(t0) }, "warn");
-      }
-      throw e;
-    }
+    });
+    return res;
   };
 }
 /* fetch with this phone's device key added when there is one */

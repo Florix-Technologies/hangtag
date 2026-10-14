@@ -97,7 +97,8 @@ const safeOp = v => { const s = text(v).toLowerCase().replace(/[^a-z0-9_:.-]/g, 
 export const durationBand = ms => { const n = +ms; return !Number.isFinite(n) || n < 0 ? "" : n < 1000 ? "under 1 s" : n < 3000 ? "1–3 s" : n < 10000 ? "3–10 s" : n < 30000 ? "10–30 s" : "30 s or more"; };
 /* A structured event: the category, what happened (kind: "upload-failed", "slow-call" …) and allowlisted technical fields —
    op (an operation name), code, status, ms (kept only as a band), count, net (the network's own time of a call, also only
-   as a band) and hidden (true: the page was hidden meanwhile). Nothing else is read from fields. */
+   as a band), hidden (true: the page was hidden meanwhile) and at (when it happened, epoch ms, when noted later: the
+   entry's time). Nothing else is read from fields. */
 export function recordEvent(category, kind, fields = {}, level){
   const cat = Object.prototype.hasOwnProperty.call(DIAG_CATEGORIES, category) ? category : "app", what = safeToken(kind, "event");
   const f = fields && typeof fields === "object" ? fields : {}, op = safeOp(f.op), band = durationBand(f.ms);
@@ -105,8 +106,9 @@ export function recordEvent(category, kind, fields = {}, level){
   const n = Number.isInteger(+f.count) && +f.count > 1 ? Math.min(9999, +f.count) : 0;
   const message = `${what.replace(/-/g, " ")}${op ? " (" + op + ")" : ""}${band ? " · " + band : ""}${net ? " · network " + net : ""}${hidden ? " · page hidden" : ""}`
     + `${n ? " · " + n + " items" : ""}`;
+  const at = Number.isFinite(f.at) && f.at > 0 && f.at <= Date.now() ? f.at : undefined;
   return recordDiagnostic({ level: ["error", "warn", "info"].includes(level) ? level : "error", source: cat, kind: what, category: cat, op,
-    message, code: f.code, status: f.status, net, hidden });
+    message, code: f.code, status: f.status, net, hidden, now: at });
 }
 /* input: technical fields only; unknown object fields are never retained. */
 export function recordDiagnostic(input = {}){

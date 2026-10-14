@@ -66,7 +66,8 @@ const launching = files(path.join(ROOT, 'tests')).filter((f) => /puppeteer\.(lau
 const loose = launching.filter((f) => !/helpers\/(env\.(mjs|cjs)|app\.mjs)|\.\/env\.mjs/.test(readFileSync(f, 'utf8').replace(/\\/g, '/')));
 check(`every file that starts a browser (${launching.length}) loads the test settings (env.cjs / env.mjs / app.mjs), which install the isolation`,
   launching.length > 40 && loose.length === 0, loose.map((f) => path.relative(ROOT, f)));
-check('…no test connects to a browser it didn\'t start', !launching.some((f) => /puppeteer\.connect\(/.test(readFileSync(f, 'utf8'))));
+check('…no test connects to a browser it didn\'t start (only the isolation test tries, to show it is refused)',
+  !launching.filter((f) => !/[\\/]e2e[\\/]network-isolation\.test\.mjs$/.test(f)).some((f) => /puppeteer\.connect\(/.test(readFileSync(f, 'utf8'))));
 const runner = readFileSync(path.join(ROOT, 'tests', 'run.mjs'), 'utf8');
 check('…and the runner starts every file with the isolation (--import isolation-hook.mjs; Chrome\'s for browser files), also in NODE_OPTIONS for the Node processes a test starts',
   /'--import', ISOLATION, file/.test(runner) && /isolation-hook\.mjs/.test(runner) && /HANGTAG_TEST_BROWSER: usesBrowser\(file\)/.test(runner)
@@ -79,6 +80,25 @@ check('…and the runner starts every file with the isolation (--import isolatio
   const code = "fetch('http://example.com/').then(() => console.log('answered'), (e) => console.log((e.cause && e.cause.code) || e.message)).finally(() => process.exit(0))";
   const r = spawnSync(process.execPath, ['-e', code], { encoding: 'utf8', env: { ...process.env, NODE_OPTIONS: '--import=' + hook } });
   check('…a Node process started by a test, with the runner\'s NODE_OPTIONS: refused before connecting too', /^ETESTISOLATION/m.test(r.stdout), { out: r.stdout.trim().slice(0, 200), err: r.stderr.trim().slice(0, 200) });
+  // a file run on its own (no runner, no NODE_OPTIONS): the worker threads and Node processes it starts are isolated too
+  const own = [
+    `require(${JSON.stringify(path.join(ROOT, 'tests', 'helpers', 'isolation.cjs'))}).install();`,
+    `const { Worker } = require('node:worker_threads');`,
+    `const w = new Worker("fetch('http://example.com/').then(() => console.log('worker answered'), (e) => console.log('worker ' + ((e.cause && e.cause.code) || e.message)))", { eval: true });`,
+    `w.on('exit', () => { const c = require('node:child_process').spawnSync(process.execPath, ['-e', "fetch('http://example.com/').then(() => console.log('child answered'), (e) => console.log('child ' + ((e.cause && e.cause.code) || e.message))).finally(() => process.exit(0))"], { encoding: 'utf8' }); console.log(c.stdout.trim()); process.exit(0); });`,
+  ].join('\n');
+  // this process's own worker from code (eval): its code runs before an --import would load, so the guard comes first in it
+  const { Worker } = await import('node:worker_threads');
+  const here = await new Promise((resolve) => {
+    let out = '';
+    const w = new Worker("fetch('http://example.com/').then(() => process.stdout.write('answered'), (e) => process.stdout.write((e.cause && e.cause.code) || e.message))", { eval: true, stdout: true });
+    w.stdout.on('data', (b) => { out += b; });
+    w.on('exit', () => resolve(out));
+  });
+  check('…a worker thread a test starts from code is refused too (the guard is the first line of its code)', /ETESTISOLATION/.test(here), here.slice(0, 200));
+  const d = spawnSync(process.execPath, ['-e', own], { encoding: 'utf8', env: { ...process.env, NODE_OPTIONS: '', HANGTAG_TEST_BROWSER: '' } });
+  check('…and in a file run on its own, the worker threads and Node processes it starts are refused too', /^worker ETESTISOLATION$/m.test(d.stdout) && /^child ETESTISOLATION$/m.test(d.stdout),
+    { out: d.stdout.trim().slice(0, 300), err: d.stderr.trim().slice(0, 300) });
 }
 
 server.close();

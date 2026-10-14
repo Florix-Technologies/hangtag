@@ -28,9 +28,13 @@
 //     name must fail at name resolution; an answer or a proxy error refuses the launch;
 //   - give a browser context its own proxy (createBrowserContext, or Target.createBrowserContext over the protocol);
 //   - use a browser it didn't start (puppeteer.connect, by CDP or WebDriver BiDi);
-//   - escape the Node guard through a child Node process (the runner passes the hook in NODE_OPTIONS).
-// Not prevented (only a deliberately written bypass gets there, such as a hand-made DevTools connection or a program other
-// than Node or Chrome): a network response the tripwire sees from such a browser still fails the file.
+//   - escape the Node guard through a child Node process or a worker thread (NODE_OPTIONS and the workers' execArgv carry
+//     the hook, through the runner or when a file is run on its own);
+//   - reach a host by its IP address: IP literals fall under the browser's rule too.
+// Not prevented, because only code written to get around this file gets there: raw UDP (dgram) or DNS to a chosen
+// server, Node's internal socket bindings, a child process with its environment scrubbed, a program other than Node or
+// Chrome, WebRTC to an IP address, a hand-made DevTools connection, or changing this file's verdict in the process. A
+// network response the tripwire sees from such a browser still fails the file.
 'use strict';
 const net = require('node:net');
 const path = require('node:path');
@@ -56,7 +60,7 @@ const launching = new AsyncLocalStorage();   // set while this file launches a b
 const NODE_LOCAL = /^(localhost|127(\.\d{1,3}){3}|::1|\[::1\]|::ffff:127(\.\d{1,3}){3}|0\.0\.0\.0|::)$/i;
 const SUPABASE = /(^|\.)supabase\.(co|com|in)$/i;
 const REALTIME = /^\/realtime\/v1\/websocket\/?$/;
-const WATCHED = new Set(['page', 'background_page', 'service_worker', 'shared_worker', 'webview', 'other']);
+const WATCHED = new Set(['page', 'background_page', 'service_worker', 'shared_worker', 'webview', 'iframe', 'other']);
 const GUARD = Symbol.for('hangtag.test-isolation');
 
 const state = { violations: [], refused: new Map(), answeredHere: 0, browsers: 0, targets: 0, quiet: false, reported: false };
@@ -264,10 +268,35 @@ function patchPuppeteer(pp) {
   if (FirefoxLauncher) FirefoxLauncher.prototype.launch = async () => { throw new Error('test isolation: only Chrome is isolated for the tests'); };
 }
 
+const HOOK = require('node:url').pathToFileURL(path.join(__dirname, 'isolation-hook.mjs')).href;
+/* the Node processes and worker threads this one starts load the same isolation (as the runner gives every file), also
+   when a file is run on its own */
+function installForDescendants() {
+  const opts = process.env.NODE_OPTIONS || '';
+  if (!opts.includes('isolation-hook.mjs')) process.env.NODE_OPTIONS = (opts + ' --import=' + HOOK).trim();
+  const wt = require('node:worker_threads');
+  if (wt.Worker[GUARD]) return;
+  const Base = wt.Worker;
+  // a worker from a file loads the hook first (--import); a worker from code (eval) runs its code before an --import has
+  // loaded, so the guard is installed at the top of that code itself
+  const first = `require(${JSON.stringify(__filename)}).install({ browser: process.env.HANGTAG_TEST_BROWSER === '1' });\n`;
+  class IsolatedWorker extends Base {
+    constructor(file, options = {}) {
+      const execArgv = [...((options && options.execArgv) || process.execArgv)];
+      if (!execArgv.some((a) => String(a).includes('isolation-hook.mjs'))) execArgv.push('--import=' + HOOK);
+      const code = options && options.eval && typeof file === 'string' ? first + file : file;
+      super(code, { ...options, execArgv });
+    }
+  }
+  IsolatedWorker[GUARD] = true;
+  wt.Worker = IsolatedWorker;
+  require('node:module').syncBuiltinESMExports();   // `import { Worker } from 'node:worker_threads'` gets it too
+}
 /* browser: also isolate Chrome (loads puppeteer-core) */
 function install({ browser = false } = {}) {
   installNodeGuard();
   installExitGuard();
+  installForDescendants();
   if (browser) patchPuppeteer(require('puppeteer-core'));
   return module.exports;
 }

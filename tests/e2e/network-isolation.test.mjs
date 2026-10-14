@@ -104,6 +104,11 @@ const pubOk = pr.http[0] === 'refused' && pr.ws[0] === 'refused' && refusedCount
 check('3. a public host (example.com) is refused at name resolution, by HTTP and by WebSocket — no answer, no handshake, no violation', pubOk && pubV.length === 0,
   { pr, refused: [...iso.state.refused], pubV });
 if (!pubOk) stop('a public host was not refused at name resolution');
+// an address by its IP: 192.0.2.1 is reserved for documentation (RFC 5737) and routed nowhere
+let ipr = null;
+await iso.expectViolations(async () => { ipr = await probe(page, { http: ['http://192.0.2.1/'], ws: ['ws://192.0.2.1/'] }); await sleep(500); });
+check('…and so is a host given by its IP address (no name to resolve): refused by the same rule, by HTTP and by WebSocket',
+  ipr.http[0] === 'refused' && ipr.ws[0] === 'refused' && refusedCount('http://192.0.2.1/') >= 1 && refusedCount('WebSocket ws://192.0.2.1/') >= 1, { ipr, refused: [...iso.state.refused] });
 
 // 4. the live project
 const liveHttp = [LIVE + '/rest/v1/', LIVE + '/auth/v1/health', LIVE + '/functions/v1/subscription', LIVE + '/storage/v1/bucket'];

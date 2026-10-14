@@ -68,9 +68,12 @@ every file (`--import tests/helpers/isolation-hook.mjs`) and by `env.cjs`, which
   (`Browser.getBrowserCommandLine`) lacks the rules, as with a wrapper given as the browser, or when a canary to a reserved
   name (`http://isolation-canary.test/`) doesn't fail at name resolution, as with a proxy forced by a machine policy.
   A browser context can't have its own proxy (through puppeteer or the protocol). `puppeteer.connect` is refused, by CDP or
-  WebDriver BiDi. A Node process a test starts is isolated too (the runner's `NODE_OPTIONS`). What remains is a bypass written
-  on purpose (a hand-made DevTools connection, a program other than Node or Chrome); a network answer the tripwire sees
-  still fails the file.
+  WebDriver BiDi. A host given by its IP address is refused by the same rule. Node processes and worker threads a test starts
+  are isolated too, through the runner or when a file is run on its own (`NODE_OPTIONS`; a worker from code gets the guard as
+  its first line, since its code runs before an `--import` loads). What remains is code written to get around this: raw UDP
+  or DNS to a chosen server, Node's internal socket bindings, a child with its environment scrubbed, a program other than
+  Node or Chrome, WebRTC to an IP address, a hand-made DevTools connection. A network answer the tripwire sees still fails
+  the file.
 
 Writing a browser test: answer every Supabase request (the stand-in's `pg.handle(r)`) or abort it, never `r.continue()` one. A
 page that has to run the app without request interception (a service-worker test: interception bypasses the worker) is

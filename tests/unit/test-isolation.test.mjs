@@ -45,6 +45,18 @@ check('…a browser address may reach this computer, the static hosts and non-ne
   may('http://localhost:3210/') && may('http://127.0.0.1:3219/x') && may('https://cdn.jsdelivr.net/npm/x') && may('data:text/plain,x') && may('blob:http://localhost/x')
   && !may(LIVE + '/rest/v1/') && !may(LIVE.replace(/^https/, 'wss') + '/realtime/v1/websocket') && !may('https://api.supabase.com/v1/projects')
   && !may('https://cdn.jsdelivr.net.example.com/') && !may('https://example.com/'));
+check('…no test may set the browser\'s name resolution or proxy, in any spelling Chrome reads (--, -, /, any case)',
+  ['--proxy-server=http://127.0.0.1:8888', '--PROXY-SERVER=x', '/proxy-server=x', '-proxy-pac-url=x', '--proxy-auto-detect', '--proxy-bypass-list=*', '--host-rules=MAP * 1.2.3.4',
+    '/Host-Resolver-Rules=MAP * 1.2.3.4', '--no-proxy-server', '--proxy'].every(iso.isForbiddenArg)
+  && !['--lang=en', '--window-size=800,600', '--use-fake-ui-for-media-stream', '--proxyish', 'http://localhost:3210/'].some(iso.isForbiddenArg));
+const [RULES, NOPROXY] = iso.CHROME_ARGS;
+check('…what the browser itself runs with must hold the rules exactly once, no proxy and nothing else of the kind (a wrapper can\'t drop them)',
+  iso.argsOk(['chrome.exe', '--headless=new', RULES, NOPROXY]) && !iso.argsOk(['chrome.exe', '--headless=new', NOPROXY]) && !iso.argsOk(['chrome.exe', RULES])
+  && !iso.argsOk(['chrome.exe', RULES, NOPROXY, '--host-resolver-rules=MAP * 10.0.0.1']) && !iso.argsOk(['chrome.exe', RULES, NOPROXY, '/proxy-server=127.0.0.1:8888'])
+  && !iso.argsOk(['chrome.exe', '--host-resolver-rules=MAP * ~NOTFOUND', NOPROXY]) && !iso.argsOk(null));
+check('…and the canary to a reserved name must fail at name resolution: an answer, a proxy error or silence refuses the browser',
+  iso.CANARY === 'http://isolation-canary.test/' && iso.canaryOk('net::ERR_NAME_NOT_RESOLVED')
+  && !['answered 200', 'answered 502', 'net::ERR_PROXY_CONNECTION_FAILED', 'net::ERR_TUNNEL_CONNECTION_FAILED', 'net::ERR_CONNECTION_REFUSED', 'no answer'].some(iso.canaryOk));
 let sentinel = null; try { iso.chromeArgs(LIVE_HOST); } catch (e) { sentinel = e.message; }
 check('…the tripwire\'s own test name must be a reserved *.test name: a live host can\'t be mapped to this computer', /must be a \*\.test name/.test(sentinel || ''), sentinel);
 
@@ -56,8 +68,18 @@ check(`every file that starts a browser (${launching.length}) loads the test set
   launching.length > 40 && loose.length === 0, loose.map((f) => path.relative(ROOT, f)));
 check('…no test connects to a browser it didn\'t start', !launching.some((f) => /puppeteer\.connect\(/.test(readFileSync(f, 'utf8'))));
 const runner = readFileSync(path.join(ROOT, 'tests', 'run.mjs'), 'utf8');
-check('…and the runner starts every file with the isolation (--import isolation-hook.mjs; Chrome\'s for browser files)',
-  /'--import', ISOLATION, file/.test(runner) && /isolation-hook\.mjs/.test(runner) && /HANGTAG_TEST_BROWSER: usesBrowser\(file\)/.test(runner));
+check('…and the runner starts every file with the isolation (--import isolation-hook.mjs; Chrome\'s for browser files), also in NODE_OPTIONS for the Node processes a test starts',
+  /'--import', ISOLATION, file/.test(runner) && /isolation-hook\.mjs/.test(runner) && /HANGTAG_TEST_BROWSER: usesBrowser\(file\)/.test(runner)
+  && /NODE_OPTIONS: \[process\.env\.NODE_OPTIONS, '--import=' \+ ISOLATION\]/.test(runner));
+{
+  // a Node process a test starts, with NODE_OPTIONS as the runner sets it: isolated too (example.com: harmless if it weren't)
+  const { spawnSync } = await import('node:child_process');
+  const { pathToFileURL } = await import('node:url');
+  const hook = pathToFileURL(path.join(ROOT, 'tests', 'helpers', 'isolation-hook.mjs')).href;
+  const code = "fetch('http://example.com/').then(() => console.log('answered'), (e) => console.log((e.cause && e.cause.code) || e.message)).finally(() => process.exit(0))";
+  const r = spawnSync(process.execPath, ['-e', code], { encoding: 'utf8', env: { ...process.env, NODE_OPTIONS: '--import=' + hook } });
+  check('…a Node process started by a test, with the runner\'s NODE_OPTIONS: refused before connecting too', /^ETESTISOLATION/m.test(r.stdout), { out: r.stdout.trim().slice(0, 200), err: r.stderr.trim().slice(0, 200) });
+}
 
 server.close();
 console.log(fails ? `\n${fails} FAILED` : '\nall passed');

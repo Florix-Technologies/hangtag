@@ -63,6 +63,14 @@ every file (`--import tests/helpers/isolation-hook.mjs`) and by `env.cjs`, which
   resolution). The app's realtime socket is the exception: the stand-in has no realtime, so it is refused and counted.
 - A violation is printed (`ISOLATION VIOLATION …`) and the file exits with 1. The runner shows each browser file's count:
   `· isolated: 303 answered here, 2 refused, 0 violations`.
+- Test configuration can't get around it. A launch is refused when a test sets the name resolution or a proxy in any
+  spelling Chrome reads (`--`, `-`, `/`, any case). It is also refused when the browser's own command line
+  (`Browser.getBrowserCommandLine`) lacks the rules, as with a wrapper given as the browser, or when a canary to a reserved
+  name (`http://isolation-canary.test/`) doesn't fail at name resolution, as with a proxy forced by a machine policy.
+  A browser context can't have its own proxy (through puppeteer or the protocol). `puppeteer.connect` is refused, by CDP or
+  WebDriver BiDi. A Node process a test starts is isolated too (the runner's `NODE_OPTIONS`). What remains is a bypass written
+  on purpose (a hand-made DevTools connection, a program other than Node or Chrome); a network answer the tripwire sees
+  still fails the file.
 
 Writing a browser test: answer every Supabase request (the stand-in's `pg.handle(r)`) or abort it, never `r.continue()` one. A
 page that has to run the app without request interception (a service-worker test: interception bypasses the worker) is

@@ -47,13 +47,31 @@ const probe = (page, { http: hs = [], ws = [] }) => page.evaluate(async (hs, ws)
 const refusedCount = (u) => iso.state.refused.get(u) || 0;
 
 // 1. the launch
-let own = null; try { await puppeteer.launch({ executablePath: H.CHROME, headless: true, args: ['--proxy-server=http://127.0.0.1:9'] }); } catch (e) { own = e.message; }
-check('1. a test can\'t set the browser\'s proxy or name resolution itself: that launch is refused', /test isolation: a test may not set --proxy-server/.test(own || ''), own);
+const refusedLaunches = [];
+for (const arg of ['--proxy-server=http://127.0.0.1:9', '--PROXY-SERVER=http://127.0.0.1:9', '/proxy-server=http://127.0.0.1:9', '-proxy-pac-url=http://127.0.0.1:9/p.pac', '--host-rules=MAP * 127.0.0.1']) {
+  let msg = null; try { const b = await puppeteer.launch({ executablePath: H.CHROME, headless: true, args: [arg] }); await b.close(); } catch (e) { msg = e.message; }
+  refusedLaunches.push(/^test isolation: a test may not set /.test(msg || ''));
+}
+check('1. a test can\'t set the browser\'s proxy or name resolution itself, in any spelling Chrome reads: each such launch is refused', refusedLaunches.every(Boolean), refusedLaunches);
 const browser = await puppeteer.launch({ executablePath: H.CHROME, headless: true });
 const spawned = browser.process().spawnargs;
 check('…every browser starts with the rules: no host name resolves except this computer\'s and the three static hosts\', and no proxy',
   spawned.includes(RULES) && spawned.includes('--no-proxy-server'), spawned.filter((a) => /resolver|proxy/.test(a)));
 if (!spawned.includes(RULES)) stop('the browser has no name-resolution rule');
+check('…and that is what the browser itself runs with (its own command line, so no wrapper dropped them), and a canary to a reserved name failed at name resolution (no proxy forced on it)',
+  JSON.stringify(iso.state.lastCommandLine) === JSON.stringify([RULES, '--no-proxy-server']) && iso.state.canary === 'net::ERR_NAME_NOT_RESOLVED',
+  { commandLine: iso.state.lastCommandLine, canary: iso.state.canary });
+let ctxProxy = null, cdpProxy = null, connectCdp = null, connectBidi = null;
+try { await browser.createBrowserContext({ proxyServer: 'http://127.0.0.1:9' }); } catch (e) { ctxProxy = e.message; }
+const bs = await browser.target().createCDPSession();
+try { await bs.send('Target.createBrowserContext', { proxyServer: 'http://127.0.0.1:9' }); } catch (e) { cdpProxy = e.message; }
+await bs.detach();
+check('…a browser context can\'t have its own proxy: through puppeteer or through the protocol itself',
+  /a browser context may not have its own proxy/.test(ctxProxy || '') && /a browser context may not have its own proxy/.test(cdpProxy || ''), { ctxProxy, cdpProxy });
+try { const c = await puppeteer.connect({ browserWSEndpoint: browser.wsEndpoint() }); await c.disconnect(); } catch (e) { connectCdp = e.message; }
+try { const c = await puppeteer.connect({ browserWSEndpoint: browser.wsEndpoint(), protocol: 'webDriverBiDi' }); await c.disconnect(); } catch (e) { connectBidi = e.message; }
+check('…and a test can only use a browser it started: puppeteer.connect is refused, by CDP and by WebDriver BiDi',
+  /a test may only use a browser it started/.test(connectCdp || '') && /a test may only use a browser it started/.test(connectBidi || ''), { connectCdp, connectBidi });
 const page = await browser.newPage();
 await page.goto(`http://localhost:${port}/`);
 

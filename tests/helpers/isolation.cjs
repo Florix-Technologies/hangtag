@@ -17,15 +17,42 @@
 //   noBackend(page): its Supabase requests, refused at name resolution, are counted too; any contact is still a violation.
 // A violation is printed at once and the process exits with 1 (also when the test itself calls process.exit(0)). Nothing
 // is sent anywhere; addresses are printed without their query (no key, no token).
+//
+// What test configuration can't do (each refused, and tested in tests/unit/test-isolation.test.mjs and
+// tests/e2e/network-isolation.test.mjs):
+//   - set the browser's name resolution or proxy: --host-resolver-rules, --host-rules, --proxy-*, in any spelling Chrome
+//     reads (--, - or /; any case);
+//   - start the browser through a wrapper that drops the rules: what the browser itself runs with is checked
+//     (Browser.getBrowserCommandLine), not what was passed;
+//   - have a proxy forced on the browser (a machine policy can override --no-proxy-server): a canary request to a reserved
+//     name must fail at name resolution; an answer or a proxy error refuses the launch;
+//   - give a browser context its own proxy (createBrowserContext, or Target.createBrowserContext over the protocol);
+//   - use a browser it didn't start (puppeteer.connect, by CDP or WebDriver BiDi);
+//   - escape the Node guard through a child Node process (the runner passes the hook in NODE_OPTIONS).
+// Not prevented (only a deliberately written bypass gets there, such as a hand-made DevTools connection or a program other
+// than Node or Chrome): a network response the tripwire sees from such a browser still fails the file.
 'use strict';
 const net = require('node:net');
+const path = require('node:path');
+const { AsyncLocalStorage } = require('node:async_hooks');
 
 const STATIC_HOSTS = ['cdn.jsdelivr.net', 'fonts.googleapis.com', 'fonts.gstatic.com'];
 const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
 const RESOLVER_RULES = ['MAP * ~NOTFOUND', ...[...LOCAL_HOSTS, ...STATIC_HOSTS].map((h) => 'EXCLUDE ' + h)].join(', ');
 const CHROME_ARGS = Object.freeze(['--host-resolver-rules=' + RESOLVER_RULES, '--no-proxy-server']);
-// what a test may not set itself: the browser's name resolution and proxy belong to this file
-const FORBIDDEN_ARG = /^--(host-resolver-rules|host-rules|proxy-server|proxy-pac-url|proxy-auto-detect|proxy-bypass-list)(=|$)/;
+// what a test may not set itself, in any spelling Chrome reads: the browser's name resolution and proxy belong to this file
+const FORBIDDEN_ARG = /^(?:--?|\/)(?:host-resolver-rules|host-rules|proxy|proxy-[a-z0-9-]*|no-proxy-server)(?:=|$)/i;
+const isForbiddenArg = (a) => FORBIDDEN_ARG.test(String(a));
+/* the switches the browser actually runs with: these rules exactly once, no proxy, no other mapping */
+function argsOk(argv, own = CHROME_ARGS) {
+  if (!Array.isArray(argv)) return false;
+  const rules = argv.filter((a) => /^(?:--?|\/)host-resolver-rules=/i.test(String(a)));
+  return rules.length === 1 && rules[0] === own[0] && argv.includes('--no-proxy-server') && !argv.some((a) => isForbiddenArg(a) && !own.includes(a));
+}
+// a reserved name (.test never resolves anywhere): with these rules it fails at name resolution; through a proxy it would not
+const CANARY = 'http://isolation-canary.test/';
+const canaryOk = (result) => result === 'net::ERR_NAME_NOT_RESOLVED';
+const launching = new AsyncLocalStorage();   // set while this file launches a browser: the only time a browser connection may be made
 const NODE_LOCAL = /^(localhost|127(\.\d{1,3}){3}|::1|\[::1\]|::ffff:127(\.\d{1,3}){3}|0\.0\.0\.0|::)$/i;
 const SUPABASE = /(^|\.)supabase\.(co|com|in)$/i;
 const REALTIME = /^\/realtime\/v1\/websocket\/?$/;
@@ -149,9 +176,55 @@ async function attachNow(t) {
   s.on('Network.webSocketHandshakeResponseReceived', (e) => { const u = sockets.get(e.requestId); if (u) violation('browser', `a WebSocket opened to ${show(u)}`); });
   s.on('Network.webSocketFrameError', (e) => { const u = sockets.get(e.requestId); if (u && /ERR_NAME_NOT_RESOLVED/.test(e.errorMessage || '')) refused(u, 'ws', t); });
 }
+/* what the browser itself runs with (a wrapper given as executablePath could drop arguments) */
+async function commandLine(browser) {
+  const s = await browser.target().createCDPSession();
+  try { return (await s.send('Browser.getBrowserCommandLine')).arguments; } finally { await s.detach().catch(() => {}); }
+}
+/* the canary request's outcome, from a throwaway context: "net::ERR_NAME_NOT_RESOLVED", "answered <status>", another error */
+async function canary(browser) {
+  const ctx = await browser.createBrowserContext();
+  try {
+    const page = await ctx.newPage(), s = await page.createCDPSession();
+    await s.send('Network.enable');
+    const result = new Promise((resolve) => {
+      s.on('Network.responseReceived', (e) => resolve('answered ' + e.response.status));
+      s.on('Network.loadingFailed', (e) => resolve(e.errorText || 'failed'));
+      setTimeout(() => resolve('no answer'), 10000);
+    });
+    await page.evaluate((u) => { fetch(u, { mode: 'no-cors', cache: 'no-store' }).catch(() => {}); }, CANARY);
+    return await result;
+  } finally { await ctx.close().catch(() => {}); }
+}
+const refuse = (what) => { throw new Error('test isolation: ' + what + ' (tests/helpers/isolation.cjs owns the browser\'s network)'); };
+/* fn wrapped once (marked), in place of obj[name] */
+function wrap(obj, name, make) { if (!obj || typeof obj[name] !== 'function' || obj[name][GUARD]) return; const w = make(obj[name]); w[GUARD] = true; obj[name] = w; }
 function patchPuppeteer(pp) {
-  const { ChromeLauncher, FirefoxLauncher, CdpBrowserContext } = pp;
+  const { ChromeLauncher, FirefoxLauncher, CdpBrowserContext, CdpBrowser, CdpCDPSession, Connection } = pp;
   if (!ChromeLauncher || ChromeLauncher.prototype.launch[GUARD]) return;
+  // no browser connection but this file's launch: puppeteer.connect (by CDP or WebDriver BiDi) goes through the same transport
+  try {
+    const file = path.join(path.dirname(require.resolve('puppeteer-core')), 'node', 'NodeWebSocketTransport.js');
+    wrap(require(file).NodeWebSocketTransport, 'create', (create) => function (...args) {
+      if (!launching.getStore()) refuse('a test may only use a browser it started (puppeteer.connect is refused)');
+      return create.apply(this, args);
+    });
+  } catch (e) { if (/test isolation/.test(e.message)) throw e; /* another puppeteer layout: the CdpBrowser check below still holds */ }
+  if (CdpBrowser) wrap(CdpBrowser, '_create', (create) => function (...args) {
+    if (!launching.getStore()) refuse('a test may only use a browser it started (puppeteer.connect is refused)');
+    return create.apply(this, args);
+  });
+  // no browser context with its own proxy: through puppeteer, or through the protocol itself
+  if (CdpBrowser) wrap(CdpBrowser.prototype, 'createBrowserContext', (create) => async function (options = {}) {
+    if (options && (options.proxyServer || options.proxyBypassList)) refuse('a browser context may not have its own proxy');
+    return create.call(this, options);
+  });
+  for (const C of [CdpCDPSession, Connection]) if (C) wrap(C.prototype, 'send', (send) => function (method, params, ...rest) {
+    if (method === 'Target.createBrowserContext' && params && (params.proxyServer || params.proxyBypassList)) {
+      return Promise.reject(new Error('test isolation: a browser context may not have its own proxy (tests/helpers/isolation.cjs owns the browser\'s network)'));
+    }
+    return send.call(this, method, params, ...rest);
+  });
   // a new page is watched before the test gets it, so its first request is seen too
   if (CdpBrowserContext && !CdpBrowserContext.prototype.newPage[GUARD]) {
     const newPage = CdpBrowserContext.prototype.newPage;
@@ -168,14 +241,21 @@ function patchPuppeteer(pp) {
   const guarded = async function (options = {}) {
     const { isolationSentinel, ...rest } = options;
     const own = chromeArgs(isolationSentinel);
-    const bad = (rest.args || []).filter((a) => FORBIDDEN_ARG.test(String(a)));
-    if (bad.length) throw new Error(`test isolation: a test may not set ${bad.join(' ')} (tests/helpers/isolation.cjs owns the browser's network)`);
-    const browser = await launch.call(this, { ...rest, args: [...(rest.args || []), ...own] });
-    const spawned = (browser.process() && browser.process().spawnargs) || [];
-    if (!own.every((a) => spawned.includes(a))) {
-      await browser.close().catch(() => {});
-      throw new Error('test isolation: the browser started without its network rules');
-    }
+    const bad = (rest.args || []).filter(isForbiddenArg);
+    if (bad.length) refuse(`a test may not set ${bad.join(' ')}`);
+    const browser = await launching.run(true, () => launch.call(this, { ...rest, args: [...(rest.args || []), ...own] }));
+    let why = '';
+    try {
+      // the browser's own command line, then the canary: no wrapper dropped the rules, no proxy is forced on it
+      const argv = await commandLine(browser).catch(() => null);
+      state.lastCommandLine = Array.isArray(argv) ? argv.filter((a) => isForbiddenArg(a)) : null;
+      if (!argsOk(argv, own)) why = 'the browser runs without its network rules (its own command line says so)';
+      else {
+        state.canary = await canary(browser);
+        if (!canaryOk(state.canary)) why = `a proxy answers for this browser (canary: ${state.canary}) — a machine policy may force one`;
+      }
+    } catch (e) { why = 'the browser\'s network rules could not be checked: ' + e.message; }
+    if (why) { await browser.close().catch(() => {}); refuse(why); }
     await watch(browser);
     return browser;
   };
@@ -192,4 +272,5 @@ function install({ browser = false } = {}) {
   return module.exports;
 }
 
-module.exports = { install, chromeArgs, expectViolations, noBackend, allowed, show, state, CHROME_ARGS, RESOLVER_RULES, STATIC_HOSTS, LOCAL_HOSTS };
+module.exports = { install, chromeArgs, expectViolations, noBackend, allowed, show, state, isForbiddenArg, argsOk, canaryOk, CANARY,
+  CHROME_ARGS, RESOLVER_RULES, STATIC_HOSTS, LOCAL_HOSTS };

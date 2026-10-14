@@ -31,9 +31,10 @@ function runFile(file) {
   return new Promise((resolve) => {
     const t0 = Date.now();
     // the runner's own Node flags go to each file (e.g. --import ./tests/helpers/postgres17.mjs for test:db:pg17), then the
-    // network isolation (tests/helpers/isolation.cjs: this computer only; Chrome's too for a file that drives a browser)
-    const child = spawn(process.execPath, [...process.execArgv, '--import', ISOLATION, file],
-      { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, HANGTAG_TEST_BROWSER: usesBrowser(file) ? '1' : '' } });
+    // network isolation (tests/helpers/isolation.cjs: this computer only; Chrome's too for a file that drives a browser) —
+    // also in NODE_OPTIONS, so a Node process the test starts is isolated too
+    const child = spawn(process.execPath, [...process.execArgv, '--import', ISOLATION, file], { stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, HANGTAG_TEST_BROWSER: usesBrowser(file) ? '1' : '', NODE_OPTIONS: [process.env.NODE_OPTIONS, '--import=' + ISOLATION].filter(Boolean).join(' ') } });
     let out = '', timedOut = false;
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { out += d; });

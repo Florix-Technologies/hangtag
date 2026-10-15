@@ -12,6 +12,7 @@ import { logger } from '../../../shared/logging/logger.js';
 import { ACCESS_LOST_TEXT, isMember, refreshAccess } from '../../shop/services/access.js';
 import { requestSignOut } from '../../../shared/ui/session-actions.js';
 import { renderAll } from '../../../shared/ui/render.js';
+import { catchUpConnected, onRealtimeStatus, resetRealtimeCatchUp } from './catch-up.js';
 
 /* The one Supabase client this app uses (settings from config.js, created by the cloud port) */
 export const newSbClient = () => use("cloud").createClient();
@@ -47,7 +48,9 @@ export async function initSupabaseOnce(){
     } else setupSupabaseRealtime();
     // Send queued offline work first (bills, stock, returns, product changes), then pull the latest
     await flushSbQueue();
-    await pullFromSupabase(false);
+    // everything is here: the next catch-up (catch-up.js) counts from now — only when the download got through (connected
+    // while the network was gone, it didn't: the next reason, e.g. back online, catches up at once)
+    if(await pullFromSupabase(false)) catchUpConnected();
     connectedHooks.forEach(f => { try{ Promise.resolve(f()).catch(e => logger.warn("After connecting:", e)); }catch(e){ logger.warn("After connecting:", e); } });
     return true;
   }catch(e){
@@ -93,6 +96,7 @@ export function setupSupabaseRealtime(){
   try{
     const cloud = use("cloud");
     if(store.sbRealtimeChannel) cloud.removeChannel(store.sbRealtimeChannel);
+    resetRealtimeCatchUp();   // a new channel: its first join isn't a re-join
     store.sbRealtimeChannel = cloud.subscribe({
       sale: onRemoteSaleEvent,
       saleLine: p=>{ if(p.new) mergeRemoteItems(p.new.sale_id,[p.new]); },
@@ -108,6 +112,10 @@ export function setupSupabaseRealtime(){
       collections: ()=>debouncePull("orders"),
       tables: ()=>debouncePull("orders"),
       biz: ()=>debouncePull("biz"),
-    }, (status)=>{ if(status === "SUBSCRIBED" && store.sbStatus !== "update"){ store.sbStatus = "connected"; renderSync(); } });
+    }, (status)=>{
+      if(status === "SUBSCRIBED" && store.sbStatus !== "update"){ store.sbStatus = "connected"; renderSync(); }
+      // joined again after a drop: what the other devices did meanwhile never came as events (catch-up.js)
+      onRealtimeStatus(status);
+    });
   }catch(e){ logger.warn("Realtime subscription notice:", e); }
 }

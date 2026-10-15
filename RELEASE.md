@@ -4,11 +4,11 @@ The owner runs these steps: each one changes the live Supabase project or Vercel
 repository's tools without the owner's word. Work through them in order. A step that fails stops the release; the
 rollback for each step is next to it.
 
-Live project: `wcorlmgkwcahyfastjoz` (PostgreSQL 17). Vercel Production: `6af8cc2` (2026-10-07). Branch to release:
+Live project: `wcorlmgkwcahyfastjoz` (PostgreSQL 17). Vercel Production: `ee76f74` (deployment 7059827088, 2026-10-14). Branch to release:
 `ux-productization`.
 
 ## 0. What this release contains
-- **App:** everything on `ux-productization` since `6af8cc2`; the Vercel Preview of the branch's tip is the candidate.
+- **App:** everything on `ux-productization` since `ee76f74`; the Vercel Preview of the branch's tip is the candidate.
 - **Database:** the whole `supabase/schema.sql`, run once in the SQL Editor. It is in order, safe to run again, and
   brings every table, function and policy to the release's version.
   - **Don't run the section files in `supabase/migrations/` by hand on the live project.** An older file run after a
@@ -56,6 +56,11 @@ Verified on the live project afterwards:
 - **Signed out:** 401 on all six tables (no privilege, as before).
 
 Still to do: the 18 functions (step 3).
+
+Since then (read-only, the database's own logs, 2026-10-15): the only statements after the containment were two
+read-only check scripts (10-14 06:32 and 06:38 UTC); no function or policy has changed. `hangtag_shop_changes`, which
+team phones and now owner devices use to catch up, is current; `hangtag_biz_changes` is the older 3r version (changes
+to the shop's own fields and units are not noticed by the change check until step 3).
 
 ## 1. Before anything changes (read-only)
 1. `npm run preflight:live` reports, per function:
@@ -239,8 +244,28 @@ npx supabase functions deploy <name> --project-ref wcorlmgkwcahyfastjoz
    `ux-productization`) → Promote to Production.
 2. Open Production in a private window. Phones pick up the update the next time the app starts with a connection. The
    service worker's cache name changes with every release.
-- **Rollback.** Deployments → the previous Production deployment (`6af8cc2`'s) → Promote to Production. It is instant,
+- **Rollback.** Deployments → the previous Production deployment (`ee76f74`'s, 7059827088) → Promote to Production. It is instant,
   and the database needs nothing (step 3).
+
+## 6a. Checking a Preview, signed in (before promoting)
+A Preview reads and writes the **live** shop: check without changing real stock or making real bills, sign in only
+with your own accounts, and run no SQL. Tick each:
+1. **The build.** Settings → Advanced → Diagnostics & health → "Build" shows `hangtag-<hash>`, the cache name in the
+   release commit's `sw.js` (for the catch-up commit it is given in the release report). A hard reload shows the same.
+2. **Cloud refresh.** "Refresh" says everything is up to date; "Last full sync" moves to now; no new "Pull … failed".
+3. **Diagnostics.** No new entries after the refresh; a slow call, if any, says "network …" and "page hidden" where it
+   applies.
+4. **Your shop only.** The products, bills and customers are your shop's; a second owner account (another shop) sees
+   none of them.
+5. **Offline recovery, two devices.** Open the Preview on a computer (A) and a phone (B), both signed in to your shop.
+   Without changing anything: turn B's network off and on, and put B in the background for a minute and bring it back —
+   no error, nothing in its sync queue or review, the same data as A. *Only if you choose to change one live record:*
+   with B offline, edit a test product's name on A, bring B back online — within 20 s B shows it — then change it back.
+   (The isolated two-device test proves bills, returns and stock this way without live data.)
+6. **Workflows, non-destructively.** Open a bill, a return screen and Stock without saving; open "Upload bill" (it says
+   reading isn't set up yet, and offers entry by hand) and cancel; open Plans & Billing (online payment shows as not
+   available).
+7. Note anything wrong with its time, and download the Diagnostics report.
 
 ## 7. After the release
 Use a test product and a test customer, and cancel what you create afterwards:

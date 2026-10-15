@@ -130,6 +130,13 @@ clearDiagnostics();
   const left = t2.network('rpc:hangtag_subscription_status', 20000, 60000);
   w2.pagehide();
   check('…leaving the page: a call still waiting is noted at once (without a network time), not lost', (await left) === null);
+  const d3 = { visibilityState: 'visible', addEventListener: (k, f) => { d3[k] = f; } };
+  const w3 = { document: d3, performance: { now: () => 0 }, addEventListener() {}, PerformanceObserver: class { observe() {} } };
+  const t3 = createNetworkTiming({ opOf: apiOp, win: w3 });
+  t3.begin('rpc:hangtag_subscription_status', 30000);
+  const frozen = t3.network('rpc:hangtag_subscription_status', 30000, 60000);
+  d3.freeze();
+  check('…and the page frozen (an installed app in the background may be ended without a pagehide): noted at once too', (await frozen) === null);
 }
 clearDiagnostics();
 {

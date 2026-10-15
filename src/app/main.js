@@ -32,6 +32,7 @@ import { runAutomation } from '../features/automation/services/automation.js';
 import { installAutoDelivery, processDeliveryQueue } from '../features/delivery/use-cases/auto-delivery.js';
 import { applyCatalogMigration } from '../features/products/services/catalog.js';
 import { initSupabase, memberPoll } from '../features/sync/services/connection.js';
+import { installCatchUp } from '../features/sync/services/catch-up.js';
 import { isMember } from '../features/shop/services/access.js';
 import { flushSbQueue } from '../features/sync/services/outbox.js';
 import { sendPendingDocs } from '../features/inventory/use-cases/import-supplier-bill.js';
@@ -56,6 +57,7 @@ installSetupEvents();
 installAccountMenuEvents();
 installSyncStatusTimer();
 installSyncRetryTimer();
+installCatchUp();     // an owner's device catches up on what realtime missed (back online, on screen again, every 5 min)
 installTooltips();
 installMenus();       // every record's and document's "More actions" menu
 installDomEvents();

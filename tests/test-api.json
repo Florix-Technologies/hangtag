@@ -217,7 +217,8 @@
   "openUnitEditor",
   "clearDiagnostics",
   "getDiagnostics",
-  "pullSales"
+  "pullSales",
+  "onRealtimeStatus"
  ],
  "state": [
   "access",

@@ -5,6 +5,44 @@ Newest session first. The audit never changed production data or services (no mi
 2026-10-13 the live project's catalog and query statistics were read through the Supabase CLI, which creates a
 short-lived login role (`cli_login_postgres`) to connect. Code is pushed only on the owner's word.
 
+## 2026-10-15 (tenth session: owner devices catch up; downloads never lose what landed meanwhile)
+
+The owner's brief: push `bf9cf63` once reviewed; finish the approved owner-device catch-up (realtime re-join, back
+online, back on screen, a bounded 5-minute look, one check at a time, nothing lost or doubled), prove it in an isolated
+two-device browser test that fails on the old code; then the release audit (sync, tenancy, transactions, payments,
+extraction, import), the repair's readiness and a Preview checklist. No production change, no SQL on the live database.
+
+| # | Area | Finding | Status |
+|---|------|---------|--------|
+| 109 | `bf9cf63` | Docs only (item 104's auth-log evidence, RELEASE §2a, the plan-billing remediation plan); no secret, token, id or log payload | **Pushed** (`73d232f..bf9cf63`). Preview `hangtag-npsalkwg6-florixtechnologies-projects.vercel.app` (deployment 7083454069, success). Production is still `ee76f74` (7059827088) |
+| 110 | An owner's device after a gap | **Confirmed.** A device whose realtime dropped, or that was offline, asleep or in the background, never fetched what the other devices did meanwhile: "online" only uploaded. Shown on the old code: B offline while A sold two bills, took a return and stocked in; 20 s after B came back it had none of it (Kurta stock 50 against 54) | Fixed: `catch-up-core.js` / `catch-up.js`. The team phone's change check (fingerprints, then only the parts that moved) on a re-join after a drop, back online, back on screen after 30 s away (hidden, frozen, back/forward cache), and every 5 minutes on screen; never for the first connection; one at a time (one more after it when a reason comes meanwhile); own work up first (waited for at most 30 s); a check stuck 2 minutes no longer blocks the next; every listener and timer removable. Tests: `tests/unit/sync-catch-up.test.mjs` (33), `tests/e2e/sync-catch-up.test.mjs` (12) |
+| 111 | A failed download counted as up to date | **Confirmed.** The products' download swallowed its error, so the change check marked the products current and never asked again (team phones too); a full download whose products failed still said "Everything is up to date"; a check that failed advanced the 5-minute look | Fixed: a failed part keeps its old fingerprint and the check fails; the catch-up counts only a check that got everything, and one that failed is owed and tried again a minute later. Tests: `sync-overlap` (4), `sync-catch-up` (+8) |
+| 112 | A download replacing what landed while it was on its way | **Confirmed** (each case fails on the old code): a stock move or return uploaded during the download disappeared here until the next one (stock wrong); so did another device's move, bill or cancel brought by realtime meanwhile; of two downloads at once, the one that began first could replace what the later one brought; a price list deleted here came back while its delete was waiting or going up | Fixed: `sync-ledger.js`. Uploads the cloud took and realtime changes applied are noted in order; each download keeps this device's copy of anything noted after it began, and never replaces what a later download of the same part brought. Kept only until a download that began after it. Test: `tests/unit/sync-overlap.test.mjs` (15) |
+| 113 | A restored bill cancelled again | **Confirmed** on the old code: a bill restored here (un-cancelled) showed cancelled again after a download read the cloud before the restore landed, or while it waited offline (its stock off by the bill) | Fixed in the same ledger. Test: `sync-overlap` (+2) |
+| 114 | Two returns of one bill line at the same moment | **Hypothesis, from the code; not reproduced** (the test databases are single-connection PGlite). `hangtag_check_return_qty` reads the bought and already-returned quantities without a lock; two transactions in flight at once could each miss the other's return. One after the other is refused (report row 14; `cloud-roundtrip` returns the same last piece on two devices) | Open, medium. Fix: lock the bill line (`SELECT … FOR UPDATE` on `hangtag_sale_items`) before the sum; needs a schema section, a multi-connection test, and the live repair (blocked) |
+| 115 | `hangtag_shop_changes` on live | **Current.** Its body matches `schema.sql` (the read-only catalog comparison of 10-13/14), and nothing has changed the live functions since: the database's own logs show statements for the 10-13 schema run (16) and containment (4), then only two read-only check scripts (10-14 06:32 and 06:38 UTC), none since (to 10-15 13:00 UTC). `hangtag_biz_changes` on live is the older 3r version: changes to the shop's own fields and units aren't noticed by the change check until the repair | No SQL run. The catch-up relies on it |
+| 116 | Reviewed, no defect | Customer payments: the webhook checks the signature over the raw body (constant time) before parsing, takes amounts from the stored intent, changes an intent once (a repeat is a no-op; the update is conditioned on the status it read); the app can only read intents. Bill extraction: review before anything is saved, Confirm separate, a repeated supplier invoice refused, "isn't set up yet" with manual entry when the function has no key. Bills: a re-sent bill, its lines and payments update in place (`ON CONFLICT`), never doubled | — |
+
+### Test results (run, not assumed)
+- `npm test` on the committed code: **174/174 files** (6,345 checks: 2,771 unit and eval, 1,525 database, 2,049 browser),
+  then **30/30 database files on PostgreSQL 17** (1,525 checks); none failed, timed out or skipped. `npm run check` and
+  `npm run build` clean (425 modules, 0 rule violations, 0 cycles, lint 0/0, `sw.js` cache `hangtag-8b251d57e8`); the
+  build leaves the tree unchanged. 58 browser files: 11,348 requests answered by the tests, 275 refused at name
+  resolution, **0 violations** (the refused ones include the live project's realtime socket).
+- Production untouched (read-only, end of session): Edge Functions the same 9, none updated since 2026-10-07, no
+  `subscription`/`subscription-webhook`; Vercel Production `ee76f74`; no SQL run on the live database.
+- `tests/e2e/sync-catch-up.test.mjs`, three runs in a row: B shows A's bills, return and stock **0.1 s** after coming
+  back online; with its own offline bill and stock count waiting, both ways in **0.1–0.3 s**; each bill and the return
+  once on both devices; the same stock on both. On the old code it failed: nothing after 20 s.
+- `tests/unit/sync-overlap.test.mjs` on the old code (`bf9cf63`, in a throwaway worktree): 13 of 15 fail.
+
+### Not done / next
+- Item 114 (the return race) and item 108's plan-billing work need schema sections; the repair stays blocked (backup).
+- The audit's four parallel reviewers hit the session's usage limit before starting; the review above was done inline.
+- Residual sync risks (by design, measured): an owner device whose realtime never joins at all catches up only every
+  5 minutes; a download that hangs is not cancelled (the catch-up stops waiting after 2 minutes); the 5-minute look is
+  one small query per owner device on screen.
+
 ## 2026-10-14 (ninth session: the diagnostics fix pushed; the tests cut off from the live project)
 
 The owner's brief: push `2827a20` once checked; make the browser tests unable to reach the live project (fail closed, with

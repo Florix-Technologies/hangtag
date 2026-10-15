@@ -19,6 +19,7 @@ import { purchaseItemOff, purchaseItemOn } from '../../inventory/services/purcha
 import { bizRepository } from '../../commerce/repositories/biz-repository.js';
 import { noteSubscriptionRefused, subscriptionLocked } from '../../billing/services/subscription.js';
 import { attrIdsOf } from '../../../domain/catalog/attributes.js';
+import { noteSent } from './sync-ledger.js';
 
 /* Add work for the cloud; identical product uploads are merged so the queue stays short */
 
@@ -163,7 +164,7 @@ export async function flushSbQueueOnce(){
       if(done.has(item) || review.has(item)) continue;
       if(isBlocked(item, waiting)){ skipped++; continue; }   // its bill / product is still on its way (or under review)
       item.sending = true;
-      try{ await sendItem(item); done.add(item); sentNow++; const k = recordKey(item); if(k) waiting.delete(k); }
+      try{ await sendItem(item); done.add(item); noteSent(item); sentNow++; const k = recordKey(item); if(k) waiting.delete(k); }
       catch(err){
         logger.event("sync", "upload-failed", { op: item.type, code: err && err.code }, "warn");
         // the shop's plan has ended (HT402): nothing more can go up until renewal — keep it all queued, ask the server

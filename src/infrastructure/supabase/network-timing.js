@@ -15,8 +15,11 @@ export function createNetworkTiming({ opOf, win = typeof window === "undefined" 
   let hiddenAt = -Infinity;   // when the page last became hidden (the same clock as performance.now)
   const isHidden = () => !!doc && doc.visibilityState === "hidden";
   if(doc && doc.addEventListener){ if(isHidden()) hiddenAt = now(); doc.addEventListener("visibilitychange", () => { if(isHidden()) hiddenAt = now(); }); }
-  // leaving the page: every call still waiting is noted now (without a network time) rather than lost
-  if(win && win.addEventListener) win.addEventListener("pagehide", () => { for(const w of waiting){ waiting.delete(w); clearTimeout(w.timer); w.resolve(null); } });
+  // leaving the page, or the page frozen (an installed app in the background may be frozen, then ended, without a
+  // pagehide): every call still waiting is noted now (without a network time) rather than lost
+  const noteWaiting = () => { for(const w of waiting){ waiting.delete(w); clearTimeout(w.timer); w.resolve(null); } };
+  if(win && win.addEventListener) win.addEventListener("pagehide", noteWaiting);
+  if(doc && doc.addEventListener) doc.addEventListener("freeze", noteWaiting);
   const near = (op, t0, r) => r.op === op && Math.abs(r.start - t0) < MATCH_MS;
   /* another call of op started within the window of t0: which timing is whose can't be told */
   const ambiguous = (op, t0) => starts.filter((s) => s.op === op && Math.abs(s.t0 - t0) < MATCH_MS).length > 1;

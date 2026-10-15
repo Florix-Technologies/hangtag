@@ -84,6 +84,49 @@ Still to do: the 18 functions (step 3).
 
   `npx supabase db dump --linked` is an alternative on a machine with Docker.
 
+## 2a. Before the repair can be approved: the evidence
+The repair (section 3) stays blocked until each item below exists and the owner approves the run itself, separately. As of
+2026-10-15, none exists: the live project has 0 physical backups and point-in-time recovery off.
+
+1. **The backup.** A `pg_dump` 17 of the live project (step 2), taken by the owner. Record:
+   - the time (UTC);
+   - `pg_dump --version`, and the server's PostgreSQL 17.6 and system identifier `7678071634733212629` (the dump's header);
+   - the file's size and sha256.
+
+   Keep it encrypted, outside the repository. The bills bucket's files are not in a dump; only their rows are.
+2. **An isolated restore.** Restore it into a database that is not the live project, and that the app can't reach:
+   - a local PostgreSQL 17 (Docker `postgres:17` with the `anon`, `authenticated`, `service_role` and `supabase_*` roles
+     created first), or a throwaway Supabase project;
+   - `pg_restore` exits 0. Record every error line; each one is explained, or the restore doesn't count.
+3. **Integrity, the restored copy against live.** Run each check on both and keep both outputs. Live is read-only and
+   close to the dump's time.
+   - `supabase/checks/data-fingerprint.sql`: the same 61 shop tables, with the same row counts and hashes (rows
+     written on live after the dump are the only allowed difference, named table by table);
+   - `select count(*) from auth.users`: the same count;
+   - `2026-10-13-function-versions.sql`: the same baseline (18 OLDER VERSION, 3 STILL THERE);
+   - `open-policies.sql`: no row on either.
+4. **A rehearsal on the restored copy** of the exact run in section 3:
+   - `supabase/schema.sql` of the release commit, 819,383 bytes, sha256 `56cb6eaa62ef4d37…` (unchanged from `ee76f74` to
+     `73d232f`), between `BEGIN;` + `SET LOCAL lock_timeout = '10s';` and `COMMIT;`;
+   - then the section 3 "After" checks: the report all 83 rows ok with row 96 0; `2026-10-13-function-versions.sql` all
+     21 ok; `open-policies.sql` no row; `schema-dry-run.sql` all 0;
+   - `data-fingerprint.sql` identical before and after; `sync-read-isolation.sql` 0 rows of other shops;
+   - `2026-10-13-repair-undo.sql` on a second restored copy puts the 18 functions back byte for byte.
+5. **A fresh read-only preflight on live,** on the day of the request (section 3 "Preflight"):
+   - the identity (ref, version, system identifier);
+   - the dry run all 0;
+   - the catalog unchanged since 2026-10-14 (or each difference named);
+   - the migration history;
+   - the data fingerprint;
+   - the backup status.
+6. **The approval request** names:
+   - the dump's sha256 and where it is kept;
+   - the outputs of items 2–5;
+   - the script's sha256 and the undo;
+   - the time window and who runs it.
+
+   Approving it is the owner's decision alone. Until then, nothing in section 3 runs.
+
 ## 3. Database (SQL Editor)
 The whole `supabase/schema.sql` of the release commit, once, in one transaction. On the live project of 2026-10-13
 (compared with `schema.sql` object by object, read-only) it changes:

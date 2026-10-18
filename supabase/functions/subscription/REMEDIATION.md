@@ -1,5 +1,20 @@
 # Plan billing: remediation before `subscription` / `subscription-webhook` are deployed
 
+**Status 2026-10-18 (code only; nothing deployed, no secret set, AutoPay off).**
+- Step 1 **done**: `subscription/handler.js` and `subscription-webhook/handler.js` hold the logic (plain JS, injected
+  clients); each `index.ts` only reads the request and secrets. Tested by behaviour: `tests/unit/subscription-handlers.test.mjs`.
+- Step 2 **done**: the webhook answers 503 when the payment lookup fails, 500 when activation or the failed-payment record
+  fails for a reason that may pass, 200 plus an error line (payment and provider ids) when activation is refused for good
+  (P0001) or the amount isn't the amount due; `linkState` counts only a captured payment.
+- Step 3 **done in part**: test keys need `SUBSCRIPTION_TEST_MODE=true`, live keys are refused with it, any other key is
+  refused (`keyMode`); `deploy.json` requires the provider keys for the webhook and declares the flag. Not done: a
+  `supabase/config.toml` (whether the CLI would push other project settings from it is unchecked); the import-graph
+  settings check (a full-graph scan flags settings of shared modules a function never uses — not a sound rule).
+- Step 10 **done in part**: AutoPay checks the provider's plan against the terms before the consent is recorded. CORS
+  stays `*`: the function authenticates by bearer token (no cookies), and limiting the origin would stop Previews.
+- Also: a payment confirmation that fails for a reason that may pass says "try again" (503), not "contact support".
+- Steps 4–9 and 11 change the schema: they wait for the database repair (RELEASE.md §2a), which is blocked.
+
 Status: a plan, not implemented. Both functions stay undeployed (the owner's word is needed for any deploy). Written
 2026-10-15 from a read-only review of the code at `73d232f` (AUDIT.md item 108). The goal is charge-to-entitlement
 consistency: every captured charge, one-time or AutoPay, adds exactly the paid time, once; no paid time without a

@@ -37,7 +37,7 @@ console.log('=== the provider is chosen by secrets ===');
   check('no secrets → not configured', providerFor({}) === null);
   check('a key id without its secret → not configured', providerFor({ SUBSCRIPTION_RAZORPAY_KEY_ID: 'rzp_live_x' }) === null);
   check('an unknown provider → not configured', providerFor({ SUBSCRIPTION_PROVIDER: 'paypal', SUBSCRIPTION_RAZORPAY_KEY_ID: 'a', SUBSCRIPTION_RAZORPAY_KEY_SECRET: 'b' }) === null);
-  const p = providerFor({ SUBSCRIPTION_RAZORPAY_KEY_ID: 'rzp_test_1', SUBSCRIPTION_RAZORPAY_KEY_SECRET: 's' });
+  const p = providerFor({ SUBSCRIPTION_TEST_MODE: 'true', SUBSCRIPTION_RAZORPAY_KEY_ID: 'rzp_test_1', SUBSCRIPTION_RAZORPAY_KEY_SECRET: 's' });
   check('Razorpay with its keys', p && p.name === 'razorpay');
   check('the shops\' own payment-gateway keys are never used for Hangtag plans', providerFor({ RAZORPAY_KEY_ID: 'rzp_live_shop', RAZORPAY_KEY_SECRET: 'x' }) === null);
 }
@@ -50,7 +50,7 @@ console.log('=== Razorpay payment links ===');
     if (init.method === 'POST') return { ok: true, json: async () => ({ id: 'plink_ABC123xyz', short_url: 'https://rzp.io/i/abc', status: 'created' }) };
     return { ok: true, json: async () => ({ id: 'plink_ABC123xyz', status: 'paid', amount_paid: 107920, payments: [{ payment_id: 'pay_9', amount: 107920, status: 'captured' }] }) };
   };
-  const p = providerFor({ SUBSCRIPTION_RAZORPAY_KEY_ID: 'rzp_test_1', SUBSCRIPTION_RAZORPAY_KEY_SECRET: 'sec' }, fake, () => 1_800_000_000_000);
+  const p = providerFor({ SUBSCRIPTION_TEST_MODE: 'true', SUBSCRIPTION_RAZORPAY_KEY_ID: 'rzp_test_1', SUBSCRIPTION_RAZORPAY_KEY_SECRET: 'sec' }, fake, () => 1_800_000_000_000);
   const page = await p.createPayment({ paymentId: PID, amount: 1079.2, currency: 'INR', description: 'Hangtag 3 months', email: 'owner@shop.in', callbackUrl: 'https://app/#plans' });
   const body = JSON.parse(calls[0].init.body);
   check('a payment link for the amount in paise, the payment as reference, no partial payment', page.orderId === 'plink_ABC123xyz' && page.payUrl === 'https://rzp.io/i/abc'
@@ -63,7 +63,7 @@ console.log('=== Razorpay payment links ===');
   check('link states', linkState({ id: 'plink_1', status: 'created' }).state === 'pending' && linkState({ id: 'plink_1', status: 'expired' }).state === 'expired'
     && linkState({ id: 'plink_1', status: 'cancelled' }).state === 'cancelled' && linkState({ id: 'plink_1', status: 'created', expire_by: 1 }, 5000).state === 'expired'
     && linkState({ id: 'plink_1', status: 'partially_paid', amount_paid: 100 }).state === 'pending' && linkState(null).state === 'failed');
-  const failing = providerFor({ SUBSCRIPTION_RAZORPAY_KEY_ID: 'k', SUBSCRIPTION_RAZORPAY_KEY_SECRET: 's' }, async () => ({ ok: false, status: 401, json: async () => ({ error: { code: 'BAD_REQUEST_ERROR' } }) }));
+  const failing = providerFor({ SUBSCRIPTION_RAZORPAY_KEY_ID: 'rzp_live_k', SUBSCRIPTION_RAZORPAY_KEY_SECRET: 's' }, async () => ({ ok: false, status: 401, json: async () => ({ error: { code: 'BAD_REQUEST_ERROR' } }) }));
   let threw = null;
   try { await failing.createPayment({ paymentId: PID, amount: 10 }); } catch (e) { threw = e; }
   check('a provider error is an error (never a fake page)', threw && threw.status === 401, threw && threw.message);
@@ -94,7 +94,7 @@ console.log('=== the webhook ===');
   check('a valid signature passes', await verifySignature(raw, sig, secret));
   check('a wrong, empty or missing-secret signature fails', !(await verifySignature(raw, sig.replace(/.$/, '0'), secret)) && !(await verifySignature(raw, '', secret)) && !(await verifySignature(raw, sig, '')));
   check('a changed body fails', !(await verifySignature(raw.replace('49900', '1'), sig, secret)));
-  const p = providerFor({ SUBSCRIPTION_RAZORPAY_KEY_ID: 'k', SUBSCRIPTION_RAZORPAY_KEY_SECRET: 's', SUBSCRIPTION_WEBHOOK_SECRET: secret });
+  const p = providerFor({ SUBSCRIPTION_RAZORPAY_KEY_ID: 'rzp_live_k', SUBSCRIPTION_RAZORPAY_KEY_SECRET: 's', SUBSCRIPTION_WEBHOOK_SECRET: secret });
   check('the provider checks its own header', await p.verifyWebhook(raw, { 'x-razorpay-signature': sig }) && !(await p.verifyWebhook(raw, {})));
   const t = p.readWebhook(JSON.parse(raw));
   check('the event → the link, the Hangtag payment and what was paid', t && t.orderId === 'plink_ABC123xyz' && t.paymentRef === PID && t.view.state === 'paid' && t.view.paid === 49900 && t.view.paymentId === 'pay_7', t);
@@ -148,7 +148,7 @@ console.log('=== AutoPay: consent, the provider\'s plan, mandates, and only capt
     const path = url.replace('https://api.razorpay.com/v1', '').replace(/\/sub_\w+/, '/sub_X').replace(/\/plan_\w+/, '/plan_X'), r = routes[(init.method || 'GET') + ' ' + path];
     return { ok: !!r, status: r ? 200 : 404, json: async () => r || {} };
   };
-  const p = providerFor({ SUBSCRIPTION_RAZORPAY_KEY_ID: 'rzp_test_1', SUBSCRIPTION_RAZORPAY_KEY_SECRET: 's', SUBSCRIPTION_WEBHOOK_SECRET: 'whsec' }, api({
+  const p = providerFor({ SUBSCRIPTION_TEST_MODE: 'true', SUBSCRIPTION_RAZORPAY_KEY_ID: 'rzp_test_1', SUBSCRIPTION_RAZORPAY_KEY_SECRET: 's', SUBSCRIPTION_WEBHOOK_SECRET: 'whsec' }, api({
     'GET /plans/plan_X': { id: 'plan_Abc123XYZ', period: 'monthly', interval: 1, item: { amount: 99900, currency: 'INR' } },
     'POST /subscriptions': { id: 'sub_Fx12345678', short_url: 'https://rzp.io/i/abc', status: 'created', customer_id: 'cust_9' },
     'POST /subscriptions/sub_X/cancel': { id: 'sub_Fx12345678', status: 'cancelled' },
@@ -175,11 +175,11 @@ console.log('=== AutoPay: consent, the provider\'s plan, mandates, and only capt
     && p.readWebhook(sub('updated')) === null && p.readWebhook({ event: 'subscription.charged', payload: {} }) === null);
   check('…plan payment links read as before', p.readWebhook({ event: 'payment_link.paid', payload: { payment_link: { entity: { id: 'plink_1', status: 'paid', amount: 99900, amount_paid: 99900, notes: {} } },
     payment: { entity: { id: 'pay_9', amount: 99900, status: 'captured' } } } }).kind === 'payment');
-  const wh = readFileSync(new URL('../../supabase/functions/subscription-webhook/index.ts', import.meta.url), 'utf8');
-  const fn = readFileSync(new URL('../../supabase/functions/subscription/index.ts', import.meta.url), 'utf8');
-  check('the webhook records AutoPay only through hangtag_autopay_event, after the signature check', wh.indexOf('provider.verifyWebhook(') > 0 && wh.indexOf('provider.verifyWebhook(') < wh.indexOf('admin.rpc("hangtag_autopay_event"') && /p_payment: target\.paymentId/.test(wh));
-  check('the function records the consent AS the owner and checks the provider\'s plan before making a mandate; it never records a charge itself',
-    fn.indexOf('db.rpc("hangtag_autopay_begin"') > 0 && fn.indexOf('db.rpc("hangtag_autopay_begin"') < fn.indexOf('provider.createAutopay') && fn.indexOf('provider.getPlan') < fn.indexOf('provider.createAutopay')
+  const wh = readFileSync(new URL('../../supabase/functions/subscription-webhook/handler.js', import.meta.url), 'utf8');
+  const fn = readFileSync(new URL('../../supabase/functions/subscription/handler.js', import.meta.url), 'utf8');
+  check('the webhook records AutoPay only through hangtag_autopay_event, after the signature check', wh.indexOf('provider.verifyWebhook(') > 0 && wh.indexOf('provider.verifyWebhook(') < wh.indexOf('db.rpc("hangtag_autopay_event"') && /p_payment: target\.paymentId/.test(wh));
+  check('the function checks the provider\'s plan, then records the consent AS the owner, then makes a mandate; it never records a charge itself',
+    fn.indexOf('db.rpc("hangtag_autopay_begin"') > 0 && fn.indexOf('db.rpc("hangtag_autopay_begin"') < fn.indexOf('provider.createAutopay') && fn.indexOf('provider.getPlan') < fn.indexOf('db.rpc("hangtag_autopay_begin"')
     && !/p_event: "charged"/.test(fn));
 }
 

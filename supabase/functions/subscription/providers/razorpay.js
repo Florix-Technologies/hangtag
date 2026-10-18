@@ -6,13 +6,16 @@ const API = "https://api.razorpay.com/v1";
 const str = (v) => (v == null ? "" : String(v));
 export const toPaise = (rupees) => Math.round((+rupees || 0) * 100);
 
-/* The link's state as Hangtag reads it: { state: "paid"|"pending"|"expired"|"cancelled"|"failed", paid (paise), paymentId } */
+/* The link's state as Hangtag reads it: { state: "paid"|"pending"|"expired"|"cancelled"|"failed", paid (paise), paymentId }.
+   Only a CAPTURED payment is money: a link Razorpay calls paid whose payment is only authorised waits (pending), so no
+   plan is activated on an authorisation that may never be captured. */
 export function linkState(link, now = Date.now()) {
   if (!link || typeof link !== "object" || !link.id) return { state: "failed", paid: 0, paymentId: null };
-  const pays = Array.isArray(link.payments) ? link.payments.filter((p) => p && (p.status === "captured" || p.status === "authorized")) : [];
-  const paid = +link.amount_paid || pays.reduce((a, p) => a + (+p.amount || 0), 0);
+  const pays = Array.isArray(link.payments) ? link.payments.filter((p) => p && p.status === "captured") : [];
+  const paid = pays.length ? (+link.amount_paid || pays.reduce((a, p) => a + (+p.amount || 0), 0)) : 0;
   const paymentId = pays[0] ? str(pays[0].payment_id || pays[0].id) : null;
   if (paid > 0 && link.status === "paid") return { state: "paid", paid, paymentId };
+  if (link.status === "paid") return { state: "pending", paid: 0, paymentId: null };
   if (link.status === "cancelled") return { state: "cancelled", paid, paymentId };
   if (link.status === "expired" || (link.expire_by && link.expire_by * 1000 < now)) return { state: "expired", paid, paymentId };
   if (link.status === "created" || link.status === "issued" || link.status === "partially_paid") return { state: "pending", paid, paymentId };

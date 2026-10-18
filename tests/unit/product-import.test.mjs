@@ -93,5 +93,9 @@ check('xlsx: column widths and Text-formatted code columns (numFmt 49), note sty
 const back2 = (await readXlsx(wb, { DOMParser: null }))[0].rows;
 check('xlsx: the template reads back row for row', back2.length === T.length && back2[notes.length][0] === 'Product name (required)' && validateImport(back2, {}).summary.examples === 5, back2.slice(notes.length, notes.length + 2));
 
+
+check("opening stock from the file keeps its cost: the row's, else the product's (AUDIT 62)", plan.moves.length > 0 && plan.moves.some((x) => x.cost != null)
+  && plan.moves.every((x) => { const p = plan.products.find((q) => q.id === x.p), v = p.variants.find((y) => y.id === x.v); return x.cost === (v.cost != null ? v.cost : p.cost != null ? p.cost : null); }),
+  plan.moves.map((x) => [x.v, x.cost]));
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

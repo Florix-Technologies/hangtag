@@ -5,7 +5,7 @@
 // card (the mix against the last 30 days); old dues; stock that isn't selling; and reconciliation (a cash close that
 // didn't match and the entry of exactly that amount, bills whose receipts don't add up, UPI to verify, money not on a
 // bill, money that lands in no bank account). Run: npm run test:unit
-import { REF_LABELS, THRESHOLDS, businessToday, explainAverageBill, explainMargin, explainPayments, explainReceivables, explainReconciliation, explainSales, explainStock, pickComparison } from '../../src/domain/reports/business-today.js';
+import { REF_LABELS, THRESHOLDS, businessToday, stockReceived, explainAverageBill, explainMargin, explainPayments, explainReceivables, explainReconciliation, explainSales, explainStock, pickComparison } from '../../src/domain/reports/business-today.js';
 
 let passed = 0, failed = 0;
 const check = (n, ok, info) => { if (ok) { passed++; console.log('PASS ' + n); } else { failed++; console.log('FAIL ' + n + (info !== undefined ? '  ' + JSON.stringify(info).slice(0, 500) : '')); } };
@@ -118,5 +118,10 @@ V = businessToday(facts, { profit: true, position: true });
 check('a manager (no money split): no cash / UPI / card or reconciliation', !V.figures.some((x) => ['cash', 'upi', 'card', 'reconciliation'].includes(x.key)) && V.figures.some((x) => x.key === 'stock'));
 check('every ref a reason may carry has words for its button', ['bill', 'customer', 'product', 'report', 'reconcile', 'reorder', 'cashbook', 'bankbook', 'customers', 'bills', 'banks'].every((k) => REF_LABELS[k]));
 
+
+console.log('=== "Received today": stock in from suppliers, not opening stock (AUDIT 62) ===');
+check("stock in (RESTOCK) with a cost counts at cost; opening stock, stock without a cost, stock out and other days don't",
+  stockReceived([{ t: 10, type: 'RESTOCK', q: 4, cost: 25.5 }, { t: 11, type: 'OPENING', q: 100, cost: 10 }, { t: 12, type: 'RESTOCK', q: 2, cost: null },
+    { t: 13, type: 'RESTOCK', q: -1, cost: 25.5 }, { t: 99, type: 'RESTOCK', q: 5, cost: 1 }, { t: 14, type: 'ADJUST', q: 3, cost: 2 }], 0, 50) === 102 && stockReceived(null, 0, 1) === 0);
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

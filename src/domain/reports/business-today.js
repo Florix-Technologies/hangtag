@@ -25,6 +25,10 @@ const TH = THRESHOLDS;
 const pct = (a, b) => b ? Math.round((a - b) / b * 100) : null;
 const share = (a, b) => b ? Math.round(a / b * 100) : 0;
 const r2 = x => Math.round(x * 100) / 100;
+/* Stock received between from and to, at cost: stock in (RESTOCK) with a cost — never a product's opening stock, which
+   wasn't received that day */
+export const stockReceived = (ledger, from, to) => r2((ledger || []).filter(e => e && e.t >= from && e.t <= to && e.type === "RESTOCK" && e.q > 0 && e.cost != null)
+  .reduce((a, e) => a + e.q * e.cost, 0));
 const one = x => { const v = Math.round(x * 10) / 10; return Number.isInteger(v) ? String(v) : v.toFixed(1); };
 const plural = (n, a, b) => `${n} ${n === 1 ? a : b || a + "s"}`;
 const why = (id, text, ref) => ref ? { id, text, ref } : { id, text };

@@ -107,7 +107,7 @@ export function serialStates({moves,sales,returns,resolve}){
       const m=e.m; if(!Array.isArray(m.sn)||!m.sn.length) return;
       m.sn.forEach(x=>{ const sn=normSerial(x), o=rec(sn,m.v,m.p);
         if(m.q>0){ Object.assign(o,{vid:m.v,pid:m.p||o.pid,status:"IN_STOCK",inId:m.id,imp:m.imp||null,saleId:null,ln:null,cust:null,returnId:null,t:e.t});
-          o.history.push({t:e.t,what:m.imp?"Purchased":m.type==="OPENING"?"Opening stock":m.type==="ADJUST"?"Found (adjustment)":"Stock in",ref:m.note||"",id:m.id,imp:m.imp||null}); }
+          o.history.push({t:e.t,what:m.type==="OPENING"?"Opening stock":m.type==="ADJUST"?"Found (adjustment)":m.imp?"Purchased":"Stock in",ref:m.note||"",id:m.id,imp:m.imp||null}); }
         else { o.status=outStatus(m); o.t=e.t; o.history.push({t:e.t,what:o.status==="CANCELLED"?"Purchase cancelled":"Written off",ref:m.note||"",id:m.id}); }
       });
     } else if(e.s){
@@ -144,7 +144,7 @@ export function batchStates({moves,sales,returns,resolve,batchTracked}){
       o.qty=roundQty(o.qty+q);
       if(q>0&&o.t==null){ o.t=e.t; o.cost=m.cost==null?null:m.cost; o.imp=m.imp||null; }
       if(m.exp&&!o.exp) o.exp=m.exp;
-      o.history.push({t:e.t,what:m.imp&&q>0?"Purchased":m.imp?"Purchase cancelled":m.type==="OPENING"?"Opening stock":m.type==="ADJUST"?"Adjustment":"Stock in",q,ref:m.note||"",id:m.id});
+      o.history.push({t:e.t,what:m.type==="OPENING"?"Opening stock":m.type==="ADJUST"?"Adjustment":m.imp?(q>0?"Purchased":"Purchase cancelled"):"Stock in",q,ref:m.note||"",id:m.id});
     } else if(e.s){
       const s=e.s, i=e.i, vid=rv(i); if(!vid||s.void) return;
       let alloc=Array.isArray(i.bt)&&i.bt.length?i.bt.map(a=>({b:normBatch(a.b),q:roundQty(a.q)})):null;

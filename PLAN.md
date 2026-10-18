@@ -82,7 +82,7 @@ S, M, L: small, medium, large. "Needs": increments that must land first.
 | I9 | S | Appending option values uploads only the new variants | — | none | Planned |
 | I10 | M | Checked upload:<br>- a queued product edit compares the cloud with its expected old values before writing (using I3's `updated_at`);<br>- a conflict goes to sync review;<br>- a product deleted elsewhere stays deleted | I3 | none | Planned (closes AUDIT.md 57) |
 | I11 | L | "Update your products" from a file:<br>- the preview shows old → new, with decisions;<br>- one local save;<br>- uploads only through I10 | I7, I8, I9, I10 | none | Planned |
-| I12 | S | Opening stock from a file carries its cost. History labels and "Received today" go by the kind of stock record | — | none | Planned |
+| I12 | S | Opening stock from a file carries its cost. History labels and "Received today" go by the kind of stock record | — | none | **Done** 2026-10-18 (AUDIT.md 139) |
 | I13 | M | Tracking columns in the product file (Track stock by, Batch, Expiry date, Serial numbers or IMEIs), checked across the whole file | — | none | Planned |
 | I14 | L | A server-checked, repeat-safe function for stock from product files:<br>- opening lines are insert-only;<br>- "set to" lines carry the quantity expected now, and are refused if stock has moved since | I2 | one function | Planned |
 | I15 | M | New products with opening stock, serials and batches, through I14. Online only: names aren't unique, and two offline phones would double the stock | I4, I12, I13, I14 | none beyond I14 | Planned |
@@ -92,7 +92,7 @@ S, M, L: small, medium, large. "Needs": increments that must land first.
 | I19 | S | Supplier bills keep the printed unit. A line in another unit ("5 box") needs its base quantity; the purchase keeps the bill's money exactly | — | none | **Done** `93308e2` |
 | I20 | S | Repacking never creates stock. An output off the target unit's grid is refused, with the nearest amounts that fit suggested | — | none | **Done** `451ded6` |
 | I21 | S | Bill and return lines carry the unit sold. (With I1 and I3 a unit can no longer change under a product's history, so this is now only for a bill made offline before the product had any.) | — | two functions re-created | Planned |
-| I22 | M | Quantity and money tidiness:<br>- purchase line money rounded as sales are;<br>- low-stock levels keep their decimals;<br>- a shop unit's GST code is locked once lines use it | — | `low_stock` to `NUMERIC(12,3)`; unit guard extended | Planned |
+| I22 | M | Quantity and money tidiness:<br>- purchase line money rounded as sales are;<br>- low-stock levels keep their decimals;<br>- a shop unit's GST code is locked once lines use it | — | `low_stock` to `NUMERIC(12,3)`; unit guard extended | Partly done 2026-10-18: line money (AUDIT.md 139); the rest needs the schema, after the repair |
 | I23 | L | Exact cost per base unit (4 decimals), next to the integer cost columns, which stay | I3 | additive columns, a trigger for old apps, functions | Planned |
 | I24 | M | Same-dimension conversions (kg = 1000 g, l = 1000 ml, m = 100 cm, dozen = 12 pcs). Each is made once, at entry, with the factor kept on the line; supplier-bill lines in g or dozens convert instead of asking | I3, I19, I23 | functions check the factor when present | Planned |
 | I25 | L | Pack definitions per product (box of 12, carton of 24): a pack's factor never changes, and every code sits in one registry | I3, I24 | `packs` column, `hangtag_codes` table | Planned |

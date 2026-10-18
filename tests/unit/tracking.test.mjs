@@ -142,5 +142,18 @@ check('a bill with those serials / batches waits while the purchase is still on 
 check('a write-off waits for the stock-in of its serial; a stock-in doesn\'t wait for itself', dependsOn({ type: 'move', move: { id: 'w', p: 'ph', v: 'ph:', q: -1, sn: ['N1'] } }).includes('sn:N1')
   && !dependsOn({ type: 'move', move: { id: 'i', p: 'ph', v: 'ph:', q: 1, sn: ['N1'] } }).includes('sn:N1'));
 
+
+console.log('--- history labels by the kind of stock record (AUDIT 62) ---');
+{
+  const om = { o1: { id: 'o1', v: 'ph:', p: 'ph', type: 'OPENING', q: 1, t: 1, sn: ['SN900'], imp: 'file1' }, r1: { id: 'r1', v: 'ph:', p: 'ph', type: 'RESTOCK', q: 1, t: 2, sn: ['SN901'], imp: 'pur9' },
+    s1: { id: 's1', v: 'ph:', p: 'ph', type: 'RESTOCK', q: 1, t: 3, sn: ['SN902'] } };
+  const SS = serialStates({ moves: om, sales: [], returns: [] });
+  check('a serial: opening stock is "Opening stock" even with an import id; from a supplier bill "Purchased"; other stock in "Stock in"',
+    SS.get('SN900').history[0].what === 'Opening stock' && SS.get('SN901').history[0].what === 'Purchased' && SS.get('SN902').history[0].what === 'Stock in', [...SS.values()].map((x) => x.history));
+  const bmo = { o2: { id: 'o2', v: 'rx:', p: 'rx', type: 'OPENING', q: 5, t: 1, b: 'B9', imp: 'file1' }, r2: { id: 'r2', v: 'rx:', p: 'rx', type: 'RESTOCK', q: 3, t: 2, b: 'B9', imp: 'pur9' },
+    c2: { id: 'c2', v: 'rx:', p: 'rx', type: 'RESTOCK', q: -3, t: 3, b: 'B9', imp: 'pur9' } };
+  const B9 = batchStates({ moves: bmo, sales: [], returns: [] }).byVid['rx:'].B9;
+  check('a batch: "Opening stock", then "Purchased", then "Purchase cancelled"', !!B9 && JSON.stringify(B9.history.map((h) => h.what)) === JSON.stringify(['Opening stock', 'Purchased', 'Purchase cancelled']), B9 && B9.history);
+}
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

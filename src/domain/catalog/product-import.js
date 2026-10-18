@@ -345,7 +345,7 @@ export function importPlan(v,{ids,colors,now,dev}){
       const id=ids.variant();
       variants.push({id,o:x.opts.map(o=>g.opts.find(op=>same(op.n,o.n)).v.find(val=>same(val,o.v))),sku:x.sku,bc:x.bc,price:x.price!=null&&x.price!==g.price?x.price:null,
         cost:x.cost!=null&&x.cost!==g.cost?x.cost:null,active:true});
-      if(x.qty>0) moves.push({id:"open:"+id,v:id,p:pid,type:"OPENING",q:x.qty,cost:null,note:"Opening stock (import)",t:now,dev});
+      if(x.qty>0) moves.push({id:"open:"+id,v:id,p:pid,type:"OPENING",q:x.qty,cost:x.cost!=null?x.cost:g.cost!=null?g.cost:null,note:"Opening stock (import)",t:now,dev});
     });
     const p={id:pid,name:g.name,cat:g.cat||"",brand:g.brand||"",desc:g.desc||"",price:g.price,cost:g.cost,color:colors&&colors.length?colors[i%colors.length]:"#8E8A83",archived:false,
       hsn:g.hsn||"",gst:g.gst,code:variants.some(x=>x.bc)?"barcode":"",opts:g.opts.map(o=>({n:o.n,v:o.v.slice(),...(o.a?{a:o.a}:{})})),variants};

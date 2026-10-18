@@ -139,5 +139,10 @@ check('bill file type: from the picker, else from the name; anything else is not
     && p.errors.some((e) => /Other lines of Basmati are in kg: choose the same unit/.test(e.message)), p.errors);
 }
 
+
+console.log("=== a purchase line's money, as a bill line's (AUDIT 62) ===");
+check('quantity × cost in exact thousandths, half up, as sales do: 1.005 at ₹1 is ₹1.01 (not ₹1.00), 0.335 kg at ₹43 is ₹14.41, then GST on it',
+  lineMoney({ q: 1.005, cost: 1, gst: 0 }).tx === 101 && lineMoney({ q: 0.335, cost: 43, gst: 0 }).tx === 1441 && lineMoney({ q: 3, cost: 99.99, gst: 18 }).tax === Math.round(29997 * 0.18)
+  && lineMoney({ q: 2, cost: 10, gst: 5 }).total === 2100);
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

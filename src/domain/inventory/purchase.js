@@ -7,7 +7,7 @@
 //   Serial numbers and batches (domain/inventory/tracking.js): a line of a product tracked by serial number carries
 //   `serials` (one per piece), one tracked by batch `batch` ({ no, exp }); its stock-in record carries them (sn / b, exp),
 //   so they come into stock, and leave it again when the purchase is cancelled, with the same records as the stock.
-import { toPaise, toRupees, tooPrecise } from '../sales/paise.js';
+import { linePaise, toPaise, toRupees, tooPrecise } from '../sales/paise.js';
 import { validEmail } from '../../shared/validation/email.js';
 import { validGstin } from '../../shared/validation/gstin.js';
 import { validPhone } from '../../shared/validation/phone.js';
@@ -43,9 +43,10 @@ export function checkSupplier(input,others=[]){
 }
 
 /* ---------- purchase lines and totals ---------- */
-/* One line's money in paise: taxable value = qty × cost per piece (before GST), the GST on it, and the line total */
+/* One line's money in paise: taxable value = qty × cost per piece (before GST), the GST on it, and the line total. The
+   quantity times the cost is worked out as a bill line's is (paise.js linePaise), so 1.005 at ₹1 is ₹1.01 on both */
 export function lineMoney({q,cost,gst}){
-  const tx=Math.round((+q||0)*toPaise(cost)), tax=Math.round(tx*(+gst||0)/100);
+  const tx=linePaise(q,cost), tax=Math.round(tx*(+gst||0)/100);
   return {tx,tax,total:tx+tax};
 }
 /* The first problem with a line (n: its number on the screen), or null. dec: decimals its quantity may have (0: whole pieces) */

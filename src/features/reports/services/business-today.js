@@ -7,7 +7,7 @@
 import { store } from '../../../shared/state/store.js';
 import { logger } from '../../../shared/logging/logger.js';
 import { addDays, dayKey, dayLong, fmtDate, hhmm } from '../../../shared/formatting/dates.js';
-import { businessToday, pickComparison } from '../../../domain/reports/business-today.js';
+import { businessToday, pickComparison, stockReceived } from '../../../domain/reports/business-today.js';
 import { groupLines, paymentSummary, profitSummary } from '../../../domain/reports/sales-report.js';
 import { reconcileSale } from '../../../domain/finance/books.js';
 import { PAY_METHODS, dueAmtOf, isUnverified, unverifiedPayments } from '../../../domain/sales/payments.js';
@@ -93,7 +93,7 @@ export function duesFacts(k, now){
 /* The stock's value (Smart reorder's valuation), what isn't selling, and today's stock in and out at cost */
 function stockFacts(k, now, profitToday){
   const inv = inventoryIntelligence({ now }), s = inv.summary, b = dayBounds(k, k);
-  const received = D().ledger.filter(e => e.t >= b.from && e.t <= b.to && (e.type === "RESTOCK" || e.type === "OPENING") && e.q > 0 && e.cost != null).reduce((a, e) => a + e.q * e.cost, 0);
+  const received = stockReceived(D().ledger, b.from, b.to);
   const top = inv.products.filter(p => p.deadStockValue > 0).sort((a, b2) => b2.deadStockValue - a.deadStockValue).slice(0, 3).map(p => ({ id: p.id, name: p.name, value: p.deadStockValue }));
   return { value: s.inventoryValue, cost: s.inventoryCost, coverage: (s.marginCoverage == null ? 100 : s.marginCoverage) / 100,
     dead: { value: s.deadStockValue, products: s.deadStock, days: inv.config.deadDays, top }, today: { received: r2(received), sold: profitToday ? profitToday.cogs : 0 } };

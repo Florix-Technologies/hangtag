@@ -14,6 +14,9 @@ import { use } from '../di/services.js';
 export const DIAGNOSTICS_KEY = "hangtag_diagnostics_v1";
 export const DIAGNOSTICS_LIMIT = 50;
 const MAX_BYTES = 48 * 1024, MAX_TEXT = 240;
+// a server call that fails again on every retry while it is out of reach — the catch-up and the team check back off to
+// 5 minutes, the plan check asks every 10, other calls run in between — is one entry per call: just over the longest
+const API_REPEAT_MS = 11 * 60e3, API_REPEAT_KINDS = ["connection-failed", "server-error"];
 let fallback = [];
 const installedOn = new WeakSet();
 
@@ -128,7 +131,22 @@ export function recordDiagnostic(input = {}){
   if(BAND_WORDS.includes(input.net)) entry.net = input.net;
   if(input.hidden === true) entry.hidden = true;
   const list = read().slice(), previous = list[list.length - 1];
-  if(previous && previous.level === entry.level && previous.source === entry.source && previous.kind === entry.kind && previous.message === entry.message && now - Date.parse(previous.at) < 60000){
+  const same = x => !!x && x.level === entry.level && x.source === entry.source && x.kind === entry.kind && x.message === entry.message;
+  // a failed connection or server error: its latest identical entry within API_REPEAT_MS, wherever it is, is counted and
+  // moved to the end, keeping when it first happened, so the history before an outage stays. Anything else: only the
+  // entry just before, within a minute.
+  const repeat = entry.category === "api" && API_REPEAT_KINDS.includes(entry.kind);
+  let hit = -1;
+  if(repeat){
+    for(let i = list.length - 1; i >= 0 && hit < 0; i--){
+      const x = list[i];
+      if(same(x) && x.category === "api" && x.status === entry.status && x.code === entry.code && now - Date.parse(x.at) < API_REPEAT_MS) hit = i;
+    }
+  }
+  if(hit >= 0){
+    const x = list.splice(hit, 1)[0];
+    list.push({ ...x, at: entry.at, first: x.first || x.at, count: Math.min(999, (x.count || 1) + 1) });
+  }else if(!repeat && same(previous) && now - Date.parse(previous.at) < 60000){
     list[list.length - 1] = { ...previous, at: entry.at, count: Math.min(999, (previous.count || 1) + 1) };
   }else list.push(entry);
   write(list);

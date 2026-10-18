@@ -7,8 +7,12 @@
 // When: realtime joins again after a drop; the device comes back online; the app comes back to the screen after a while
 // (hidden, frozen, or restored from the back/forward cache); and every 5 minutes while on screen. One check at a time:
 // a reason that comes during a check runs one more after it, never two at once. Only a check that got everything counts:
-// one that failed (or was left to a download already under way) is owed, and tried again at the next minute's look.
-// No imports: the clock, the checks and the page are given (catch-up.js wires the app's), so all of it can be tested.
+// one that failed is owed and retried after 1, 2, 4, then at most 5 minutes; a real online/realtime/foreground signal
+// tries immediately. A check left to a download already under way stays owed without consuming a retry step.
+// The clock, the checks and the page are given (catch-up.js wires the app's), and the retry clock (retry-backoff.js) has no
+// timers of its own, so all of it can be tested.
+import { createRetryBackoff } from './retry-backoff.js';
+
 export const POLL_MS = 5 * 60e3, RESUME_MS = 30e3, TICK_MS = 60e3;
 // a check still going after 2 minutes (a connection that hangs after sleep) no longer holds the next one back; the
 // upload before a check is waited for at most 30 s (the downloads keep what is still going up)
@@ -46,26 +50,38 @@ export function catchUpDue({ reason, now, lastCheckAt = 0, hiddenFor = 0, owed =
    database has no change check yet; warn(e) */
 export function createCatchUp(deps){
   const tracker = createRealtimeTracker();
+  const retry = createRetryBackoff({ now: deps.now });
   let lastCheckAt = 0, lastFull = 0, inFlight = null, startedAt = 0, again = false, owed = false;
   const sleep = deps.sleep || (() => new Promise(() => {}));
-  /* one check → true when it got everything */
+  const warn = e => { if(!(deps.isReported && deps.isReported(e))) deps.warn(e); };
+  /* one check returns success, failure, or deferred while another download is under way */
   async function once(){
     await Promise.race([deps.flush(), sleep(FLUSH_WAIT_MS)]);
-    if(deps.busy()) return false;   // a download under way: the next minute's look checks again
-    try{ await deps.check(); return true; }
+    if(deps.busy()) return "deferred";   // a download under way: the next minute's look checks again
+    try{ await deps.check(); return "success"; }
     catch(e){
-      if(!deps.isOutdated(e)){ deps.warn(e); return false; }
+      if(!deps.isOutdated(e)){ warn(e); return "failure"; }
       // a database without the change check yet: the whole download, at most every 5 minutes (as on a member's phone;
       // until then nothing is owed)
-      if(deps.now() - lastFull < POLL_MS) return true;
+      if(deps.now() - lastFull < POLL_MS) return "success";
       lastFull = deps.now();
-      return !!(await deps.fullPull());
+      return (await deps.fullPull()) ? "success" : "failure";
     }
   }
   function run(){
     const p = (async () => {
-      try{ do{ again = false; if(await once()){ lastCheckAt = deps.now(); owed = false; } else owed = true; } while(again && deps.eligible()); }
-      catch(e){ deps.warn(e); }
+      do{
+        again = false;
+        let outcome;
+        try{ outcome = await once(); }
+        catch(e){ warn(e); outcome = "failure"; }
+        if(outcome === "success"){
+          lastCheckAt = deps.now(); owed = false; retry.succeeded();
+        }else{
+          owed = true;
+          if(outcome === "failure") retry.failed();
+        }
+      }while(again && deps.eligible());
       return true;
     })().finally(() => { if(inFlight === p) inFlight = null; });
     inFlight = p; startedAt = deps.now();
@@ -79,6 +95,8 @@ export function createCatchUp(deps){
       // A check that hangs is left to finish on its own (what it brings can't replace newer: sync-ledger.js)
       if(inFlight && deps.now() - startedAt < STUCK_MS){ if(reason !== "poll") again = true; return inFlight; }
       if(!catchUpDue({ reason, now: deps.now(), lastCheckAt, hiddenFor, owed })) return Promise.resolve(false);
+      // Network/device signals are fresh evidence and try now; the one-minute look observes bounded backoff.
+      if(!retry.canTry({ immediate: reason !== "poll" })) return Promise.resolve(false);
       if(inFlight) deps.warn(new Error("A catch-up has been waiting 2 minutes; another starts."));
       return run();
     },
@@ -87,15 +105,15 @@ export function createCatchUp(deps){
     /* a new channel: its first join is a join, not a re-join */
     realtimeReset(){ tracker.reset(); },
     /* the device connected and downloaded everything: the next poll counts from now */
-    connected(){ lastCheckAt = deps.now(); lastFull = lastCheckAt; owed = false; },
+    connected(){ lastCheckAt = deps.now(); lastFull = lastCheckAt; owed = false; retry.succeeded(); },
     /* the page's events and the 5-minute look → a function that removes them all. timers: { setInterval, clearInterval } */
-    install({ win, doc, timers }){
+    install({ win, doc, timers, onForeground }){
       let hiddenAt = doc && doc.visibilityState === "hidden" ? deps.now() : null;
       const away = () => { if(hiddenAt == null) hiddenAt = deps.now(); };
-      const back = () => { const hiddenFor = hiddenAt == null ? 0 : deps.now() - hiddenAt; hiddenAt = null; api.catchUp("foreground", { hiddenFor }); };
+      const back = () => { const hiddenFor = hiddenAt == null ? 0 : deps.now() - hiddenAt; hiddenAt = null; api.catchUp("foreground", { hiddenFor }); if(onForeground) onForeground({ hiddenFor }); };
       const onVisibility = () => { if(doc.visibilityState === "hidden") away(); else back(); };
       // restored from the back/forward cache: away for an unknown while, its socket closed — always a catch-up
-      const onShow = (e) => { if(e && e.persisted){ hiddenAt = null; api.catchUp("foreground", { hiddenFor: RESUME_MS }); } };
+      const onShow = (e) => { if(e && e.persisted){ hiddenAt = null; api.catchUp("foreground", { hiddenFor: RESUME_MS }); if(onForeground) onForeground({ hiddenFor: RESUME_MS }); } };
       const listeners = [[doc, "visibilitychange", onVisibility], [doc, "freeze", away], [doc, "resume", back], [win, "pageshow", onShow]].filter(([t]) => t && t.addEventListener);
       listeners.forEach(([t, k, f]) => t.addEventListener(k, f));
       // a device asleep: its timer fires again on waking, 5 minutes or more after the last check — one catch-up
@@ -103,7 +121,7 @@ export function createCatchUp(deps){
       return () => { timers.clearInterval(timer); listeners.forEach(([t, k, f]) => t.removeEventListener(k, f)); };
     },
     /* for tests: what the scheduler knows */
-    state: () => ({ lastCheckAt, inFlight: !!inFlight, again, owed }),
+    state: () => ({ lastCheckAt, inFlight: !!inFlight, again, owed, ...retry.state() }),
   };
   return api;
 }

@@ -31,7 +31,10 @@ const row = (label, value, tone) => `<div class="diag-kv${tone ? " " + tone : ""
 /* An entry's technical detail under it: where (file:line), its code and HTTP status — each when there is one (a database
    event has a code but no file) */
 export const entryDetail = e => {
-  const parts = [e.file ? esc(e.file) + (e.line ? ":" + e.line : "") : "", e.code ? esc(e.code) : "", e.status ? esc(String(e.status)) : ""].filter(Boolean);
+  // a repeated server-call failure says when it began (diagnostics.js keeps "first")
+  const first = e.first && e.count > 1 && Number.isFinite(Date.parse(e.first)) ? Date.parse(e.first) : null;
+  const since = first == null ? "" : "since " + esc(dayKey(first) === dayKey(Date.now()) ? new Date(first).toLocaleTimeString() : String(e.first).slice(0, 10));
+  const parts = [e.file ? esc(e.file) + (e.line ? ":" + e.line : "") : "", e.code ? esc(e.code) : "", e.status ? esc(String(e.status)) : "", since].filter(Boolean);
   return parts.length ? `<small>${parts.join(" · ")}</small>` : "";
 };
 

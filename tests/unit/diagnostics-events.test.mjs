@@ -5,7 +5,7 @@
 // and database errors by SQLSTATE (a rule's message for people and the plan lock are not counted as errors).
 // Run: node tests/unit/diagnostics-events.test.mjs
 import { provide } from '../../src/shared/di/services.js';
-import { DIAG_CATEGORIES, categoryCounts, clearDiagnostics, durationBand, getDiagnostics, recordEvent } from '../../src/shared/logging/diagnostics.js';
+import { DIAG_CATEGORIES, categoryCounts, clearDiagnostics, durationBand, getDiagnostics, recordDiagnostic, recordEvent } from '../../src/shared/logging/diagnostics.js';
 import { apiOp, withTiming } from '../../src/infrastructure/supabase/client.js';
 import { toAppError } from '../../src/infrastructure/supabase/errors.js';
 import { logger } from '../../src/shared/logging/logger.js';
@@ -199,6 +199,51 @@ check('…a refusal by row security stays a problem, with its table; an operatio
   ev.length === 3 && ev[0].kind === 'permission-denied' && ev[0].level === 'error' && ev[0].op === 'table:hangtag_sales' && !('op' in ev[1]) && !('op' in ev[2])
   && !/9876543210|phone/.test(JSON.stringify(ev)), ev);
 clearDiagnostics();
+
+console.log('=== a server call failing on every retry: one entry per call, the history before it kept ===');
+{
+  const H = 3600e3, M = 60e3, start = Date.now() - 4 * H;   // in the past: a noted event may carry its time up to now
+  for (let i = 0; i < 20; i++) recordDiagnostic({ level: 'info', source: 'test', message: 'earlier ' + i, now: start - (20 - i) * 61000 });
+  // three hours with the server out of reach: the catch-up at once, then 1, 2, 4 and every 5 minutes later; the plan check
+  // every 10 minutes; a token refresh every 30 s in the last two hours; a table answering 503 twice, then 500
+  const at = [0]; for (const g of [1, 2, 4]) at.push(at[at.length - 1] + g); while (at[at.length - 1] + 5 <= 180) at.push(at[at.length - 1] + 5);
+  const ev = at.map((m) => [m * M, 'connection-failed', 'rpc:hangtag_shop_changes']);
+  for (let m = 10; m <= 180; m += 10) ev.push([m * M, 'connection-failed', 'rpc:hangtag_subscription_status']);
+  for (let s = 3600; s <= 3 * 3600; s += 30) ev.push([s * 1000, 'connection-failed', 'auth:token']);
+  ev.push([50 * M, 'server-error', 'table:hangtag_products', 503], [53 * M, 'server-error', 'table:hangtag_products', 503], [54 * M, 'server-error', 'table:hangtag_products', 500]);
+  ev.sort((a, b) => a[0] - b[0]);
+  for (const [t, kind, op, status] of ev) recordEvent('api', kind, { op, ms: 200, status, at: start + t }, kind === 'server-error' ? 'error' : 'warn');
+  const d = getDiagnostics(), of = (op, st) => d.filter((x) => x.category === 'api' && x.op === op && (st === undefined || x.status === st));
+  check(`3 hours (${ev.length} failed calls): all 20 earlier entries kept; one entry per failing call, counted`, d.filter((x) => /^earlier /.test(x.message)).length === 20
+    && of('rpc:hangtag_shop_changes').length === 1 && of('rpc:hangtag_shop_changes')[0].count === at.length
+    && of('rpc:hangtag_subscription_status').length === 1 && of('rpc:hangtag_subscription_status')[0].count === 18
+    && of('auth:token').length === 1 && of('auth:token')[0].count === 241, d.filter((x) => x.category === 'api'));
+  const sc = of('rpc:hangtag_shop_changes')[0];
+  check('…each keeps when it first happened and when it last did', sc.first === new Date(start).toISOString() && sc.at === new Date(start + at[at.length - 1] * M).toISOString(), sc);
+  check('…a server error is one entry per status: 503 twice (counted), 500 on its own', of('table:hangtag_products', 503).length === 1
+    && of('table:hangtag_products', 503)[0].count === 2 && of('table:hangtag_products', 500).length === 1 && !of('table:hangtag_products', 500)[0].count);
+  check('…the history stays in time order, 25 entries of its 50', d.length === 25 && d.every((x, i) => i === 0 || Date.parse(x.at) >= Date.parse(d[i - 1].at)), d.map((x) => x.message));
+  clearDiagnostics();
+  // a failed call whose address carries a token and a phone number, twice, through the fetch layer: one entry, values gone
+  const leaky = withTiming(async () => { throw new TypeError('Failed to fetch'); }, () => 0);
+  for (let i = 0; i < 2; i++) await leaky('https://p.supabase.co/rest/v1/hangtag_customers?phone=eq.9876543210&apikey=eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiYW5vbiJ9.abcdefghijk').catch(() => {});
+  const lk = getDiagnostics(), KEYS = ['at', 'level', 'source', 'kind', 'message', 'category', 'op', 'code', 'status', 'net', 'hidden', 'count', 'first', 'file', 'line', 'column'];
+  check('…a merged failure keeps technical fields only: the operation name, counts and times — no address values, token or phone number',
+    lk.length === 1 && lk[0].count === 2 && !!lk[0].first && lk[0].op === 'table:hangtag_customers' && lk.every((x) => Object.keys(x).every((k) => KEYS.includes(k)))
+    && !/9876543210|eyJ|apikey|phone|https?:/.test(JSON.stringify(lk)), lk);
+  clearDiagnostics();
+  const t1 = Date.now() - H;
+  recordEvent('api', 'connection-failed', { op: 'table:hangtag_sales', ms: 100, at: t1 }, 'warn');
+  recordEvent('api', 'connection-failed', { op: 'table:hangtag_sales', ms: 100, at: t1 + 12 * M }, 'warn');   // past 11 minutes: a new outage
+  for (const m of [13, 15]) { recordEvent('api', 'slow-call', { op: 'rpc:x', ms: 4000, at: t1 + m * M }, 'warn'); recordEvent('sync', 'upload-failed', { op: 'rpc:hangtag_save_sales', at: t1 + (m + 1) * M }, 'warn'); }
+  const e = getDiagnostics();
+  check('a failure again after 11 minutes is a new entry; slow calls and other events keep the one-minute rule', e.length === 6 && e.every((x) => !x.count), e);
+  const { entryDetail } = await import('../../src/features/shop/components/diagnostics-view.js');
+  const today = new Date(); today.setHours(0, 5, 0, 0);
+  check('…the history says when a repeated failure began', /^<small>since /.test(entryDetail({ count: 3, first: today.toISOString() })) && entryDetail({ count: 1, first: today.toISOString() }) === ''
+    && entryDetail({ status: 503, count: 2, first: '2026-01-02T10:00:00.000Z' }) === '<small>503 · since 2026-01-02</small>', entryDetail({ status: 503, count: 2, first: '2026-01-02T10:00:00.000Z' }));
+  clearDiagnostics();
+}
 
 Object.assign(console, quiet);
 console.log(fails ? `\n${fails} FAILED` : '\nall passed');

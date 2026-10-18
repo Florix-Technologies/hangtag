@@ -1,15 +1,30 @@
 // An owner's device catching up on what realtime missed (src/features/sync/services/catch-up-core.js): when a check is due
 // (the first connection isn't a gap; realtime joining again after a drop; back online; back on screen after a while; every
 // 5 minutes), one check at a time with one more after it for what came meanwhile, its own work uploaded first (waited for
-// 30 s at most), only a check that got everything counted (one that failed is owed, and tried again a minute later), a
+// 30 s at most), only a check that got everything counted (failed checks back off 1, 2, 4, then at most 5 minutes), a
 // check that hangs not holding the next back, the whole download only for a database without the change check (at most
 // every 5 minutes), and every timer and listener removed.
 // Run: node tests/unit/sync-catch-up.test.mjs
 import { createCatchUp, createRealtimeTracker, catchUpDue, FLUSH_WAIT_MS, POLL_MS, RESUME_MS, STUCK_MS, TICK_MS } from '../../src/features/sync/services/catch-up-core.js';
+import { createRetryBackoff, retryDelay, RETRY_DELAYS_MS } from '../../src/features/sync/services/retry-backoff.js';
 
 let fails = 0;
 const check = (name, ok, info) => { if (!ok) fails++; console.log((ok ? 'PASS ' : 'FAIL ') + name + (!ok && info !== undefined ? '  ' + JSON.stringify(info).slice(0, 500) : '')); };
 const tick = () => new Promise((r) => setTimeout(r, 0));
+
+// --- the timer-free retry clock used by owner and member downloads
+{
+  let now = 1000;
+  const retry = createRetryBackoff({ now: () => now });
+  check('retry backoff: failures wait 1, 2, 4, then at most 5 minutes',
+    JSON.stringify([1, 2, 3, 4, 5, 20].map(retryDelay)) === JSON.stringify([60e3, 120e3, 240e3, 300e3, 300e3, 300e3]) &&
+    JSON.stringify(RETRY_DELAYS_MS) === JSON.stringify([60e3, 120e3, 240e3, 300e3]));
+  retry.failed();
+  check('…a routine poll waits for its retry boundary; an immediate signal bypasses it',
+    !retry.canTry() && retry.canTry({ immediate: true }) && !retry.canTry({ at: now + 60e3 - 1 }) && retry.canTry({ at: now + 60e3 }));
+  retry.succeeded();
+  check('…success resets the failure count and retry clock', retry.canTry() && JSON.stringify(retry.state()) === '{"failures":0,"nextRetryAt":0}', retry.state());
+}
 
 // --- realtime: only a join after a drop
 {
@@ -82,7 +97,8 @@ function rig(o = {}) {
   check('not this device (a team member\'s phone, signed out, not connected): nothing runs', JSON.stringify(ran) === '[false,false,false]' && r.log.length === 0, r.log);
   let busy = true; const b = rig({ busy: () => busy }); b.C.connected(); b.add(1);
   await b.C.catchUp('online');
-  check('a full download under way: its work goes up, the check is left to the download (it brings everything)', b.log.join() === 'flush', b.log);
+  check('a full download under way: its work goes up, the check is left to the download without consuming a retry',
+    b.log.join() === 'flush' && b.C.state().owed && b.C.state().failures === 0 && b.C.state().nextRetryAt === 0, { log: b.log, state: b.C.state() });
   busy = false; b.add(TICK_MS); await b.C.catchUp('poll');
   check("…but it isn't counted: owed, the next minute's look checks", b.log.join() === 'flush,flush,check' && !b.C.state().owed, b.log);
 }
@@ -92,11 +108,35 @@ function rig(o = {}) {
   r.add(POLL_MS); await r.C.catchUp('online');
   check('a database without the change check: the whole download, at most every 5 minutes (none at once after connecting)', r.log.join() === 'flush,check,flush,check,flush,check,full', r.log);
   const w = rig({ fail: new Error('Failed to fetch') }); w.add(1); await w.C.catchUp('online');
-  check('…any other failure is noted and tried again at the next reason, never a full download', w.log.join() === 'flush,check,warn:Failed to fetch', w.log);
-  const failedAt = w.C.state().lastCheckAt; w.add(TICK_MS); await w.C.catchUp('poll');
-  check("…a failed check never counts: owed, the next minute's look tries again (not 5 minutes later)", w.C.state().owed && failedAt === 0 && w.log.join() === 'flush,check,warn:Failed to fetch,flush,check,warn:Failed to fetch', w.log);
-  w.o.fail = null; w.add(TICK_MS); await w.C.catchUp('poll'); const okAt = w.C.state().lastCheckAt; w.add(TICK_MS); const after = await w.C.catchUp('poll');
-  check('…once it gets everything it counts, and the 5-minute look counts from then', !w.C.state().owed && okAt > 0 && after === false, { okAt, after, log: w.log });
+  check('…any other failure is noted, owed, and never causes a full download',
+    w.log.join() === 'flush,check,warn:Failed to fetch' && w.C.state().owed && w.C.state().lastCheckAt === 0, { log: w.log, state: w.C.state() });
+  const observed = [w.C.state().nextRetryAt - 1_000_001];
+  const blocked = [], ran = [];
+  for(const delay of RETRY_DELAYS_MS){
+    w.add(delay - 1); blocked.push(await w.C.catchUp('poll'));
+    w.add(1); ran.push(await w.C.catchUp('poll'));
+    observed.push(w.C.state().nextRetryAt - (1_000_001 + RETRY_DELAYS_MS.slice(0, observed.length).reduce((a, n) => a + n, 0)));
+  }
+  check('…routine retries follow 1, 2, 4, 5 minutes exactly, with later failures capped at 5 minutes',
+    blocked.every((x) => x === false) && ran.every((x) => x === true) && JSON.stringify(observed) === JSON.stringify([60e3, 120e3, 240e3, 300e3, 300e3]),
+    { blocked, ran, observed, state: w.C.state() });
+  const beforeRecovery = w.C.state(); w.o.fail = null; w.add(1); const recovered = await w.C.catchUp('foreground');
+  const okAt = w.C.state().lastCheckAt; w.add(TICK_MS); const after = await w.C.catchUp('poll');
+  check('…foreground bypasses the delay; success resets it and the ordinary 5-minute cadence starts there',
+    recovered === true && beforeRecovery.failures === 5 && !w.C.state().owed && w.C.state().failures === 0 && okAt > 0 && after === false,
+    { recovered, beforeRecovery, after: w.C.state(), log: w.log });
+  w.o.fail = new Error('again'); w.add(1); await w.C.catchUp('online');
+  check('…after recovery, a new incident starts again at a one-minute delay',
+    w.C.state().failures === 1 && w.C.state().nextRetryAt - (okAt + TICK_MS + 1) === TICK_MS, w.C.state());
+}
+{
+  const results = [];
+  for(const reason of ['online', 'realtime']){
+    const r = rig({ fail: new Error('offline') }); r.add(1); await r.C.catchUp('online');
+    r.o.fail = null; r.add(1); results.push({ reason, ran: await r.C.catchUp(reason), state: r.C.state(), log: r.log.slice() });
+  }
+  check('online and realtime signals also bypass an active retry delay and reset it on success',
+    results.every((x) => x.ran === true && x.state.failures === 0 && !x.state.owed && x.log.filter((v) => v === 'check').length === 2), results);
 }
 {
   const r = rig({ hold: true }); r.C.connected(); r.add(1);
@@ -124,7 +164,8 @@ function page() {
 }
 {
   const r = rig(), p = page(); r.C.connected();
-  const off = r.C.install({ win: p.win, doc: p.doc, timers: p.api });
+  let foregrounds = 0;
+  const off = r.C.install({ win: p.win, doc: p.doc, timers: p.api, onForeground: () => { foregrounds++; } });
   check('installed: back-on-screen, freeze/resume, back/forward cache, and one timer every minute',
     ['visibilitychange', 'freeze', 'resume', 'win:pageshow'].every((k) => p.listeners.has(k)) && p.timers.size === 1 && [...p.timers.values()][0].ms === TICK_MS, [...p.listeners.keys()]);
   p.doc.visibilityState = 'hidden'; p.fire('visibilitychange'); r.add(RESUME_MS - 1); p.doc.visibilityState = 'visible'; p.fire('visibilitychange'); await tick();
@@ -135,6 +176,7 @@ function page() {
   check('…frozen, then resumed 10 minutes later: one catch-up', r.log.join() === 'flush,check', r.log);
   r.log.length = 0; r.add(1); p.fire('win:pageshow', { persisted: true }); await tick(); p.fire('win:pageshow', { persisted: false }); await tick();
   check('…restored from the back/forward cache: one catch-up (an ordinary page show: none)', r.log.join() === 'flush,check', r.log);
+  check('…the shared foreground hook sees each return/resume and persisted restore, but not an ordinary page show', foregrounds === 4, foregrounds);
   r.log.length = 0; const T = [...p.timers.values()][0];
   T.f(); await tick(); const tooSoon = r.log.length; r.add(POLL_MS); p.doc.visibilityState = 'hidden'; T.f(); await tick(); const whileHidden = r.log.length;
   p.doc.visibilityState = 'visible'; T.f(); await tick();

@@ -13,6 +13,8 @@ import { ACCESS_LOST_TEXT, isMember, refreshAccess } from '../../shop/services/a
 import { requestSignOut } from '../../../shared/ui/session-actions.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { catchUpConnected, onRealtimeStatus, resetRealtimeCatchUp } from './catch-up.js';
+import { createRetryBackoff } from './retry-backoff.js';
+import { aggregateDownloadFailure, downloadFailed, downloadRecovered, failedParts, isReportedDownloadFailure, pullPart } from './download-health.js';
 
 /* The one Supabase client this app uses (settings from config.js, created by the cloud port) */
 export const newSbClient = () => use("cloud").createClient();
@@ -50,7 +52,10 @@ export async function initSupabaseOnce(){
     await flushSbQueue();
     // everything is here: the next catch-up (catch-up.js) counts from now — only when the download got through (connected
     // while the network was gone, it didn't: the next reason, e.g. back online, catches up at once)
-    if(await pullFromSupabase(false)) catchUpConnected();
+    if(await pullFromSupabase(false)){
+      catchUpConnected();
+      if(isMember()) memberPollConnected();
+    }
     connectedHooks.forEach(f => { try{ Promise.resolve(f()).catch(e => logger.warn("After connecting:", e)); }catch(e){ logger.warn("After connecting:", e); } });
     return true;
   }catch(e){
@@ -61,27 +66,80 @@ export async function initSupabaseOnce(){
 /* A team member's phone no longer reaches its shop (revoked, switched off): sign out and say so. Its unsent work stays
    with the member's data on this phone. */
 export function accessLost(){ requestSignOut({ message: ACCESS_LOST_TEXT, forgetDevice: true }); }
-/* Every 30 s on a member's phone (app/main.js): still in the shop (and the role now)? then only what changed in the shop
-   (pull.js pullShopChanges: small fingerprints, then just those parts; never the whole shop). A database without
-   hangtag_shop_changes yet (schema.sql not run again): the whole download, at most every 5 minutes. */
-let polling = false, lastFull = 0;
-export async function memberPoll(){
-  if(polling || !isMember() || store.sbStatus !== "connected") return;
-  polling = true;
-  try{
-    const a = await refreshAccess();
-    if(a.lost){ accessLost(); return; }
-    if(!a.ok) return;
-    try{ await pullShopChanges(); await pullOrderChanges().catch(e => logger.warn("Orders:", e)); await pullBizChanges().catch(e => logger.warn("Price lists, purchase orders:", e)); }
-    catch(e){
-      // the database doesn't have hangtag_shop_changes yet: the whole download, at most every 5 minutes (anything else,
-      // e.g. a dropped connection, is simply tried again at the next check)
-      if(!(e && e.code === ERROR_CODES.OUTDATED_DATABASE)){ logger.warn("What changed:", e); return; }
-      if(Date.now() - lastFull > 300000){ lastFull = Date.now(); forgetShopChanges(); await pullFromSupabase(false); }
-    }
-  }catch(e){ logger.warn("Member refresh:", e); }
-  finally{ polling = false; }
+/* A member has no realtime channel. The existing 30-second app timer asks this scheduler to look, but a failed download
+   backs off (1, 2, 4, then 5 minutes) instead of filling Diagnostics. Online/foreground are evidence that conditions
+   changed, so they bypass the delay. They still share one flight and request at most one follow-up if one is running. */
+const IMMEDIATE_MEMBER_REASONS = new Set(["online", "foreground"]);
+export function createMemberPoller(deps){
+  const retry = createRetryBackoff({ now: deps.now });
+  let inFlight = null, again = false;
+  const run = () => {
+    const p = (async () => {
+      do{
+        again = false;
+        let ok = false, error = null;
+        try{ ok = (await deps.check()) !== false; }catch(e){ error = e; }
+        if(ok) retry.succeeded();
+        else{
+          retry.failed();
+          if(error && !(deps.isReported && deps.isReported(error))) deps.warn(error);
+        }
+      }while(again && deps.eligible());
+      return true;
+    })().finally(() => { if(inFlight === p) inFlight = null; });
+    inFlight = p;
+    return p;
+  };
+  return {
+    poll(reason = "poll"){
+      if(!deps.eligible()) return Promise.resolve(false);
+      const immediate = IMMEDIATE_MEMBER_REASONS.has(reason);
+      if(inFlight){ if(immediate) again = true; return inFlight; }
+      if(!retry.canTry({ immediate })) return Promise.resolve(false);
+      return run();
+    },
+    connected(){ retry.succeeded(); },
+    state: () => ({ ...retry.state(), inFlight: !!inFlight, again }),
+  };
 }
+
+let lastFull = 0;
+async function checkMemberChanges(){
+  const a = await refreshAccess();
+  if(a.lost){ accessLost(); return true; }
+  // the team check itself didn't get through (offline, a server error): noted once, until it gets through again
+  if(!a.ok) throw downloadFailed('access', a.error || new Error("The team member's access couldn't be refreshed."), { level: 'warn' });
+  downloadRecovered('access');
+  try{ await pullShopChanges(); }
+  catch(e){
+    // A database without the small change check still gets the whole shop, at most every five minutes. A failed full
+    // download does not move that five-minute marker: the retry clock gets another chance after its current delay.
+    if(!(e && e.code === ERROR_CODES.OUTDATED_DATABASE)) throw e;
+    const now = Date.now();
+    if(now - lastFull <= 300000) return true;
+    forgetShopChanges();
+    const ok = !!(await pullFromSupabase(false));
+    if(ok) lastFull = now;
+    return ok;
+  }
+  // orders, held bills and collections; price lists, purchase orders…: each noted once when it fails (a database without
+  // them yet has nothing to bring: that isn't a failure, and never sends the phone to the whole download)
+  const failures = [await pullPart(pullOrderChanges, 'orders'), await pullPart(pullBizChanges, 'commerce')].filter(Boolean);
+  if(failures.length) throw aggregateDownloadFailure(failures.flatMap(failedParts), "Not everything was downloaded.");
+  return true;
+}
+const memberPoller = createMemberPoller({
+  now: () => Date.now(),
+  eligible: () => !!(isMember() && store.sbStatus === "connected"),
+  check: checkMemberChanges,
+  isReported: isReportedDownloadFailure,
+  warn: e => logger.warn("Member refresh:", e),
+});
+/* reason: poll | online | foreground. Returns whether a check ran (or joined one already running). */
+export const memberPoll = (reason = "poll") => memberPoller.poll(reason);
+/* A successful full download on connect is a clean baseline: the next failure starts again at one minute. */
+export const memberPollConnected = () => { lastFull = Date.now(); memberPoller.connected(); };
+export const memberPollState = () => memberPoller.state();
 /* Work that needs the cloud and runs each time the app connects (registered by app/main.js): open provider payments,
    hand-checked UPI to verify, receipts waiting to be sent */
 export const connectedHooks = [];

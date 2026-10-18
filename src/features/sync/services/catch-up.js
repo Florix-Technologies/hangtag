@@ -3,17 +3,15 @@
 // so the same row security, the same downloads and the same handling of work still waiting to upload apply. A team
 // member's phone keeps its own 30-second look (connection.js memberPoll); this is for the shop owner's devices.
 import { store } from '../../../shared/state/store.js';
-import { AppError, ERROR_CODES } from '../../../shared/errors/app-error.js';
+import { ERROR_CODES } from '../../../shared/errors/app-error.js';
 import { logger } from '../../../shared/logging/logger.js';
 import { isMember } from '../../shop/services/access.js';
 import { flushSbQueue } from './outbox.js';
 import { forgetShopChanges, pullBizChanges, pullFromSupabase, pullOrderChanges, pullShopChanges } from './pull.js';
 import { createCatchUp } from './catch-up-core.js';
+import { aggregateDownloadFailure, failedParts, isReportedDownloadFailure, pullPart } from './download-health.js';
 
 const isOutdated = e => !!(e && e.code === ERROR_CODES.OUTDATED_DATABASE);
-/* orders, held bills and collections; price lists, purchase orders…: → false when they didn't come down (a database
-   without them yet has nothing to bring: that isn't a failure) */
-const part = async (pull, what) => { try{ await pull(); return true; }catch(e){ logger.warn(what, e); return isOutdated(e); } };
 
 const C = createCatchUp({
   now: () => Date.now(),
@@ -23,12 +21,15 @@ const C = createCatchUp({
   sleep: ms => new Promise(r => setTimeout(r, ms)),
   check: async () => {
     await pullShopChanges();
-    const orders = await part(pullOrderChanges, "Orders:"), biz = await part(pullBizChanges, "Price lists, purchase orders:");
-    if(!orders || !biz) throw new AppError(ERROR_CODES.NETWORK, "Not everything was downloaded.");
+    // orders, held bills and collections; price lists, purchase orders…: each noted once when it fails (a database
+    // without them yet has nothing to bring: that isn't a failure)
+    const orders = await pullPart(pullOrderChanges, 'orders'), biz = await pullPart(pullBizChanges, 'commerce');
+    const failures = [orders, biz].filter(Boolean);
+    if(failures.length) throw aggregateDownloadFailure(failures.flatMap(failedParts), "Not everything was downloaded.");
   },
   fullPull: async () => { forgetShopChanges(); return !!(await pullFromSupabase(false)); },
   isOutdated,
-  warn: e => logger.warn("Catching up:", e),
+  warn: e => { if(!isReportedDownloadFailure(e)) logger.warn("Catching up:", e); },
 });
 
 /* reason: realtime | online | foreground | poll → whether a check ran */
@@ -38,5 +39,7 @@ export const onRealtimeStatus = s => C.realtimeStatus(s);
 export const resetRealtimeCatchUp = () => C.realtimeReset();
 /* connected and downloaded everything (connection.js initSupabase) */
 export const catchUpConnected = () => C.connected();
-/* once at start-up (app/main.js): the page's events and the 5-minute look → removes them */
-export const installCatchUp = () => C.install({ win: window, doc: document, timers: { setInterval: (f, ms) => setInterval(f, ms), clearInterval: (t) => clearInterval(t) } });
+/* once at start-up (app/main.js): the page's events and the 5-minute look → removes them. onForeground({ hiddenFor }):
+   also told each time the app is back on screen (a team member's phone has no catch-up of its own: connection.js) */
+export const installCatchUp = (onForeground) => C.install({ win: window, doc: document, onForeground,
+  timers: { setInterval: (f, ms) => setInterval(f, ms), clearInterval: (t) => clearInterval(t) } });

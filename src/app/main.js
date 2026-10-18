@@ -31,8 +31,9 @@ import { checkUnverified } from '../features/finance/components/reconcile-view.j
 import { runAutomation } from '../features/automation/services/automation.js';
 import { installAutoDelivery, processDeliveryQueue } from '../features/delivery/use-cases/auto-delivery.js';
 import { applyCatalogMigration } from '../features/products/services/catalog.js';
-import { initSupabase, memberPoll } from '../features/sync/services/connection.js';
+import { initSupabase, memberPoll, memberPollState } from '../features/sync/services/connection.js';
 import { installCatchUp } from '../features/sync/services/catch-up.js';
+import { RESUME_MS } from '../features/sync/services/catch-up-core.js';
 import { isMember } from '../features/shop/services/access.js';
 import { flushSbQueue } from '../features/sync/services/outbox.js';
 import { sendPendingDocs } from '../features/inventory/use-cases/import-supplier-bill.js';
@@ -57,7 +58,11 @@ installSetupEvents();
 installAccountMenuEvents();
 installSyncStatusTimer();
 installSyncRetryTimer();
-installCatchUp();     // an owner's device catches up on what realtime missed (back online, on screen again, every 5 min)
+installCatchUp(({ hiddenFor = 0 } = {}) => {
+  // Members have no realtime channel. Back on screen after 30 s away (as on an owner's device), or while a failed check is
+  // waiting out its retry delay, a member's phone looks at once; memberPoll keeps it one at a time with the 30-second look.
+  if(store.authUser && isMember() && store.sbStatus === "connected" && (hiddenFor >= RESUME_MS || memberPollState().failures > 0)) memberPoll("foreground");
+});                  // an owner's device catches up on what realtime missed (back online, on screen again, every 5 min)
 installTooltips();
 installMenus();       // every record's and document's "More actions" menu
 installDomEvents();
@@ -100,6 +105,6 @@ reconnectScale(store.scale && store.scale.auto);
     // Signed in but the cloud dropped out: try again every 30 s while online
     else if(store.authUser && store.sbStatus !== "connected" && navigator.onLine && tick % 3 === 0) initSupabase();
     // A team member's phone gets no live updates: every 30 s it checks it is still in the shop and downloads the latest
-    if(store.authUser && isMember() && store.sbStatus === "connected" && tick % 3 === 0) memberPoll();
+    if(store.authUser && isMember() && store.sbStatus === "connected" && tick % 3 === 0) memberPoll("poll");
   }, 10000);
 })();

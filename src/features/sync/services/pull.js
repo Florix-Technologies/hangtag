@@ -18,8 +18,12 @@ import { logger } from '../../../shared/logging/logger.js';
 import { can } from '../../shop/services/access.js';
 import { bizRepository } from '../../commerce/repositories/biz-repository.js';
 import { refreshShopUnits } from '../../products/services/shop-fields.js';
-import { AppError, ERROR_CODES } from '../../../shared/errors/app-error.js';
+import { ERROR_CODES } from '../../../shared/errors/app-error.js';
 import { beginPull, changedSince, mayApply } from './sync-ledger.js';
+import { aggregateDownloadFailure, downloadFailed, downloadRecovered, isReportedDownloadFailure } from './download-health.js';
+
+const isOutdated = error => !!(error && error.code === ERROR_CODES.OUTDATED_DATABASE);
+const failureParts = (error, fallback) => error && error.details && Array.isArray(error.details.parts) && error.details.parts.length ? error.details.parts : [fallback];
 
 /* ---------- pulls (cloud is the truth, except for work still waiting in this device's queue) ---------- */
 let seen = null;   // the shop's fingerprints this device's data matches (null: not known yet; see pullShopChanges)
@@ -49,7 +53,7 @@ export async function pullCatalogFromSupabase(remoteIsTruth = false, opts = {}){
   try{
     const cloud = use("cloud");
     const prods = await cloud.fetchProducts();
-    if(!prods.length && !products().length) return true;
+    if(!prods.length && !products().length){ downloadRecovered('catalog'); return true; }
     const vars = await cloud.fetchVariants();
     const images = gi ? await cloud.fetchImages() : null;
     if((prods.length > 0 || remoteIsTruth) && mayApply(g)){
@@ -65,8 +69,9 @@ export async function pullCatalogFromSupabase(remoteIsTruth = false, opts = {}){
       saveCatalog();
     }
     if(gi && ((images && images.length) || remoteIsTruth) && mayApply(gi)){ store.imgs = withLocalImages(images || [], gi); saveImgs(); }
+    downloadRecovered('catalog');
     return true;
-  }catch(e){ logger.event("sync", "download-failed", { op: "catalog", code: e && e.code }); return false; }
+  }catch(e){ downloadFailed('catalog', e, { level: 'error' }); return false; }
 }
 export async function pullMoves(){
   const g = beginPull("moves");
@@ -127,13 +132,17 @@ export async function pullPurchases(){
   const cloud = use("cloud"), g = beginPull("purchases");
   let sups, purs, pays;
   try{ [sups, purs, pays] = await Promise.all([cloud.fetchSuppliers(), cloud.fetchPurchases(), cloud.fetchSupplierPayments()]); }
-  catch(e){ logger.event("sync", "download-failed", { op: "purchases", code: e && e.code }, "warn"); return false; }
-  if(!mayApply(g)) return true;   // a download that began later has brought them already
+  catch(e){
+    if(e && e.code === ERROR_CODES.OUTDATED_DATABASE) throw e;
+    downloadFailed('purchases', e, { level: 'warn' }); return false;
+  }
+  if(!mayApply(g)){ downloadRecovered('purchases'); return true; }   // a download that began later has brought them already
   const ps = pendingIds("supplier", g), pp = new Set([...pendingIds("purchase", g), ...pendingIds("pcancel", g)]), px = pendingIds("spay", g), S = {}, P = {}, X = {};
   sups.forEach(s => { S[s.id] = s; }); Object.values(store.suppliers || {}).forEach(s => { if(ps.has(s.id)) S[s.id] = s; });
   purs.forEach(p => { P[p.id] = p; }); Object.values(store.purchases || {}).forEach(p => { if(pp.has(p.id)) P[p.id] = p; });
   pays.forEach(x => { X[x.id] = x; }); Object.values(store.supplierPays || {}).forEach(x => { if(px.has(x.id)) X[x.id] = x; });
   store.suppliers = S; saveSuppliers(); store.purchases = P; savePurchases(); store.supplierPays = X; saveSupplierPays();
+  downloadRecovered('purchases');
   return true;
 }
 /* Settings and the receipt logo (both kept in hangtag_meta; a change still waiting to upload wins — also one made while
@@ -167,28 +176,42 @@ export async function pullFromSupabase(showToast = true){
     // every 30 s, an owner's device when it catches up (catch-up.js); unknown (null) means the next look downloads all
     const marks = await use("cloud").shopChanges().catch(() => null);
     const pmarks = await use("cloud").purchaseChanges().catch(() => null);
+    const failures = [];
     const catalogOk = await pullCatalogFromSupabase();
+    if(!catalogOk) failures.push('catalog');
     await pullMoves();
     await pullReturns();
     await pullCustomers();
     await pullEvents();
     await pullCash();
     // orders, held bills and payments collected (section 3m): a database without them yet doesn't stop the rest
-    await pullOrders().catch(e => logger.event("sync", "download-failed", { op: "orders", code: e && e.code }, "warn"));
-    await pullPurchases();
+    try{ await pullOrders(); downloadRecovered('orders'); }
+    catch(e){ if(!isOutdated(e)) failures.push(...failureParts(isReportedDownloadFailure(e) ? e : downloadFailed('orders', e, { level: 'warn' }), 'orders')); }
+    let purchasesOk = false, purchasesOutdated = false;
+    try{ purchasesOk = await pullPurchases(); }
+    catch(e){
+      purchasesOutdated = isOutdated(e);
+      if(!purchasesOutdated) failures.push(...failureParts(isReportedDownloadFailure(e) ? e : downloadFailed('purchases', e, { level: 'warn' }), 'purchases'));
+    }
+    if(!purchasesOk && !purchasesOutdated && !failures.includes('purchases')) failures.push('purchases');
     // price lists, purchase orders, GST readiness, repacks, vouchers (section 3r): a database without them keeps this device's copy
-    await pullBiz().catch(e => logger.event("sync", "download-failed", { op: "commerce", code: e && e.code }, "warn"));
+    try{ await pullBiz(); downloadRecovered('commerce'); }
+    catch(e){ if(!isOutdated(e)) failures.push(...failureParts(isReportedDownloadFailure(e) ? e : downloadFailed('commerce', e, { level: 'warn' }), 'commerce')); }
     await pullSettings();
     await pullSales();
     // products that didn't come down aren't up to date: the next look downloads them again
-    seen = marks && !catalogOk ? Object.assign({}, marks, { catalog: null }) : marks; seenPurchases = pmarks;
-    if(catalogOk) markSynced();
+    seen = marks && !catalogOk ? Object.assign({}, marks, { catalog: null }) : marks;
+    if(purchasesOk) seenPurchases = pmarks;
+    if(!failures.length) markSynced();
     renderAll();
-    if(!catalogOk) throw new AppError(ERROR_CODES.NETWORK, "The products weren't downloaded.");
+    if(failures.length) throw aggregateDownloadFailure(failures, failures.length === 1 && failures[0] === 'catalog' ? "The products weren't downloaded." : "Not everything was downloaded.");
+    downloadRecovered('shop');
     if(showToast) toast("Everything is up to date.");
     return true;
   }catch(e){
-    logger.error("Pull from Supabase failed:", e);
+    // anything else that stopped the whole download (a table refused, the network gone): its first failure is noted with
+    // the error itself ("… (table:hangtag_meta)"); repeats stay quiet until a whole download gets through again
+    if(!isReportedDownloadFailure(e)) downloadFailed('shop', e, { log: err => logger.error("Pull from Supabase failed:", err) });
     if(showToast) toast("Couldn't refresh from the cloud. Your work is saved on this device.");
     return false;
   }finally{ store.syncing = false; renderSync(); }
@@ -245,32 +268,41 @@ const isoMinus = (t, ms) => { const x = Date.parse(String(t || "").replace(/(\.\
 export async function pullShopChanges(){
   if(!store.sbClient || store.sbStatus !== "connected" || !(await sbSessionOk())) return [];
   const cloud = use("cloud");
-  const now = await cloud.shopChanges();
+  let now;
+  try{ now = await cloud.shopChanges(); downloadRecovered('changes'); }
+  catch(e){ if(isOutdated(e)) throw e; throw downloadFailed('changes', e, { level: 'warn' }); }
   // not known what this phone's copy matches: once, everything
-  if(!seen){ if(!(await pullFromSupabase(false))) throw new AppError(ERROR_CODES.NETWORK, "The shop wasn't downloaded."); return ["all"]; }
+  if(!seen){ if(!(await pullFromSupabase(false))) throw aggregateDownloadFailure([], "The shop wasn't downloaded."); return ["all"]; }
   const was = seen, parts = ["catalog", "images", "moves", "returns", "customers", "events", "cash", "settings", "sales"].filter(k => now[k] !== was[k]);
   const pnow = await cloud.purchaseChanges().catch(() => null);
   if(pnow != null && pnow !== seenPurchases) parts.push("purchases");
   if(!parts.length) return [];
   store.syncing = true; renderSync();
   let missed = [];
+  // each part on its own: one that fails is noted once (download-health.js: one entry per incident, one when it comes
+  // down again), keeps its old fingerprint, and doesn't stop the others
+  const step = async (part, pull) => {
+    if(!parts.includes(part)) return;
+    try{ await pull(); downloadRecovered(part); }
+    catch(e){ if(isOutdated(e)) throw e; downloadFailed(part, e, { level: 'warn' }); missed.push(part); }
+  };
   try{
     if(parts.includes("catalog") && !(await pullCatalogFromSupabase(false, { images: false }))) missed.push("catalog");
-    if(parts.includes("images")) await pullImages();
-    if(parts.includes("moves")) await pullMoves();
-    if(parts.includes("returns")) await pullReturns();
-    if(parts.includes("customers")) await pullCustomers();
-    if(parts.includes("events")) await pullEvents();
-    if(parts.includes("cash")) await pullCash();
-    if(parts.includes("settings")) await pullSettings();
+    await step("images", pullImages);
+    await step("moves", pullMoves);
+    await step("returns", pullReturns);
+    await step("customers", pullCustomers);
+    await step("events", pullEvents);
+    await step("cash", pullCash);
+    await step("settings", pullSettings);
     if(parts.includes("purchases")){ if(await pullPurchases()) seenPurchases = pnow; else missed.push("purchases"); }
-    if(parts.includes("sales")) await pullNewSales(was, now);
+    await step("sales", () => pullNewSales(was, now));
     // a part that didn't come down keeps its old fingerprint, so the next look asks for it again
-    seen = Object.assign({}, now); missed.forEach(k => { if(k in was) seen[k] = was[k]; });
+    seen = Object.assign({}, now); missed.forEach(k => { if(k in was) seen[k] = was[k]; else delete seen[k]; });
     if(!missed.length) markSynced();
     renderAll();
   }finally{ store.syncing = false; renderSync(); }
-  if(missed.length) throw new AppError(ERROR_CODES.NETWORK, "Not downloaded: " + missed.join(", "));
+  if(missed.length) throw aggregateDownloadFailure(missed, "Not downloaded: " + missed.join(", "));
   return parts;
 }
 /* The shop's photos (only when one changed); a photo still waiting to upload from this phone stays as it is */

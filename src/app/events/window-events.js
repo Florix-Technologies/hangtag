@@ -5,9 +5,10 @@ import { onSignedIn } from '../../features/auth/services/session.js';
 import { renderReport } from '../../features/reports/pages/report-page.js';
 import { renderPicker } from '../../features/sales/components/variant-picker.js';
 import { renderSync } from '../../features/sync/components/sync-status.js';
-import { initSupabase } from '../../features/sync/services/connection.js';
+import { initSupabase, memberPoll } from '../../features/sync/services/connection.js';
 import { flushSbQueue } from '../../features/sync/services/outbox.js';
 import { catchUp } from '../../features/sync/services/catch-up.js';
+import { isMember } from '../../features/shop/services/access.js';
 import { cloudConfigured } from '../../shared/config/app-config.js';
 import { $ } from '../../shared/dom.js';
 import { use } from '../../shared/di/services.js';
@@ -22,9 +23,12 @@ export function installWindowEvents(){
       return;
     }
     if(store.sbStatus !== "connected") await initSupabase();
-    // back online while still connected: an owner's device uploads its work and catches up on what the other devices did
-    // meanwhile (catch-up.js); a member's phone uploads (its 30-second look brings the rest)
-    else if(!(await catchUp("online"))) await flushSbQueue();
+    // Back online while still connected: upload this device's work first, then let a member bypass its retry delay and
+    // download at once. Owners use catch-up.js, which already does the same upload-before-download ordering.
+    else if(isMember()){
+      await flushSbQueue();
+      await memberPoll("online");
+    }else if(!(await catchUp("online"))) await flushSbQueue();
   });
   window.addEventListener("offline",()=>renderSync());
   // A team sign-in QR's link (<app>#enroll=<code>) opened in a tab where the app is already running: start again, so the

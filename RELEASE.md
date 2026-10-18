@@ -108,11 +108,19 @@ The repair (section 3) stays blocked until each item below exists and the owner 
    - `supabase/checks/data-fingerprint.sql`: the same 61 shop tables, with the same row counts and hashes (rows
      written on live after the dump are the only allowed difference, named table by table);
    - `select count(*) from auth.users`: the same count;
-   - `2026-10-13-function-versions.sql`: the same baseline (18 OLDER VERSION, 3 STILL THERE);
-   - `open-policies.sql`: no row on either.
+   - `2026-10-13-function-versions.sql`: the same baseline (18 OLDER VERSION, 3 STILL THERE; 17 if the console
+     permissions update of §6b was applied);
+   - `open-policies.sql`: no row on either;
+   - `restore-row-counts.sql`: every table of `public` and `auth` (and storage objects by bucket) with the same count,
+     line by line (rows written on live after the dump named);
+   - `restore-fk-orphans.sql` on the restored copy: no row (the restore loads with triggers off, so no reference may
+     point at nothing). Both checks are under test (`supabase/tests/restore-checks.test.mjs`).
 4. **A rehearsal on the restored copy** of the exact run in section 3:
-   - `supabase/schema.sql` of the release commit, 819,383 bytes, sha256 `56cb6eaa62ef4d37…` (unchanged from `ee76f74` to
-     `73d232f`), between `BEGIN;` + `SET LOCAL lock_timeout = '10s';` and `COMMIT;`;
+   - `supabase/schema.sql` of the release commit, unchanged from `ee76f74` to `1b9b573`. Its reference hash is the
+     repository's own bytes (LF), `git show <commit>:supabase/schema.sql | sha256sum`: 809,397 bytes, sha256
+     `fde12118a672b66c4f7271a675ec2a02049a74ca32370ba595ada6336acc184c`. A Windows checkout (CRLF) of the same file is
+     819,383 bytes, `56cb6eaa62ef4d378141b77fd0a2e02009043e16a537dd0c32e62b09ab4daee7`; the request names which copy ran.
+     It runs between `BEGIN;` + `SET LOCAL lock_timeout = '10s';` and `COMMIT;`;
    - then the section 3 "After" checks: the report all 83 rows ok with row 96 0; `2026-10-13-function-versions.sql` all
      21 ok; `open-policies.sql` no row; `schema-dry-run.sql` all 0;
    - `data-fingerprint.sql` identical before and after; `sync-read-isolation.sql` 0 rows of other shops;
@@ -173,7 +181,8 @@ All of this was rehearsed on PGlite, on PostgreSQL 17 and 18, from the live proj
 - **Data fingerprint:** 61 shop tables, 4,205 rows. Take it again right before the run.
 - **Size:** the Management API took an 830 KB script, larger than the 819 KB repair.
 
-**What runs:** `supabase/schema.sql` of `ee76f74` (819,383 bytes, sha256 `56cb6eaa62ef4d37…`), between `BEGIN;` +
+**What runs:** `supabase/schema.sql` of `ee76f74` (repository bytes: 809,397, sha256 `fde12118a672b66c…`; a Windows
+checkout: 819,383, `56cb6eaa62ef4d37…`; §2a item 4), between `BEGIN;` +
 `SET LOCAL lock_timeout = '10s';` and `COMMIT;`.
 - **Constraints:** 49 of its 85 `ADD CONSTRAINT` re-check existing rows: the same constraints the 20:39 run validated, enforced on every write since. The other 36 are `NOT VALID`.
 - **Column types:** its 5 `ALTER COLUMN … TYPE` name the type the columns already have (`numeric(12,2)`), so no table is rewritten.
@@ -254,18 +263,112 @@ with your own accounts, and run no SQL. Tick each:
    release commit's `sw.js` (for the catch-up commit it is given in the release report). A hard reload shows the same.
 2. **Cloud refresh.** "Refresh" says everything is up to date; "Last full sync" moves to now; no new "Pull … failed".
 3. **Diagnostics.** No new entries after the refresh; a slow call, if any, says "network …" and "page hidden" where it
-   applies.
+   applies. (In builds after `1b9b573`: a download that keeps failing shows once as "download failed (…)", naming the
+   part, and once as "download recovered (…)" when it works again; each failed call still adds its own "connection
+   failed (…)" line.)
+   In builds with the 2026-10-18 network-entry merge (AUDIT 130; not yet deployed), a call that keeps failing is one
+   "connection failed (…)" line with a count (×N) and "since …", and earlier entries stay.
 4. **Your shop only.** The products, bills and customers are your shop's; a second owner account (another shop) sees
    none of them.
 5. **Offline recovery, two devices.** Open the Preview on a computer (A) and a phone (B), both signed in to your shop.
    Without changing anything: turn B's network off and on, and put B in the background for a minute and bring it back —
    no error, nothing in its sync queue or review, the same data as A. *Only if you choose to change one live record:*
    with B offline, edit a test product's name on A, bring B back online — within 20 s B shows it — then change it back.
-   (The isolated two-device test proves bills, returns and stock this way without live data.)
+   (The isolated two-device test proves bills, returns and stock this way without live data. It can't prove what real
+   Supabase realtime does when it reconnects — the tests refuse the realtime socket and call the app's handler directly
+   — so note how long B took to catch up after its network came back: this check is the first real evidence of it.)
 6. **Workflows, non-destructively.** Open a bill, a return screen and Stock without saving; open "Upload bill" (it says
    reading isn't set up yet, and offers entry by hand) and cancel; open Plans & Billing (online payment shows as not
    available).
 7. Note anything wrong with its time, and download the Diagnostics report.
+
+## 6b. Client access: the free trial and the Platform Console (the owner)
+A shop's trial is as long as the "Free trial" plan says **when the shop finishes setting up**; its end is written then, and
+changing the plan later never lengthens a trial already running. **The standard from 2026-10-18 is 30 days** for every new
+shop. Rehearsed end to end on `schema.sql` (15 checks) and on a copy built like the live project, its 18 older functions
+included (22 checks).
+1. **Audit, read-only** (needs the owner's approval as production SQL): `supabase/checks/2026-10-18-trial-audit.sql`, run
+   whole in the SQL Editor after changing the two emails at its top (the client's, and the owner's own). One SELECT; it
+   changes nothing and returns one table: the trial new shops get, console edits to it, trial lengths (counts), the
+   client's trial and what it is owed, console actions on that shop, console staff (counts), **the owner's own console
+   role**, every shop below 30 days with its verdict and the days it is owed, and (part 9) the owed shops as a list for
+   step 5. (The editor shows only a script's last result, so the older `2026-10-18-trial-diagnosis.sql` must be run one
+   query at a time.)
+2. **The first console account.** `/platform/` shows "No access" and the account ID. First, read-only,
+   `supabase/checks/2026-10-18-console-access.sql` (that ID filled in; one row: is there an active super admin, is the ID
+   an account, did the console refuse it). Only if there is no active super admin (approval; once):
+   `supabase/operations/2026-10-18-first-super-admin.sql`, the same ID filled in. It adds one row (that account,
+   super_admin, active) and only while no active super admin exists and the ID is a real account: one row back means
+   granted, none means nothing changed (a second run, a mistyped ID). Undo: set that row's `active` to false. There is no
+   public sign-up for the console; further staff are added in the console (Settings → Staff), by role. Rehearsed on a
+   live-like copy, with both files as written.
+3. **Sign in** at `/platform/` with that account (the app's own sign-in). The database checks the role on every action
+   and keeps an audit log (who, role, shop, reason, before and after).
+4. **New shops get 30 days:** Plans → Free trial → days 30 (audited as `plan.update`). Only shops set up afterwards get it.
+5. **Shops owed days** (part 8, verdict "owed"): Customers → search the account ID → Extend → its `extend_days`, with the
+   reason, **the same day as the audit** (Extend counts from the trial's end or now, whichever is later). The preview shows
+   the new end first: it should be the shop's `entitled_end` (start + 30 days; under a day later). Nothing else changes.
+   - Several shops, or the exact entitlement wanted: `supabase/operations/2026-10-18-trial-corrections.sql` (writes;
+     approval of that operation and of the shops it names). Your account ID and the approved shops' account IDs at its
+     top (part 9's list, or fewer); without a list it changes nothing, and a listed shop that isn't "owed" by part 8's
+     rule is left alone. One statement: each listed owed shop's trial ends exactly 30 days after it started, audited as
+     `customer.extend` (via SQL); nothing unless your account is an active super admin, nothing on a second run.
+     Rehearsed on a live-like copy (9 checks).
+   - Not owed: a shop whose 30 days from its start have passed (more is the owner's goodwill decision), a shop whose email
+     had already had a trial (0 days, by design), a shop with a paid period. A shop with AutoPay set up: Give a plan.
+   - Longer access stays possible: Extend 1–90 days per action (repeatable) or Give a plan (1, 3 or 6 months, recorded as a
+     manual payment), both audited. Promo codes only discount paid plans, which can't be bought while payment is off.
+- On the live database until the repair (section 3), Suspend, Restore and End all sign-ins are refused for every role (their
+  permissions arrived with the newer functions); Extend, Give a plan, Plans and Promotions work. To have them before the
+  repair (optional; approval of that DDL): `supabase/operations/2026-10-18-console-permissions.sql` puts back only the
+  current console permissions function (it maps a role to its list; no table, no row), byte for byte from `schema.sql`;
+  its last row says whether it took. Undo: `2026-10-18-console-permissions-undo.sql` (the live body now). Afterwards
+  the 13 Oct version check shows 17 older functions, not 18 (§2a item 3 then expects 17), and `2026-10-13-repair-undo.sql`
+  would put the older body back too. Rehearsed on a live-like copy (12 checks): before it Suspend is refused; after it
+  Suspend locks the shop, Restore unlocks it, End all sign-ins ends the owner's and the team's sessions, each audited;
+  read-only and billing roles still refused; the undo puts the live body back.
+
+## 6c. Where things stand, and the owner's approvals (2026-10-18)
+**Committed and pushed to `ux-productization` for a Preview on 2026-10-18; not promoted.** App build `hangtag-1601181284`
+(the cache name in `sw.js`). Before the push: `npm test` 178/178 files and 31/31 on PostgreSQL 17, `npm run check` and
+`npm run lint` clean (AUDIT, 2026-10-18 twelfth session). In it, beyond Production's `ee76f74`:
+- Diagnostics: a download that keeps failing is one entry per part plus one when it recovers, with retries at 1, 2, 4,
+  then every 5 minutes; a server call that keeps failing is one entry with a count and "since …"; the earlier history
+  stays through a 3-hour outage (AUDIT 117–118, 130, 140).
+- The console's dashboard shows only figures the database sent, on its older and newer answers (AUDIT 128, 135).
+- `subscription` / `subscription-webhook` corrected in code, **not deployed** (AUDIT 136, REMEDIATION.md status).
+- Purchases and stock: line money as sales, "Received today", opening stock's cost, history labels (AUDIT 139).
+- The owner's SQL (§6b) and the restore checks (§2a), each under test (AUDIT 138, 144).
+
+**What `hangtag.vercel.app` serves:** still the tree as it was at 01:51 UTC on 2026-10-18 (`hangtag-1803427d85`, AUDIT
+125), deployed outside git. Promoting the Preview replaces it; that waits for the owner's signed-in Preview check (§6a).
+
+**The owner's approvals, in order.** Nothing below has been run.
+1. Read-only: `supabase/checks/2026-10-18-console-access.sql`, your account ID filled in.
+2. Only if it shows no active super admin: `supabase/operations/2026-10-18-first-super-admin.sql`, the same ID.
+3. In the console: Promotions → Plans → Free trial → Edit → Days 30 → Save. Shops that finish setting up from then on
+   get 30 days (audited). The editor accepts 1–90: keep it at 30 or more.
+4. Read-only: `supabase/checks/2026-10-18-trial-audit.sql`, the client's email and yours filled in.
+5. Only the shops you approve: Customers → Extend by part 8's `extend_days` with a reason, or
+   `supabase/operations/2026-10-18-trial-corrections.sql` with those account IDs (part 9).
+6. Optional: `supabase/operations/2026-10-18-console-permissions.sql` (Suspend, Restore, End all sign-ins before the
+   repair; the undo is beside it).
+7. The signed-in Preview check (§6a), then promoting that Preview to Production, or keeping or rolling back what
+   `hangtag.vercel.app` serves now.
+8. The client: after step 5, reopen the app (or "Check again" on the lock screen), then §6a's checks with their sign-in.
+
+**Pending work, by what it waits for**
+| Waits for | Item | Next step |
+|---|---|---|
+| Nothing (done locally, in the Preview) | AUDIT 117–118, 128, 130, 135–140, 144 | The Preview check (§6a) |
+| The owner's signed-in Preview | §6a; the dashboard on live's older function (128, 135); realtime catch-up timing (120) | §6a, noting how long a second device takes to catch up |
+| The owner's approval (production) | Steps 1–8 above; Production promotion; deploying `subscription` / `subscription-webhook` (only after the repair, a test project and REMEDIATION.md's switch-on order); bill reading's key and `extract-bill` deploy (81); the Agent's key (74) | Each its own word |
+| A backup | The repair (78, 91, 99; §2a); then the schema-level fixes: stock records' shape (56, I4), bill lines' unit (61, I21), low-stock decimals (I22), billing steps 4–9 and 11 | The owner's `pg_dump` and an isolated restore (§2a) |
+| A real multi-connection PostgreSQL | Two returns of one bill line at once (114, 141): the fix and its two-connection test | Docker `postgres:17` or a throwaway project, never the live one |
+| Evidence the repository can't see | The six `auth:token` failures of 10-13 (104): the device's own report times; a staging project (46, 73); real-provider evals (31, 42) | The owner's Diagnostics report; the owner's decision on staging and keys |
+| Design, not a fix | An edit after a delete elsewhere (57, 143: PLAN I10); the online store's Add (51: the owner's call); PLAN I5–I30 (roadmap) | Planned work |
+
+Online payment, AutoPay and bill reading stay unavailable throughout.
 
 ## 7. After the release
 Use a test product and a test customer, and cancel what you create afterwards:

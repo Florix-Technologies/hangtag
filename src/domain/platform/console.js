@@ -72,20 +72,32 @@ export function guard(route, perms){
    account may open that section. */
 export function dashboardTiles(d, perms){
   if(!d || typeof d !== "object") return [];
-  const n = v => (Number.isFinite(+v) ? +v : 0), s = d.shops || {}, c = d.customers || {}, p = d.subscriptions || {}, r = d.revenue || {}, u = d.usage || {};
+  // only what the database counted: a figure it didn't send is no tile (never a 0 it didn't count)
+  const num = v => (v !== null && v !== undefined && v !== "" && Number.isFinite(+v) ? +v : null);
+  const obj = v => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
+  const s = obj(d.shops), c = obj(d.customers), p = obj(d.subscriptions), r = obj(d.revenue), u = obj(d.usage);
   const to = (perm, route, query) => (can(perms, perm) ? routeHash(route, query) : undefined);
-  const list = (label, key) => ({ label, value: n(c[key]), href: to("customers.view", "customers", { filter: key }) });
+  const tile = (label, value, more) => (value === null ? null : { label, value, ...more });
+  const list = (label, key, value = num(c[key])) => tile(label, value, { href: to("customers.view", "customers", { filter: key }) });
+  const failures = tile("Payment failures, 7 days", num(r.failed_7d), { href: to("payments.view", "payments", { status: "failed", days: 7 }) });
+  // an older database (the live one until its repair, 3w) has no "customers" counts, only plan states under "subscriptions":
+  // its own counts then (a running trial, ending soon or not, is a trial), and no tile for what it didn't count
+  const older = !(d.customers && typeof d.customers === "object") && num(p.trial) !== null;
+  const trials = num(p.trial) === null ? null : num(p.trial) + (num(p.trial_ending) || 0);
+  const customers = older
+    ? [list("Active", "active", num(p.active)), list("Trials", "trial", trials), failures, list("Expired", "expired", num(p.expired)), list("Suspended", "suspended", num(p.suspended))]
+    : [list("All customers", "all"), list("Active", "active"), list("Trials", "trial"), list("Expiring in 7 days", "expiring"), failures,
+      list("Expired", "expired"), list("Suspended", "suspended"), list("Inactive 30 days", "inactive")];
+  const count = num(r.month_count);
   return [
-    { group: "Customers", items: [list("All customers", "all"), list("Active", "active"), list("Trials", "trial"), list("Expiring in 7 days", "expiring"),
-      { label: "Payment failures, 7 days", value: n(r.failed_7d), href: to("payments.view", "payments", { status: "failed", days: 7 }) },
-      list("Expired", "expired"), list("Suspended", "suspended"), list("Inactive 30 days", "inactive")] },
-    { group: "Shops", items: [{ label: "Shops set up", value: n(s.total) }, { label: "New in 7 days", value: n(s.new_7d) }, { label: "New in 30 days", value: n(s.new_30d) }] },
-    { group: "AutoPay", items: [{ label: "On", value: n(p.autopay_on) }, { label: "Failing", value: n(p.autopay_failing) }, { label: "Turned off", value: n(p.autopay_cancelled) },
-      { label: "Waiting for AutoPay", value: n(p.autopay_setup) }, { label: "Renewing now", value: n(p.renewing) }] },
-    { group: "Money received", items: [{ label: "This month", value: n(r.month), money: true, hint: `${n(r.month_count)} payment${n(r.month_count) === 1 ? "" : "s"}` },
-      { label: "Last 30 days", value: n(r.last_30d), money: true }, { label: "By AutoPay, 30 days", value: n(r.autopay_30d), money: true }] },
-    { group: "Usage", items: [{ label: "Bills in 24 hours", value: n(u.bills_24h) }, { label: "Shops selling, 7 days", value: n(u.shops_selling_7d) }] },
-  ];
+    { group: "Customers", items: customers },
+    { group: "Shops", items: [tile("Shops set up", num(s.total)), tile("New in 7 days", num(s.new_7d)), tile("New in 30 days", num(s.new_30d))] },
+    { group: "AutoPay", items: [tile("On", num(p.autopay_on)), tile("Failing", num(p.autopay_failing)), tile("Turned off", num(p.autopay_cancelled)),
+      tile("Waiting for AutoPay", num(p.autopay_setup)), tile("Renewing now", num(p.renewing))] },
+    { group: "Money received", items: [tile("This month", num(r.month), { money: true, ...(count === null ? {} : { hint: `${count} payment${count === 1 ? "" : "s"}` }) }),
+      tile("Last 30 days", num(r.last_30d), { money: true }), tile("By AutoPay, 30 days", num(r.autopay_30d), { money: true })] },
+    { group: "Usage", items: [tile("Bills in 24 hours", num(u.bills_24h)), tile("Shops selling, 7 days", num(u.shops_selling_7d))] },
+  ].map(g => ({ ...g, items: g.items.filter(Boolean) })).filter(g => g.items.length);
 }
 
 /* The lists of Customers and Subscriptions, and the payment statuses, as the database names them (schema.sql 3x) */

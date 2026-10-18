@@ -68,7 +68,20 @@ console.log('=== the dashboard and the audit log ===');
     && t('Expired').href === '#/customers?filter=expired' && t('Payment failures, 7 days').value === 1 && t('Payment failures, 7 days').href === '#/payments?status=failed&days=7'
     && t('All customers').href === '#/customers' && !t('This month').href, all.filter((x) => x.href).map((x) => x.href));
   check('…but no link to a section the role can\'t open', dashboardTiles(D, ['dashboard.view']).flatMap((g) => g.items).every((x) => !x.href));
-  check('…a missing figure is 0, never made up; no answer, no tiles', dashboardTiles({}).flatMap((g) => g.items).every((x) => x.value === 0) && dashboardTiles(null).length === 0);
+  check('…a figure the server did not send is no tile (never a made-up 0); no answer or an empty one, no tiles', dashboardTiles({}).length === 0 && dashboardTiles(null).length === 0);
+  const partial = dashboardTiles({ customers: { all: 3, trial: 0, active: 2 }, revenue: { month: 0 }, shops: { total: 3 } }, ['customers.view']);
+  const pt = partial.flatMap((g) => g.items), pl = (label) => pt.find((x) => x.label === label);
+  check('…a newer answer missing some counts: only the counted tiles, a real 0 kept as 0, no group left empty',
+    pl('All customers').value === 3 && pl('Trials').value === 0 && pl('This month').value === 0 && !('hint' in pl('This month')) && !pl('Inactive 30 days') && !pl('Expired')
+    && !pl('Payment failures, 7 days') && partial.map((g) => g.group).join() === 'Customers,Shops,Money received', partial);
+  const OLDER = { shops: { total: 9 }, subscriptions: { trial: 3, trial_ending: 1, active: 2, expired: 4, suspended: 0, autopay_on: 0 }, revenue: { failed_7d: 0 }, usage: {} };
+  const ot = dashboardTiles(OLDER, ['customers.view']).find((g) => g.group === 'Customers').items, o = (label) => ot.find((x) => x.label === label);
+  check('an older database (live until the repair: no "customers" counts): the Customers tiles use its plan states, links kept, no tile it didn\'t count',
+    o('Trials').value === 4 && o('Active').value === 2 && o('Expired').value === 4 && o('Expired').href === '#/customers?filter=expired' && o('Suspended').value === 0
+    && !o('All customers') && !o('Expiring in 7 days') && !o('Inactive 30 days'), ot);
+  const og = dashboardTiles(OLDER, ['customers.view']);
+  check('…and its other counts as it sent them (shops, AutoPay); none it did not (money, usage)', og.find((g) => g.group === 'Shops').items.length === 1
+    && og.find((g) => g.group === 'AutoPay').items.map((x) => x.label).join() === 'On' && !og.some((g) => g.group === 'Usage') && og.find((g) => g.group === 'Customers').items.length === 5, og);
   check('an offer\'s counter: 3 of 100 → 97 left', JSON.stringify(offerProgress({ redeemed: 3, cap: 100 })) === JSON.stringify({ redeemed: 3, cap: 100, left: 97, share: 0.03 }) && offerProgress({ redeemed: 5, cap: null }).left === null);
   check('the audit log says what changed', JSON.stringify(auditChanges({ before: { max_uses: 3, title: 'Launch offer', updated_at: 'a' }, after: { max_uses: 100, title: 'Launch offer', updated_at: 'b' } })) === JSON.stringify(['max_uses: 3 → 100'])
     && auditChanges({ after: { role: 'read_only', active: true } }).length === 2 && auditChanges(null).length === 0 && !!AUDIT_LABELS['staff.update']

@@ -43,6 +43,15 @@ async function phone(label, { session = null, width = 1180, height = 900, mobile
   p.text = (sel) => p.$eval(sel, (e) => e.innerText.replace(/\s+/g, ' ').trim()).catch(() => null);
   p.fill = async (sel, v) => { await p.$eval(sel, (e) => { e.value = ''; }); await p.type(sel, v); };
   p.tabs = () => p.$$eval('.nav [data-tab]', (b) => b.filter((x) => getComputedStyle(x).display !== 'none').map((x) => x.dataset.tab));
+  // the app re-renders by itself (Home's quick actions when the sync status changes): a node replaced between finding and
+  // clicking it is found again (twice at most), as tests/helpers/app.mjs's click does; a selector that matches nothing
+  // still fails at once
+  const click = p.click.bind(p);
+  p.click = async (sel, opts) => {
+    for (let i = 0; ; i++) {
+      try { return await click(sel, opts); } catch (e) { if (i >= 2 || !/detached|not attached/i.test(String(e && e.message))) throw e; await sleep(100); }
+    }
+  };
   return p;
 }
 

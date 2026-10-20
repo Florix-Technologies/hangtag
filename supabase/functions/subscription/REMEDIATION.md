@@ -1,5 +1,79 @@
 # Plan billing: remediation before `subscription` / `subscription-webhook` are deployed
 
+**Status 2026-10-20 (code and tests only; nothing deployed, no secret set, AutoPay off).**
+- **Step 11 done**: the provider is asked a limited number of times per account — `hangtag_billing_call_claim` and its
+  table `hangtag_billing_call_counts` (post-repair migration, section 7; service role only), counted by the minute and the
+  hour with the agent-usage pattern. The app's payment check (`verify`): 60 a minute, 900 an hour; over it (or when the
+  count can't be read) the function answers what the database knows ("pending") and asks the provider nothing — the
+  notification and the reconciler still settle the payment. Starting AutoPay: 6 and 30, then 429 "too many tries" (503
+  when the count can't be read) before the provider's plan is read. Not limited: taking a payment page (checkout already
+  allows 20 an hour) and turning AutoPay off (the database refuses it once it is off; refusing a cancel could leave a
+  mandate charging). Before the migration: no limit, as before.
+- The migration refuses to commit unless its own report is all ok ("The post-repair report is not all ok (…)", nothing
+  kept); the runbook says how to read the report after `COMMIT`.
+- A charge whose agreed price or plan can no longer be found is kept for review (`amount_mismatch`), never an error the
+  provider would send again until it disables the webhook.
+- `npm run probe:reconcile`: the reconcile entry of a deployed test project (RELEASE.md §6d step 2g), in place of a curl
+  that would leave the secret in the shell's history; both probes are tested against the real handlers
+  (`tests/unit/payment-probes.test.mjs`).
+- The owner's decisions (refunds, the scheduler, renewal grace, the limits, a Cashfree refund sweep, AutoPay) are listed
+  with their options in RELEASE.md §6e. Still unproven against the real APIs: everything in "What a separate Razorpay
+  test-mode project must prove first" below, and Cashfree's sandbox (RELEASE.md §6d step 2).
+
+**Status 2026-10-19, later: steps 4, 5, 7, 8 and 9 implemented (code and tests only; nothing deployed, no secret set,
+AutoPay off).** Everything the database needs is in the post-repair migration (sections 6–12), never in `schema.sql`: it
+reaches live only after the repair (supabase/REPAIR-RUNBOOK.md, steps 6–7). A design review by three independent critics
+(money, security and migration, provider realism against Razorpay's and Cashfree's documentation) changed the design
+before it was built; what differs from the plan below is said here.
+- **The billing mode** (step 4's interlock 4, enforced in the database): `hangtag_billing_settings.billing_mode` ('live' by
+  default, changed only in the SQL Editor — a test project sets 'test'). Every database function that can add time or
+  record money or a set-up refuses another mode (`hangtag_billing_event_record`, `hangtag_subscription_activate_checked`,
+  `hangtag_autopay_report`, `hangtag_autopay_attach_mandate`, `hangtag_autopay_orphan`, `hangtag_billing_reconcile_begin`,
+  `hangtag_billing_probe_record`); the functions check it before acting (`billingModeAllows`): a database without it yet
+  takes live keys only. A notification in the other mode is never acted on and is kept for review (`mode_mismatch`).
+- **Step 4, readiness**: `hangtag_billing_readiness()` — within 7 days (the provider's own times, from the signed body), a
+  Razorpay payment-link notification and a subscription notification, each about one of the self-check's probes
+  (`hangtag_billing_probes`) or a real Hangtag object, and within 26 hours a complete, ok reconciliation. It gates
+  `hangtag_autopay_terms` (so the quote, begin and the function's config), `hangtag_platform_settings_save` (switching
+  AutoPay on, or making it a condition of new trials, only when ready — a save that keeps it on still works while the
+  proof has lapsed) and `hangtag_subscription_ensure` (a lapsed proof never locks a new shop). The self-check is the
+  function's `billing_selfcheck` action (console staff with settings.manage, once in 10 minutes, audited): a ₹1 link and a
+  subscription starting in a year, made, noted as probes, cancelled; both also end by themselves within minutes.
+- **Step 5, the registry**: `hangtag_autopay_mandates` (its shop column is `shop_owner_id`, not `owner_id`, so schema.sql's
+  subscription guard never takes it as a shop table), with the plan, price and currency agreed to. Begin registers the
+  set-up and hands back every earlier one not confirmed off (waiting or halted) to be cancelled; attach goes by the
+  registry's id (`notes.hangtag_mandate`). `hangtag_autopay_report` (a new function; `hangtag_autopay_event` is kept as it
+  was, so no function's arguments change) finds any registered set-up: a charge is recorded once and adds time only at the
+  price and currency agreed to (another amount — say a ₹5 authorisation — or currency is kept for review instead), never
+  for money already refunded or disputed, never for a set-up no shop recorded (an orphan: `unknown_mandate_charge`); on a
+  replaced set-up it is recorded and that set-up is cancelled. Checkout hands a halted set-up back to be cancelled first;
+  when that can't be done, no payment by hand.
+- **Step 8, order**: the provider's event time (the top-level created_at, never later than now) is kept per set-up; a state
+  report older than the newest applied changes nothing; a charge is always recorded once (its state effect only when
+  newer); a cancellation always applies.
+- **Step 7, reconciliation**: `supabase/functions/subscription/reconcile.js`, the subscription-webhook function's reconcile
+  entry (`x-hangtag-reconcile` and `Authorization: Bearer <SUBSCRIPTION_RECONCILE_SECRET>`, 32 characters or more). Sweeps
+  A (both providers), B, C and D (Razorpay) as planned, with: one run at a time (the database opens and closes runs and
+  stamps their times); a 4xx on one item kept against that item while the run goes on (only a 5xx, 401, 429 or network
+  error stops a run); a call cap with resume points (a capped run is ok but not complete, and readiness needs a complete
+  one); Razorpay's 400 for a subscription already ended read back as confirmed. The owner's `autopay_verify` runs the same
+  check for its own set-up at most every 5 minutes. **The scheduler is the owner's decision** (an hourly external cron).
+- **Step 9**: a place in a capped offer is held only by an attached checkout, one per shop, and not by a shop that let two
+  such checkouts lapse in a day. The planned reuse of an unattached row was dropped (a double tap could then lose a
+  payment); instead a page is attached only to a payment still open for it, and a page that can't be is withdrawn.
+- **Step 6, the console**: Payments → Billing review — the billing health (mode, readiness, last runs, the money-and-time
+  checks of `hangtag_billing_integrity()`) and the items, settled one at a time with a reason (subscriptions.manage,
+  audited); refunds and disputes from both providers' notifications are kept for review, before or after the payment is
+  recorded. **Not built: revoking a refunded payment's time** — with periods stacked one after another, taking one out
+  changes the others; whether refunds should take time away, and how, is the owner's decision.
+- Tests: `supabase/tests/billing-consistency.test.mjs` (the database: steps 4–9 and the console's part), `tests/unit/
+  subscription-reconcile.test.mjs`, `tests/unit/subscription-handlers.test.mjs` and `subscription-cashfree` (the functions,
+  before and after the migration), `tests/e2e/console-billing-review.test.mjs` (the console).
+- **Still open** (then; step 11's throttle done 2026-10-20): step 11's per-owner throttle; the Razorpay test-mode proof below (none of this has met the real API —
+  in particular whether a far-off subscription can be cancelled while only "created" and whether that sends
+  subscription.cancelled, which the readiness proof relies on); Cashfree's account-level reconciliation (its /pg/recon,
+  unverified) — a refund whose notification is missed is not yet found by a sweep for Cashfree.
+
 **Status 2026-10-18 (code only; nothing deployed, no secret set, AutoPay off).**
 - Step 1 **done**: `subscription/handler.js` and `subscription-webhook/handler.js` hold the logic (plain JS, injected
   clients); each `index.ts` only reads the request and secrets. Tested by behaviour: `tests/unit/subscription-handlers.test.mjs`.
@@ -15,7 +89,40 @@
 - Also: a payment confirmation that fails for a reason that may pass says "try again" (503), not "contact support".
 - Steps 4–9 and 11 change the schema: they wait for the database repair (RELEASE.md §2a), which is blocked.
 
-Status: a plan, not implemented. Both functions stay undeployed (the owner's word is needed for any deploy). Written
+**Status 2026-10-18, later (Cashfree; code and tests only, nothing deployed).**
+- Cashfree payment links as a second provider (`providers/cashfree.js`), checked against Cashfree's documentation (API
+  2026-01-01); the webhook picks the provider by its signature header; test credentials only on a test project.
+- Step 4 **in part** and step 6 **in part**, in the post-repair migration (after the repair): `hangtag_billing_events`
+  (each settled notification noted once; a repeat is known) and `hangtag_billing_exceptions` (amount or currency
+  mismatch, a link naming another payment, an activation refused for good, a refund, a charge on an untracked mandate).
+  Not yet: readiness interlock, the mandate registry (step 5), reconciliation (step 7), console views of the exceptions.
+- CORS is now configurable (`APP_URL` and `SUBSCRIPTION_ALLOWED_ORIGINS`), "*" only when neither is set.
+- Tests: `tests/unit/subscription-cashfree.test.mjs` (15 scenarios plus the provider), `supabase/tests/subscription-cashfree.test.mjs`
+  (the lifecycle on the real database). Cashfree's real sandbox: `npm run eval:cashfree-sandbox` — not run (no keys here).
+
+**Status 2026-10-19 (code and tests only, nothing deployed).**
+- Step 11 **in part**, in the post-repair migration (section 7, after the repair): checkout refuses a suspended shop
+  ("This shop is suspended. Contact Hangtag support.", the words AutoPay's start already uses); money for a payment
+  started before the suspension is still honoured. Not done: the per-owner throttle on provider-bound actions.
+- Step 6 **wider**: money on a Hangtag link that no payment recorded (its note names a Hangtag payment, or the provider's
+  own record of the link carries Hangtag's mark) is kept for review as `unknown_order` — never activated; a link the
+  provider has never made (404) is answered for good; a request with no provider's signature header is refused (400),
+  no longer "not configured" (503, which asks for it again).
+- A probe of the deployed webhook on a test project (`npm run probe:cashfree-webhook`) and a real Cashfree delivery to
+  it (`npm run eval:cashfree-sandbox` with `HANGTAG_EVAL_CASHFREE_NOTIFY_URL`): RELEASE.md §6d, step 2. Not run (no
+  keys, no test project here).
+- From the review (AUDIT 167–172): the app's own payment check now reads the payment's currency (it activated a payment
+  in another currency with the same number); a Cashfree success its API doesn't show yet is answered 503 and sent again,
+  not settled.
+- (Closed later the same day by the registry: an untracked mandate whose cancel fails is registered to be cancelled by the
+  reconciler.) Open, documented: when cancelling an AutoPay mandate Hangtag no longer tracks fails, the notification is still answered
+  200, so the mandate may charge later (step 5's registry and a retry belong together, after the Razorpay test-mode proof
+  below — a webhook that keeps failing may be disabled by Razorpay); on the checkout path a missing provider or shop phone
+  is reported before "suspended" (the lock screen never offers checkout to a suspended shop).
+- Still not done (then): step 9, steps 4, 5, 7, 8, and the console views of the exceptions — all done later the same day
+  (the status at the top).
+
+The plan, as written 2026-10-15 (implemented 2026-10-19 with the changes listed at the top). Both functions stay undeployed (the owner's word is needed for any deploy). Written
 2026-10-15 from a read-only review of the code at `73d232f` (AUDIT.md item 108). The goal is charge-to-entitlement
 consistency: every captured charge, one-time or AutoPay, adds exactly the paid time, once; no paid time without a
 captured charge; no charge the system can't see. Steps marked **schema** change `supabase/schema.sql` and so work on live
@@ -113,7 +220,7 @@ only after the database update, which is blocked (RELEASE.md §2a).
 
 ## Reconciliation
 
-Design only; nothing is implemented.
+Implemented 2026-10-19 (reconcile.js; the status at the top says what differs).
 
 PRINCIPLE. The provider is the record of money; the database is the record of entitlement. Every repair goes through the same idempotent RPCs as the webhook: hangtag_subscription_activate (locks the payment row, does nothing if it is already paid) and hangtag_autopay_event ('charged' is keyed by UNIQUE(provider, provider_payment_id), schema.sql:7361; this is what makes 'exactly once' hold). So the webhook and the reconciler can race safely. The reconciler never creates a charge, never refunds, and never removes time; anything it can't match becomes a hangtag_billing_exceptions row (step 6).
 

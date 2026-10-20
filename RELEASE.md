@@ -141,10 +141,16 @@ The repair (section 3) stays blocked until each item below exists and the owner 
    Approving it is the owner's decision alone. Until then, nothing in section 3 runs.
 
 ## 3. Database (SQL Editor)
+**The ordered procedure, from preflight to recovery, is `supabase/REPAIR-RUNBOOK.md` (reviewed 2026-10-18).** This
+section keeps the detail.
+
 The whole `supabase/schema.sql` of the release commit, once, in one transaction. On the live project of 2026-10-13
 (compared with `schema.sql` object by object, read-only) it changes:
 - the bodies of the 18 older functions;
-- the three redundant indexes the first migration put back (dropped).
+- the three redundant indexes the first migration put back (dropped);
+- `hangtag_sales_money_check`, dropped and re-added as `schema.sql` has it (NOT VALID: no existing row is re-checked).
+
+Exactly this, and no policy, column, trigger, row security, grant or row: `supabase/tests/repair-inventory.test.mjs`.
 
 Every other table, column, default, trigger, policy, grant and function is re-applied as it already is.
 
@@ -173,6 +179,11 @@ error, stop, and run it again later.
 
 All of this was rehearsed on PGlite, on PostgreSQL 17 and 18, from the live project's state: `supabase/tests/live-recovery.test.mjs`.
 
+**Then, separately approved: the post-repair migration** (`supabase/REPAIR-RUNBOOK.md`, step 7; its report 13 rows, all
+ok). From then on, until it is folded into `schema.sql`, **every run of `schema.sql` is followed by the migration again**:
+a `schema.sql` run puts the older bodies of the ten functions it changes back (`supabase/checks/post-repair-report.sql`,
+read-only, shows which rows then read false).
+
 **Preflight of 2026-10-14 (06:32–06:38 UTC, read-only, on the live project):**
 - **Which database:** `wcorlmgkwcahyfastjoz`, PostgreSQL 17.6, system identifier 7678071634733212629.
 - **Dry run:** all 26 numbers 0.
@@ -196,7 +207,7 @@ checkout: 819,383, `56cb6eaa62ef4d37…`; §2a item 4), between `BEGIN;` +
 
 **Stays as it is** (older and harmless, not from 2026-10-13):
 - the owner foreign keys of six tables carry older names (`hangtag_sales_owner_fkey` …), with the same definition;
-- `hangtag_sales_money_check` prints `subtotal` without a cast;
+- (corrected 2026-10-18: `hangtag_sales_money_check` doesn't stay — the repair re-adds it, NOT VALID; see above);
 - `hangtag_payments_provider_fee_check` is missing, but the payments' shape check already refuses a negative fee.
 - **Rollback.** The sections only add:
   - tables, columns and functions;
@@ -253,11 +264,12 @@ npx supabase functions deploy <name> --project-ref wcorlmgkwcahyfastjoz
    `ux-productization`) → Promote to Production.
 2. Open Production in a private window. Phones pick up the update the next time the app starts with a connection. The
    service worker's cache name changes with every release.
-- **Rollback.** Deployments → the previous Production deployment (`ee76f74`'s, 7059827088) → Promote to Production. It is instant,
-  and the database needs nothing (step 3).
+- **Rollback.** Deployments → the deployment Production had before → Promote to Production. Since 2026-10-18 13:47 UTC
+  Production serves `262dbdb` (build `hangtag-1601181284`); before it, a tree deployed outside git (`hangtag-1803427d85`,
+  AUDIT 125); before that, `ee76f74`'s deployment (7059827088). It is instant, and the database needs nothing (step 3).
 
-## 6a. Checking a Preview, signed in (before promoting)
-A Preview reads and writes the **live** shop: check without changing real stock or making real bills, sign in only
+## 6a. Checking signed in: Production now, and a Preview before any later promotion
+Production and every Preview read and write the **live** shop: check without changing real stock or making real bills, sign in only
 with your own accounts, and run no SQL. Tick each:
 1. **The build.** Settings → Advanced → Diagnostics & health → "Build" shows `hangtag-<hash>`, the cache name in the
    release commit's `sw.js` (for the catch-up commit it is given in the release report). A hard reload shows the same.
@@ -266,7 +278,7 @@ with your own accounts, and run no SQL. Tick each:
    applies. (In builds after `1b9b573`: a download that keeps failing shows once as "download failed (…)", naming the
    part, and once as "download recovered (…)" when it works again; each failed call still adds its own "connection
    failed (…)" line.)
-   In builds with the 2026-10-18 network-entry merge (AUDIT 130; not yet deployed), a call that keeps failing is one
+   In builds with the 2026-10-18 network-entry merge (AUDIT 130; in Production since 2026-10-18 13:47 UTC, `262dbdb`), a call that keeps failing is one
    "connection failed (…)" line with a count (×N) and "since …", and earlier entries stay.
 4. **Your shop only.** The products, bills and customers are your shop's; a second owner account (another shop) sees
    none of them.
@@ -281,6 +293,17 @@ with your own accounts, and run no SQL. Tick each:
    reading isn't set up yet, and offers entry by hand) and cancel; open Plans & Billing (online payment shows as not
    available).
 7. Note anything wrong with its time, and download the Diagnostics report.
+
+**Who does each check.** Production has served the pushed commit `262dbdb` since 2026-10-18 13:47 UTC (AUDIT 163), so
+these checks now apply to Production as it is; it uses the same live database as a Preview.
+| Check | Who | Why |
+|---|---|---|
+| 1 build, 2 refresh, 3 Diagnostics | The owner, own account | Read from the owner's own device |
+| 4 your shop only | The owner, with a second account of their own (a second shop) | The client's shop is never used to test isolation |
+| 5 two devices | The owner, own devices and shop; the optional live edit only if the owner chooses | It changes a live record |
+| 6 workflows, 7 the report | The owner; then the client, in their own shop | Nothing is saved |
+| The client's trial | The client, signed in, after §6c step 5: Plans & Billing shows "N days remaining — Trial ends on …", the end 30 days after their shop was set up (or the end the owner gave); nothing is locked | Only the client can sign in to their shop |
+| The client's daily work | The client: bills, returns, stock, as they work | Their business, not a test |
 
 ## 6b. Client access: the free trial and the Platform Console (the owner)
 A shop's trial is as long as the "Free trial" plan says **when the shop finishes setting up**; its end is written then, and
@@ -329,7 +352,22 @@ included (22 checks).
   read-only and billing roles still refused; the undo puts the live body back.
 
 ## 6c. Where things stand, and the owner's approvals (2026-10-18)
-**Committed and pushed to `ux-productization` for a Preview on 2026-10-18; not promoted.** App build `hangtag-1601181284`
+**Since the push below, not committed (no commit authorised):** the thirteenth to fifteenth sessions' work — the
+repair runbook and inventory, the restore rehearsal, the post-repair migration (twelve sections, with its order guard,
+generated by `scripts/gen-post-repair.mjs` from `schema.sql` and the stated edits in
+`supabase/tests/post-repair-edits.mjs`) and its tests, tenant-isolation tests, Cashfree plan payments, the test-project
+webhook probe, and the billing remediation — the billing mode, AutoPay's readiness and registry, reports in order,
+reconciliation, offer holds, refunds and disputes kept for review, the console's billing review (REMEDIATION steps 4, 5,
+7, 8, 9; AUDIT 145–186); and on 2026-10-20 (AUDIT 187–197) the provider-call limit per account (step 11), the
+migration's refusal to commit unless its report is all ok, the runbook's stop conditions, `npm run probe:reconcile`, the
+pilot checklist (`PILOT-CHECKLIST.md`) and the owner's decisions (§6e). None of it changes Production until the repair,
+the migration and the deploys of §6d. Its verification, 2026-10-20 (AUDIT.md, the sixteenth session's "Test results"):
+`npm test` **189/189 files** (6,764 checks: 89 unit, 38 database, 4 eval, 58 browser; 0 isolation violations) and
+**38/38 on PostgreSQL 17** (1,758 checks), none failed, timed out or skipped; `npm run check`, `lint` and `build` clean
+(`sw.js` `hangtag-db09103bf2`, unchanged). **Not run** (no infrastructure or keys here): the concurrent-returns test, Cashfree's
+sandbox, a deployed test project, the Razorpay test-mode proof; and nothing on the live project.
+
+**Committed and pushed to `ux-productization` on 2026-10-18; in Production since 13:47 UTC that day (promoted outside this work).** App build `hangtag-1601181284`
 (the cache name in `sw.js`). Before the push: `npm test` 178/178 files and 31/31 on PostgreSQL 17, `npm run check` and
 `npm run lint` clean (AUDIT, 2026-10-18 twelfth session). In it, beyond Production's `ee76f74`:
 - Diagnostics: a download that keeps failing is one entry per part plus one when it recovers, with retries at 1, 2, 4,
@@ -340,8 +378,9 @@ included (22 checks).
 - Purchases and stock: line money as sales, "Received today", opening stock's cost, history labels (AUDIT 139).
 - The owner's SQL (§6b) and the restore checks (§2a), each under test (AUDIT 138, 144).
 
-**What `hangtag.vercel.app` serves:** still the tree as it was at 01:51 UTC on 2026-10-18 (`hangtag-1803427d85`, AUDIT
-125), deployed outside git. Promoting the Preview replaces it; that waits for the owner's signed-in Preview check (§6a).
+**What `hangtag.vercel.app` serves:** `262dbdb`, build `hangtag-1601181284` (its `sw.js`, Last-Modified 2026-10-18
+13:47:30 UTC; read again 2026-10-19). It was promoted outside this work; GitHub's deployment list may still name
+`ee76f74` as Production. The signed-in checks (§6a) now apply to Production itself; if one fails, roll back (§6).
 
 **The owner's approvals, in order.** Nothing below has been run.
 1. Read-only: `supabase/checks/2026-10-18-console-access.sql`, your account ID filled in.
@@ -353,22 +392,152 @@ included (22 checks).
    `supabase/operations/2026-10-18-trial-corrections.sql` with those account IDs (part 9).
 6. Optional: `supabase/operations/2026-10-18-console-permissions.sql` (Suspend, Restore, End all sign-ins before the
    repair; the undo is beside it).
-7. The signed-in Preview check (§6a), then promoting that Preview to Production, or keeping or rolling back what
-   `hangtag.vercel.app` serves now.
+7. The signed-in check (§6a) on Production, which already serves `262dbdb`; keep it, or roll back (§6) if a check
+   fails.
 8. The client: after step 5, reopen the app (or "Check again" on the lock screen), then §6a's checks with their sign-in.
 
 **Pending work, by what it waits for**
 | Waits for | Item | Next step |
 |---|---|---|
-| Nothing (done locally, in the Preview) | AUDIT 117–118, 128, 130, 135–140, 144 | The Preview check (§6a) |
-| The owner's signed-in Preview | §6a; the dashboard on live's older function (128, 135); realtime catch-up timing (120) | §6a, noting how long a second device takes to catch up |
+| Nothing (done; in Production since 2026-10-18 13:47 UTC) | AUDIT 117–118, 128, 130, 135–140, 144 | The signed-in check (§6a) |
+| The owner's signed-in check | §6a; the dashboard on live's older function (128, 135); realtime catch-up timing (120) | §6a, noting how long a second device takes to catch up |
 | The owner's approval (production) | Steps 1–8 above; Production promotion; deploying `subscription` / `subscription-webhook` (only after the repair, a test project and REMEDIATION.md's switch-on order); bill reading's key and `extract-bill` deploy (81); the Agent's key (74) | Each its own word |
-| A backup | The repair (78, 91, 99; §2a); then the schema-level fixes: stock records' shape (56, I4), bill lines' unit (61, I21), low-stock decimals (I22), billing steps 4–9 and 11 | The owner's `pg_dump` and an isolated restore (§2a) |
-| A real multi-connection PostgreSQL | Two returns of one bill line at once (114, 141): the fix and its two-connection test | Docker `postgres:17` or a throwaway project, never the live one |
-| Evidence the repository can't see | The six `auth:token` failures of 10-13 (104): the device's own report times; a staging project (46, 73); real-provider evals (31, 42) | The owner's Diagnostics report; the owner's decision on staging and keys |
-| Design, not a fix | An edit after a delete elsewhere (57, 143: PLAN I10); the online store's Add (51: the owner's call); PLAN I5–I30 (roadmap) | Planned work |
+| A backup | The repair (78, 91, 99; `supabase/REPAIR-RUNBOOK.md`, rehearsed on a restored copy: 158); then the post-repair migration, prepared and tested (147–152, 162: returns one at a time, tracked stock records, bill lines' unit, deleted products' marks, own-shop capabilities, billing notifications and exceptions, no payment from a suspended shop) and the billing remediation (173–182: the billing mode, readiness, the AutoPay registry, reports in order, reconciliation's run log, offer holds, the console's billing review); low-stock decimals (157) | The runbook, step by step |
+| A real multi-connection PostgreSQL | The concurrent proof of the returns fix (114, 148): `supabase/tests/concurrency/` | Docker `postgres:17` or a throwaway project, never the live one |
+| Keys or a test project | Cashfree's real sandbox (156: `npm run eval:cashfree-sandbox`); the deployed webhook on a test project (`npm run probe:cashfree-webhook`, 165) and a real Cashfree delivery to it; a reconciliation run there (`npm run probe:reconcile`, §6d step 2g); for AutoPay later, the Razorpay test-mode proof (REMEDIATION.md) | Sandbox keys; a Supabase project that isn't the live one |
+| The owner's decision | The reconciler's scheduler; refunds and disputes; renewal grace; the provider-call limits; a Cashfree refund sweep; AutoPay — each with its options and the gate it is needed by in §6e | Each its own word |
+| Evidence the repository can't see | The six `auth:token` failures of 10-13 (104): the device's own report times; whether anything was read across shops while the policies were open (145: the project's logs, if kept); a staging project (46, 73); real-provider evals (31, 42) | The owner's Diagnostics report and logs; the owner's decision on staging and keys |
+| Design, not a fix | The online store's Add (51: the owner's call); PLAN I5–I30 (roadmap) | Planned work |
 
 Online payment, AutoPay and bill reading stay unavailable throughout.
+
+## 6d. Plan payments (Cashfree): the deployment checklist (each step the owner's approval)
+Nothing below has been done. Payments stay off until the last step. Use a separate Cashfree account or app for Hangtag's
+plans where possible; on a shared Florix account, orders that aren't Hangtag plan payments are ignored by the webhook,
+but a payment webhook set in the dashboard to this function's address also sends it every other product's events.
+1. **The database:** the repair and the post-repair migration (`supabase/REPAIR-RUNBOOK.md`, steps 1–7; its report 13 rows).
+   The live database stays in billing mode `live` (the migration's default): it counts only production money.
+2. **A test project first.** Nothing here touches the live project; every script below refuses its ref.
+   a. *Sandbox keys.* In Cashfree's merchant dashboard, switch to the sandbox (test) environment → Developers → API Keys →
+      generate. The App ID and the secret key (it starts `cfsk_ma_test_`) stay in a password manager or in a file
+      outside this repository; never in chat, a commit or a screenshot.
+   b. *The keys alone:* `HANGTAG_EVAL_CASHFREE_APP_ID=… HANGTAG_EVAL_CASHFREE_SECRET_KEY=… npm run eval:cashfree-sandbox`
+      — a ₹1 link is made, read back with Hangtag's notes, the same request gives the same link, an unknown link is a
+      404. Every line PASS.
+   c. *A test project:* a new Supabase project (never `wcorlmgkwcahyfastjoz`). SQL Editor: `supabase/schema.sql` whole
+      (its report all ok), then `supabase/migrations/20261019120000_hangtag_post_repair_integrity.sql` whole (its last
+      result is its report: 13 rows, all ok; it refuses to commit otherwise, with an error naming the rows), then
+      `UPDATE public.hangtag_billing_settings SET billing_mode = 'test';` — a test project counts sandbox money only.
+      Without it, sandbox keys are refused there (no checkout) and every sandbox notification is kept for review as
+      `mode_mismatch`, never acted on.
+   d. *Its secrets and functions* (Supabase CLI, signed in; `<test-ref>` is the new project's ref): put
+      `SUBSCRIPTION_PROVIDER=cashfree`, `SUBSCRIPTION_CASHFREE_APP_ID`, `SUBSCRIPTION_CASHFREE_SECRET_KEY`,
+      `SUBSCRIPTION_CASHFREE_ENV=sandbox`, `SUBSCRIPTION_TEST_MODE=true`, `APP_URL` (an https address) and
+      `SUBSCRIPTION_RECONCILE_SECRET` (32 random characters or more, e.g. `openssl rand -hex 24`) in a file
+      outside the repository, then `npx supabase secrets set --project-ref <test-ref> --env-file <that file>`,
+      `npx supabase functions deploy subscription --project-ref <test-ref>` and
+      `npx supabase functions deploy subscription-webhook --no-verify-jwt --project-ref <test-ref>`.
+      Every setting by name (values only in that file and a password manager; checked against the code 2026-10-20):
+
+      | Where | Setting | |
+      |---|---|---|
+      | Both functions, the test project's secrets | `SUBSCRIPTION_PROVIDER` = `cashfree` | required for Cashfree (Razorpay is the default when its key is set) |
+      | | `SUBSCRIPTION_CASHFREE_APP_ID`, `SUBSCRIPTION_CASHFREE_SECRET_KEY` (`cfsk_ma_test_…`) | required |
+      | | `SUBSCRIPTION_CASHFREE_ENV` = `sandbox`, `SUBSCRIPTION_TEST_MODE` = `true` | both required: the sandbox is refused without `TEST_MODE`, and a `cfsk_ma_prod_` key with it |
+      | | `SUBSCRIPTION_RECONCILE_SECRET` (32+ characters) | required for the reconciler (without it: 503) |
+      | `subscription` only | `APP_URL` (an https address: the return page) | required; `SUBSCRIPTION_ALLOWED_ORIGINS` optional |
+      | Supabase sets these itself | `SUPABASE_URL` (the webhook address each link carries), `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` | never set by hand |
+      | This computer, `npm run eval:cashfree-sandbox` | `HANGTAG_EVAL_CASHFREE_APP_ID`, `HANGTAG_EVAL_CASHFREE_SECRET_KEY` | required (sandbox keys only) |
+      | | `HANGTAG_EVAL_CASHFREE_NOTIFY_URL`, `HANGTAG_EVAL_CASHFREE_WAIT` | optional: the real delivery of step e |
+      | This computer, `npm run probe:cashfree-webhook` | `HANGTAG_PROBE_WEBHOOK_URL`, `HANGTAG_EVAL_CASHFREE_SECRET_KEY` | required |
+      | This computer, `npm run probe:reconcile` | `HANGTAG_PROBE_WEBHOOK_URL`, `HANGTAG_PROBE_RECONCILE_SECRET` | required |
+
+      Set the computer's ones in the terminal session only, never in a file in this repository. The `NAME=… npm run …`
+      form of steps b, e and g is Git Bash's; in PowerShell set each first, typed or pasted at the prompt so it stays out of the
+      command history (`$env:HANGTAG_EVAL_CASHFREE_SECRET_KEY = Read-Host`), run `npm run …`, then `Remove-Item Env:HANGTAG_*`.
+   e. *The deployed webhook:* `HANGTAG_PROBE_WEBHOOK_URL=https://<test-ref>.supabase.co/functions/v1/subscription-webhook
+      HANGTAG_EVAL_CASHFREE_SECRET_KEY=… npm run probe:cashfree-webhook` — GET 405, a wrong or missing signature 400, a
+      correctly signed notification of no Hangtag payment 200 (the function holds the key and checks Cashfree's
+      signature as Cashfree makes it). Nothing is written. Then **a real delivery from Cashfree**: step b again with
+      `HANGTAG_EVAL_CASHFREE_NOTIFY_URL=` that same address and `HANGTAG_EVAL_CASHFREE_WAIT=300`; pay the printed link
+      with Cashfree's sandbox test details. In the test project, `SELECT kind, ref, amount FROM
+      hangtag_billing_exceptions` shows one `unknown_order` row for that link (a paid Hangtag link no checkout recorded:
+      kept for review, nothing activated), and Cashfree's webhook logs show the delivery answered 200.
+   f. *The app end to end (before any real payment):* a copy of the app whose `config.js` names the test project, served
+      at an https address (the one in `APP_URL`, and in `SUBSCRIPTION_ALLOWED_ORIGINS` if different), never a commit of
+      that `config.js`. Sign up a test shop there and finish its setup (its trial starts). Each line is read in the test
+      project's SQL Editor (one query at a time):
+      - **Pay a plan** (Plans & Billing → a plan → Cashfree's sandbox success): the app shows the plan; `SELECT status,
+        amount, currency, provider_payment_id, period_end FROM public.hangtag_subscription_payments ORDER BY created_at DESC
+        LIMIT 3` — one `paid` row at the plan's amount; `SELECT period_end FROM public.hangtag_subscriptions` — moved once,
+        by the plan's months.
+      - **The same notification again** (Cashfree's dashboard → the webhook's log → resend, where offered): nothing
+        changes; `SELECT event_type, outcome, count(*) FROM public.hangtag_billing_events GROUP BY 1, 2` — that event once.
+      - **A payment that fails or is left** (the sandbox's failure, or the page left until it expires): that row `failed`
+        or `expired`, no time added.
+      - **A refund** of the paid one (Cashfree's sandbox dashboard): `SELECT kind, ref, amount, status FROM
+        public.hangtag_billing_exceptions ORDER BY id DESC LIMIT 5` — a `refund` row, open; `period_end` unchanged (a refund
+        never takes time away by itself: §6e, the owner's decisions); the console's Payments → Billing review lists it.
+      - **Then step g**: the reconciliation repairs nothing, and Billing review says "Money and time agree: Yes".
+   g. *The reconciler:* `HANGTAG_PROBE_WEBHOOK_URL=https://<test-ref>.supabase.co/functions/v1/subscription-webhook
+      HANGTAG_PROBE_RECONCILE_SECRET=… npm run probe:reconcile` (not a hand-typed curl: the secret would stay in the shell's
+      history) — GET 405, no secret and a wrong one 401 with nothing read, the right one one run that is ok and complete
+      (it prints what it checked and repaired), a second call at once `busy`. Every line PASS; if the first call is already
+      `busy` (a run in the last 5 minutes), run it again 5 minutes later. The console's Payments → Billing review (pointed
+      at the test project) then shows the run, and "Money and time agree: Yes". (A request without the
+      `x-hangtag-reconcile` header is a provider notification to the function: unsigned, it is refused with 400.)
+3. **The live project's secrets** (never test keys there; never `SUBSCRIPTION_TEST_MODE` there):
+   `SUBSCRIPTION_PROVIDER=cashfree`, `SUBSCRIPTION_CASHFREE_APP_ID`, `SUBSCRIPTION_CASHFREE_SECRET_KEY` (a `cfsk_ma_prod_…`
+   key), `SUBSCRIPTION_CASHFREE_ENV=production`, `APP_URL`, `SUBSCRIPTION_RECONCILE_SECRET` (a new one, not the test
+   project's), optionally `SUBSCRIPTION_ALLOWED_ORIGINS`. `npm run preflight:live` (the owner's) then shows the functions
+   and secrets as expected.
+4. **Deploy** `subscription-webhook --no-verify-jwt`, then the reconciler's schedule and one complete run (Payments →
+   Billing review shows it), then `subscription`. The schedule (the owner's choice of scheduler) makes, hourly, a `POST` to
+   `https://<live-ref>.supabase.co/functions/v1/subscription-webhook` with the headers `x-hangtag-reconcile: 1` and
+   `Authorization: Bearer <the live SUBSCRIPTION_RECONCILE_SECRET>`, the secret kept in the scheduler's own secret store
+   (`probe:reconcile` refuses the live project on purpose). Each link carries the webhook as its `notify_url`; in
+   Cashfree's dashboard, add the webhook only if Hangtag has its own account.
+5. **One real low-value payment** end to end (the owner's own shop): one paid row, the months added once, the money
+   counted; then a refund in Cashfree's dashboard appears for review and removes no time; the next reconciliation repairs
+   nothing, and Payments → Billing review says money and time agree.
+6. **Then** the app offers online payment to everyone (it does as soon as the function says `available`: provider keys
+   set, in the database's billing mode). AutoPay stays off: it is Razorpay's. It can be switched on only after the
+   Razorpay test-mode proof (REMEDIATION.md), its live keys and webhook, the console's billing self-check, and a complete
+   reconciliation — the database refuses it before (readiness), and offers it to no shop while that proof lapses.
+**Undo:** remove the provider's secrets (the function answers "not set up" at once; payments already made stay
+honoured); the webhook keeps settling notifications still on their way.
+
+## 6e. The controlled pilot, and the gates before money
+**For the pilot, payments stay off.** Today, on the live project: `subscription` and `subscription-webhook` are not
+deployed and no provider secret is set, so the app says online payment isn't available; AutoPay is off
+(`hangtag_platform_config.autopay_enabled` false — and after the post-repair migration the database refuses to switch
+it on without the proof); bill reading is off. The pilot runs on the 30-day trial (§6b), with the console's Extend and
+Give a plan for anything longer — each audited, named shops only, never a reset of every account. Keep it so until
+every gate below has its evidence:
+
+| # | Gate | Evidence that closes it |
+|---|---|---|
+| 1 | A recoverable backup of live | The `pg_dump` (runbook step 2), its sha256, and where it is kept |
+| 2 | Restored in isolation, the rehearsal complete | Runbook steps 3–4 on the restored copy: every comparison and check as `supabase/tests/restore-rehearsal.test.mjs` expects |
+| 3 | The live repair, approved | The owner's approval (runbook step 5), then step 6's checks all ok |
+| 4 | The post-repair migration, approved after the repair is verified | Runbook step 7: its report 13 rows ok, the fingerprint and registry counts as expected |
+| 5 | Cashfree sandbox and the deployed test-project webhook | §6d step 2: `eval:cashfree-sandbox` all PASS, `probe:cashfree-webhook` all PASS, a real sandbox delivery (`unknown_order` row), `probe:reconcile` all PASS (an ok, complete run) |
+| 6 | The signed-in release checks and the trial corrections | §6a done by the owner and the client; §6c steps 1–5 with the shops the owner approved |
+| 7 | One real low-value payment, and reconciliation after it | §6d step 5, then Payments → Billing review: money and time agree; nothing to repair |
+
+**The pilot's own checklist** — what the owner and the client check, area by area, and which automated tests already
+prove each locally: `PILOT-CHECKLIST.md`.
+
+**The owner's decisions** (none is needed for the pilot; each is needed before the gate it names). Nothing here is
+built as a policy until the owner chooses:
+| Decision | Today | Options | Before |
+|---|---|---|---|
+| Refunds and disputes | Never take time away by themselves: kept for review (Payments → Billing review); one open before its payment is recorded stops that payment from adding time | (a) as today, settled by hand (Extend, or nothing); (b) an audited console action "take back this payment's months" (not built: with periods stacked it shortens the shop's end by that payment's months); (c) automatic (not advised: a partial refund or a dispute Hangtag wins would cost the shop time) | Gate 7 |
+| The reconciler's scheduler | None (the entry and its secret are ready) | Hourly `POST` as §6d step 4 says, from: a scheduler the owner already trusts (its own secret store); or `pg_cron` with `pg_net` on the project (DDL on live: after the repair, its own approval; the secret in Supabase Vault) | Gate 7 (payments on) |
+| Renewal grace (`renewal_grace_hours`, console Settings, 0–168) | 48 | Used only while AutoPay renews (a trial or a one-time plan that ends locks the app at once). Before AutoPay: longer than Razorpay's charge retries (measured in the test-mode proof, REMEDIATION.md item 5) plus an hour | AutoPay |
+| Provider calls per account (REMEDIATION step 11) | The app's payment check 60 a minute and 900 an hour; starting AutoPay 6 and 30 (`hangtag_billing_call_claim`, post-repair migration) | Keep, or other numbers (a change to the migration) | Gate 7 |
+| A missed Cashfree refund notification | Not found by any sweep (Cashfree's account-level listing is unverified); refunds are made by the owner in Cashfree's dashboard, so each is known | Keep; or a Cashfree refund sweep, built after the sandbox shows its API | Gate 7 |
+| AutoPay | Off; the database refuses it without proof | Offer it only after the Razorpay test-mode proof (REMEDIATION.md), its live keys and webhook, the self-check and a complete reconciliation | — |
 
 ## 7. After the release
 Use a test product and a test customer, and cancel what you create afterwards:

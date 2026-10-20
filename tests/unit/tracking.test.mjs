@@ -132,6 +132,9 @@ check('stock record: serials out (capitals) and back', eq(moveRow({ id: 'm', v: 
 const it = saleItemRows({ id: 's', items: [{ ln: 0, v: 'rice:', p: 'rice', n: 'Rice', q: 7.25, price: 60, bt: [{ b: 'B2', q: 5.5 }, { b: 'B1', q: 1.75 }] }, { ln: 1, v: 'ph:', p: 'ph', n: 'Phone', q: 1, price: 9000, sn: ['A2'] }] });
 check('bill lines: batches and serials out, and back', eq(it[0].batches, [{ b: 'B2', q: 5.5 }, { b: 'B1', q: 1.75 }]) && eq(it[1].serials, ['A2']) && it[0].serials === null
   && eq(rowToItem({ ...it[0], quantity: '7.250' }).bt, [{ b: 'B2', q: 5.5 }, { b: 'B1', q: 1.75 }]) && eq(rowToItem(it[1]).sn, ['A2']));
+const iu = saleItemRows({ id: 's', items: [{ ln: 0, v: 'rice:', p: 'rice', n: 'Rice', q: 2.5, price: 60, u: 'kg' }, { ln: 1, v: 'tee:', p: 'tee', n: 'Tee', q: 1, price: 500 }] });
+check('bill lines carry the unit they were sold in; pieces (no unit on the line) send none, for the database to fill',
+  iu[0].unit === 'kg' && iu[1].unit === null && rowToItem(iu[0]).u === 'kg' && !('u' in rowToItem({ ...iu[1], unit: 'pcs' })));
 const ri = returnItemRows({ id: 'r', sale: 's', items: [{ ln: 1, v: 'ph:', p: 'ph', n: 'Phone', q: 1, price: 9000, sn: ['A2'] }] });
 check('return lines: serials out, and back', eq(ri[0].serials, ['A2']) && eq(rowToReturnItem(ri[0]).sn, ['A2']));
 const purchaseItem = { type: 'purchase', id: 'pu9', purchase: pu.purchase, moves: pu.moves };

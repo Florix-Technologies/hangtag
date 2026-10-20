@@ -17,6 +17,9 @@
     "test:eval": "node tests/run.mjs tests/eval",
     "eval:agent:provider": "node tests/eval/agent-provider.eval.mjs",
     "eval:extract-bill": "node tests/eval/extract-bill-provider.eval.mjs",
+    "eval:cashfree-sandbox": "node tests/eval/cashfree-sandbox.eval.mjs",
+    "probe:cashfree-webhook": "node scripts/cashfree-webhook-probe.mjs",
+    "probe:reconcile": "node scripts/reconcile-probe.mjs",
     "preflight:live": "node scripts/preflight-live.mjs",
     "build:zxing": "node scripts/build-zxing.mjs"
   },

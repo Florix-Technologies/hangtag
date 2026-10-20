@@ -177,9 +177,11 @@ console.log('=== AutoPay: consent, the provider\'s plan, mandates, and only capt
     payment: { entity: { id: 'pay_9', amount: 99900, status: 'captured' } } } }).kind === 'payment');
   const wh = readFileSync(new URL('../../supabase/functions/subscription-webhook/handler.js', import.meta.url), 'utf8');
   const fn = readFileSync(new URL('../../supabase/functions/subscription/handler.js', import.meta.url), 'utf8');
-  check('the webhook records AutoPay only through hangtag_autopay_event, after the signature check', wh.indexOf('provider.verifyWebhook(') > 0 && wh.indexOf('provider.verifyWebhook(') < wh.indexOf('db.rpc("hangtag_autopay_event"') && /p_payment: target\.paymentId/.test(wh));
-  check('the function checks the provider\'s plan, then records the consent AS the owner, then makes a mandate; it never records a charge itself',
-    fn.indexOf('db.rpc("hangtag_autopay_begin"') > 0 && fn.indexOf('db.rpc("hangtag_autopay_begin"') < fn.indexOf('provider.createAutopay') && fn.indexOf('provider.getPlan') < fn.indexOf('db.rpc("hangtag_autopay_begin"')
+  check('the webhook records AutoPay only through the registry (hangtag_autopay_report; hangtag_autopay_event before the migration), after the signature check',
+    wh.indexOf('provider.verifyWebhook(') > 0 && wh.indexOf('provider.verifyWebhook(') < wh.indexOf('db.rpc("hangtag_autopay_report"')
+    && wh.indexOf('db.rpc("hangtag_autopay_report"') < wh.indexOf('db.rpc("hangtag_autopay_event"') && /p_payment: target\.paymentId/.test(wh));
+  check('the function checks the provider\'s plan, then records the consent AS the owner, then makes a mandate; a charge only as read back from the provider (the reconciler\'s check), never from the request',
+    fn.indexOf('db.rpc("hangtag_autopay_begin"') > 0 && fn.indexOf('db.rpc("hangtag_autopay_begin"') < fn.indexOf('autopay.createAutopay') && fn.indexOf('autopay.getPlan') > 0 && fn.indexOf('autopay.getPlan') < fn.indexOf('db.rpc("hangtag_autopay_begin"')
     && !/p_event: "charged"/.test(fn));
 }
 

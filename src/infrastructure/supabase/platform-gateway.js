@@ -69,6 +69,11 @@ export function createPlatformGateway({ client }){
     payments: ({ q = "", status = "all", from = null, to = null, days = null, limit = 25, offset = 0 } = {}) =>
       rpc("hangtag_platform_payments", { p_query: q || null, p_status: status, p_from: from || null, p_to: to || null, p_days: days || null, p_limit: limit, p_offset: offset }),
     payment: id => rpc("hangtag_platform_payment", { p_id: id }),
+    /* money kept for review (the post-repair migration's billing review): { counts, rows }; one settled with a reason
+       (audited); and billing health { mode, readiness, autopay_enabled, runs, open_exceptions, integrity } */
+    billingReview: ({ status = "open", limit = 100 } = {}) => rpc("hangtag_platform_billing_exceptions", { p_status: status, p_limit: limit }),
+    settleBillingReview: (id, resolution) => rpc("hangtag_platform_billing_exception_resolve", { p_id: id, p_resolution: resolution }),
+    billingHealth: () => rpc("hangtag_platform_billing_health"),
     /* An action on a shop (suspend · restore · grant · extend · sign_out). dryRun: the database's preview of exactly what it
        would do (nothing changes). A refusal comes back as an answer, not an error (so the database keeps its audit line):
        it becomes a PlatformError here. */

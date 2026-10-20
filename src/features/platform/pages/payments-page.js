@@ -52,12 +52,61 @@ async function openPayment(host, pid){
   pn.body.addEventListener("click", e => { if(e.target.closest && e.target.closest("a[href^='#/customers']")) pn.close(); });
 }
 
+/* Billing review: money the subscription functions couldn't match, kept for review (never activated, never time taken
+   away by itself), and the billing health — the database's billing mode, AutoPay's readiness, the reconciler's last runs,
+   the checks between money and time. Settled one at a time with a reason, by those who manage subscriptions (audited). */
+const REVIEW_KIND = { amount_mismatch: "Amount that isn't due", currency_mismatch: "Another currency", wrong_shop: "Link names another payment",
+  unknown_order: "Paid link no payment holds", refund: "Refund", dispute: "Dispute", activation_refused: "Activation refused",
+  unknown_mandate_charge: "Charge on an unknown AutoPay", unmatched_payment: "Payment nothing holds", stale_mandate: "Untracked AutoPay",
+  charge_overdue: "Renewal overdue", cancel_failed: "AutoPay cancel failed", mode_mismatch: "Notification in another billing mode",
+  reconcile_error: "Can't be read at the provider" };
+const reviewError = e => e && e.code === "OUTDATED" ? "Billing review needs the post-repair database migration (supabase/REPAIR-RUNBOOK.md, step 7)." : (e && e.message) || "Something went wrong.";
+function healthHTML(h){
+  const rd = h.readiness || {}, run = (h.runs || [])[0], ig = h.integrity || {};
+  return `<dl class="pc-dl">${kv("Billing mode", h.mode === "test" ? "Test (a provider's sandbox)" : "Live")}
+    ${kv("AutoPay", `${h.autopay_enabled ? "Switched on" : "Off"} · ${rd.ready ? "its notifications proven" : "not proven: " + (rd.reasons || []).join("; ")}`)}
+    ${kv("Last reconciliation", run ? `${when(run.started_at)} · ${run.ok ? (run.complete ? "complete" : "partial") : "failed" + (run.error_code ? ` (${run.error_code})` : "")}` : "None yet")}
+    ${kv("Money and time agree", ig.ok ? "Yes" : `No — ${count((ig.problems || []).length)} to look at`)}</dl>`;
+}
+function reviewRowsHTML(d){
+  if(!d.rows.length) return listEmptyHTML("Nothing waiting for review.", false);
+  return `<ul class="pc-review">${d.rows.map(r => `<li class="pc-review-item" data-id="${esc(r.id)}">
+    <p><strong>${esc(REVIEW_KIND[r.kind] || r.kind)}</strong> · ${esc(r.provider)}${r.amount != null ? ` · ${esc(money(r.amount))}` : ""}</p>
+    <p class="note">${esc(r.shop_name || r.email || "No shop known")} · <code>${esc(r.provider_payment_id || r.ref)}</code> · ${esc(when(r.opened_at))}</p>
+    ${r.status === "resolved" ? `<p class="note">Settled: ${esc(r.resolution || "")}</p>` : `<form class="pc-review-settle" data-pc-settle="${esc(r.id)}" novalidate>
+      <label class="pc-f pc-grow"><span>How it was settled</span><input name="why" maxlength="300" autocomplete="off" placeholder="Refunded in the dashboard; time given; …"></label>
+      <button type="submit" class="btn sm">Settle</button><p class="note pc-review-msg" role="status"></p></form>`}</li>`).join("")}</ul>`;
+}
+async function openReview(host){
+  const P = use("platform"), pn = openPanel(host, { label: "Billing review" });
+  pn.title.innerHTML = "<h2>Billing review</h2>";
+  let status = "open";
+  const draw = async () => {
+    pn.body.innerHTML = listLoadingHTML();
+    let h, d;
+    try{ [h, d] = await Promise.all([P.billingHealth(), P.billingReview({ status })]); }
+    catch(e){ pn.body.innerHTML = `<div class="pc-empty" role="alert"><p>${esc(reviewError(e))}</p></div>`; return; }
+    pn.body.innerHTML = `${healthHTML(h)}<h3 class="pc-sub">Waiting for review (${esc(count(d.counts.open))})</h3>
+      <p><button type="button" class="btn sm" data-pc-review-all>${status === "open" ? "Show settled ones too" : "Show only those waiting"}</button></p>${reviewRowsHTML(d)}`;
+  };
+  pn.body.addEventListener("click", e => { if(e.target.closest && e.target.closest("[data-pc-review-all]")){ status = status === "open" ? "all" : "open"; draw(); } });
+  pn.body.addEventListener("submit", async e => {
+    const f = e.target.closest && e.target.closest("[data-pc-settle]");
+    if(!f) return;
+    e.preventDefault();
+    const msg = f.querySelector(".pc-review-msg"), why = String(f.elements.why.value || "").trim();
+    try{ await P.settleBillingReview(+f.dataset.pcSettle, why); draw(); }
+    catch(err){ msg.textContent = err && err.code === "DENIED" ? "Your console role can't settle billing items." : reviewError(err); }
+  });
+  await draw();
+}
+
 export async function renderPayments(main, { query = {} }){
   const P = use("platform");
   const st = { q: query.q || "", status: pick(PAYMENT_STATUSES, query.status), days: /^\d{1,3}$/.test(query.days || "") ? +query.days : null, from: "", to: "",
     offset: 0, data: null, err: null, loading: true, seq: 0 };
   main.innerHTML = `<div class="pc-page">
-    <div class="pc-head"><h1>Payments</h1><span class="note" id="pcTotal"></span><button type="button" class="btn sm" data-pc-reload>Refresh</button></div>
+    <div class="pc-head"><h1>Payments</h1><span class="note" id="pcTotal"></span><button type="button" class="btn sm" data-pc-review>Billing review</button><button type="button" class="btn sm" data-pc-reload>Refresh</button></div>
     <form class="pc-tools" role="search" data-pc-search novalidate>
       <label class="pc-f pc-grow"><span>Search</span><input type="search" name="q" value="${esc(st.q)}" maxlength="120" autocomplete="off" placeholder="Shop, phone, email, payment ID or provider reference"></label>
       <label class="pc-f"><span>From</span><input type="date" name="from"></label><label class="pc-f"><span>To</span><input type="date" name="to"></label>
@@ -110,8 +159,9 @@ export async function renderPayments(main, { query = {} }){
     st[n] = e.target.value; if(st.from || st.to) st.days = null; st.offset = 0; load();
   };
   main.onclick = e => {
-    const t = e.target.closest && e.target.closest("[data-pc-list],[data-pc-page],[data-pc-open],[data-pc-clear],[data-pc-reload],[data-pc-days-clear]");
+    const t = e.target.closest && e.target.closest("[data-pc-list],[data-pc-page],[data-pc-open],[data-pc-clear],[data-pc-reload],[data-pc-days-clear],[data-pc-review]");
     if(!t || e.target.closest(".pc-panel-wrap")) return;
+    if(t.dataset.pcReview !== undefined){ openReview(main); return; }
     if(t.dataset.pcList){ st.status = t.dataset.pcList; st.offset = 0; load(); }
     else if(t.dataset.pcPage){ st.offset = Math.max(0, st.offset + (t.dataset.pcPage === "next" ? LIMIT : -LIMIT)); load(); }
     else if(t.dataset.pcOpen){ openPayment(main, t.dataset.pcOpen); }

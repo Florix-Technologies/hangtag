@@ -29,8 +29,9 @@ UPDATE public.hangtag_sale_items t SET line_no = r.rn
 FROM (SELECT id, (row_number() OVER (PARTITION BY sale_id ORDER BY id)) - 1 AS rn FROM public.hangtag_sale_items) r
 WHERE t.id = r.id;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_hangtag_sale_items_line ON public.hangtag_sale_items(sale_id, line_no);`;
-// the section files, newest first (as they were run on 2026-10-13)
-const SECTIONS_NEWEST_FIRST = fs.readdirSync(MIGS).filter((f) => /^202610\d{8}_.+\.sql$/.test(f)).sort().reverse();
+// the section files, newest first (as they were run on 2026-10-13: the ones that existed then, 3r … 3za; a later file,
+// such as the post-repair migration, wasn't part of it)
+const SECTIONS_NEWEST_FIRST = fs.readdirSync(MIGS).filter((f) => /^202610\d{8}_.+\.sql$/.test(f) && f.slice(0, 14) <= '20261013120000').sort().reverse();
 // the functions whose bodies differed from schema.sql on the live project at 21:17 IST that evening (read from its catalog)
 const LIVE_OLDER = ['hangtag_access_ok(p_owner uuid)', 'hangtag_biz_changes()', 'hangtag_cap_on(p_owner uuid, p_cap text)',
   'hangtag_import_stock(p_import jsonb, p_products jsonb, p_variants jsonb, p_moves jsonb, p_allow_duplicate boolean)', 'hangtag_mobile_catalog(p_token text)',

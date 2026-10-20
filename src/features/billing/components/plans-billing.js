@@ -341,9 +341,10 @@ function poll(){
   pollTimer = setTimeout(async () => { pollTimer = null; await check(false); if(pending()) poll(); }, POLL_EVERY);
 }
 
-/* Back from the payment page (…/#plans?payment=<id>): keep waiting for that payment */
+/* Back from the payment page (…/#plans?payment=<id>, perhaps with the provider's own parameters after it): keep waiting
+   for that payment */
 function returnedFromPayment(){
-  const m = /^#plans\?payment=([0-9a-f-]{36})$/i.exec(location.hash || "");
+  const m = /^#plans\?payment=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[&?].*)?$/i.exec(location.hash || "");
   if(!m) return;
   const p = pending();
   setPending(Object.assign({ startedAt: Date.now() }, p && p.paymentId === m[1] ? p : {}, { paymentId: m[1] }));

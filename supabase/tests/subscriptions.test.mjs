@@ -264,7 +264,8 @@ console.log('=== activation: only the provider\'s confirmation, exact amount, ca
   const a = ok.r && ok.r.rows[0].a;
   check('the confirmed payment activates 3 months', !ok.err && a.ok && a.state === 'paid_active' && a.plan_code === 'm3' && a.already === false, ok);
   check('…starting when the running trial ends (paying early never loses trial days)', iso(a.period_start) === iso(before.trial_ends_at), { a, before });
-  const end = new Date(before.trial_ends_at); end.setUTCMonth(end.getUTCMonth() + 3);
+  // calendar months as the database counts them (a 31st + 1 month is the month's last day, not the 1st after it)
+  const end = new Date((await sql(db, `SELECT ($1::timestamptz + interval '3 months') AS t`, [new Date(before.trial_ends_at).toISOString()]))[0].t);
   check('…and ending 3 calendar months later', iso(a.period_end) === iso(end), { a, end });
   const again = await activate(db, pay1.payment_id, 'pay_A1', 1079.2);
   check('activating again changes nothing (idempotent)', !again.err && again.r.rows[0].a.already === true && iso(again.r.rows[0].a.period_end) === iso(a.period_end), again);
@@ -278,7 +279,7 @@ console.log('=== activation: only the provider\'s confirmation, exact amount, ca
   // stacking on an active paid plan
   const p2 = (await checkout(db, A, 'm1', null)).r.rows[0].c;
   const a2 = (await activate(db, p2.payment_id, 'pay_A2', 499)).r.rows[0].a;
-  const end2 = new Date(a.period_end); end2.setUTCMonth(end2.getUTCMonth() + 1);
+  const end2 = new Date((await sql(db, `SELECT ($1::timestamptz + interval '1 month') AS t`, [new Date(a.period_end).toISOString()]))[0].t);
   check('renewing during a paid plan adds a month after its end', iso(a2.period_start) === iso(a.period_end) && iso(a2.period_end) === iso(end2), { a2, end2 });
   const reuse = await activate(db, (await checkout(db, A, 'm1', null)).r.rows[0].c.payment_id, 'pay_A2', 499);
   check('one provider payment cannot activate two plan payments', !!reuse.err, reuse);

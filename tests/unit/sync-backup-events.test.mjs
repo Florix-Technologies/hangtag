@@ -156,6 +156,22 @@ check('two devices (and a repeated upload of the same bill) end with one copy of
   await gw.patchProduct(edit({ price: 1100 }), 3, ['price'], []);
   check('…a product the cloud doesn\'t have yet is saved whole, with all its variants', calls.map((c) => c.op + ':' + c.t).join() === 'update:hangtag_products,upsert:hangtag_products,upsert:hangtag_variants'
     && calls[1].rows.name === 'Kurta' && calls[1].rows.sort_order === 3 && calls[2].rows.length === 2, calls);
+  // a product deleted on another device leaves a mark (the post-repair section): an edit queued here never brings it back
+  const marked = (marks, err) => ({ from: (t) => (t === 'hangtag_deleted_products'
+    ? { select: () => ({ eq: () => ({ limit: async () => ({ data: err ? null : marks, error: err || null }) }) }) } : client.from(t)) });
+  const gwOn = (c) => createCloudGateway({ getClient: () => c, url: 'https://x.supabase.co', key: 'pk', storageKey: 'k' });
+  calls.length = 0;
+  let gone = null;
+  try { await gwOn(marked([{ product_id: 'p1' }])).patchProduct(edit({ price: 1100 }), 3, ['price'], []); } catch (e) { gone = e; }
+  check('…one deleted on another device (its mark is there): not brought back — a conflict for the review list, nothing saved',
+    !!gone && gone.code === C.CONFLICT && failureAction(gone.code, 1) === 'review' && !/Kurta/.test(gone.message) && !calls.some((c) => c.op === 'upsert'), { code: gone && gone.code, calls });
+  calls.length = 0;
+  await gwOn(marked(null, { code: 'PGRST205', message: 'no such table' })).patchProduct(edit({ price: 1100 }), 3, ['price'], []);
+  check('…a database without the marks (before the post-repair section) or one that can\'t say: saved whole, as before',
+    calls.map((c) => c.op + ':' + c.t).join() === 'update:hangtag_products,upsert:hangtag_products,upsert:hangtag_variants', calls);
+  calls.length = 0;
+  await gwOn(marked([])).patchProduct(edit({ price: 1100 }), 3, ['price'], []);
+  check('…no mark for it (never uploaded yet): saved whole', calls.filter((c) => c.op === 'upsert').length === 2, calls);
   // the queue: never merged into the upload being sent; uploaded as patches
   reset(); store.catalog = { version: 3, products: [structuredClone(P)] };
   cloud.patchProduct = async function(p, i, f, v){ this.calls.push(`patch:${p.id}:${f.join('+')}:${v.join('+')}`); };

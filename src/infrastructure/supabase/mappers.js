@@ -67,7 +67,9 @@ export const saleItemRows = s => (s.items||[]).map((i,k)=>{ const d = normalizeD
   color:i.c||"", size:i.s==null?"":i.s, variant_label:i.vl||null, options:ovToRow(i.ov), sku:i.sku||null, quantity:i.q, unit_price:i.price, cost_price:i.cost==null?null:i.cost,
   discount_type:d?d.type:null, discount_value:d?d.value:null, discount_amount:i.dAmt||0, bill_discount_share:i.bdAmt||0, taxable_value:i.tx==null?null:i.tx,
   gst_rate:i.gst==null?null:i.gst, cgst_amount:i.cgst||0, sgst_amount:i.sgst||0, igst_amount:i.igst||0, line_total:i.lt==null?null:i.lt, hsn:i.hsn||null,
-  serials:snRow(i.sn), batches:btRow(i.bt), ...(i.kit ? { kit:{ v:i.kit.v, p:i.kit.p, name:String(i.kit.name||"").slice(0,120), n:+i.kit.n||0 } } : {}) }; });
+  serials:snRow(i.sn), batches:btRow(i.bt), ...(i.kit ? { kit:{ v:i.kit.v, p:i.kit.p, name:String(i.kit.name||"").slice(0,120), n:+i.kit.n||0 } } : {}),
+  // the unit it was sold in (none: pieces, or the product's — the database fills it); kept by databases with the post-repair section
+  unit:i.u||null }; });
 /* A bill's payments (one row per method; bills from before split payments have one) */
 export const paymentRows = s => paymentsOf(s).map(p => ({ id:p.id, sale_id:s.id, method:p.method, amount:p.amount,
   tendered:p.method==="cash" ? (p.received==null ? Math.round((p.amount+(p.change||0))*100)/100 : p.received) : null, change_given:p.change||0, reference:p.ref||null, t:s.t, device_id:s.dev||store.dev,

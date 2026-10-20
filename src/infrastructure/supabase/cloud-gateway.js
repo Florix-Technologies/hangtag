@@ -15,6 +15,12 @@ import { einvRow, ewayRow, poArgs, priceListRow, repackArgs, rowToDelivery as ro
 export function createCloudGateway({ getClient, url, key, storageKey, deviceKey }){
   const db = () => getClient();
   const table = t => db().from(t);
+  /* Was this product deleted in the cloud (a mark the post-repair section leaves)? Only a mark that is there says yes: a
+     database without the marks, or one that can't be asked, says no — the edit is then saved as before */
+  const deletedElsewhere = async id => {
+    try{ const r = await table('hangtag_deleted_products').select('product_id').eq('product_id', id).limit(1); return !r.error && Array.isArray(r.data) && r.data.length > 0; }
+    catch{ return false; }
+  };
   const auth = {
     getSession: () => db().auth.getSession(),
     onAuthStateChange: cb => db().auth.onAuthStateChange(cb),
@@ -139,7 +145,12 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
       (fields || []).forEach(f => { const col = COLS[f]; if(col) patch[col] = col in row ? row[col] : col === 'attrs' ? {} : null; });
       const r = await table('hangtag_products').update(patch).eq('id', p.id).select('id'); sbOk(r);
       const rows = variantRows(p), ids = new Set(variantIds || []);
-      if(!r.data || !r.data.length){ sbOk(await table('hangtag_products').upsert(row)); if(rows.length) sbOk(await table('hangtag_variants').upsert(rows)); return; }
+      if(!r.data || !r.data.length){
+        // not in the cloud: deleted on another device (its mark, post-repair section) — the edit waits in the review list
+        // instead of bringing the product back; never uploaded yet — saved whole
+        if(await deletedElsewhere(p.id)) throw new AppError(ERROR_CODES.CONFLICT, "This product was deleted on another device, so this change wasn't saved.");
+        sbOk(await table('hangtag_products').upsert(row)); if(rows.length) sbOk(await table('hangtag_variants').upsert(rows)); return;
+      }
       const changed = rows.filter(v => ids.has(v.id));
       if(changed.length) sbOk(await table('hangtag_variants').upsert(changed));
     },

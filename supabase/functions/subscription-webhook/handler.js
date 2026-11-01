@@ -17,15 +17,25 @@ import { cancelOrConfirm, missingRpc, verifyDecision, withBudget } from "../subs
 
 const out = (status, body) => ({ status, body });
 /* Money reported (by the notification, or by the provider's own figures) that its API doesn't show as a payment yet: not
-   settled, so the provider sends it again. Only where the state was read from the API (Cashfree): a state taken from the
-   notification itself (Razorpay) would come back the same every time. */
-const settling = (target, view) => !target.view && !!view && view.state === "pending" && (view.paid > 0 || !!target.claimsPaid);
+   settled, so the provider sends it again — whatever the link reads as meanwhile (open, or expired or cancelled while the
+   payment was landing): a "paid" notification is never settled as anything but paid. Only where the state was read from
+   the API (Cashfree): a state taken from the notification itself (Razorpay) would come back the same every time. */
+const settling = (target, view) => !target.view && !!view && view.state !== "paid" && (view.paid > 0 || !!target.claimsPaid);
+/* Answered for a retry. Once the link has closed (past its expiry and the grace, or cancelled) and still lists no paid
+   order, the claim is also kept for review, once, so it isn't lost when the provider stops sending it; a later delivery
+   that finds the money still activates the payment. */
+async function notYetReadable(db, log, provider, target, view, row = null) {
+  log.error("subscription-webhook: paid at the provider, not readable yet:", target.orderId);
+  if (view.state !== "pending") await exception(db, log, provider, "unmatched_payment", `${target.orderId}:unconfirmed`, { owner: row && row.owner_id, payment: row && row.id,
+    amount: target.amount == null ? null : target.amount, detail: { reason: "paid_notification_unconfirmed", link_state: view.state } });
+  return out(503, { ok: false });
+}
 const TERMINAL = ["cancelled", "completed", "expired"];
 
 /* req: { method, raw (the body as text), headers (lower-case names) }; provider: webhookProviderFor(env, headers) or null;
    admin(): the service-role client (made only after the signature is checked); log: console-like; cancelBudgetMs: how long
    an AutoPay cancel at the provider may take before the answer goes back (the reconciler finishes what doesn't) */
-export async function handleWebhook({ method, raw, headers }, { provider, admin, log = console, cancelBudgetMs = 2000 }) {
+export async function handleWebhook({ method, raw, headers }, { provider, admin, log = console, cancelBudgetMs = 2000, now = () => Date.now() }) {
   if (method !== "POST") return out(405, { ok: false });
   // no provider's signature header at all: not a provider's notification (refused for good, not "send again")
   const h = headers || {};
@@ -56,7 +66,9 @@ export async function handleWebhook({ method, raw, headers }, { provider, admin,
   }
   if (seen.duplicate) return out(200, { ok: true, duplicate: true });
   const r = target.probe ? out(200, { ok: true, probe: true })
-    : target.kind === "autopay" ? await autopayEvent(db, provider, target, log, cancelBudgetMs)
+    : target.kind === "autopay" ? await autopayEvent(db, provider, target, log, cancelBudgetMs, now)
+    : target.kind === "autopay_notice" ? await autopayNotice(db, provider, target, log)
+    : target.kind === "mandate_refund" ? await mandateRefund(db, provider, target, log)
     : target.kind === "refund" || target.kind === "dispute" ? await refundEvent(db, provider, target, log)
     : await planPayment(db, provider, target, log);
   if (r.status < 300 && eventId) {
@@ -113,7 +125,7 @@ async function planPayment(db, provider, target, log) {
     try { view = await provider.getPayment(row.provider_order_id); }
     catch (e) { log.error("subscription-webhook: the provider couldn't be asked:", e && e.status || ""); return out(503, { ok: false }); }
   }
-  if (settling(target, view)) { log.error("subscription-webhook: paid at the provider, not readable yet:", target.orderId); return out(503, { ok: false }); }
+  if (settling(target, view)) return notYetReadable(db, log, provider, target, view, row);
   const d = verifyDecision(row, view);
   if (d.action === "activate") {
     const { data: a, error } = await activate(db, provider, row, d);
@@ -156,7 +168,7 @@ async function unrecordedLink(db, provider, target, log) {
   }
   const named = String(target.paymentRef || (view && view.ref) || "").slice(0, 64);
   if (!named && !(view && view.hangtag)) return out(200, { ok: true, ignored: true });
-  if (settling(target, view)) { log.error("subscription-webhook: paid at the provider, not readable yet:", target.orderId); return out(503, { ok: false }); }
+  if (settling(target, view)) return notYetReadable(db, log, provider, target, view);
   if (!view || view.state !== "paid") return out(200, { ok: true, ignored: true });
   const x = await exception(db, log, provider, "unknown_order", target.orderId, { amount: view.paid ? view.paid / 100 : null, providerPayment: view.paymentId || null,
     detail: { named_payment: named || null, provider_payment: view.paymentId || null, paid_currency: view.currency || null } });
@@ -204,10 +216,22 @@ async function refundEvent(db, provider, target, log) {
   return x.ok ? out(200, { ok: true, refund: "noted", kind }) : out(500, { ok: false });
 }
 
+/* Money refunded on an AutoPay charge (Cashfree): kept for review, once; the time it paid for is never taken away by itself */
+async function mandateRefund(db, provider, target, log) {
+  const x = await exception(db, log, provider, "refund", `${target.refundId || target.paymentId || target.subscriptionId}:refunded`, { amount: target.amount,
+    providerPayment: target.paymentId || null, detail: { subscription: target.subscriptionId, refund: target.refundId || null } });
+  return x.ok ? out(200, { ok: true, status: "review" }) : out(500, { ok: false });
+}
+
 /* An AutoPay report, through the registry (hangtag_autopay_report; hangtag_autopay_event before the post-repair migration).
    A set-up that was replaced, or that no shop recorded but carries Hangtag's note, is cancelled at the provider within a
    short budget; what doesn't finish stays requested, for the reconciler. */
-async function autopayEvent(db, provider, target, log, budgetMs) {
+async function autopayEvent(db, provider, target, log, budgetMs, now = () => Date.now()) {
+  if (target.confirm) {
+    const c = await confirmCharge(provider, target, log, now);
+    if (c.answer) return c.answer;
+    target = c.target;
+  }
   let { data: a, error: aErr } = await db.rpc("hangtag_autopay_report", { p_provider: provider.name, p_subscription: target.subscriptionId, p_event: target.event,
     p_payment: target.paymentId, p_amount: target.amount, p_currency: target.currency || null, p_next_charge_at: target.nextChargeAt,
     p_event_at: target.createdAt || null, p_mode: provider.mode });
@@ -243,6 +267,69 @@ async function autopayEvent(db, provider, target, log, budgetMs) {
     }
   }
   return out(200, { ok: true, autopay: target.event, known: !!(a && a.known), recorded: !!(a && a.recorded) });
+}
+
+/* A payment on a mandate that a notification names (Cashfree), read back from the provider's API before anything is
+   decided — all of the mandate's payments, so the authorisation is known as such — with the provider's own status, id
+   and amount, and reported as of now (what the API says now is the newest word on it: never "older" than an earlier read
+   of the mandate, which would leave the next charge where it was).
+   → { target } to report (charged: an attempt SUCCESS; pending: FAILED on the API's word), or { answer }: money reported
+   that the API doesn't show as taken yet (not listed yet, still in progress, or only another attempt listed) is sent
+   again (503); anything else — the authorisation, a charge withdrawn, a failure the API doesn't show — changes nothing */
+async function confirmCharge(provider, target, log, now) {
+  if (typeof provider.listMandatePayments !== "function") return { answer: out(200, { ok: true, ignored: true }) };
+  let all;
+  try { all = await provider.listMandatePayments(target.subscriptionId); }
+  catch (e) {
+    if (e && e.status === 404) return { answer: out(200, { ok: true, ignored: true }) };   // no such mandate on the account
+    log.error("subscription-webhook: the provider couldn't be asked:", e && e.status || ""); return { answer: out(503, { ok: false }) };
+  }
+  // the attempt it names, and every attempt on the same charge (Cashfree retries a failed UPI charge itself; an attempt
+  // may be listed on its own under the same payment_id): taken if any attempt was
+  const named = target.paymentId ? all.find((p) => p.id === target.paymentId) : null;
+  if (named && named.type !== "CHARGE") return { answer: out(200, { ok: true, ignored: true }) };   // the ₹1 authorisation: never a charge
+  const ref = (named && named.ref) || target.chargeRef;
+  const same = all.filter((p) => p.type === "CHARGE" && ((named && p.id === named.id) || (ref && p.ref === ref)));
+  const at = new Date(now()).toISOString();
+  const ok = same.find((p) => p.status === "success" && p.id);
+  if (ok) return { target: { ...target, event: "charged", paymentId: ok.id, amount: ok.amount / 100, currency: ok.currency, createdAt: at } };
+  // ended untaken: every attempt failed or was cancelled — and either the notification reports that, or the very attempt it
+  // reports paid is listed as ended (an earlier attempt's end never settles a reported success). A charge only cancelled
+  // counts while the mandate is still on at Cashfree (the payer declined it); on a mandate turned off it was withdrawn with
+  // it (Hangtag withdraws a set-up's charges when it is turned off): nothing to report
+  const ended = same.length && same.every((p) => p.status === "failed" || p.status === "cancelled") ? same.find((p) => p.status === "failed") || same[0] : null;
+  if (ended && (target.event === "pending" || (named && (named.status === "failed" || named.status === "cancelled")))) {
+    if (ended.status === "cancelled") {
+      let st = null;
+      try { st = await provider.getAutopay(target.subscriptionId); }
+      catch (e) { log.error("subscription-webhook: the provider couldn't be asked:", e && e.status || ""); return { answer: out(503, { ok: false }) }; }
+      if (!st || st.event !== "authenticated") return { answer: out(200, { ok: true, ignored: true }) };
+    }
+    return { target: { ...target, event: "pending", paymentId: ended.id || null, amount: null, currency: null, createdAt: at } };
+  }
+  if (target.event === "charged") {
+    log.error("subscription-webhook: a charge reported paid, not readable yet:", target.subscriptionId);
+    return { answer: out(503, { ok: false }) };
+  }
+  return { answer: out(200, { ok: true, ignored: true }) };
+}
+
+/* A pre-debit notice (the payer told of a charge about to be taken): nothing changes hands, so nothing is reported; it is
+   noted once (the ledger), held against the set-up it names. A notice for a charge Hangtag never asked for — not one of its
+   charge refs, over the price agreed, or on a set-up turned off or being turned off — is kept for review while the charge
+   can still be withdrawn. A mandate no shop's set-up holds: ignored. */
+async function autopayNotice(db, provider, target, log) {
+  const { data: m, error } = await db.from("hangtag_autopay_mandates").select("shop_owner_id, price, is_current, cancel_requested_at, provider_status")
+    .eq("provider", provider.name).eq("subscription_id", target.subscriptionId).maybeSingle();
+  if (error) { log.error("subscription-webhook: the AutoPay set-up couldn't be read:", error.code); return out(500, { ok: false }); }   // sent again
+  if (!m || !m.shop_owner_id) return out(200, { ok: true, ignored: true });
+  const why = !target.ours ? "not_hangtag_charge" : target.amount != null && !(target.amount <= +m.price) ? "over_price"
+    : !m.is_current || m.cancel_requested_at || TERMINAL.includes(m.provider_status) ? "autopay_off" : null;
+  if (!why) return out(200, { ok: true, status: "notice" });
+  const x = await exception(db, log, provider, "unexpected_charge", target.chargeRef || target.paymentId || target.subscriptionId, { owner: m.shop_owner_id,
+    amount: target.amount, providerPayment: target.paymentId || null,
+    detail: { reason: why, subscription: target.subscriptionId, charge: target.chargeRef || null, scheduled_at: target.scheduledAt || null, price: +m.price } });
+  return x.ok ? out(200, { ok: true, status: "review" }) : out(500, { ok: false });
 }
 
 /* An AutoPay cancelled (or found already ended) at the provider within the budget: true; false when it can't be said now */

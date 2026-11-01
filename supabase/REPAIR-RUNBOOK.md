@@ -35,31 +35,38 @@ here, unless the difference is understood and written down.
 Choose one; record what the approval needs (RELEASE §2a item 1).
 - **Platform:** move the project to a plan with daily backups and turn on point-in-time recovery, then wait until the
   dashboard lists a backup or shows PITR active. Note the recovery point (time, UTC).
-- **Your own dump** (always, even with the platform's), on a machine with PostgreSQL 17 client tools, using the
-  connection string from Supabase → Connect (session pooler if the network has no IPv6):
-  ```sh
-  pg_dump --version                                   # must say 17.x
-  pg_dump "<connection string>" -n public -n auth -F c -f hangtag-before-repair.dump
-  sha256sum hangtag-before-repair.dump                # record it with the file's size and the time (UTC)
-  pg_restore -l hangtag-before-repair.dump | head -20 # the header: server 17.6, the database name
-  ```
-  The dump holds customers' and staff's personal data: keep it encrypted, outside the repository, off shared drives.
-  The bills bucket's files are not in it (only their rows): download the bucket separately if it holds anything.
+- **Your own dump** (always, even with the platform's): `scripts/backup/hangtag-backup.ps1`, in your own PowerShell, with
+  PostgreSQL client tools 17.6 or newer.
+  - It takes every schema but Supabase's own (`public`, `private`, `auth`, `storage`, `supabase_migrations`), in UTC.
+    pg_dump asks for the password itself.
+  - It records the archive's size, SHA-256 and `pg_restore --list` result. It refuses to call it a backup when
+    `public`, `auth` or `private` is missing.
+  - Never dump by hand with `-n public -n auth`: such a dump lacks `private`, `storage` and `supabase_migrations`, and
+    no recovery (`supabase/RESTORE-RUNBOOK.md` §5) can use it.
 
-**Abort** if no backup can be made: the repair stays blocked. A dump counts only when `pg_dump` exited 0, `pg_restore -l`
-reads it (its header names server 17.6 and lists the `public` tables, `hangtag_sales` among them), and its sha256 is
-recorded; a dump that fails any of these is no backup. Step 3 then proves it can be restored.
+  The dump holds customers' and staff's personal data: keep it in the script's private folder, outside the repository,
+  off shared drives. The bills bucket's files are not in it (only their rows): download the bucket separately if it
+  holds anything.
+
+**Abort** if no backup can be made: the repair stays blocked. A dump counts only when the script reports pg_dump's exit
+0, the archive's SHA-256, and a readable `pg_restore --list` that holds every expected schema. A dump that fails any of
+these is no backup. Step 3 then proves it can be restored.
 
 ## 3. Isolated restore and integrity (owner or a trusted operator)
-Restore into a database the app can't reach: a throwaway Supabase project (it already has Supabase's roles and
-extensions), or a local PostgreSQL 17 with the `anon`, `authenticated`, `service_role` and `supabase_*` roles created
-first. **Never the live project.**
-```sh
-pg_restore --no-owner --no-privileges -d "<throwaway connection string>" hangtag-before-repair.dump 2> restore-errors.txt; echo "exit $?"
-```
-- `pg_restore` exits 0, or every line of `restore-errors.txt` is explained (for example, objects Supabase already
-  creates). An unexplained error means the restore doesn't count.
-- On the restored copy and on live (read-only, close to the dump's time), compare line by line:
+Restore only where the app can't reach it. **Never the live project.**
+- **On this computer** (2026-10-25): `node scripts/backup/verify-restore.mjs <archive>` and `… --target supabase-sim`
+  (`supabase/RESTORE-RUNBOOK.md` §4). Owners and privileges come back as in the archive, and Supabase's platform
+  entries are left out by name with their reasons. Every definition, right, row and sequence is compared.
+- **Into a throwaway Supabase project:** only by `supabase/RESTORE-RUNBOOK.md` §5 exactly: the preflight,
+  `before-recovery.sql`, one transaction, and the step 8 compare. Never `pg_restore --no-owner --no-privileges` into a
+  Supabase project: its default privileges would give `anon` and `authenticated` every restored function and table.
+  `anon` could then run 104 SECURITY DEFINER functions instead of 6.
+
+Checks:
+- Both runs end with `RESULT: restorable …` (and step 8 with its exit 0 for a §5 project). An unexplained error or
+  difference means the restore doesn't count.
+- On a restored copy (a §5 project, or the verifier's copy kept with `--keep`) and on live (read-only, close to the
+  dump's time), compare line by line:
   `data-fingerprint.sql`, `restore-row-counts.sql`, `2026-10-13-function-versions.sql`, `open-policies.sql`; and on the
   restored copy `restore-fk-orphans.sql` (expected: no row). Rows written on live after the dump are the only allowed
   difference, named table by table.
@@ -85,6 +92,28 @@ On the restored copy, exactly what step 6 will run, then its checks:
 **Abort** on any difference from the rehearsal in the repository (`live-recovery`, `repair-inventory`,
 `post-repair-integrity`, `restore-rehearsal` tests). `supabase/tests/restore-rehearsal.test.mjs` runs steps 3–4 as written
 on a physical backup and restore of a live-like database, with these check files and these expected outputs (AUDIT 158).
+
+**On the real backup (2026-10-27):** `node scripts/backup/rehearse-repair.mjs <archive> --sha256 <its sha256>` runs this
+step on a restored copy of the owner's own dump, on this computer only:
+
+- **How it runs:**
+  - It restores into a simulated new Supabase project with `verify-restore.mjs --target supabase-sim`, where postgres is not a superuser.
+  - Then it runs the repair, the post-repair migration and the Cashfree migration as postgres, then the three undos.
+  - Results are counts, names and hashes only. They are written beside the archive as `<archive>.rehearse-repair.txt`.
+  - The copy is deleted afterwards, and the archive is hashed before and after.
+- **What it adds to this step:**
+  - Every account reads every shop table as itself.
+  - Every account tries to change and to delete another shop's row on the six tables reopened on 2026-10-13.
+  - Every account tries to add a row that names another shop, with that shop's plan made current, so row security itself must refuse it with 42501.
+  - Every owner changes its own row, with its plan made current.
+  - All of these run in sub-transactions that are always rolled back.
+- **Reading the two-shop probe against real data:**
+  - A probe that needs a row the shop doesn't have reads "has no row here". It is not applicable.
+  - A shop whose plan has lapsed is refused by the plan guard (HT402) before row security. That applies both to "add as other shop" and to its own change. The row isn't added either way, and the probes above show row security and own writes with the plan made current.
+- **Two allowances model what Supabase gives postgres:**
+  - membership of anon, authenticated and service_role, as the SQL Editor's `set role authenticated` uses;
+  - supabase_auth_admin and supabase_storage_admin while the repair runs, for its trigger on `auth.users` and its policies on `storage.objects`. Live accepted both from postgres on 2026-10-13.
+- **Result for `…092928.dump`: 51/51 passed.**
 
 ## 5. The approval request (owner's decision alone)
 It names: the dump's sha256 and where it is kept; the restore's exit and explained errors; the integrity comparisons;
@@ -133,7 +162,9 @@ fingerprint doesn't list them). `SELECT count(*) FROM public.hangtag_autopay_man
 project sets `test`). Then the app's checks (RELEASE §6a). What it does: AUDIT 147–152, 162, 173–186 and the file's header.
 **Until the migration is folded into `schema.sql`, run it again after any run of `schema.sql`** (a `schema.sql` run puts
 the older bodies of its ten functions back; `supabase/checks/post-repair-report.sql`, read-only, shows which rows then
-read false).
+read false). **After any run of this migration, run `20261027120000_hangtag_cashfree_readiness.sql` again** (this migration
+puts back its own two definitions of the functions that one changes). `supabase/checks/cashfree-readiness-report.sql`,
+read-only, shows whether the Cashfree migration is in place: 4 rows, all ok.
 
 ## 8. Recovery
 | What happened | What to do |
@@ -141,5 +172,5 @@ read false).
 | Step 6 or 7 failed | Nothing changed (one transaction). Read the error; fix; repeat from step 1 |
 | The app misbehaves after step 7 | `supabase/operations/post-repair-integrity-undo.sql` (approval): its ten functions back to `schema.sql`'s (their grants unchanged), its triggers and every function it added removed, its tables kept. The subscription functions fall back to the older database functions by themselves |
 | A repaired function is proven to break the app after step 6 | Roll the app back first (RELEASE §6). `2026-10-13-repair-undo.sql` puts back the 18 older functions and 3 indexes, with their known gaps: only on the owner's word |
-| Data is damaged | Point-in-time recovery to the noted point, or restore the step-2 dump into a new project and move the app to it. Both lose what was written after the backup |
+| Data is damaged | Point-in-time recovery to the noted point, or restore the step-2 dump into a new project and move the app to it (`supabase/RESTORE-RUNBOOK.md` §5). Both lose what was written after the backup |
 | Never | Re-run an older section file to "undo" anything: that is what caused the incident |

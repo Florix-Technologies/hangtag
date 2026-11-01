@@ -59,6 +59,7 @@ const REVIEW_KIND = { amount_mismatch: "Amount that isn't due", currency_mismatc
   unknown_order: "Paid link no payment holds", refund: "Refund", dispute: "Dispute", activation_refused: "Activation refused",
   unknown_mandate_charge: "Charge on an unknown AutoPay", unmatched_payment: "Payment nothing holds", stale_mandate: "Untracked AutoPay",
   charge_overdue: "Renewal overdue", cancel_failed: "AutoPay cancel failed", mode_mismatch: "Notification in another billing mode",
+  unexpected_charge: "AutoPay charge Hangtag didn't ask for",
   reconcile_error: "Can't be read at the provider" };
 const reviewError = e => e && e.code === "OUTDATED" ? "Billing review needs the post-repair database migration (supabase/REPAIR-RUNBOOK.md, step 7)." : (e && e.message) || "Something went wrong.";
 function healthHTML(h){

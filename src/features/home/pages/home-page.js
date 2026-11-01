@@ -32,6 +32,7 @@ import { UI_ICON, statusChip } from '../../../shared/ui/kit.js';
 import { $, esc } from '../../../shared/dom.js';
 import { agoText, dayKey, dayLab, dayLong, fmtDate, hhmm } from '../../../shared/formatting/dates.js';
 import { inr, inrShort } from '../../../shared/formatting/money.js';
+import { products } from '../../products/services/catalog.js';
 
 export { stockAlerts };
 const card = (title, link, body, cls = "", aria = "") => `<section class="card hcard${cls ? " " + cls : ""}"${aria ? ` aria-label="${esc(aria)}"` : ""}><div class="card-h"><h3>${title}</h3>${link || ""}</div>${body}</section>`;
@@ -94,6 +95,8 @@ export function installHomeEvents(){
       if(navigator.share) navigator.share({ text }).catch(() => {}); else window.open("https://wa.me/?text=" + encodeURIComponent(text), "_blank", "noopener");
       return;
     }
+    // Getting started hidden on this device (its steps stay where they are: Products, Sell, Settings)
+    if(e.target && e.target.closest && e.target.closest("[data-starthide]")){ store.prefs.startHidden = true; savePrefs(); renderHome(); return; }
     const tb = e.target && e.target.closest ? e.target.closest("[data-hometable]") : null;
     if(tb){ store.tableView = Object.assign({ mode: "floor", edit: null }, store.tableView, { sel: tb.dataset.hometable }); setTab("tables"); return; }
     const b = e.target && e.target.closest ? e.target.closest("[data-bt]") : null; if(!b) return;
@@ -102,6 +105,27 @@ export function installHomeEvents(){
     renderHome();
     if(store.homeWhy){ const w = $("#btWhy"); if(w && w.getBoundingClientRect().bottom > innerHeight) w.scrollIntoView({ block: "nearest" }); }
   });
+}
+/* Getting started, for a new shop (whoever manages its settings): the few things that make the till ready — products,
+   the first bill, how payments are taken, the receipt — each ticked by itself from the shop's own records (or once its
+   settings were looked at), until all are done or the card is hidden. Nothing here changes anything by itself. */
+export function startSteps(){
+  const s = store.settings || {}, prefs = store.prefs || {};
+  return [
+    { k: "products", done: products().length > 0, t: "Add your products", sub: "One by one, or many at once from a spreadsheet.", acts: [['data-tab="products"', "Products"], ['data-act="prodimport"', "Import a spreadsheet"]] },
+    { k: "bill", done: recentBills(1).length > 0, t: "Make your first bill", sub: "On Sell: tap a product, then take the payment.", acts: [['data-tab="sell"', "Go to Sell"]] },
+    { k: "pay", done: !!(s.upiId || prefs.paySeen), t: "Choose how you take payments", sub: "Cash and your card machine work as they are; add your own UPI QR if you like.", acts: [['data-setgo="payments"', "Payment settings"]] },
+    { k: "receipt", done: !!(store.logo || prefs.receiptSeen), t: "Set up your receipt", sub: "Your logo and details on bills, the paper size, and receipts sent by WhatsApp or email.", acts: [['data-setgo="billing"', "Receipt settings"]] },
+  ];
+}
+function startHTML(){
+  if(!can("manage_settings") || (store.prefs && store.prefs.startHidden)) return "";
+  const steps = startSteps(), n = steps.filter(x => x.done).length;
+  if(n === steps.length) return "";
+  const rows = steps.map(x => `<li class="hstart-i${x.done ? " done" : ""}" data-start="${x.k}"><i aria-hidden="true">${x.done ? UI_ICON.check : ""}</i><span class="hstart-t"><b>${esc(x.t)}</b>${x.done ? "" : `<small>${esc(x.sub)}</small>`}</span>
+    ${x.done ? `<span class="hstart-ok">Done</span>` : `<span class="hstart-acts">${x.acts.map(([a, l]) => `<button type="button" class="btn sm" ${a}>${esc(l)}</button>`).join("")}</span>`}</li>`).join("");
+  return `<section class="card hstart" aria-label="Getting started"><div class="hstart-h"><h3>Getting started <span class="hcount">${n} of ${steps.length}</span></h3>
+    <button type="button" class="link xs" data-starthide>Hide</button></div><ol class="hstart-l">${rows}</ol></section>`;
 }
 /* What needs someone, worst first, each with where to act on it */
 function attentionHTML(){
@@ -146,6 +170,7 @@ export function homeHTML(){
   let h = `<div class="viewhead hhead"><div><div class="eyebrow">${esc(fmtDate(now, { weekday: "long", day: "numeric", month: "long" }))}</div>
     <h2 class="vt">${esc(p.shop_name || "Your shop")}</h2><p>${esc(shopTypeLabel())}</p></div>${acts.length ? `<div class="qa" role="group" aria-label="Quick actions">${acts.map((a, i) => `<button type="button" class="btn ${i === 0 ? "primary qa-main" : "qa-alt"} qa-b" ${a.attr}>${NAV_ICONS[a.icon] || ""}<span>${esc(a.label)}</span></button>`).join("")}</div>` : ""}</div>`;
   h += subscriptionBannerHTML();   // the free trial's days left, or a paid plan ending within a week (owner and managers)
+  h += startHTML();   // a new shop's first steps (until done or hidden)
   // what this role's day is about (domain/shop/role-workspace.js): full-width sections first, then two columns
   const SEC = homeSections(role, currentPerms()), has = k => SEC.includes(k), sells = canAny(["create_sale", "view_reports"]), reports = can("view_reports");
   const top = [has("briefing") && can("view_reports") && watchSettings().briefing === "notify" ? briefingHTML(now) : "", has("business") && sells ? todayHTML(role) : "", has("shift") ? shiftHTML(now) : "", has("tables") ? tablesHTML() : ""].join("");

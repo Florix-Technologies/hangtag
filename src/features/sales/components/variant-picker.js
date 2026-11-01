@@ -23,7 +23,9 @@ import { openSerialPicker } from './serial-picker.js';
 import { trackingOfP } from '../../inventory/services/tracking.js';
 
 /* ---------- variant picker: every variant with its own quantity, added in one go ----------
-   Rows are the combinations of every option but the last (e.g. colours), columns the last option's values (e.g. sizes). */
+   Rows are the combinations of every option but the last (e.g. colours), cells the last option's values (e.g. sizes).
+   The cells wrap into as many columns as the width allows — one variant or ninety, never a sideways scroll — and the
+   variants scroll between a fixed header and the footer's "Add to bill". */
 
 export function openPicker(pid, target){
   const p=prod(pid); if(!p||p.archived) return;
@@ -43,9 +45,10 @@ export const pickMax = vid => store.pick && store.pick.target==="exchange" ? exA
 export const pickRows=matrixOf;
 export function cellHTML(p,v,ki){
   if(!v) return `<div class="vc na" aria-hidden="true"><span>—</span></div>`;
-  const a=pickMax(v.id), q=store.pick.qty[v.id]||0, lv=levelOf(a+q), rest=roundQty(a-q);
+  const a=pickMax(v.id), q=store.pick.qty[v.id]||0, lv=levelOf(a+q), rest=roundQty(a-q), label=colKey(p,v)||"One size";
+  // a long size name ("Kids 5.5\"", "128 GB") in smaller type, on up to two lines, so it stays readable
   return `<div class="vc ${lv}${q?" on":""}" data-vc="${esc(v.id)}">
-    <button type="button" class="vc-tap" data-cellplus="${esc(v.id)}"${a<=0&&!q?" disabled":""} aria-label="Add one ${esc(vLabel(v)||p.name)}, ${a<=0?"sold out":rest+" left"}"><b>${esc(colKey(p,v)||"One size")}</b><small>${a<=0&&!q?"Sold out":rest+" left"}</small>${ki!=null&&ki<9?`<span class="kh">${ki+1}</span>`:""}<em class="vp">${inr(vPrice(p,v))}</em></button>
+    <button type="button" class="vc-tap" data-cellplus="${esc(v.id)}"${a<=0&&!q?" disabled":""} aria-label="Add one ${esc(vLabel(v)||p.name)}, ${a<=0?"sold out":rest+" left"}"><b${label.length>4?` class="lg"`:""} title="${esc(label)}">${esc(label)}</b><small>${a<=0&&!q?"Sold out":rest+" left"}</small>${ki!=null&&ki<9?`<span class="kh">${ki+1}</span>`:""}<em class="vp">${inr(vPrice(p,v))}</em></button>
     <div class="vc-q"><button type="button" data-cellminus="${esc(v.id)}" aria-label="One less"${q?"":" disabled"}>−</button><input type="number" inputmode="${decimalsOf(p.unit)?"decimal":"numeric"}" min="0" step="${decimalsOf(p.unit)?"any":"1"}" max="${Math.max(0,a)}" data-cellqty="${esc(v.id)}" value="${q?fmtQty(q):""}" placeholder="0" aria-label="Quantity ${esc(vLabel(v)||p.name)}"${a<=0&&!q?" disabled":""}></div>
   </div>`;
 }
@@ -60,9 +63,14 @@ export function pickSummary(p){ let n=0,amt=0;const qs=[]; Object.entries(store.
 export function renderPicker(){
   const p=prod(store.pick&&store.pick.pid); if(!p){closeSheets();return}
   document.body.style.overflow="hidden";
-  const {colors,sizes,find,names,sw}=pickRows(p), hasC=colors[0]!=="", wide=window.innerWidth>=700;
+  // where the variants were scrolled to, kept when the sheet is drawn again (a colour chosen, the window resized)
+  const prev=$("#sheetHost .pk-body"), keepTop=prev&&prev.dataset.pid===p.id?prev.scrollTop:0;
+  const {colors,sizes,find,names,sw}=pickRows(p), hasC=colors[0]!=="", wide=window.innerWidth>=700, matrix=hasC&&(wide||colors.length===1);
   const colorQty=c=>sizes.reduce((a,s)=>{const v=find(c,s);return a+(v?(store.pick.qty[v.id]||0):0)},0);
   const colorLeft=c=>sizes.reduce((a,s)=>{const v=find(c,s);return a+(v?Math.max(0,pickMax(v.id)):0)},0);
+  // the sheet as wide as its sizes need (each about 112 px, the colour's name beside them), from 560 to 1180 px — never
+  // wider than the screen; past that the sizes wrap onto more lines
+  const sheetMax=Math.round(Math.min(1180,Math.max(560,56+(matrix?156:0)+Math.max(1,sizes.length)*112)));
   let body="";
   const single=!(p.opts||[]).length&&variantsOf(p).length===1?variantsOf(p)[0]:null;
   if(single){
@@ -71,21 +79,23 @@ export function renderPicker(){
     body=`<div class="qsheet" data-vc="${esc(v.id)}"><div class="qs-info"><b class="qs-price">${inr(vPrice(p,v))}</b><span class="qs-left ${levelOf(a)}">${a<=0&&!q?"Sold out":roundQty(a-q)+" left"}</span>${v.sku?`<span class="qs-sku">SKU ${esc(v.sku)}</span>`:""}</div>
       <div class="qs-step"><button type="button" data-cellminus="${esc(v.id)}" aria-label="One less"${q?"":" disabled"}>−</button><input type="number" inputmode="${decimalsOf(p.unit)?"decimal":"numeric"}" min="0" step="${decimalsOf(p.unit)?"any":"1"}" max="${Math.max(0,a)}" data-cellqty="${esc(v.id)}" value="${q?fmtQty(q):""}" placeholder="0" aria-label="Quantity"><button type="button" data-cellplus="${esc(v.id)}" aria-label="One more"${a-q<=0?" disabled":""}>+</button></div></div>`;
   }else
-  if(hasC&&(wide||colors.length===1)){
-    // full matrix: colours down, sizes across
-    body=`<div class="vmx" role="group" aria-label="${esc([names.row,names.col].filter(Boolean).join(" and ")||"Variants")}">${colors.map(c=>`<div class="vmx-row${c===store.pick.color?" act":""}" data-row="${esc(c)}"><button type="button" class="vmx-c" data-color="${esc(c)}">${sw(c)}<span>${esc(c)}</span>${colorQty(c)?`<em>${colorQty(c)}</em>`:""}</button><div class="vcells" style="--n:${sizes.length}">${sizes.map((s,k)=>cellHTML(p,find(c,s),c===store.pick.color?k:null)).join("")}</div></div>`).join("")}</div>`;
+  if(matrix){
+    // every colour with all its sizes: the colour's name beside (or, on a narrower sheet, above) its sizes, which wrap
+    body=`<div class="vmx" role="group" aria-label="${esc([names.row,names.col].filter(Boolean).join(" and ")||"Variants")}">${colors.map(c=>{const left=colorLeft(c);return `<div class="vmx-row${c===store.pick.color?" act":""}" data-row="${esc(c)}"><button type="button" class="vmx-c" data-color="${esc(c)}">${sw(c)}<span>${esc(c)}</span>${colorQty(c)?`<em>${colorQty(c)}</em>`:""}<small class="${left<=0?"out":""}">${left<=0?"Sold out":roundQty(left)+" left"}</small></button><div class="vcells">${sizes.map((s,k)=>cellHTML(p,find(c,s),c===store.pick.color?k:null)).join("")}</div></div>`}).join("")}</div>`;
   }else{
+    // a phone: the colours as chips, then the chosen colour's sizes
     const active=hasC?store.pick.color:"";
     body=(hasC?`<div class="vchips" role="group" aria-label="${esc(names.row||"Variants")}">${colors.map(c=>`<button type="button" class="vchip${c===active?" on":""}" data-color="${esc(c)}" aria-pressed="${c===active}">${sw(c)}${esc(c)}${colorQty(c)?`<em>${colorQty(c)}</em>`:colorLeft(c)<=0?`<small>out</small>`:""}</button>`).join("")}</div>`:"")+
-      `<div class="vcells grid-${Math.min(sizes.length,5)}" style="--n:${Math.min(sizes.length,5)}">${sizes.map((s,k)=>cellHTML(p,find(active,s),k)).join("")}</div>`;
+      `<div class="vcells">${sizes.map((s,k)=>cellHTML(p,find(active,s),k)).join("")}</div>`;
   }
   const S=pickSummary(p), ex=store.pick.target==="exchange";
-  $("#sheetHost").innerHTML=`<div class="scrim" data-scrim><div class="sheet picker" role="dialog" aria-modal="true" aria-label="Choose ${esc(p.name)}">
+  $("#sheetHost").innerHTML=`<div class="scrim" data-scrim><div class="sheet picker" style="--pk-max:${sheetMax}px" role="dialog" aria-modal="true" aria-label="Choose ${esc(p.name)}">
     <div class="sh-head">${thumb(p,"md")}<div class="sh-t"><h3>${esc(p.name)}</h3><p>${esc(priceRange(p))} · tap to add, or type a quantity</p></div><button class="iconbtn" data-act="closesheet" aria-label="Close">${ICON.x}</button></div>
-    ${body}
+    <div class="pk-body" data-pid="${esc(p.id)}">${body}</div>
     <div class="sh-foot"><span class="pk-sum" id="pickSum">${pickSumHTML(p,S)}</span>
       <div class="sh-acts"><button class="btn sm" data-act="closesheet">Cancel</button><button class="btn sm primary" data-act="addpicked" id="addPickBtn"${S.n?"":" disabled"}>${ex?"Use for exchange":"Add to bill"}</button></div></div>
   </div></div>`;
+  if(keepTop){ const b=$("#sheetHost .pk-body"); if(b) b.scrollTop=keepTop; }
 }
 export function updatePicker(){
   const p=prod(store.pick&&store.pick.pid); if(!p) return;
@@ -99,7 +109,7 @@ export function updatePicker(){
     if(inp&&document.activeElement!==inp) inp.value=q||"";
   });
   const {sizes,find}=pickRows(p);
-  $$("#sheetHost [data-color]").forEach(b=>{const c=b.dataset.color;const n=sizes.reduce((a,s)=>{const v=find(c,s);return a+(v?(store.pick.qty[v.id]||0):0)},0);let em=b.querySelector("em");if(n){if(!em){em=document.createElement("em");b.appendChild(em)}em.textContent=n}else if(em)em.remove()});
+  $$("#sheetHost [data-color]").forEach(b=>{const c=b.dataset.color;const n=sizes.reduce((a,s)=>{const v=find(c,s);return a+(v?(store.pick.qty[v.id]||0):0)},0);let em=b.querySelector("em");if(n){if(!em){em=document.createElement("em");b.insertBefore(em,b.querySelector("small"))}em.textContent=n}else if(em)em.remove()});
   const S=pickSummary(p);
   const sum=$("#pickSum"); if(sum) sum.innerHTML=pickSumHTML(p,S);
   const b=$("#addPickBtn"); if(b) b.disabled=!S.n;

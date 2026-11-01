@@ -11,6 +11,7 @@ import path from 'node:path';
 import puppeteer from 'puppeteer-core';
 import H from '../helpers/env.mjs';
 import { siteFiles, toUrl } from '../../scripts/sw-cache.mjs';
+import { headersFor as vercelHeaders } from '../helpers/vercel-routes.mjs';
 
 if (!H.CHROME) { console.log('skipped: ' + H.NO_BROWSER); process.exit(77); }
 let fails = 0;
@@ -22,8 +23,8 @@ const files = siteFiles(H.ROOT);
 const SITE = new Map(files.map((f) => [toUrl(H.ROOT, f).slice(1), f]));   // "/src/app/main.js" → the file
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json',
   '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png' };
-// vercel.json's headers for a path (each "source" is a path pattern; ours is "/(.*)")
-const headersFor = (p) => Object.fromEntries(vercel.headers.filter((h) => new RegExp('^' + h.source + '$').test(p)).flatMap((h) => h.headers.map((x) => [x.key, x.value])));
+// vercel.json's headers for a path, matched as Vercel matches each rule's source (tests/helpers/vercel-routes.mjs)
+const headersFor = (p) => vercelHeaders(vercel, p);
 const served = [];
 const server = http.createServer((req, res) => {
   const p = decodeURIComponent(new URL(req.url, BASE).pathname);
@@ -89,6 +90,15 @@ try {
   check(`the app's own scripts and styles (${loaded.size} files) break no rule of the Content-Security-Policy`, !(await app.csp()).length, await app.csp());
   check('no page error or console error while it starts', !app.problems.length, app.problems);
   await app.ctx.close();
+
+  // the AutoPay page: its own headers (the only page allowed Cashfree's script), the app's never allowing it
+  const ap = await open('/autopay.html#cf=x&env=sandbox');
+  const ah = ap.resp.headers(), apCsp = ah['content-security-policy'] || '';
+  check('the AutoPay page has its own Content-Security-Policy (Cashfree\'s script and pages only), framed by no one, never cached; the app\'s pages never allow Cashfree',
+    apCsp === headersFor('/autopay.html')['Content-Security-Policy'] && /script-src 'self' https:\/\/sdk\.cashfree\.com;/.test(apCsp) && /frame-ancestors 'none'/.test(apCsp)
+    && ah['x-frame-options'] === 'DENY' && ah['cache-control'] === 'no-store' && !/cashfree/.test(headersFor('/')['Content-Security-Policy']), ah);
+  check('…a link without a valid session says so, and opens nothing', /isn't complete/.test(await ap.page.$eval('#msg', (e) => e.textContent).catch(() => '')));
+  await ap.ctx.close();
 
   // the public pages and the Platform Console
   for (const p of ['/receipt.html', '/order.html', '/store.html', '/platform/', '/platform/login/']) {

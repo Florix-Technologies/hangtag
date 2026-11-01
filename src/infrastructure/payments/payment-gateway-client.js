@@ -9,11 +9,17 @@ const toIntent = r => normalizeProviderIntent({ id:r.id, method:r.method, kind:r
 /* cloud: the cloud gateway (paymentIntent) */
 export function createPaymentGatewayClient({ cloud }){
   const client = {
-    /* { provider, upi, cardLink }: what can be taken through the provider (all false when it isn't set up) */
+    /* { provider, upi, cardLink, gateway }: what can be taken through the shop's own provider account (all false without one),
+       and the gateway's set-up */
     async config(){
       const r = await cloud.paymentIntent({ action:"config" });
       return normalizeProviderConfig(r);
     },
+    /* Connects the shop's own Razorpay account (its keys go to the function once, are checked and kept sealed there) */
+    connect: ({ keyId, keySecret, webhookSecret }) => cloud.paymentIntent({ action:"connect", provider:"razorpay", key_id:keyId, key_secret:keySecret, webhook_secret:webhookSecret })
+      .then(normalizeProviderConfig),
+    /* Disconnects it: what is still open on it is closed, its keys dropped */
+    disconnect: () => cloud.paymentIntent({ action:"disconnect" }).then(normalizeProviderConfig),
     /* A single-use UPI QR (method "upi") or a card payment link ("card") for exactly `amount` → the intent ("pending") */
     createPayment: ({ method, amount, saleId, note, expiryMin }) => cloud.paymentIntent({ action:"create", method, amount, sale_id:saleId, note, expiry_min:expiryMin }).then(toIntent),
     createDynamicQr: ({ amount, saleId, note, expiryMin }) => cloud.paymentIntent({ action:"create", method:"upi", amount, sale_id:saleId, note, expiry_min:expiryMin }).then(toIntent),

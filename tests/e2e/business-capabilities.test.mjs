@@ -39,8 +39,10 @@ async function phone(label, { session = null, width = 1180, height = 900, mobile
   if (session) await p.evaluateOnNewDocument((s) => { if (location.hostname === 'localhost' && !sessionStorage.__seeded) { sessionStorage.__seeded = 1; localStorage.setItem('hangtag-auth', s); } }, JSON.stringify(session));
   p.run = (b) => p.evaluate((b) => __ev('(async()=>{' + b + '})()'), b);
   p.until = async (cond, ms = 15000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await p.run('return !!(' + cond + ')').catch(() => false)) return true; await sleep(120); } return false; };
-  p.vis = (sel) => p.$eval(sel, (e) => !e.hidden && getComputedStyle(e).display !== 'none' && e.getClientRects().length > 0).catch(() => false);
-  p.text = (sel) => p.$eval(sel, (e) => e.innerText.replace(/\s+/g, ' ').trim()).catch(() => null);
+  // read in one step in the page (found and read together): Home redraws by itself as the sync status changes, and a
+  // node found by one call and read by the next may be gone in between ("detached"), which read as "not visible"
+  p.vis = (sel) => p.evaluate((s) => { const e = document.querySelector(s); return !!e && !e.hidden && getComputedStyle(e).display !== 'none' && e.getClientRects().length > 0; }, sel).catch(() => false);
+  p.text = (sel) => p.evaluate((s) => { const e = document.querySelector(s); return e ? e.innerText.replace(/\s+/g, ' ').trim() : null; }, sel).catch(() => null);
   p.fill = async (sel, v) => { await p.$eval(sel, (e) => { e.value = ''; }); await p.type(sel, v); };
   p.tabs = () => p.$$eval('.nav [data-tab]', (b) => b.filter((x) => getComputedStyle(x).display !== 'none').map((x) => x.dataset.tab));
   // the app re-renders by itself (Home's quick actions when the sync status changes): a node replaced between finding and

@@ -18,16 +18,20 @@
 .iconbtn.sm{width:28px;height:28px}
 .iconbtn.sm svg{width:16px;height:16px}
 .taxrow{font-size:13px!important}
-/* variant picker */
-.sheet.picker{max-width:720px}
+/* variant picker: a fixed header and footer, the variants scrolling between them (the only scroll), and sizes in
+   wrapping grids — as many columns as fit, never a sideways scroll. The sheet's width comes from its sizes (--pk-max) */
+.sheet.picker{max-width:var(--pk-max,720px);display:flex;flex-direction:column;overflow:hidden;padding-bottom:0}
+.sheet.picker .sh-head{flex:none}
+.pk-body{flex:1 1 auto;min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;margin:0 -6px;padding:2px 6px 8px}
+.sheet.picker .sh-foot{flex:none;margin-top:0;padding:12px 0 calc(16px + env(safe-area-inset-bottom,0px));border-top:1px solid var(--line);background:var(--bg)}
 .vchips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
 .vchip{display:inline-flex;align-items:center;gap:7px;border:1.5px solid var(--line-2);border-radius:999px;padding:7px 12px;font-weight:600;font-size:14px;background:var(--bg)}
 .vchip i,.vmx-c i,.chip i{width:12px;height:12px;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(16,19,31,.25);flex:none}
 .vchip.on{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink)}
 .vchip em,.vmx-c em{font-style:normal;background:var(--ink);color:#fff;border-radius:999px;font-size:11.5px;font-weight:700;padding:1px 7px;margin-left:2px}
 .vchip small{font-size:11px;color:var(--crit);font-weight:700}
-.vcells{display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr));gap:8px}
-@media (max-width:520px){.vcells.grid-5,.vcells.grid-4{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.vcells{--cell:104px;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(var(--cell),100%),1fr));gap:8px}
+@media (max-width:699px){.vcells{--cell:92px}}
 .vc{display:flex;flex-direction:column;border:1.5px solid var(--line-2);border-radius:13px;overflow:hidden;background:var(--bg);min-width:0}
 .vc.on{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink)}
 .vc.na{border-style:dashed;align-items:center;justify-content:center;color:var(--ink-3);min-height:88px}
@@ -35,6 +39,7 @@
 .vc-tap:hover:not(:disabled){background:var(--wash)}
 .vc-tap:disabled{opacity:.45}
 .vc-tap b{font-stretch:75%;font-weight:700;font-size:24px;line-height:1;letter-spacing:.02em;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vc-tap b.lg{font-size:17px;line-height:1.15;letter-spacing:0;white-space:normal;text-align:center;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .vc-tap small{font-size:12px;font-stretch:75%;font-weight:700;color:var(--ink-3);white-space:nowrap}
 .vc.low .vc-tap small{color:var(--warn-ink)}.vc.out .vc-tap small{color:var(--crit)}
 .vc-tap .kh{position:absolute;top:5px;right:7px;font-size:10.5px;font-weight:700;color:var(--ink-3)}
@@ -46,11 +51,14 @@
 .vc-q input::-webkit-outer-spin-button,.vc-q input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 .vc-q input:focus{outline:2px solid var(--ink);outline-offset:-2px}
 .vc.on .vc-q{background:var(--accent-soft)}
-.vmx{display:flex;flex-direction:column;gap:8px;overflow-x:auto;padding-bottom:2px}
-.vmx-row{display:grid;grid-template-columns:120px minmax(0,1fr);gap:8px;align-items:stretch;border-radius:14px;padding:4px;min-width:max-content}
+.vmx{display:flex;flex-direction:column;gap:6px}
+.vmx-row{display:grid;grid-template-columns:140px minmax(0,1fr);gap:8px;align-items:start;border-radius:14px;padding:6px;min-width:0}
 .vmx-row.act{background:var(--wash)}
-.vmx-row .vcells{grid-template-columns:repeat(var(--n),minmax(72px,1fr))}
-.vmx-c{display:flex;align-items:center;gap:7px;font-weight:700;font-size:14px;padding:0 6px;text-align:left}
+.vmx-c{display:flex;flex-wrap:wrap;align-items:center;gap:4px 7px;font-weight:700;font-size:14px;padding:8px 6px;text-align:left;min-width:0}
+.vmx-c span{min-width:0;overflow-wrap:anywhere}
+.vmx-c small{flex-basis:100%;font-size:12px;font-weight:600;color:var(--ink-3)}.vmx-c small.out{color:var(--crit)}
+/* a sheet too narrow for the colour's name beside its sizes: the name goes above them */
+@media (max-width:899px){.vmx-row{grid-template-columns:minmax(0,1fr);gap:4px}.vmx-c{padding:4px 6px}.vmx-c small{flex-basis:auto}}
 .pk-sum{font-size:14px;color:var(--ink-2)}
 /* paid */
 .sheet.paid{max-width:420px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:8px}

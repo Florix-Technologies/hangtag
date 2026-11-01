@@ -20,21 +20,26 @@
 // Razorpay dashboard: Webhooks → this function's URL, the same secret, the payment_link.*, subscription.*, refund.processed
 // and payment.dispute.created events (and the webhook's alert email: Razorpay disables a webhook that keeps failing).
 // Cashfree: each payment link carries this function's URL as its notify_url; payment webhooks in the dashboard may point
-// here too (orders that aren't Hangtag plan payments are ignored), with the refund and dispute events.
+// here too (orders that aren't Hangtag plan payments are ignored), with the refund and dispute events. AutoPay (Cashfree
+// Subscriptions): the dashboard's Subscriptions webhook points here, version 2026-01-01; after approving a mandate the
+// owner is sent here (?back=autopay, perhaps as a POST) and straight on to the app — nothing else happens on that path.
 import { createClient } from "npm:@supabase/supabase-js@2.117.2";
-import { providerFor, providerNamed, webhookProviderFor } from "../subscription/providers/index.js";
+import { appBackUrl } from "../subscription/core.js";
+import { autopayProviderFor, providerFor, providerNamed, webhookProviderFor } from "../subscription/providers/index.js";
 import { handleReconcile } from "../subscription/reconcile.js";
 import { handleWebhook } from "./handler.js";
 
 Deno.serve(async (req) => {
   const env = Deno.env.toObject();
+  const back = appBackUrl(env, new URL(req.url).searchParams.get("back"));
+  if (back) return new Response(null, { status: 303, headers: { Location: back, "Cache-Control": "no-store" } });
   const headers: Record<string, string> = {};
   req.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
   const admin = () => createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
   // the scheduled reconciliation (supabase/functions/subscription/reconcile.js): its own header and secret
   if (headers["x-hangtag-reconcile"]) {
-    const rec = await handleReconcile({ method: req.method, headers }, { env, admin, provider: providerFor(env), autopay: providerNamed("razorpay", env),
-      named: (name: string) => providerNamed(name, env) });
+    const rec = await handleReconcile({ method: req.method, headers }, { env, admin, provider: providerFor(env),
+      autopay: autopayProviderFor(env) || providerNamed("razorpay", env), named: (name: string) => providerNamed(name, env) });
     return new Response(JSON.stringify(rec.body), { status: rec.status, headers: { "Content-Type": "application/json" } });
   }
   const raw = req.method === "POST" ? await req.text() : "";

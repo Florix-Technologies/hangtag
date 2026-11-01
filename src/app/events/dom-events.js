@@ -23,7 +23,8 @@ import { photoFromFile } from '../../features/products/use-cases/product-photo.j
 import { openBillView } from '../../features/receipts/components/bill-view.js';
 import { downloadReceipt, shareReceipt, whatsappReceipt } from '../../features/receipts/services/receipt-output.js';
 import { onPrint } from '../../features/printing/components/print-actions.js';
-import { onDeliveryRefresh, onInvoiceLink, onRevokeLinks, onSend } from '../../features/delivery/components/send-actions.js';
+import { onAddContact, onContactCancel, onContactSave, onDeliveryRefresh, onInvoiceLink, onRevokeLinks, onSend } from '../../features/delivery/components/send-actions.js';
+import { downloadInvoice, shareInvoice } from '../../features/delivery/components/invoice-actions.js';
 import { renderReport, reportOption, showTable } from '../../features/reports/pages/report-page.js';
 import { exportCsv } from '../../features/reports/services/csv-export.js';
 import { openReturn, renderReturnSheet, saveReturn, setReturnQty, setReturnReason, swapReturnLine } from '../../features/returns/components/return-sheet.js';
@@ -32,6 +33,7 @@ import { closeSheets, renderBill, renderBillSheet, updateBillTotals } from '../.
 import { addPicked, openPicker, renderPicker, setPickQty } from '../../features/sales/components/variant-picker.js';
 import { openKeyboardHelp, renderGrid, sellCatClick } from '../../features/sales/pages/sell-page.js';
 import { openProductView } from '../../features/products/components/product-view.js';
+import { importInput } from '../../features/products/components/product-import.js';
 import { billViewClick } from '../../features/receipts/components/bill-view.js';
 import { addPurchaseLine, openPurchaseEntry, renderPurchaseEntry } from '../../features/inventory/components/purchase-entry.js';
 import { variantsOf as variantsOfP } from '../../domain/catalog/variants.js';
@@ -42,8 +44,8 @@ import { openVoidForm, submitVoidForm, voidFormChange } from '../../features/sal
 import { setBillDiscount } from '../../features/sales/use-cases/discounts.js';
 import { applyLineDiscount, lineDiscountInput, lineDiscountType, openLineDiscount } from '../../features/sales/components/discount-sheet.js';
 import { cashFormChange, openCashForm, submitCashForm } from '../../features/finance/components/cash-form.js';
-import { checkUnverified, loadUnmatched, resolveUnmatched } from '../../features/finance/components/reconcile-view.js';
-import { completePayment, openPayment, payCardReceived, payClosed, payInput, payIntent, payManualUpiReceived, payMode, payQuick, payRest, paySend, payVia, payVoucher, payVoucherRemove } from '../../features/sales/components/payment-sheet.js';
+import { checkUnverified, confirmUpiReceived, loadUnmatched, resolveUnmatched } from '../../features/finance/components/reconcile-view.js';
+import { completePayment, openPayment, payCardReceived, payClosed, payExact, payInput, payIntent, payManualUpiReceived, payMode, payQuick, payRest, paySend, payVia, payVoucher, payVoucherRemove } from '../../features/sales/components/payment-sheet.js';
 import { checkoutBack, checkoutPayment, checkoutStep, checkoutWalkIn, openCheckout } from '../../features/sales/components/checkout-flow.js';
 import { openBook } from '../../features/finance/components/books-view.js';
 import { enqueue, flushSbQueue } from '../../features/sync/services/outbox.js';
@@ -114,9 +116,12 @@ export function installDomEvents(){
     const pm=t.closest("[data-paymode]");if(pm&&store.payState){payMode(pm.dataset.paymode);return}
     const prs=t.closest("[data-payrest]");if(prs&&store.payState){payRest(prs.dataset.payrest);return}
     const pq=t.closest("[data-payquick]");if(pq&&store.payState){payQuick(pq.dataset.payquick);return}
+    if(t.closest("[data-payexact]")&&store.payState){payExact();return}
+    if(t.closest("[data-checkoutaddcust]")&&store.checkoutFlow){store.custQ="";store.custForm=null;newCustomerForm("sell");return}
     const cf=t.closest("[data-cashform]");if(cf){openCashForm(cf.dataset.cashform);return}
     const ge=t.closest("[data-gstexp]");if(ge){gstExport(ge.dataset.gstexp);return}
     const um=t.closest("[data-unm]");if(um){resolveUnmatched(um.dataset.unm);return}
+    const uc=t.closest("[data-upiconfirm]");if(uc&&!uc.disabled){confirmUpiReceived(uc.dataset.upiconfirm);return}
     const pvia=t.closest("[data-payvia]");if(pvia&&store.payState){payVia(pvia.dataset.payvia);return}
     if(t.closest("[data-upireceived]")&&store.payState){payManualUpiReceived();return}
     if(t.closest("[data-cardreceived]")&&store.payState){payCardReceived();return}
@@ -142,7 +147,11 @@ export function installDomEvents(){
     const pr=t.closest("[data-print]");if(pr){onPrint(pr.dataset.print,{paper:pr.dataset.paper});return}
     const pb=t.closest("[data-printbrowser]");if(pb){onPrint(pb.dataset.printbrowser,{browser:true});return}
     const dl=t.closest("[data-dlreceipt]");if(dl){downloadReceipt(dl.dataset.dlreceipt);return}
+    const di=t.closest("[data-dlinvoice]");if(di){downloadInvoice(di.dataset.dlinvoice);return}
+    const shi=t.closest("[data-shareinvoice]");if(shi){shareInvoice(shi.dataset.shareinvoice);return}
     const il=t.closest("[data-invlink]");if(il){onInvoiceLink(il.dataset.invlink);return}
+    const ac=t.closest("[data-addcontact]");if(ac){onAddContact(ac.dataset.addcontact);return}
+    const cc=t.closest("[data-contactcancel]");if(cc){onContactCancel(cc.dataset.contactcancel);return}
     const ir=t.closest("[data-invrevoke]");if(ir){onRevokeLinks(ir.dataset.invrevoke);return}
     const dr=t.closest("[data-dlrefresh]");if(dr){onDeliveryRefresh(dr.dataset.dlrefresh);return}
     const snd=t.closest("[data-send]");if(snd&&!snd.disabled){const i=snd.dataset.send.indexOf(":");onSend(snd.dataset.send.slice(i+1),snd.dataset.send.slice(0,i));return}
@@ -253,6 +262,7 @@ export function installDomEvents(){
     if(creditOrdersInput(t))return;
     if(trackingInput(t))return;
     if(restaurantInput(t))return;
+    if(importInput(t))return;
     if(t.matches("[data-cellqty]")&&store.pick){const v=t.dataset.cellqty;setPickQty(v,t.value===""?0:t.value);return}
     if(t.matches("[data-disc]")){setBillDiscount({type:store.disc&&store.disc.type,value:t.value});updateBillTotals();return}
     if(t.id==="ldVal"){lineDiscountInput(t.value);return}
@@ -278,6 +288,7 @@ export function installDomEvents(){
     if(trackingSubmit(e))return;
     if(restaurantSubmit(e))return;
     if(e.target.id==="custForm"){e.preventDefault();saveCustomerForm(e.target);return}
+    if(e.target.dataset&&e.target.dataset.contactform){e.preventDefault();onContactSave(e.target.dataset.contactform,e.target);return}
     if(e.target.id==="edForm"){e.preventDefault();return}
     if(e.target.id==="evForm"){e.preventDefault();submitEventForm(e.target);return}
     if(e.target.id==="cashForm"){e.preventDefault();submitCashForm(e.target);return}

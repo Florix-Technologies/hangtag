@@ -2,6 +2,8 @@
 // subscription-webhook Edge Functions and unit-tested in Node with a fake fetch (tests/unit/subscription-function.test.mjs).
 // These are Hangtag's OWN keys (SUBSCRIPTION_RAZORPAY_KEY_ID / SUBSCRIPTION_RAZORPAY_KEY_SECRET), never a shop's keys
 // (the shops' keys belong to the payment-gateway function). Amounts go to Razorpay in paise.
+import { PAGE_MINUTES } from "../core.js";
+
 const API = "https://api.razorpay.com/v1";
 const str = (v) => (v == null ? "" : String(v));
 export const toPaise = (rupees) => Math.round((+rupees || 0) * 100);
@@ -91,7 +93,7 @@ export function razorpay({ keyId, keySecret, webhookSecret }, fetchImpl = fetch,
     async createPayment({ paymentId, amount, currency = "INR", description, email, callbackUrl }) {
       const body = {
         amount: toPaise(amount), currency, accept_partial: false, description: str(description).slice(0, 120) || "Hangtag plan",
-        reference_id: str(paymentId).replace(/-/g, "").slice(0, 40), expire_by: Math.floor(now() / 1000) + 60 * 60,
+        reference_id: str(paymentId).replace(/-/g, "").slice(0, 40), expire_by: Math.floor(now() / 1000) + PAGE_MINUTES * 60,
         reminder_enable: false, notify: { sms: false, email: false }, notes: { hangtag_payment: str(paymentId) },
         ...(email ? { customer: { email: str(email).slice(0, 120) } } : {}),
         ...(callbackUrl ? { callback_url: callbackUrl, callback_method: "get" } : {}),

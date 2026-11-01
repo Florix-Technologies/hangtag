@@ -230,16 +230,24 @@
  * @property {(since: number) => Promise<Object[]>} recent  What was sent from any bill since a time (ms), newest first, at most 500.
  * @property {(saleId: string) => Promise<Object>} refresh  Asks the providers whether the bill's messages were delivered.
  * @property {(saleId: string) => Promise<{url: string}>} link  The bill's secure invoice link (made once, 12 months).
+ * @property {(req: {saleId: string, pdf?: string}) => Promise<{invoice: Object, url: string, already: boolean}>} invoice
+ *   The bill's one invoice PDF; pdf (base64) registers this phone's copy when the bill has none (the first copy is kept).
  * @property {(saleId: string) => Promise<void>} revokeLinks  Stops the bill's invoice links working.
  */
 
 /**
- * "paymentGateway": provider-neutral verified UPI (single-use QR for an exact amount) and card payment intents.
+ * "paymentGateway": provider-neutral verified UPI (single-use QR for an exact amount) and card payment intents, on the
+ * shop's OWN gateway account (its keys, sealed server-side; no shared Hangtag account).
  * Implementation: infrastructure/payments/payment-gateway-client.js → Edge Function payment-gateway (provider keys stay
  * server-side; only the provider's verified record makes an intent "verified"). Reach it through
  * features/sales/use-cases/provider-payment.js.
  * @typedef {Object} PaymentGatewayPort
- * @property {() => Promise<{provider: (string|null), upi: boolean, cardLink: boolean}>} config
+ * @property {() => Promise<{provider: (string|null), upi: boolean, cardLink: boolean, gateway: Object}>} config  What can be
+ *   taken now, and the gateway's set-up: { available (may this shop connect one), connected, mode, keyId (masked), checkedAt,
+ *   lastEventAt, webhookUrl and events (for who manages settings) }.
+ * @property {(req: {keyId: string, keySecret: string, webhookSecret: string}) => Promise<Object>} connect  The shop's own
+ *   Razorpay keys (checked with Razorpay, kept sealed) → the config.
+ * @property {() => Promise<Object>} disconnect  Closes what is open on the account and drops its keys → the config.
  * @property {(req: {method: "upi"|"card", amount: number, saleId: string, note?: string, expiryMin?: number}) => Promise<Object>} createPayment
  *   → the intent { id, status: "pending", qrUrl | linkUrl, reference, expiresAt }.
  * @property {(req: {amount: number, saleId: string, note?: string, expiryMin?: number}) => Promise<Object>} createDynamicQr
@@ -262,10 +270,11 @@
  * @property {() => Promise<Object[]>} payments  The owner's plan payments, newest first.
  * @property {() => Promise<{available: boolean, provider: (string|null), autopay: boolean}>} config  Whether online payment and AutoPay are set up (never throws).
  * @property {() => Promise<Object>} autopayQuote  AutoPay's terms: today, the plan's price after the trial, from when, the consent's version.
- * @property {(consentVersion: string) => Promise<Object>} autopayStart  AutoPay with the owner's consent: { auth_url } (approved with the bank / UPI app).
+ * @property {(consentVersion: string, phone?: string) => Promise<Object>} autopayStart  AutoPay with the owner's consent: { auth_url } (approved with the bank / UPI app); phone when the server asked for one.
  * @property {() => Promise<Object>} autopayVerify  Asks the provider about the mandate: { status }.
  * @property {() => Promise<Object>} autopayCancel  Turns AutoPay off (at the provider first): { status: "cancelled" }.
- * @property {(plan: string, promo: string) => Promise<Object>} checkout  Starts a payment: { payment_id, amount, pay_url } or { free: true, status: "paid" }.
+ * @property {(plan: string, promo: string, phone?: string) => Promise<Object>} checkout  Starts a payment: { payment_id, amount, pay_url } or { free: true, status: "paid" }.
+ *   phone: the payer's mobile number for this payment, sent when the server asked for one (phone_required).
  * @property {(paymentId: string) => Promise<Object>} verify  Asks the provider: { status: "paid"|"pending"|… }.
  */
 

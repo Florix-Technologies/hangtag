@@ -205,7 +205,7 @@ export function explainPayments(f){
     if(split) out.reasons.push(split);
     if(k === "cash" && f.drawer) out.reasons.push(why("drawer", `The drawer should hold ${inr(f.drawer.closing)} now: ${inr(f.drawer.opening)} at the start of the day, ${inr(f.drawer.in)} in, ${inr(f.drawer.out)} out.`, { target: "cashbook" }));
     if(k === "cash" && f.close) out.reasons.push(why("close", f.close.diff ? `Today's close: counted ${inr(f.close.counted)}, ${inr(Math.abs(f.close.diff))} ${f.close.diff < 0 ? "short" : "over"}.` : `Today's close: counted ${inr(f.close.counted)}, as expected.`, { target: "cashbook" }));
-    if(k === "upi" && f.unverified && f.unverified.count) out.reasons.push(why("unverified", `${plural(f.unverified.count, "UPI payment")} today (${inr(f.unverified.amount)}) checked only by hand, not yet matched with the payment provider.`, { target: "reconcile", id: "30d" }));
+    if(k === "upi" && f.unverified && f.unverified.count) out.reasons.push(why("unverified", `${plural(f.unverified.count, "UPI payment")} today (${inr(f.unverified.amount)}) checked only by hand, not yet confirmed in your bank or UPI app.`, { target: "reconcile", id: "30d" }));
     if(refunds[k] > 0) out.reasons.push(why("refunds", `${inr(refunds[k])} paid back by ${k === "cash" ? "cash" : METHOD[k]} on returns today.`, { target: "report", id: "today" }));
     return out;
   });
@@ -284,7 +284,7 @@ export function explainReconciliation(f){
     R.push(why("bills", `${plural(f.billCount || B.length, "bill")} where what was received doesn't match what was due: ${B.slice(0, 3).map(b => `${b.no} (${inr(b.due)} due, ${inr(b.received)} received)`).join(", ")}.`, { target: "bill", id: B[0].id })); }
   const U = f.upi || {};
   if(U.count){ issues += U.count; amount += U.amount || 0;
-    R.push(why("upi", `${plural(U.count, "UPI payment")} (${inr(U.amount)}) checked only by hand in the last 30 days, not yet matched with the payment provider.`, { target: "reconcile", id: "30d" })); }
+    R.push(why("upi", `${plural(U.count, "UPI payment")} (${inr(U.amount)}) checked only by hand in the last 30 days, not yet confirmed in your bank or UPI app.`, { target: "reconcile", id: "30d" })); }
   const M = f.unmatched || {};
   if(M.loaded && M.count){ bad = true; issues += M.count; amount += M.amount || 0;
     const x = M.first, detail = x ? (x.paidAmount !== x.amount ? ` — ${inr(x.paidAmount)} paid where ${inr(x.amount)} was asked` : " — paid after the QR or link was closed") : "";

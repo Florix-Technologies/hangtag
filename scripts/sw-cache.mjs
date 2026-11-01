@@ -18,7 +18,10 @@ export const appFiles = (root) => sortFiles(root, walk(path.join(root, 'src')).f
 export const shellFiles = (root) => [...STATIC.map((f) => path.join(root, f)), ...appFiles(root)];
 // What Vercel serves (dist/site, vercel.json): the shell, sw.js and the maskable icon the manifest names. Nothing else (no
 // tests, scripts, supabase/ or node_modules); tests/e2e/vercel-site.test.mjs serves exactly these with vercel.json's headers.
-export const siteFiles = (root) => [...shellFiles(root), path.join(root, 'sw.js'), path.join(root, 'icon-maskable-512.png')];
+// ONLINE: served but never saved for offline use — the AutoPay page that opens the payment provider's own page (it can do
+// nothing offline, and it is the only page that loads the provider's script; vercel.json gives it its own headers)
+export const ONLINE = ['autopay.html', 'autopay-checkout.js'];
+export const siteFiles = (root) => [...shellFiles(root), ...ONLINE.map((f) => path.join(root, f)), path.join(root, 'sw.js'), path.join(root, 'icon-maskable-512.png')];
 
 // Binary as git decides it (a NUL byte in the first 8000 bytes): git never converts those, and a PNG's CRLF is data
 const binary = (b) => b.subarray(0, 8000).includes(0);

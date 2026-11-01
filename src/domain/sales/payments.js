@@ -3,7 +3,10 @@
 // How each part was confirmed is kept with it (its verification):
 //   verified   — the payment provider confirmed the money (a UPI QR or a card payment link paid through the provider);
 //   recorded   — cash, or a card paid on a separate card machine, marked received by the cashier (its reference optional);
-//   unverified — UPI checked by eye by the cashier; its transaction reference (UTR) is optional.
+//   unverified — UPI checked by eye by the cashier; its transaction reference (UTR) is optional. Paid straight to the
+//                shop's own UPI ID, so it stays unverified until the shop confirms it reached its account;
+//   confirmed  — that UPI payment, confirmed by the owner (or a role that sees the books) in Reports → Reconciliation,
+//                after checking the bank or UPI app (the database keeps who and when; a phone can't set it).
 // Showing a QR never pays anything: a provider part counts only once its payment intent says "verified".
 // No card number, CVV or PIN is ever taken: at most the last 4 digits, and a reference that looks like a card number is
 // refused. Pure; amounts in rupees in and out, compared in paise.
@@ -23,7 +26,7 @@ export const DUE="due";
 export const PAY_VIA={upi:["manual","qr"],card:["terminal","link"]};
 export const VIA_LABELS={manual:"UPI (checked by hand)",qr:"UPI QR (verified)",terminal:"Card machine",link:"Card link (verified)"};
 export const PROVIDER_VIA=["qr","link"];
-export const VERIFY_LABELS={verified:"Verified",recorded:"Recorded",unverified:"Unverified"};
+export const VERIFY_LABELS={verified:"Verified",confirmed:"Confirmed",recorded:"Recorded",unverified:"Unverified"};
 /* A payment intent at the provider (a QR or a payment link) */
 export const INTENT_STATES=["pending","verified","failed","cancelled","expired","unmatched"];
 export const INTENT_LABELS={pending:"Payment pending",verified:"Payment received",failed:"Payment failed",cancelled:"Cancelled",expired:"Expired",unmatched:"Received, not matched to this bill"};

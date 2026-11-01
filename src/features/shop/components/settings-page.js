@@ -22,6 +22,9 @@ import { renderAll, setTab } from '../../../shared/ui/render.js';
 import { UI_ICON, formActionsHTML, kvHTML } from '../../../shared/ui/kit.js';
 import { fmtDate } from '../../../shared/formatting/dates.js';
 
+/* This device's note that a settings section was opened once (kept in its preferences) */
+const seenOnce = k => { if(store.prefs && !store.prefs[k]){ store.prefs[k] = true; savePrefs(); } };
+
 /* ---------- what each section holds ---------- */
 /* The features that belong to a section, and where they are switched (Business → Features) */
 const SECTION_FEATURES = {
@@ -120,6 +123,8 @@ export function renderSettingsPage(force){
     ${cur ? `<section class="setmain" id="set-${esc(key)}" data-setsec="${esc(key)}" aria-labelledby="setT">
       <div class="sethead"><button type="button" class="btn text sm setback" data-setback>${UI_ICON.back} Settings</button><h3 id="setT">${esc(cur.s.label)}</h3><p>${esc(cur.s.sub)}</p></div>
       ${cur.body}</section>` : `<section class="setmain"><p class="note">Nothing to set here for your role.</p></section>`}</div>`;
+  // a section shown (not merely listed): Home's "Getting started" counts its payment or receipt step as looked at
+  if(cur && showMain){ if(key === "payments") seenOnce("paySeen"); if(key === "billing") seenOnce("receiptSeen"); }
   if(cur && (key === "payments" || key === "billing") && can("manage_settings")) refreshPaymentsForm();
   fitDocFrames(host);   // a document preview in a section (Bills & Documents → Templates) scaled to its width
 }

@@ -4,7 +4,7 @@
 // Run: npm run test:unit
 import { createHmac } from 'crypto';
 import { checkLast4, checkReference, isUnverified, looksLikeCardNumber, paymentsOf, settlePayments, verificationOf } from '../../src/domain/sales/payments.js';
-import { checkVpa, upiPayUri } from '../../src/domain/sales/upi.js';
+import { checkVpa, upiCheckUri, upiPayUri } from '../../src/domain/sales/upi.js';
 import * as PG from '../../supabase/functions/payment-gateway/core.js';
 import * as SR from '../../supabase/functions/send-receipt/core.js';
 import { autoDeliveryPlan, nextAttemptAt, MAX_ATTEMPTS } from '../../src/domain/invoices/delivery.js';
@@ -63,15 +63,39 @@ const eq = (a, b) => JSON.stringify(sortKeys(a)) === JSON.stringify(sortKeys(b))
   check('shop UPI ID: name@bank', !checkVpa('') && !checkVpa('myshop@okaxis') && !!checkVpa('myshop').error && !!checkVpa('a b@x').error);
   const uri = upiPayUri({ vpa: 'myshop@okaxis', name: 'Riya Boutique', amount: 1890, note: 'Bill INV-1' });
   check('static UPI QR carries the exact amount', uri === 'upi://pay?pa=myshop%40okaxis&pn=Riya%20Boutique&am=1890.00&cu=INR&tn=Bill%20INV-1' && upiPayUri({ vpa: 'x', amount: 5 }) === '' && upiPayUri({ vpa: 'a@b', amount: 0 }) === '', uri);
+  const test = upiCheckUri({ vpa: ' myshop@okaxis ', name: 'Riya Boutique' });
+  check('the settings\' test QR: the UPI ID and the shop\'s name, never an amount (scanning it pays nothing); none for an ID that isn\'t name@bank',
+    test === 'upi://pay?pa=myshop%40okaxis&pn=Riya%20Boutique&cu=INR' && !/[?&]am=/.test(test) && upiCheckUri({ vpa: 'myshop', name: 'X' }) === '', test);
 }
 
 // ---------- payment-gateway (Edge Function core) ----------
 {
   const env = { RAZORPAY_KEY_ID: 'rzp_test_1', RAZORPAY_KEY_SECRET: 's3cret', PAYMENT_ALLOWED_USERS: 'shop@x.in' };
-  const cfg = PG.razorpayConfig(env);
-  check('provider set up only with both keys; the card link can be turned off', !!cfg && cfg.cardLink && !PG.razorpayConfig({ RAZORPAY_KEY_ID: 'x' }) && !PG.razorpayConfig({ ...env, PAYMENT_CARD_LINK: 'off' }).cardLink);
+  check('no shared Hangtag keys: the core has no reader of RAZORPAY_KEY_ID / _SECRET any more (each shop connects its own account)', !('razorpayConfig' in PG));
   check('only the accounts named may take provider payments (unset = off)', PG.allowedToPay({ id: 'u1', email: 'shop@x.in' }, env) && !PG.allowedToPay({ id: 'u2', email: 'x@y.z' }, env) && !PG.allowedToPay({ id: 'u1' }, {}) && PG.allowedToPay({ id: 'u9' }, { PAYMENT_ALLOWED_USERS: '*' }));
-  check('config: all off unless set up and allowed; keys never in the answer', eq(PG.configView(cfg, false), { ok: true, provider: null, upi: false, cardLink: false }) && eq(PG.configView(cfg, true), { ok: true, provider: 'razorpay', upi: true, cardLink: true }) && !JSON.stringify(PG.configView(cfg, true)).includes('s3cret'));
+  const keys = { keyId: 'rzp_test_AbCd1234', keySecret: 'S3cretS3cretS3cret', webhookSecret: 'hook-secret-1' };
+  check('the shop\'s own keys: a test key id, a secret, a webhook secret of its own; live keys only once live is switched on',
+    PG.checkKeys(keys, false).mode === 'test' && PG.checkKeys({ ...keys, keyId: 'rzp_live_AbCd1234' }, false).error === 'live_not_allowed' && PG.checkKeys({ ...keys, keyId: 'rzp_live_AbCd1234' }, true).mode === 'live'
+    && PG.checkKeys({ ...keys, keyId: 'AbCd1234' }, true).error === 'bad_key_id' && PG.checkKeys({ ...keys, webhookSecret: keys.keySecret }, true).error === 'bad_webhook_secret'
+    && PG.liveAllowed({ PAYMENT_LIVE_MODE: 'on' }) && !PG.liveAllowed({}) && !PG.liveAllowed({ PAYMENT_LIVE_MODE: 'true' }));
+  const acct = { id: 'a1', key_id: 'rzp_test_AbCd1234', mode: 'test', card_link: true, hook_id: 'h'.repeat(43), checked_at: null, last_event_at: null };
+  check('config: all off without the shop\'s own account or when not switched on; the key masked; the webhook address only for who manages settings',
+    eq(PG.configView(null, { allowed: true, available: true }), { ok: true, provider: null, upi: false, cardLink: false, gateway: { available: true, connected: false } })
+    && PG.configView(acct, { allowed: false, available: true }).upi === false && PG.configView(acct, { allowed: true, available: true }).upi === true
+    && PG.configView(acct, { allowed: true, available: true }).gateway.keyId === 'rzp_test_…1234' && PG.configView(acct, { allowed: true, available: true }).gateway.webhookUrl === undefined
+    && PG.configView(acct, { allowed: true, available: true, manage: true, supabaseUrl: 'https://p.supabase.co/' }).gateway.webhookUrl === 'https://p.supabase.co/functions/v1/payment-webhook?a=' + 'h'.repeat(43));
+  const sk = await PG.accountsKey({ PAYMENT_ACCOUNTS_KEY: Buffer.alloc(32, 1).toString('base64') });
+  const box = await PG.seal(sk, 'S3cretS3cretS3cret', 'acct-1', 'secret');
+  check('sealing: "v1.<iv>.<ciphertext>", opens only for the same account and field and key; no key for a key that isn\'t 32 bytes',
+    /^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{24,}$/.test(box) && !box.includes('S3cret') && (await PG.unseal(sk, box, 'acct-1', 'secret')) === 'S3cretS3cretS3cret'
+    && (await PG.unseal(sk, box, 'acct-2', 'secret')) === null && (await PG.unseal(sk, box, 'acct-1', 'webhook')) === null
+    && (await PG.unseal(await PG.accountsKey({ PAYMENT_ACCOUNTS_KEY: Buffer.alloc(32, 2).toString('base64') }), box, 'acct-1', 'secret')) === null
+    && (await PG.accountsKey({ PAYMENT_ACCOUNTS_KEY: 'c2hvcnQ=' })) === null && (await PG.accountsKey({})) === null && box !== (await PG.seal(sk, 'S3cretS3cretS3cret', 'acct-1', 'secret')));
+  const T0 = 1_800_000_000_000, open = { account_id: 'a1', client_sale_id: 's1', method: 'upi', amount: '500.00', status: 'pending', kind: 'qr', expires_at: new Date(T0 + 5 * 60000).toISOString() };
+  check('the same bill part asked for again gets its open QR back (same account, bill, method and amount, over a minute left); not another one\'s',
+    PG.reusable(open, { accountId: 'a1', saleId: 's1', method: 'upi', amount: 500 }, T0) && !PG.reusable(open, { accountId: 'a2', saleId: 's1', method: 'upi', amount: 500 }, T0)
+    && !PG.reusable(open, { accountId: 'a1', saleId: 's1', method: 'upi', amount: 501 }, T0) && !PG.reusable(open, { accountId: 'a1', saleId: 's1', method: 'upi', amount: 500 }, T0 + 4.5 * 60000)
+    && !PG.reusable({ ...open, status: 'verified' }, { accountId: 'a1', saleId: 's1', method: 'upi', amount: 500 }, T0));
   let v = PG.validateRequest({ action: 'create', method: 'upi', amount: 1890.5, sale_id: 's1', note: 'Bill <INV-1>', expiry_min: 99 });
   check('create: amount, bill id, note cleaned, expiry kept within 2-30 minutes', v.ok && v.amount === 1890.5 && v.note === 'Bill INV-1' && v.expiryMin === 30);
   check('create refuses a bad amount, method or missing bill', !PG.validateRequest({ action: 'create', method: 'upi', amount: 0, sale_id: 's1' }).ok && !PG.validateRequest({ action: 'create', method: 'upi', amount: 1.001, sale_id: 's1' }).ok
@@ -108,6 +132,11 @@ const eq = (a, b) => JSON.stringify(sortKeys(a)) === JSON.stringify(sortKeys(b))
   check('webhook: which QR and what it says', tgt.kind === 'qr' && tgt.providerIntentId === 'qr_1' && tgt.view.state === 'paid' && tgt.view.paymentId === 'pay_1');
   const lt = PG.webhookTarget({ event: 'payment_link.paid', payload: { payment_link: { entity: { id: 'plink_1', status: 'paid', amount_paid: 80000 } }, payment: { entity: { id: 'pay_9', amount: 80000, status: 'captured', method: 'card' } } } }, now);
   check('webhook: a paid card link', lt.kind === 'link' && lt.view.state === 'paid' && lt.view.paymentId === 'pay_9' && PG.webhookTarget({ event: 'order.paid', payload: {} }) === null);
+  const rf = PG.webhookTarget({ event: 'refund.failed', payload: { refund: { entity: { id: 'rfnd_1', payment_id: 'pay_9', status: 'failed' } } } });
+  check('webhook: a refund\'s outcome (processed / failed); Razorpay\'s refund states read as pending until then', rf.kind === 'refund' && rf.refundId === 'rfnd_1' && rf.state === 'failed'
+    && PG.webhookTarget({ event: 'refund.processed', payload: { refund: { entity: { id: 'rfnd_2' } } } }).state === 'processed' && PG.refundState('pending') === 'pending' && PG.refundState(undefined) === 'pending');
+  check('a notification\'s id: Razorpay\'s event id, else the body\'s hash (the same body again is the same notification)', (await PG.eventIdOf('evt_ABC123', body)) === 'evt_ABC123'
+    && (await PG.eventIdOf('', body)) === (await PG.eventIdOf(null, body)) && /^sha256:[0-9a-f]{64}$/.test(await PG.eventIdOf('', body)) && (await PG.eventIdOf('', body + ' ')) !== (await PG.eventIdOf('', body)));
   const R = PG.intentReply({ id: 'i', method: 'upi', kind: 'qr', status: 'pending', amount: '1890.00', reference: 'qr_1', qr_url: 'https://rzp.io/q', expires_at: new Date(now).toISOString(), provider_response: { secret: 1 } });
   check('the app\'s view of an intent: no provider response inside', R.amount === 1890 && R.qrUrl === 'https://rzp.io/q' && R.expiresAt === now && !('provider_response' in R));
 }

@@ -26,7 +26,7 @@ export function cashCardHTML(R){
 export function bankCardHTML(R){
   const B=bankBookFor(R.from,R.to);
   return `<div class="bookkpis">${kv("UPI",inrx(B.upiIn))}${kv("Card",inrx(B.cardIn))}${kv("Refunds","−"+inrx(B.refunds))}${kv("Net to bank",inrx(B.net),"hl")}</div>
-    <p class="note">${count(B.entries.length,B.cancelled)}${B.upiUnverified?` · <span class="btag warn" data-unverified>${inrx(B.upiUnverified)} UPI unverified</span>`:""}${B.verifiedIn?` · ${inrx(B.verifiedIn)} verified by the provider`:""}</p><button class="btn xs" data-book="bank">Open bank book</button>${bankSummaryHTML()}`;
+    <p class="note">${count(B.entries.length,B.cancelled)}${B.upiUnverified?` · <span class="btag warn" data-unverified>${inrx(B.upiUnverified)} UPI unverified</span>`:""}${B.upiConfirmed?` · ${inrx(B.upiConfirmed)} UPI confirmed by you`:""}${B.verifiedIn?` · ${inrx(B.verifiedIn)} verified by the provider`:""}</p><button class="btn xs" data-book="bank">Open bank book</button>${bankSummaryHTML()}`;
 }
 /* kind: "cash" | "bank" — the entries for the period chosen on Reports */
 export function openBook(kind){
@@ -41,7 +41,7 @@ export function openBook(kind){
     if(e.collectionId) return `<button class="bkrow${off?" off":""}" data-custhist="${esc(e.customerId||"")}" data-entry="${esc(e.id)}"><span class="bk-w"><b>Payment from ${esc(e.customerName||"a customer")}</b><small>${esc(when(e.t))} · ${PAY_LABELS[e.method]||esc(e.method)} collected${e.ref?" · ref "+esc(e.ref):""}${e.verification==="unverified"?` · <span class="btag warn">Unverified</span>`:""}${off?` · <span class="btag">Cancelled</span>`:""}</small></span>`+
       `<span class="bk-a in">+${inrx(e.in)}</span>${cash?`<span class="bk-b">${inrx(e.balance)}</span>`:""}</button>`;
     const what=cash?(e.type==="cash_refund"?"Cash refund":"Cash sale")+(e.type==="cash_sale"&&e.change?` · received ${inrx(e.received)}, change ${inrx(e.change)}`:"")
-      :`${PAY_LABELS[e.method]||esc(e.method)} ${e.type==="refund"?"refund":"received"}${e.ref?" · ref "+esc(e.ref):""}${e.verification==="unverified"?` · <span class="btag warn">Unverified</span>`:e.verification==="verified"?` · <span class="btag ok">Verified</span>`:""}`;
+      :`${PAY_LABELS[e.method]||esc(e.method)} ${e.type==="refund"?"refund":"received"}${e.ref?" · ref "+esc(e.ref):""}${e.verification==="unverified"?` · <span class="btag warn">Unverified</span>`:e.verification==="verified"?` · <span class="btag ok">Verified</span>`:e.verification==="confirmed"?` · <span class="btag ok">Confirmed</span>`:""}`;
     return `<button class="bkrow${off?" off":""}" data-billview="${esc(e.saleId)}" data-entry="${esc(e.id)}"><span class="bk-w"><b>${esc(e.billNo||"Bill")}</b><small>${esc(when(e.t))} · ${what}${off?` · <span class="btag">Cancelled</span>`:""}</small></span>`+
       `<span class="bk-a ${e.in?"in":"out"}">${e.in?"+"+inrx(e.in):"−"+inrx(e.out)}</span>${cash?`<span class="bk-b">${inrx(e.balance)}</span>`:""}</button>`;
   };
@@ -49,7 +49,7 @@ export function openBook(kind){
       <div class="bookkpis">${kv("Opening float",inrx(B.openingFloat))}${kv("Cash in",inrx(B.cashIn))}${kv("Cash out","−"+inrx(B.cashOut))}${kv("Expenses","−"+inrx(B.expenses))}</div>
       <p class="note">Cash received ${inrx(B.received)} · change given ${inrx(B.changeGiven)}. Cash sales count what stays in the drawer.${B.collections?` Collected from customers who owed: <b>${inrx(B.collections)}</b>.`:""}</p>`
     :`<div class="bookkpis">${kv("UPI received",inrx(B.upiIn))}${kv("Card received",inrx(B.cardIn))}${kv("Refunds","−"+inrx(B.refunds))}${kv("Net",inrx(B.net),"hl")}</div>
-      <p class="note">Verified by the payment provider ${inrx(B.verifiedIn)}${B.upiUnverified?` · UPI checked by hand, not yet verified: <b>${inrx(B.upiUnverified)}</b>`:""}${B.collections?` · collected from customers who owed: <b>${inrx(B.collections)}</b>`:""}</p>`;
+      <p class="note">Verified by the payment provider ${inrx(B.verifiedIn)}${B.upiConfirmed?` · UPI confirmed by you: <b>${inrx(B.upiConfirmed)}</b>`:""}${B.upiUnverified?` · UPI checked by hand, not yet confirmed: <b>${inrx(B.upiUnverified)}</b>`:""}${B.collections?` · collected from customers who owed: <b>${inrx(B.collections)}</b>`:""}</p>`;
   $("#modalHost").innerHTML=`<div class="scrim" data-modal-scrim><div class="sheet booksheet" id="bookSheet" data-bookkind="${kind}" role="dialog" aria-modal="true" aria-labelledby="bookT">
     <div class="sh-head"><div class="sh-t"><h3 id="bookT">${cash?"Cash book":"Bank book"}</h3><p>${esc(R.label)}${cash?"":" · UPI and card"}</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
     ${sum}

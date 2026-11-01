@@ -10,7 +10,7 @@ import { callbackUrl } from "../delivery-status/core.js";
 
 export const CHANNELS = ["email", "whatsapp", "sms"];
 export const CHANNEL_LABELS = { email: "email", whatsapp: "WhatsApp", sms: "SMS" };
-export const LIMITS = { saleId: 64, receiptUrl: 500, sms: 300, whatsapp: 4000, lines: 200, notes: 2000 };
+export const LIMITS = { saleId: 64, receiptUrl: 500, sms: 300, whatsapp: 4000, lines: 200, notes: 2000, pdfBytes: 2097152, pdfBase64: 2796204 };
 /* Quotations go by email or WhatsApp (an SMS can't carry a quotation's lines) */
 export const QUOTE_CHANNELS = ["email", "whatsapp"];
 /* One press of Send on the phone: the id that makes a retry or a queued send go out only once */
@@ -28,16 +28,21 @@ export const PROFILE_COLUMNS = "shop_name,address,city,state,phone,gstin";
 const fail = (status, error, message) => ({ ok: false, status, error, message });
 const str = (v) => (typeof v === "string" ? v : "");
 
-/* body: { action: "channels" } · { action: "send", channel, sale_id, auto? } · { action: "send", channel, order_id, request_id }
-   (a quotation) · { action: "refresh" | "link", sale_id }. Anything else in the body is ignored. auto: sent by itself when
-   the bill completed — at most once per bill and channel. */
+/* body: { action: "channels" } · { action: "send", channel, sale_id, auto?, request_id?, customer_id? } · { action: "send",
+   channel, order_id, request_id } (a quotation) · { action: "refresh" | "link", sale_id } · { action: "invoice", sale_id,
+   pdf? } (the bill's one invoice PDF: registered from this copy when it has none yet, base64). Anything else in the body is
+   ignored. auto: sent by itself when the bill completed — at most once per bill and channel. request_id: one press of
+   Send, used once. customer_id: a saved customer to send a walk-in bill to (the bill itself doesn't change). */
 export function validateRequest(body) {
   if (!body || typeof body !== "object") return fail(400, "bad_request", "Send the request as JSON.");
   if (body.action === "channels") return { ok: true, action: "channels" };
-  if (body.action === "refresh" || body.action === "link") {
+  if (body.action === "refresh" || body.action === "link" || body.action === "invoice") {
     const saleId = str(body.sale_id).trim();
     if (!saleId || saleId.length > LIMITS.saleId) return fail(400, "bad_request", "Which bill? The bill id is missing.");
-    return { ok: true, action: body.action, saleId };
+    if (body.action !== "invoice") return { ok: true, action: body.action, saleId };
+    const pdf = str(body.pdf).trim();
+    if (pdf.length > LIMITS.pdfBase64) return fail(413, "too_large", "That invoice PDF is too big (2 MB at most).");
+    return { ok: true, action: "invoice", saleId, pdf };
   }
   if (body.action !== "send") return fail(400, "bad_request", "Unknown action.");
   const channel = body.channel;
@@ -52,7 +57,10 @@ export function validateRequest(body) {
   }
   const saleId = str(body.sale_id).trim();
   if (!saleId || saleId.length > LIMITS.saleId) return fail(400, "bad_request", "Which bill? The bill id is missing.");
-  return { ok: true, action: "send", channel, saleId, auto: body.auto === true };
+  const requestId = str(body.request_id).trim(), customerId = str(body.customer_id).trim();
+  if (requestId && !REQUEST_ID_RE.test(requestId)) return fail(400, "bad_request", "The send request's id isn't valid.");
+  if (customerId && !/^[A-Za-z0-9_-]{1,64}$/.test(customerId)) return fail(400, "bad_request", "Which customer? The customer id isn't valid.");
+  return { ok: true, action: "send", channel, saleId, auto: body.auto === true, ...(requestId ? { requestId } : {}), ...(customerId ? { customerId } : {}) };
 }
 
 /* Which provider serves each channel, from the function's secrets (env: an object of strings). null = not set up.
@@ -63,7 +71,7 @@ export function providerConfig(channel, env, kind = "bill") {
   if (kind === "quote") {
     if (!QUOTE_CHANNELS.includes(channel)) return null;
     if (channel === "whatsapp") {
-      const q = { ...env, WHATSAPP_TEMPLATE: str(env.WHATSAPP_QUOTE_TEMPLATE), TWILIO_WHATSAPP_CONTENT_SID: str(env.TWILIO_WHATSAPP_QUOTE_CONTENT_SID) };
+      const q = { ...env, WHATSAPP_TEMPLATE: str(env.WHATSAPP_QUOTE_TEMPLATE), TWILIO_WHATSAPP_CONTENT_SID: str(env.TWILIO_WHATSAPP_QUOTE_CONTENT_SID), WHATSAPP_TEMPLATE_DOCUMENT: "" };
       return providerConfig(channel, q, "bill");
     }
   }
@@ -81,15 +89,20 @@ export function providerConfig(channel, env, kind = "bill") {
     return null;
   }
   const name = (e("WHATSAPP_PROVIDER") || "meta").toLowerCase();
+  // documentHeader: the approved bill template has a DOCUMENT header, so the invoice PDF itself goes with the message
+  // (WHATSAPP_TEMPLATE_DOCUMENT=on); otherwise the message carries the invoice link. Quotations have no PDF here.
   if (name === "meta" && e("WHATSAPP_TOKEN") && e("WHATSAPP_PHONE_NUMBER_ID") && e("WHATSAPP_TEMPLATE"))
-    return { name, token: e("WHATSAPP_TOKEN"), phoneNumberId: e("WHATSAPP_PHONE_NUMBER_ID"), template: e("WHATSAPP_TEMPLATE"), language: e("WHATSAPP_TEMPLATE_LANG") || "en", apiVersion: e("WHATSAPP_API_VERSION") || "v21.0" };
+    return { name, token: e("WHATSAPP_TOKEN"), phoneNumberId: e("WHATSAPP_PHONE_NUMBER_ID"), template: e("WHATSAPP_TEMPLATE"), language: e("WHATSAPP_TEMPLATE_LANG") || "en", apiVersion: e("WHATSAPP_API_VERSION") || "v21.0",
+      documentHeader: e("WHATSAPP_TEMPLATE_DOCUMENT").toLowerCase() === "on" };
   if (name === "twilio" && twilio && e("TWILIO_WHATSAPP_FROM") && e("TWILIO_WHATSAPP_CONTENT_SID"))
     return { name, ...twilio, from: e("TWILIO_WHATSAPP_FROM"), contentSid: e("TWILIO_WHATSAPP_CONTENT_SID"), whatsapp: true };
   return null;
 }
-/* { email, whatsapp, sms } for bills, and quote_email / quote_whatsapp for quotations */
+/* { email, whatsapp, sms } for bills, quote_email / quote_whatsapp for quotations, and whatsapp_pdf: WhatsApp carries the
+   invoice PDF itself (a template with a document header) rather than its link */
 export const configuredChannels = (env) => ({ ...Object.fromEntries(CHANNELS.map((c) => [c, !!providerConfig(c, env)])),
-  ...Object.fromEntries(QUOTE_CHANNELS.map((c) => ["quote_" + c, !!providerConfig(c, env, "quote")])) });
+  ...Object.fromEntries(QUOTE_CHANNELS.map((c) => ["quote_" + c, !!providerConfig(c, env, "quote")])),
+  whatsapp_pdf: !!(providerConfig("whatsapp", env) || {}).documentHeader });
 
 /* May this signed-in account send? Sign-up is open and the provider accounts are the operator's, so sending is off until
    SEND_ALLOWED_USERS names who may send: user ids or sign-in emails, comma-separated, or "*" for every signed-in account.
@@ -217,23 +230,28 @@ export function billView({ sale, items, payments, returns, shop, customer, regio
 }
 const lineText = (l) => `${l.name}${l.detail ? " (" + l.detail + ")" : ""} × ${l.qty} = ${rupees(l.gross)}${l.discount ? ` (discount −${rupees(l.discount)})` : ""}`;
 
-/* The message for a channel: email { subject, html, text } · SMS { text } · WhatsApp { text, params } (template values
-   {{1}} customer, {{2}} shop, {{3}} bill number, {{4}} amount) */
+/* The message for a channel: email { subject, html, text, attachments? } · SMS { text } · WhatsApp { text, params,
+   document? } (template values {{1}} customer, {{2}} shop, {{3}} bill number, {{4}} amount).
+   With the bill's one invoice PDF (canonical invoice): data.pdf { base64, filename } goes with an email as its only
+   attachment; data.pdfLink says the link opens that PDF (SMS can't carry a file: it carries the link, and never says
+   "attached"); data.document { link, filename } is the PDF for a WhatsApp template with a document header. */
 export function billMessage(channel, data) {
   const rupees = moneyFor(data && data.region);
   const B = billView(data), more = B.more ? [`… and ${B.more} more items`] : [];
-  const link = data && data.link ? String(data.link) : "";
+  const link = data && data.link ? String(data.link) : "", pdfLink = !!(data && data.pdfLink);
   if (channel === "sms") {
     // one message where possible: the link is kept whole; the words before it are shortened when space is short
-    const head = `${B.shop}: Bill ${B.number} for ${B.total}, ${B.paid}.`, tail = link ? ` Invoice: ${link}` : " Thank you for shopping with us!";
+    const head = `${B.shop}: Bill ${B.number} for ${B.total}, ${B.paid}.`, tail = link ? (pdfLink ? ` Download your bill (PDF): ${link}` : ` Invoice: ${link}`) : " Thank you for shopping with us!";
     const t = head + tail;
     return { text: t.length <= LIMITS.sms ? t : link ? head.slice(0, LIMITS.sms - tail.length - 1) + "…" + tail : t.slice(0, LIMITS.sms - 1) + "…" };
   }
   if (channel === "whatsapp") {
-    const text = [`*${B.shop}*`, `${B.title} ${B.number} · ${B.date}`, "", ...B.lines.map(lineText), ...more, "", ...B.rows.map(([l, v, b]) => (v ? (b ? `*${l}: ${v}*` : `${l}: ${v}`) : l)), ...(link ? ["", `Invoice: ${link}`] : [])].join("\n");
+    const doc = data && data.document && data.document.link ? { link: String(data.document.link), filename: invoiceFileName(data.document.filename || B.number) } : null;
+    const text = [`*${B.shop}*`, `${B.title} ${B.number} · ${B.date}`, "", ...B.lines.map(lineText), ...more, "", ...B.rows.map(([l, v, b]) => (v ? (b ? `*${l}: ${v}*` : `${l}: ${v}`) : l)),
+      ...(doc ? ["", "Your bill is attached as a PDF."] : link ? ["", `${pdfLink ? "Download your bill (PDF)" : "Invoice"}: ${link}`] : [])].join("\n");
     // the approved template has {{1}}..{{4}}; a template with a 5th value for the link is used when WHATSAPP_LINK_PARAM=on
     const params = [B.customer || "Customer", B.shop, B.number, B.total, ...(link && data.linkParam ? [link] : [])];
-    return { text: text.slice(0, LIMITS.whatsapp), params: params.map((x) => x.slice(0, 200)) };
+    return { text: text.slice(0, LIMITS.whatsapp), params: params.map((x) => x.slice(0, 200)), ...(doc ? { document: doc } : {}) };
   }
   const subject = `Your bill ${B.number} from ${B.shop} — ${B.total}`.slice(0, 200);
   const td = 'style="padding:6px 0;border-bottom:1px solid #eee;font-size:14px;color:#222"', tdr = 'style="padding:6px 0;border-bottom:1px solid #eee;font-size:14px;color:#222;text-align:right;white-space:nowrap"';
@@ -242,20 +260,24 @@ export function billMessage(channel, data) {
   const money = B.rows.map(([l, v, b]) => `<tr><td style="padding:3px 0;font-size:14px;color:#222${b ? ";font-weight:700" : ""}">${esc(l)}</td><td style="padding:3px 0;font-size:14px;color:#222;text-align:right${b ? ";font-weight:700" : ""}">${esc(v)}</td></tr>`).join("");
   // the logo row (an inline picture the message carries, data.logo from emailLogo) — and the same email without it, in case
   // the email service turns the picture down (the receipt still goes)
-  const L = data && data.logo, logoRow = L ? `<tr><td style="padding-bottom:10px;text-align:${L.align}"><img src="cid:${LOGO_CID}" alt="${esc(B.shop)}" style="max-height:64px;max-width:180px;display:inline-block"></td></tr>` : "";
+  // with the invoice PDF, the PDF is the email's one attachment: no inline logo (the PDF carries it) and no second try
+  // without attachments (an email that drops the PDF would not be the invoice)
+  const P = data && data.pdf && data.pdf.base64 ? { base64: String(data.pdf.base64), filename: invoiceFileName(data.pdf.filename || B.number) } : null;
+  const L = P ? null : data && data.logo, logoRow = L ? `<tr><td style="padding-bottom:10px;text-align:${L.align}"><img src="cid:${LOGO_CID}" alt="${esc(B.shop)}" style="max-height:64px;max-width:180px;display:inline-block"></td></tr>` : "";
   const page = (top) => `<!doctype html><html><body style="margin:0;background:#f5f4f1;font-family:Arial,Helvetica,sans-serif">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f4f1;padding:24px 12px"><tr><td align="center">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;padding:24px">
 ${top}<tr><td style="font-size:20px;font-weight:700;color:#111">${esc(B.shop)}</td></tr>
 ${B.contact.length ? `<tr><td style="font-size:13px;color:#666;padding-top:2px">${B.contact.map(esc).join(" · ")}</td></tr>` : ""}
-<tr><td style="padding-top:18px;font-size:15px;color:#222">${B.customer ? `Hello ${esc(B.customer)},<br>` : ""}Thank you for shopping with us. Here is your ${esc(B.title.toLowerCase())}.</td></tr>
+<tr><td style="padding-top:18px;font-size:15px;color:#222">${B.customer ? `Hello ${esc(B.customer)},<br>` : ""}Thank you for shopping with us. Here is your ${esc(B.title.toLowerCase())}.${P ? ` It is attached as a PDF (${esc(P.filename)}).` : ""}</td></tr>
 <tr><td style="padding-top:14px;font-size:13px;color:#666">${esc(B.title)} <b style="color:#222">${esc(B.number)}</b> · ${esc(B.date)}</td></tr>
 <tr><td style="padding-top:10px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${items}</table></td></tr>
 <tr><td style="padding-top:10px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${money}</table></td></tr>
 <tr><td style="padding-top:22px;font-size:11px;color:#999">Sent by ${esc(B.shop)} with Hangtag. Reply to this email to contact the shop.</td></tr>
 </table></td></tr></table></body></html>`;
-  const text = [B.shop, ...B.contact, "", `${B.customer ? `Hello ${B.customer},\n` : ""}Thank you for shopping with us. Here is your ${B.title.toLowerCase()}.`, "",
+  const text = [B.shop, ...B.contact, "", `${B.customer ? `Hello ${B.customer},\n` : ""}Thank you for shopping with us. Here is your ${B.title.toLowerCase()}.${P ? ` It is attached as a PDF (${P.filename}).` : ""}`, "",
     `${B.title} ${B.number} · ${B.date}`, "", ...B.lines.map(lineText), ...more, "", ...B.rows.map(([l, v]) => (v ? `${l}: ${v}` : l))].join("\n");
+  if (P) return { subject, html: page(""), text, attachments: [{ filename: P.filename, content: P.base64, content_type: "application/pdf" }] };
   if (!L) return { subject, html: page(""), text };
   return { subject, html: page(logoRow), text, plainHtml: page(""),
     attachments: [{ filename: `logo.${L.ext}`, content: L.base64, content_type: L.contentType, content_id: LOGO_CID }] };
@@ -341,9 +363,9 @@ ${block("Notes", Q.notes)}${block("Terms & conditions", Q.terms)}
 /* ---------- the delivery record ----------
    A row is written as "pending" before the provider is called (it holds the attempt's place under the hourly limit),
    then finished as "sent" (only with the provider's message id) or "failed". */
-export const reservationRow = ({ ownerId, saleId, orderId, requestId, channel, to, provider, auto }) =>
+export const reservationRow = ({ ownerId, saleId, orderId, requestId, invoiceId, channel, to, provider, auto }) =>
   ({ owner_id: ownerId, sale_id: saleId || null, channel, recipient: String(to).slice(0, 200), status: "pending", provider: provider || null, mode: auto ? "auto" : "manual",
-    ...(orderId ? { order_id: orderId } : {}), ...(requestId ? { request_id: requestId } : {}) });
+    ...(orderId ? { order_id: orderId } : {}), ...(requestId ? { request_id: requestId } : {}), ...(invoiceId ? { invoice_id: invoiceId } : {}) });
 /* result: a provider's { ok, id, message } → the columns that finish the row */
 export function deliveryOutcome(result) {
   const sent = !!(result && result.ok && result.id);
@@ -352,6 +374,56 @@ export function deliveryOutcome(result) {
 }
 /* The finished row for one attempt */
 export const deliveryRow = ({ result, ...r }) => ({ ...reservationRow(r), ...deliveryOutcome(result) });
+
+/* ---------- the bill's one invoice PDF (canonical invoice) ----------
+   The phone makes the bill's PDF with the app's own invoice document (src/shared/utils/pdf.js docPdfBytes, the file the
+   shop downloads and prints) and registers it once; the first copy registered is the bill's invoice for good
+   (hangtag_invoices, one row per bill; the file in the private bucket). The function takes a copy only for a saved, not
+   cancelled bill of the caller's shop, and only when the copy shows that bill's number and total. Every channel then uses
+   that file: email attaches it, WhatsApp sends it as a document (or its link), SMS sends the link to download it. */
+export const INVOICE_BUCKET = "hangtag-invoices";
+export const INVOICE_COLUMNS = "id,sale_id,number,total,sha256,size_bytes,storage_path,created_at";
+/* "Invoice-<number>.pdf", safe in a header and a file system */
+export const invoiceFileName = (number) => `Invoice-${String(number || "bill").replace(/^Invoice-/, "").replace(/\.pdf$/i, "").replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "bill"}.pdf`;
+/* <shop>/<sha256>.pdf: the same file is stored once, whoever registers it */
+export const invoicePath = (ownerId, sha256) => `${ownerId}/${sha256}.pdf`;
+/* base64 → bytes, or null when it isn't base64 */
+export function pdfFromBase64(b64) {
+  const s = str(b64).replace(/\s+/g, "");
+  if (!s || s.length % 4 || !/^[A-Za-z0-9+/]+={0,2}$/.test(s)) return null;
+  try { const bin = atob(s), out = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; } catch { return null; }
+}
+/* bytes → base64 (in pieces: a whole file at once overflows the call stack) */
+export function base64Of(bytes) {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+/* The text a PDF made by the app's writer shows: every "(…) Tj" string, unescaped (the writer never compresses) */
+export function pdfTexts(bytes) {
+  let s = ""; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return [...s.matchAll(/\(((?:\\[\s\S]|[^\\)])*)\)\s*Tj/g)].map((m) => m[1].replace(/\\([\\()])/g, "$1"));
+}
+/* Is this copy the bill's invoice? A PDF, at most 2 MB, showing the saved bill's number and its total (in any money format:
+   the digits of the amount, with or without paise). → { ok } or a refusal. */
+export function checkInvoicePdf(bytes, sale) {
+  if (!bytes || bytes.length < 200) return fail(400, "bad_pdf", "That isn't an invoice PDF.");
+  if (bytes.length > LIMITS.pdfBytes) return fail(413, "too_large", "That invoice PDF is too big (2 MB at most).");
+  const head = String.fromCharCode(...bytes.subarray(0, 5)), tail = String.fromCharCode(...bytes.subarray(Math.max(0, bytes.length - 32)));
+  if (head !== "%PDF-" || !tail.includes("%%EOF")) return fail(400, "bad_pdf", "That isn't an invoice PDF.");
+  const texts = pdfTexts(bytes), number = str(sale && sale.bill_no).trim();
+  if (!number || !texts.some((t) => t.includes(number))) return fail(422, "invoice_mismatch", "That PDF isn't this bill's invoice: its number isn't on it.");
+  const total = r2(num(sale.total)), digits = (t) => t.replace(/\D/g, ""), want = [String(Math.round(total * 100)), ...(Number.isInteger(total) ? [String(total)] : [])];
+  if (!texts.some((t) => /\d/.test(t) && want.includes(digits(t)))) return fail(422, "invoice_mismatch", "That PDF isn't this bill's invoice: its total isn't on it.");
+  return { ok: true };
+}
+/* The SHA-256 of a file, as hex */
+export async function sha256Hex(bytes) {
+  const h = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return [...h].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+/* What the app is told about an invoice */
+export const invoiceView = (row) => row && { id: row.id, number: row.number, sha256: row.sha256, size: row.size_bytes, filename: invoiceFileName(row.number), createdAt: row.created_at };
 
 /* ---------- secure invoice links ---------- */
 export const LINK_DAYS = 366;

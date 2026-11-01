@@ -16,14 +16,21 @@ export function createSubscriptionClient({ cloud }){
     autopayQuote: () => cloud.subscriptionAutopayQuote(),
     /* Is online payment (and AutoPay) set up? Never throws: not deployed / not set up / unreachable → not available */
     async config(){
-      try{ const r = await cloud.subscriptionCall({ action: "config" }); return { available: !!(r && r.available), provider: (r && r.provider) || null, autopay: !!(r && r.autopay) }; }
+      try{
+        const r = await cloud.subscriptionCall({ action: "config" }), verify = +(r && r.autopay_verify);
+        // autopay_verify: what UPI or a card takes to confirm AutoPay (₹, refunded), shown before the owner agrees
+        return { available: !!(r && r.available), provider: (r && r.provider) || null, autopay: !!(r && r.autopay),
+          ...(r && r.autopay && verify > 0 && verify <= 100 ? { autopay_verify: verify } : {}) };
+      }
       catch(e){ return { available: false, provider: null, autopay: false, reason: e && e.code === ERROR_CODES.NOT_CONFIGURED ? "not_configured" : "unreachable" }; }
     },
     /* AutoPay with the owner's consent to the terms of this version → { auth_url, first_charge_at, today, price } */
-    autopayStart: consentVersion => cloud.subscriptionCall({ action: "autopay_start", consent: true, consent_version: consentVersion }),
+    /* phone: the payer's mobile number for the mandate, when the server asked for one (phone_required) */
+    autopayStart: (consentVersion, phone) => cloud.subscriptionCall({ action: "autopay_start", consent: true, consent_version: consentVersion, ...(phone ? { phone } : {}) }),
     autopayVerify: () => cloud.subscriptionCall({ action: "autopay_verify" }),
     autopayCancel: () => cloud.subscriptionCall({ action: "autopay_cancel" }),
-    checkout: (plan, promo) => cloud.subscriptionCall({ action: "checkout", plan, promo: promo || "" }),
+    /* phone: the payer's mobile number for this payment, when the server asked for one (phone_required) */
+    checkout: (plan, promo, phone) => cloud.subscriptionCall({ action: "checkout", plan, promo: promo || "", ...(phone ? { phone } : {}) }),
     verify: paymentId => cloud.subscriptionCall({ action: "verify", payment_id: paymentId }),
   });
 }

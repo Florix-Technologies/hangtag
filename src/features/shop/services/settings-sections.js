@@ -14,7 +14,7 @@ export const SETTINGS_SECTIONS = [
   { key: "plans", label: "Plans & Billing", icon: "receipt", owner: true, sub: "Your Hangtag plan: the free trial, renewing, promo codes and payments.",
     keywords: "plan plans subscription trial free trial renew renewal upgrade pay payment promo code coupon discount price expiry expires hangtag billing invoice" },
   { key: "payments", label: "Payments & Banks", icon: "bank", perms: ["manage_settings"], sub: "How customers pay you, your bank accounts and the cash drawer.",
-    keywords: "upi id qr verified razorpay card machine bank account accounts balance opening transfer money in out adjustment default expense categories cash drawer" },
+    keywords: "connect a payment gateway gateway payment gateway cashfree own upi qr test qr upi id qr verified razorpay card machine bank account accounts balance opening transfer money in out adjustment default expense categories cash drawer" },
   { key: "billing", label: "Bills & Documents", icon: "receipt", perms: ["manage_settings"], sub: "Bill numbers, document templates, your logo, GST on bills and receipts sent to customers.",
     keywords: "bill number prefix invoice receipt paper 80mm a4 footer template modern classic minimal compact thermal logo accent colour terms signature bank details gst tax rate inclusive b2cl e-invoice e-way quotation whatsapp sms email send automatically" },
   { key: "inventory", label: "Products & Inventory", icon: "box", perms: ["manage_settings", "manage_products", "manage_inventory"], sub: "Stock alerts and expiry dates.",

@@ -5,8 +5,10 @@
 //   supabase functions deploy receipt --no-verify-jwt
 // Views are counted on the link. The figures come from the saved bill (send-receipt/core.js billView): nothing is
 // recalculated here.
+// { token, pdf: true }: the bill's one invoice PDF (send-receipt's canonical invoice, the same file the email attached and
+// WhatsApp carried) as a download address that works for two minutes; "no_pdf" when the bill has none.
 import { createClient } from "npm:@supabase/supabase-js@2.117.2";
-import { ITEM_COLUMNS, PAYMENT_COLUMNS, PROFILE_COLUMNS, RETURN_COLUMNS, SALE_COLUMNS, billView, liveLink, shopLogo } from "../send-receipt/core.js";
+import { INVOICE_BUCKET, ITEM_COLUMNS, PAYMENT_COLUMNS, PROFILE_COLUMNS, RETURN_COLUMNS, SALE_COLUMNS, billView, invoiceFileName, liveLink, shopLogo } from "../send-receipt/core.js";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -19,7 +21,7 @@ const gone = () => reply(404, { ok: false, error: "not_found", message: "This in
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return reply(405, { ok: false, error: "method_not_allowed" });
-  let body: { token?: unknown };
+  let body: { token?: unknown; pdf?: unknown };
   try { body = await req.json(); } catch { return reply(400, { ok: false, error: "bad_request" }); }
   const token = typeof body.token === "string" ? body.token.trim() : "";
   if (!/^[A-Za-z0-9_-]{32,64}$/.test(token)) return gone();
@@ -29,6 +31,16 @@ Deno.serve(async (req) => {
   const own = (t: string) => admin.from(t).select("*").eq("owner_id", link.owner_id);
   const { data: sale } = await admin.from("hangtag_sales").select(SALE_COLUMNS).eq("owner_id", link.owner_id).eq("id", link.sale_id).maybeSingle();
   if (!sale) return gone();
+  // the bill's invoice PDF, if it has one (only this link's bill, of this link's shop); before the invoices table exists: none
+  const inv = await admin.from("hangtag_invoices").select("storage_path,number").eq("owner_id", link.owner_id).eq("sale_id", sale.id).maybeSingle();
+  const invoice = inv.error ? null : inv.data;
+  if (body.pdf === true) {
+    if (!invoice || sale.is_void) return reply(404, { ok: false, error: "no_pdf", message: "This bill has no PDF to download. Use Print or save as PDF." });
+    const { data: signed, error } = await admin.storage.from(INVOICE_BUCKET).createSignedUrl(invoice.storage_path, 120, { download: invoiceFileName(invoice.number) });
+    if (error || !signed) { console.error("receipt: couldn't sign the invoice address:", error && error.message); return reply(503, { ok: false, error: "unavailable" }); }
+    await admin.from("hangtag_invoice_links").update({ views: (link.views || 0) + 1, last_viewed_at: new Date().toISOString() }).eq("token", token);
+    return reply(200, { ok: true, url: signed.signedUrl, filename: invoiceFileName(invoice.number) });
+  }
   const [items, payments, profile, customer, logo, rets, settings] = await Promise.all([
     admin.from("hangtag_sale_items").select(ITEM_COLUMNS).eq("owner_id", link.owner_id).eq("sale_id", sale.id).order("line_no").limit(500),
     admin.from("hangtag_payments").select(PAYMENT_COLUMNS).eq("owner_id", link.owner_id).eq("sale_id", sale.id).order("id"),
@@ -45,5 +57,5 @@ Deno.serve(async (req) => {
   // the logo as the shop prints it: not at all when switched off; where it goes (Settings → Bills & Documents → Logo)
   const L = shopLogo((logo as { data?: { value?: unknown } }).data?.value, sv && sv.value);
   return reply(200, { ok: true, bill: billView({ sale, items: items.data || [], payments: payments.data || [], returns: (rets as { data?: unknown[] }).data || [], shop: profile.data || {}, customer: customer.data, region }),
-    cancelled: !!sale.is_void, logo: L ? L.url : null, logoAlign: L ? L.align : "left", expiresAt: link.expires_at });
+    cancelled: !!sale.is_void, logo: L ? L.url : null, logoAlign: L ? L.align : "left", expiresAt: link.expires_at, pdf: !!invoice && !sale.is_void });
 });

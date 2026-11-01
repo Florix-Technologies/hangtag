@@ -6,10 +6,12 @@
 //   test project). Not configured → { available: false }: the app says online payment isn't set up; a 100% promo still
 //   works (nothing to pay, activated at once). A payment is always checked with the provider that took it. Cashfree needs
 //   the payer's mobile number: the shop's (Settings → Business), asked for when missing.
-// - AutoPay (the 30-day trial, then the AutoPay plan monthly; Razorpay): autopay_start checks the provider's plan against
-//   the AutoPay terms, then records the owner's consent (hangtag_autopay_begin, AS the owner), makes the mandate and
-//   stores it in the registry (service role). Only the provider moves AutoPay on, and only a CAPTURED charge at the price
-//   agreed adds paid time (its webhook, or the owner's autopay_verify reading the provider back, at most every 5 minutes).
+// - AutoPay (the 30-day trial, then the AutoPay plan monthly; Razorpay, or Cashfree with SUBSCRIPTION_AUTOPAY_PROVIDER=
+//   cashfree): autopay_start checks the provider's plan against the AutoPay terms (Cashfree's mandate is made from them),
+//   gets the payer's mobile number when the provider needs one, then records the owner's consent (hangtag_autopay_begin,
+//   AS the owner), makes the mandate and stores it in the registry (service role). Only the provider moves AutoPay on,
+//   and only a charge it took, at the price agreed, adds paid time (its webhook, or the owner's autopay_verify reading the
+//   provider back, at most every 5 minutes). Cashfree's on-demand mandate is charged only when the reconciler asks.
 // - Money counts only in the database's billing mode (after the post-repair migration): keys in the other mode do nothing
 //   but config, which then says payment isn't available. billing_selfcheck (console staff who manage settings) proves
 //   AutoPay's webhook with a ₹1 link and a far-off subscription, both cancelled at once.

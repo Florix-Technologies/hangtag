@@ -14,13 +14,18 @@ import { renderAll } from '../../../shared/ui/render.js';
 import { formActionsHTML } from '../../../shared/ui/kit.js';
 import { saveBillingSettings, saveGstSettings, savePaymentSettings, saveReorderSettings } from '../use-cases/save-billing-settings.js';
 import { loadChannels } from '../../delivery/use-cases/send-invoice.js';
-import { loadPayConfig } from '../../sales/use-cases/provider-payment.js';
+import { gateway, loadPayConfig } from '../../sales/use-cases/provider-payment.js';
+import { userMessage } from '../../../shared/errors/app-error.js';
+import { dayKey, dayLab, hhmm } from '../../../shared/formatting/dates.js';
 import { expenseCats, saveExpenseCats } from '../../finance/use-cases/cash-moves.js';
 import { DOC_NO_MAX, checkNumberingSettings, formatDocNo, nextDocNo } from '../../../domain/documents/numbering.js';
 import { quotePrefix } from '../../../domain/orders/orders.js';
 import { deviceTill } from '../../sales/services/doc-numbers.js';
 import { D } from '../../inventory/services/ledger.js';
 import { hasCap } from '../services/shop-caps.js';
+import { can } from '../services/access.js';
+import { use } from '../../../shared/di/services.js';
+import { upiCheckUri } from '../../../domain/sales/upi.js';
 import { moneyLabel } from '../../../shared/formatting/money.js';
 
 const errHTML=id=>`<p id="${id}" class="autherr" role="alert" hidden></p>`;
@@ -78,21 +83,132 @@ export function taxFormsHTML(){
     <label class="f"><span class="lab">${esc(moneyLabel("B2C large above"))}</span><input name="b2clLimit" type="number" inputmode="numeric" min="0" value="${esc(s.b2clLimit==null?100000:s.b2clLimit)}"><span class="fhint">Invoices to another state, without GSTIN, above this value are listed one by one</span></label>
   </div>${errHTML("gstErr")}${formActionsHTML({save:"Save GST setting"})}</form>`;
 }
-/* The server's word on verified payments (null: not known yet) */
-function providerNote(){
-  const pc=store.payConfig;
-  return pc==null?"Verified UPI and card links: checking with the server…":pc.upi?`Verified UPI QR${pc.cardLink?" and card payment links are":" is"} on (${esc(pc.provider||"payment provider")}). A payment counts only when the provider confirms it.`:"Verified UPI isn't set up on the server (payment-gateway secrets). UPI and card payments are marked received by hand and kept as Unverified until they are matched.";
+/* ---------- Payments & Banks → Connect a payment gateway ----------
+   Optional for every shop, three ways side by side: cash and the shop's own card machine (always there); the shop's own UPI
+   QR, no gateway (paid straight to its UPI ID, marked received by the cashier and kept Unverified until the shop confirms
+   it in Reports → Reconciliation); and a payment gateway, where each payment is confirmed by the gateway itself. A gateway
+   is always the shop's OWN merchant account — its own Razorpay keys, so Razorpay settles the money to the shop's bank;
+   Hangtag never collects it — and the server says whether connecting one is switched on for the shop: said so, plainly,
+   never a switch that pretends. The keys go to the server once (a form of their own, never the shop's settings) and are
+   kept sealed there; the app is shown only a masked key id. Hangtag's own plan billing is separate (Plans & Billing). */
+const payUi={testQr:false,confirmRemove:false,connect:false,confirmDisconnect:false,busy:false,hook:""};
+const qrSvg=(text,size)=>{try{return use("qrCodeService").render(text,{unit:"px",size,margin:2})}catch{return ""}};
+const when=ms=>ms?`${dayLab(dayKey(ms))} · ${hhmm(ms)}`:"";
+/* A webhook secret made here for the shop to copy into Razorpay (it may type its own instead) */
+const newWebhookSecret=()=>{ const b=new Uint8Array(18); crypto.getRandomValues(b); return "hgw_"+Array.from(b,x=>x.toString(16).padStart(2,"0")).join(""); };
+/* The gateway option: what the server says about the shop's own gateway account (null: not known yet) */
+function gatewayHTML(){
+  const pc=store.payConfig, g=pc&&pc.gateway||{}, on=!!(pc&&(pc.upi||pc.cardLink)), s=store.settings, manage=can("manage_settings");
+  const chip=pc==null?`<span class="pg-chip">Checking…</span>`:g.connected?`<span class="pg-chip on">${g.mode==="live"?"On · Live":"On · Test mode"}</span>`:`<span class="pg-chip">Not connected</span>`;
+  const what=on?`${pc.upi?"UPI QR":""}${pc.upi&&pc.cardLink?" and ":""}${pc.cardLink?"card links":""}`:"";
+  const head=`<div class="pg-h"><b>A payment gateway</b>${chip}</div>
+    <p class="note">Each payment is confirmed by the gateway itself — never from a screenshot, the customer's word or the page they come back to — and the bill completes by itself.</p>`;
+  if(pc==null) return head+`<p class="note">Checking whether it is on for your shop…</p>`;
+  if(g.connected){
+    const seen=g.lastEventAt?`Razorpay's notifications: last received ${esc(when(g.lastEventAt))}.`:`Razorpay's notifications: none received yet — add the webhook below in your Razorpay dashboard, then take a test payment.`;
+    return head+`<p class="note" data-gwstate="connected">Your Razorpay account <b>${esc(g.keyId)}</b>${g.mode==="live"?"":" (test mode: no real money moves)"}${what?` · ${esc(what)}`:""}. Razorpay pays the money into your own bank; a payment counts only once Razorpay confirms it.</p>
+      <p class="note" data-gwhooks>${seen}</p>
+      ${g.webhookUrl?`<div class="pg-hook"><label class="f full"><span class="lab">Webhook address (Razorpay → Webhooks)</span><input readonly value="${esc(g.webhookUrl)}" data-gwurl></label>
+        <span class="pg-acts"><button type="button" class="btn sm" data-gwcopy>Copy address</button></span>
+        <p class="fhint">Events: ${esc((g.events||[]).join(", "))}. Use the webhook secret you gave when connecting.</p></div>`:""}
+      ${on?`<label class="f"><span class="lab">A payment QR stays open for</span><input name="payExpiry" type="number" inputmode="numeric" min="2" max="30" value="${esc(s.payExpiry||5)}"><span class="fhint">minutes (2 to 30)</span></label>`:""}
+      ${manage?(payUi.confirmDisconnect?`<div class="pg-confirm" role="alert"><p>Disconnect your Razorpay account? QR codes and links still open are closed, and Hangtag forgets the keys (you can connect again any time). Payments already taken stay as they are; refund them from your Razorpay dashboard.</p>
+        <span class="pg-acts"><button type="button" class="btn sm danger" data-gwdisconnectyes${payUi.busy?" disabled":""}>Disconnect</button><button type="button" class="btn sm" data-gwdisconnectno>Keep it</button></span></div>`
+        :`<span class="pg-acts"><button type="button" class="btn sm ghost" data-gwdisconnect>Disconnect</button></span>`):""}`;
+  }
+  if(!g.available) return head+`<p class="note">Connecting your shop's own Razorpay account (so the money settles straight to your bank) isn't switched on for your shop yet. Until it is, use your own UPI QR: nothing else changes.</p>`;
+  return head+`<p class="note" data-gwstate="available">Connect your own Razorpay account: Razorpay pays the money into your bank; Hangtag only asks it for each QR or link and checks each payment with it. Test keys (rzp_test_…) until live payments are switched on for your shop.</p>
+    ${manage?(payUi.connect?"":`<span class="pg-acts"><button type="button" class="btn sm primary" data-gwconnect>Connect your Razorpay account</button></span>`):`<p class="note">Someone who manages the shop's settings can connect it.</p>`}`;
 }
-/* Payments & Banks: the shop's UPI ID and the verified QR */
+/* The keys, in a form of their own (never part of the shop's settings, which every phone syncs) */
+function connectFormHTML(){
+  return `<form id="gwConnectForm" class="authform pg-connect" novalidate autocomplete="off"><h5>Connect your Razorpay account</h5>
+    <ol class="note pg-steps"><li>In your own Razorpay dashboard → Account &amp; Settings → API Keys, generate a <b>test</b> key.</li>
+      <li>Paste its Key Id and Key Secret here. Keep the webhook secret below (or type your own): you'll give it to Razorpay too.</li>
+      <li>Connect, then add the webhook Hangtag shows you in Razorpay → Webhooks.</li></ol>
+    <div class="pgrid">
+      <label class="f"><span class="lab">Key Id</span><input name="gwKeyId" placeholder="rzp_test_…" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="60"></label>
+      <label class="f"><span class="lab">Key Secret</span><input name="gwKeySecret" type="password" autocomplete="new-password" autocapitalize="off" spellcheck="false" maxlength="80"></label>
+      <label class="f full"><span class="lab">Webhook secret</span><input name="gwWebhookSecret" value="${esc(payUi.hook)}" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="128"><span class="fhint">8 or more characters; the same goes into Razorpay → Webhooks → Secret</span></label>
+    </div>
+    <p class="note">The secrets go to Hangtag's server once: checked with Razorpay, then kept sealed. Nobody can read them back, not even you.</p>
+    <p id="gwErr" class="autherr" role="alert" hidden></p>
+    <div class="formacts"><button class="btn" type="button" data-gwcancel>Cancel</button><button class="btn primary" type="submit" data-gwsubmit${payUi.busy?" disabled":""}>${payUi.busy?"Checking with Razorpay…":"Connect"}</button></div></form>`;
+}
+/* Payments & Banks: how the shop takes payments */
 export function paymentsFormHTML(){
-  const s=store.settings;
-  return `<div class="setblk" id="paySetup"><h5>Payment methods</h5><form id="paymentsForm" class="authform" novalidate><div class="pgrid">
-    <label class="f"><span class="lab">Shop UPI ID</span><input name="upiId" value="${esc(s.upiId||"")}" placeholder="myshop@okaxis" autocomplete="off" autocapitalize="off" spellcheck="false"><span class="fhint">Shown as a QR with the amount when UPI is marked received by hand</span></label>
-    <label class="f"><span class="lab">Verified QR stays open for</span><input name="payExpiry" type="number" inputmode="numeric" min="2" max="30" value="${esc(s.payExpiry||5)}"><span class="fhint">minutes (2 to 30)</span></label>
-  </div>
-  <p class="note" data-payprovider>${providerNote()}</p>
-  <p class="note" style="margin:0">Cards on your own card machine: the payment screen asks only for the machine's reference and the last 4 digits, both optional. Never the card number, CVV or PIN.</p>
-  <p id="payErr2" class="autherr" hidden></p>${formActionsHTML({save:"Save payment methods"})}</form></div>`;
+  const s=store.settings, vpa=String(s.upiId||"").trim(), on=!!vpa, pc=store.payConfig, gwOn=!!(pc&&(pc.upi||pc.cardLink));
+  const name=store.profile&&store.profile.shop_name||"Shop", manage=can("manage_settings");
+  const test=on&&payUi.testQr?`<div class="pg-test"><div class="pi-qr small">${qrSvg(upiCheckUri({vpa,name}),160)}</div>
+    <p class="note">Scan it with any UPI app: it shows the name of the account this UPI ID pays into. It has no amount — don't pay; check the name, then close it.</p></div>`:"";
+  const remove=payUi.confirmRemove?`<div class="pg-confirm" role="alert"><p>Remove your UPI ID? The payment screen won't show your QR any more; UPI can still be recorded by hand, and nothing already sold changes.</p>
+    <span class="pg-acts"><button type="button" class="btn sm danger" data-payremoveyes>Remove UPI ID</button><button type="button" class="btn sm" data-payremoveno>Keep it</button></span></div>`:"";
+  return `<div class="setblk" id="paySetup"><h5>Connect a payment gateway</h5>
+    <p class="note pg-lead">Optional. Choose how your shop takes payments — Hangtag works with cash, your card machine and your own UPI QR without any gateway.</p>
+    <form id="paymentsForm" class="authform" novalidate><div class="pg-opts">
+      <section class="pg-opt on" aria-label="Cash and card machine"><div class="pg-h"><b>Cash and your card machine</b><span class="pg-chip on">Always on</span></div>
+        <p class="note">Nothing to set up. For a card on your own machine the payment screen notes only its approval number and the last 4 digits, both optional — never the card number, CVV or PIN.</p></section>
+      <section class="pg-opt${on?" on":""}" id="pgUpi" aria-label="Your own UPI QR"><div class="pg-h"><b>Your own UPI QR</b><span class="pg-chip${on?" on":""}">${on?"On":"Off"}</span></div>
+        <p class="note">No gateway needed. The payment screen shows a QR with the bill's amount, paid straight to your UPI ID. The cashier marks it received after seeing the customer's successful payment, and it is kept as <b>Unverified</b> until you confirm it reached your account (Reports → Reconciliation).</p>
+        <label class="f"><span class="lab">Shop UPI ID</span><input name="upiId" value="${esc(vpa)}" placeholder="myshop@okaxis" autocomplete="off" autocapitalize="off" spellcheck="false"${manage?"":" readonly"}><span class="fhint">name@bank, as in your UPI app</span></label>
+        ${on?`<span class="pg-acts"><button type="button" class="btn sm" data-paytestqr aria-expanded="${payUi.testQr}">${payUi.testQr?"Hide the test QR":"Show a test QR"}</button>${manage?`<button type="button" class="btn sm ghost" data-payremove>Remove UPI ID</button>`:""}</span>`:""}
+        ${test}${remove}</section>
+      <section class="pg-opt${gwOn?" on":""}" aria-label="A payment gateway" data-payprovider>${gatewayHTML()}</section>
+    </div>${gwOn?"":`<input type="hidden" name="payExpiry" value="${esc(s.payExpiry||5)}">`}
+    <p id="payErr2" class="autherr" hidden></p>${manage?formActionsHTML({save:"Save payment settings"}):`<p class="note">Only someone who manages the shop's settings can change these.</p>`}</form>
+    ${payUi.connect&&manage&&pc&&pc.gateway&&pc.gateway.available&&!pc.gateway.connected?connectFormHTML():""}</div>`;
+}
+/* Connects the shop's own Razorpay account: the keys go to the payment-gateway function, which checks them with Razorpay
+   and keeps them sealed; the form is emptied whatever the answer */
+async function connectGateway(form){
+  const f=new FormData(form), keys={keyId:String(f.get("gwKeyId")||""),keySecret:String(f.get("gwKeySecret")||""),webhookSecret:String(f.get("gwWebhookSecret")||"")};
+  form.querySelector('[name="gwKeySecret"]').value="";
+  payUi.busy=true; const b=form.querySelector("[data-gwsubmit]"); if(b){ b.disabled=true; b.textContent="Checking with Razorpay…"; }
+  try{
+    store.payConfig=await gateway().connect(keys);
+    payUi.connect=false; payUi.busy=false; payUi.hook=""; redrawPaySetup();
+    toast(`Razorpay account connected${store.payConfig.gateway.mode==="live"?"":" (test mode)"}. Now add the webhook it shows in Razorpay.`);
+  }catch(e){
+    payUi.busy=false;
+    const err=$("#gwErr"); if(err){ err.textContent=userMessage(e,"Couldn't connect the account. Try again."); err.hidden=false; }
+    if(b){ b.disabled=false; b.textContent="Connect"; }
+  }
+}
+async function disconnectGateway(){
+  payUi.busy=true; redrawPaySetup();
+  try{ store.payConfig=await gateway().disconnect(); payUi.confirmDisconnect=false; toast("Razorpay account disconnected. UPI by your own QR and the card machine work as before."); }
+  catch(e){ toast(userMessage(e,"Couldn't disconnect it. Try again.")); }
+  payUi.busy=false; redrawPaySetup();
+}
+function copyWebhookUrl(){
+  const i=$("[data-gwurl]"); if(!i) return;
+  const done=()=>toast("Webhook address copied.");
+  if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(i.value).then(done,()=>{ i.select(); toast("Select and copy the address."); });
+  else { i.select(); toast("Select and copy the address."); }
+}
+/* Redrawn in place (the test QR shown or hidden, the removal asked for) */
+function redrawPaySetup(){ const b=$("#paySetup"); if(b) b.outerHTML=paymentsFormHTML(); }
+/* Remove the UPI ID (after the merchant confirmed it): the rest of the payment settings as they are */
+function removeUpiId(){
+  const s=store.settings, a=Object.assign({whatsapp:false,sms:false,email:false},s.autoSend||{});
+  const r=savePaymentSettings({upiId:"",payExpiry:s.payExpiry||5,...a});
+  payUi.confirmRemove=false; payUi.testQr=false;
+  if(r.error){ toast(r.error); redrawPaySetup(); return; }
+  renderSync(); flushSbQueue(); redrawPaySetup(); toast("UPI ID removed. UPI can still be recorded by hand.");
+}
+/* Clicks in Connect a payment gateway (from installBillingSettingsEvents) */
+function paySetupClick(t){
+  if(t.closest("[data-paytestqr]")){ payUi.testQr=!payUi.testQr; redrawPaySetup(); return true; }
+  if(t.closest("[data-payremove]")){ payUi.confirmRemove=true; redrawPaySetup(); return true; }
+  if(t.closest("[data-payremoveno]")){ payUi.confirmRemove=false; redrawPaySetup(); return true; }
+  if(t.closest("[data-payremoveyes]")){ removeUpiId(); return true; }
+  if(t.closest("[data-gwconnect]")){ payUi.connect=true; payUi.hook=payUi.hook||newWebhookSecret(); redrawPaySetup(); const k=$('#gwConnectForm [name="gwKeyId"]'); if(k) k.focus(); return true; }
+  if(t.closest("[data-gwcancel]")){ payUi.connect=false; payUi.hook=""; redrawPaySetup(); return true; }
+  if(t.closest("[data-gwdisconnect]")){ payUi.confirmDisconnect=true; redrawPaySetup(); return true; }
+  if(t.closest("[data-gwdisconnectno]")){ payUi.confirmDisconnect=false; redrawPaySetup(); return true; }
+  if(t.closest("[data-gwdisconnectyes]")){ if(!payUi.busy) disconnectGateway(); return true; }
+  if(t.closest("[data-gwcopy]")){ copyWebhookUrl(); return true; }
+  return false;
 }
 /* Bills & Documents: receipts sent by themselves when a bill completes */
 export function autoSendFormHTML(){
@@ -107,7 +223,9 @@ export function autoSendFormHTML(){
    fields someone may be typing in) */
 export async function refreshPaymentsForm(){
   await Promise.all([loadChannels(),loadPayConfig()]);
-  $$("[data-payprovider]").forEach(p=>{p.innerHTML=providerNote()});
+  // the gateway's state arrived: the whole block again only while nothing is being typed in it
+  const box=$("#paySetup"), typing=box&&box.contains(document.activeElement)&&document.activeElement.matches("input");
+  if(box&&!typing) redrawPaySetup(); else $$("[data-payprovider]").forEach(p=>{p.innerHTML=gatewayHTML()});
   const f=$("#autoSendForm"),ch=store.channels;
   if(f&&ch) ["whatsapp","sms","email"].forEach(k=>{const i=f.querySelector(`[name="${k}"]`);if(i&&ch[k]===false&&!i.checked)i.disabled=true});
 }
@@ -168,12 +286,17 @@ const formErr=(id,r)=>{const err=$(id);if(r.error){if(err){err.textContent=r.err
 
 /* Registered once at start-up (app/main.js). */
 export function installBillingSettingsEvents(){
+  document.addEventListener("click",e=>{ const t=e.target; if(t&&t.closest&&t.closest("#paySetup")&&paySetupClick(t)) e.preventDefault(); });
   document.addEventListener("submit",e=>{
     const id=e.target.id;
     if(["billingForm","taxForm","stockSetForm"].includes(id)){e.preventDefault();saveBillingForm(e.target);return}
+    if(id==="gwConnectForm"){e.preventDefault();if(!payUi.busy&&can("manage_settings"))connectGateway(e.target);return}
     if(id==="paymentsForm"||id==="autoSendForm"){e.preventDefault();const f=new FormData(e.target),s=store.settings,a=Object.assign({whatsapp:false,sms:false,email:false},s.autoSend||{});
       const r=id==="paymentsForm"?savePaymentSettings({upiId:f.get("upiId"),payExpiry:f.get("payExpiry"),...a}):savePaymentSettings({upiId:s.upiId,payExpiry:s.payExpiry,whatsapp:f.get("whatsapp"),sms:f.get("sms"),email:f.get("email")});
-      if(formErr(id==="paymentsForm"?"#payErr2":"#autoSendErr",r))return;renderSync();flushSbQueue();toast(id==="paymentsForm"?"Payment methods saved.":"Automatic receipts saved.");return}
+      if(formErr(id==="paymentsForm"?"#payErr2":"#autoSendErr",r))return;renderSync();flushSbQueue();
+      // saved: the UPI QR's state (On, its test QR and Remove) shows at once
+      if(id==="paymentsForm"){ payUi.confirmRemove=false; redrawPaySetup(); }
+      toast(id==="paymentsForm"?"Payment settings saved.":"Automatic receipts saved.");return}
     if(id==="expCatForm"){e.preventDefault();const f=new FormData(e.target);if(formErr("#expCatErr",saveExpenseCats(String(f.get("cats")||"").split(/[\n,]/))))return;toast("Expense categories saved.");return}
     if(id==="gstSetForm"){e.preventDefault();const f=new FormData(e.target);if(formErr("#gstErr",saveGstSettings({b2clLimit:f.get("b2clLimit")})))return;renderSync();flushSbQueue();toast("GST setting saved.");return}
     if(id==="reorderForm"){e.preventDefault();const f=new FormData(e.target);if(formErr("#reorderErr",saveReorderSettings({leadDays:f.get("leadDays"),safetyDays:f.get("safetyDays"),targetCoverDays:f.get("targetCoverDays")})))return;renderSync();flushSbQueue();renderAll();toast("Reorder planning saved.");return}

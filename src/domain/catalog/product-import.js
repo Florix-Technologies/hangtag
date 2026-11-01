@@ -153,6 +153,16 @@ export function mapImportHeader(header,ctx={}){
   if(map.price==null) return {error:"No Selling price column was found. Add one (download the template to see the columns)."};
   return {map,labels,optionCols,attrCols,unknown,unknownCols};
 }
+/* Where the column names are: the first of the sheet's first 15 filled rows (notes left aside) that names a Product name
+   and a Selling price column — so a title or a few lines of notes above them don't stop the file. → { at (its index),
+   H (mapImportHeader), above (filled rows above it, not imported) } or { error } (the first row's reason, when none does) */
+export function findImportHeader(sheet,ctx={}){
+  const filled=r=>(r||[]).some(c=>txt(c)!=="");
+  const cands=[]; for(let i=0;i<(sheet||[]).length&&cands.length<15;i++) if(filled(sheet[i])&&!isNoteRow(sheet[i])) cands.push(i);
+  if(!cands.length) return {error:(sheet||[]).some(filled)?"There are only notes (rows starting with #) in that file: add the column names and your products.":"That file is empty."};
+  for(const i of cands){ const H=mapImportHeader(sheet[i],ctx); if(!H.error) return {at:i,H,above:cands.filter(k=>k<i).length}; }
+  return {error:mapImportHeader(sheet[cands[0]],ctx).error};
+}
 const txt=v=>String(v==null?"":v).replace(/[\u0000-\u001f\u007f]/g," ").trim().replace(/\s+/g," ");
 const numTxt=v=>stripMoney(txt(v).replace(/%/g,""));
 const same=(a,b)=>String(a).toLowerCase()===String(b).toLowerCase();
@@ -182,17 +192,19 @@ export function suggestAttr(values){
 export function validateImport(rows,ctx={}){
   const sheet=(rows||[]).map(r=>Array.isArray(r)?r:[]);
   const filled=r=>r.some(c=>txt(c)!=="");
-  const at=sheet.findIndex(r=>filled(r)&&!isNoteRow(r));
-  if(at<0) return {error:sheet.some(filled)?"There are only notes (rows starting with #) in that file: add the column names and your products.":"That file is empty."};
-  const H=mapImportHeader(sheet[at],ctx); if(H.error) return {error:H.error};
+  const found=findImportHeader(sheet,ctx); if(found.error) return {error:found.error};
+  const {at,H}=found;
   const body=[]; sheet.forEach((r,i)=>{ if(i>at&&filled(r)&&!isNoteRow(r)) body.push({r,line:i+1}); });
   if(!body.length) return {error:"There are no products under the column names."};
   if(body.length>MAX_IMPORT_ROWS) return {error:`A file can have up to ${MAX_IMPORT_ROWS} products. Split it into smaller files.`};
   const L=k=>H.labels[k]||({price:"Selling price",cost:"Cost price",qty:"Stock quantity",gst:taxLabel(),hsn:"HSN code",low:"Low stock alert",unit:"Unit",bc:"Barcode",sku:"SKU",name:"Product name"})[k]||k;
   const units=ctx.units||importUnits(), unitOf=u=>units.find(x=>same(x[0],u)||same(x[1],u));
   const variantsOf=ctx.variantsOf||((p,all)=>((p&&p.variants)||[]).filter(v=>all||v.active!==false));
-  const taken={}, names={};
-  (ctx.products||[]).forEach(p=>{names[cleanProductName(p.name).toLowerCase()]=p.name;variantsOf(p,true).forEach(v=>{const lab=(p.name+" "+(v.o||[]).join(" / ")).trim();if(v.sku)taken["s:"+v.sku.trim().toLowerCase()]=lab;if(v.bc)taken["b:"+v.bc.trim()]=lab})});
+  const taken={}, names={}, byName={};
+  (ctx.products||[]).forEach(p=>{const k=cleanProductName(p.name).toLowerCase();names[k]=p.name;byName[k]=p;variantsOf(p,true).forEach(v=>{const lab=(p.name+" "+(v.o||[]).join(" / ")).trim();if(v.sku)taken["s:"+v.sku.trim().toLowerCase()]=lab;if(v.bc)taken["b:"+v.bc.trim()]=lab})});
+  /* a row of a product the shop has: is it one of that product's variants (the same option values), or a size or colour
+     it doesn't have yet? Either way the import leaves the product as it is — this only says which it is */
+  const hasVariant=(p,opts)=>{const want=opts.map(o=>o.v.toLowerCase()).sort().join("\u0001");return variantsOf(p,true).some(v=>(v.o||[]).map(o=>String(o).toLowerCase()).sort().join("\u0001")===want)};
   const get=(r,k)=>H.map[k]==null?"":txt(r[H.map[k]]);
   const seen={}, out=[];
   body.forEach(({r,line})=>{
@@ -221,7 +233,8 @@ export function validateImport(rows,ctx={}){
     if(u&&!U) errors.push(`${L("unit")} “${u}” isn't one Hangtag knows. Use one of: ${units.map(z=>z[0]).join(", ")}, or add it under Settings → Products & Inventory → Units.`);
     x.unit=U?U[0]:"";   // "" = not given here (the product's unit, else pieces)
     const q=numTxt(get(r,"qty"));
-    x.qty=0;
+    // an empty cell is "not given", never a count of 0: the product is added without stock, and the preview says so
+    x.qty=0; x.qtyGiven=q!=="";
     if(q!==""){
       const n=Number(q);
       if(!Number.isFinite(n)||n<0) errors.push(`${L("qty")} “${get(r,"qty")}” isn't a number (0 or more).`);
@@ -256,8 +269,11 @@ export function validateImport(rows,ctx={}){
     for(const [k,val] of [["sku",sku],["bc",bc]]) if(excelNumber(val)) errors.push(`${L(k)} “${val}” was shortened by Excel, and its digits are lost. In Excel, set the ${L(k)} column to Text, type the numbers again and save (or use the Excel template).`);
     const ce=!excelNumber(bc)&&codeError(get(r,"bc")); if(ce) errors.push(`${L("bc")}: ${ce}`);
     const existing=!!(name&&names[name.toLowerCase()]);
+    if(existing) x.existingKind=hasVariant(byName[name.toLowerCase()],opts)?"variant":"new_variant";
     if(existing&&ctx.skipExisting){ x.skip="existing"; errors.length=0; out.push(x); return; }
-    if(existing) errors.push(`${names[name.toLowerCase()]} is already in your shop. Import adds new products only: leave it out, or give this one another name.`);
+    if(existing) errors.push(x.existingKind==="new_variant"
+      ?`${names[name.toLowerCase()]} is already in your shop, and ${opts.map(o=>o.v).join(" / ")||"this row"} would be a new colour or size of it. Import adds new products only: add it to ${names[name.toLowerCase()]} in Products, or leave it out.`
+      :`${names[name.toLowerCase()]} is already in your shop. Import adds new products only: leave it out, or give this one another name.`);
     else for(const [k,val,what] of [["s:"+sku.toLowerCase(),sku,L("sku")],["b:"+bc,bc,L("bc")]]){
       if(!val||excelNumber(val)) continue;
       if(taken[k]) errors.push(`${what} ${val} is already used by ${taken[k]} in your shop.`);
@@ -298,7 +314,11 @@ export function validateImport(rows,ctx={}){
       combos.add(key);
       for(const [k,label] of [["cat","Category"],["brand","Brand"],["gst",L("gst")],["hsn",L("hsn")],["unit",L("unit")],["low",L("low")],["desc","Description"]]){
         const a=first[k], b=x[k];
-        if(i&&b!=null&&b!==""&&a!=null&&a!==""&&String(a)!==String(b)) x.errors.push(`${label} “${b}” differs from row ${first.line} of ${x.name} (${a}): one product has one ${label.toLowerCase()}.`);
+        if(!(i&&b!=null&&b!==""&&a!=null&&a!==""&&String(a)!==String(b))) continue;
+        // a description written per row (one for each colour and size): with the merchant's choice, the product keeps its first
+        // row's, and this row says its own is left out; without it, the row is refused as before
+        if(k==="desc"){ x.descConflict=true; if(ctx.firstDescription){ (x.notes=x.notes||[]).push(`Its own description is left out: ${x.name} keeps row ${first.line}'s.`); continue; } }
+        x.errors.push(`${label} “${b}” differs from row ${first.line} of ${x.name} (${a}): one product has one ${label.toLowerCase()}${k==="desc"?" — write it once, or choose “Keep each product's first description” above":""}.`);
       }
     });
     // quantities in the product's unit: whole pieces unless the unit allows decimals (kg, litre, metre, or the shop's own)
@@ -316,22 +336,28 @@ export function validateImport(rows,ctx={}){
   const pieces=used.reduce((a,x)=>a+(x.qty||0),0);
   const existing=[...new Set(out.filter(x=>x.skip==="existing"||x.existing).map(x=>names[x.name.toLowerCase()]))];
   const unknownCols=H.unknownCols.map(c=>({...c,suggest:suggestAttr(body.map(({r})=>r[c.i]))}));
-  return {rows:out,products,errorCount,ok:errorCount===0&&products.length>0,existing,unknown:H.unknown,unknownCols,labels:H.labels,
+  return {rows:out,products,errorCount,ok:errorCount===0&&products.length>0,existing,unknown:H.unknown,unknownCols,labels:H.labels,headerRow:at+1,above:found.above,
     summary:{products:products.length,variants:used.filter(x=>x.name).length,pieces:Math.round(pieces*1000)/1000,
-      examples:out.filter(x=>x.skip==="example").length,skipped:out.filter(x=>x.skip==="existing").length}};
+      examples:out.filter(x=>x.skip==="example").length,skipped:out.filter(x=>x.skip==="existing").length,
+      noQty:used.filter(x=>x.name&&!x.qtyGiven).length,descConflicts:used.filter(x=>x.descConflict).length,
+      newVariantsOfExisting:out.filter(x=>x.existingKind==="new_variant").length}};
 }
+/* What happens to a row of a product the shop already has (the import never changes an existing product) */
+export const existingNote=x=>x.existingKind==="new_variant"
+  ?"A new colour or size of a product your shop has: left out (add it to the product in Products)"
+  :"Already in your shop: left out, nothing about it changes";
 /* The file given back with what is wrong written next to each row (a "Problems" column the import ignores): fix the
    rows in it and choose it again */
 export function importProblemRows(rows,check){
   const sheet=(rows||[]).map(r=>Array.isArray(r)?r.slice():[]);
-  const at=sheet.findIndex(r=>r.some(c=>txt(c)!=="")&&!isNoteRow(r));
-  if(at<0||!check||!check.rows) return sheet;
-  const width=Math.max(...sheet.map(r=>r.length)), H=mapImportHeader(sheet[at]), col=H.map&&H.map.note!=null?H.map.note:width;
+  const found=findImportHeader(sheet);
+  if(found.error||!check||!check.rows) return sheet;
+  const at=found.at, width=Math.max(...sheet.map(r=>r.length)), H=found.H, col=H.map&&H.map.note!=null?H.map.note:width;
   const pad=r=>{while(r.length<col)r.push("");return r};
   pad(sheet[at])[col]="Problems";
   const by=new Map(check.rows.map(x=>[x.line,x]));
   sheet.forEach((r,i)=>{ if(i<=at||isNoteRow(r)) return; const x=by.get(i+1); if(!x) return;
-    pad(r)[col]=x.skip==="example"?"Example row: not imported":x.skip==="existing"?"Already in your shop: left out":x.errors.join(" ")||""; });
+    pad(r)[col]=x.skip==="example"?"Example row: not imported":x.skip==="existing"?existingNote(x):x.errors.join(" ")||""; });
   return sheet;
 }
 /* A valid import → { products (catalog records with their variants), moves (OPENING stock records) }.

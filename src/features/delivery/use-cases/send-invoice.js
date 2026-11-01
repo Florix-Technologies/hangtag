@@ -9,10 +9,12 @@ import { invoiceFor } from '../../receipts/services/receipt-model.js';
 import { messageDelivery } from '../repositories/delivery-service.js';
 import { ERROR_CODES, userMessage } from '../../../shared/errors/app-error.js';
 import { logger } from '../../../shared/logging/logger.js';
+import { uid } from '../../../shared/utils/ids.js';
+import { ensureInvoice } from './canonical-invoice.js';
 
 /* This session's sends and the server's records for a bill, newest first */
 export const deliveriesOf=sid=>store.deliveries[sid]||[];
-function note(sid,entry){ store.deliveries[sid]=[entry,...deliveriesOf(sid).filter(e=>e!==entry&&!(e.status==="sending"&&e.channel===entry.channel))]; return entry; }
+function note(sid,entry){ store.deliveries[sid]=[entry,...deliveriesOf(sid).filter(e=>e!==entry&&!(e.status==="sending"&&e.channel===entry.channel)&&!(e.status==="unknown"&&e.channel===entry.channel&&e.requestId===entry.requestId))]; return entry; }
 const online=()=>!!store.sbClient&&store.sbStatus==="connected";
 
 /* Which channels the server can send ({ email, whatsapp, sms }); asked once per session, null while unknown or offline */
@@ -58,26 +60,39 @@ export async function loadRecentDeliveries(force){
     return changed;
   }catch(e){ logger.warn("Recent deliveries:", e); return false; }
 }
-/* → { ok: true, to } once sent; { error, code, field } otherwise (nothing is claimed as sent) */
-export async function sendInvoice(sid,channel){
+/* The press of Send this attempt belongs to: a retry of one whose outcome is unknown (no answer came back) is the same
+   press, so the server answers with what happened to it instead of sending a second message; anything else is a new one */
+const pressOf=(sid,channel)=>{const e=deliveriesOf(sid).find(x=>x.channel===channel);return e&&e.status==="unknown"&&e.requestId?e.requestId:"r"+uid()+uid().slice(-4)};
+/* → { ok: true, to, format } once sent; { error, code, field } otherwise (nothing is claimed as sent).
+   opts.customerId: a walk-in bill goes to this saved customer (the bill itself doesn't change) */
+export async function sendInvoice(sid,channel,opts={}){
   const s=D().saleById[sid]; if(!s) return {error:"That bill isn't on this device."};
-  const inv=invoiceFor(s), target=deliveryTarget(inv,channel);
+  const walkInTo=!(s.cust&&s.cust.id)&&opts.customerId?store.customers[opts.customerId]:null;
+  const inv=invoiceFor(s), target=walkInTo?deliveryTarget({...inv,buyer:{name:walkInTo.name,mobile:walkInTo.phone||"",email:walkInTo.email||""}},channel):deliveryTarget(inv,channel);
   // refused before anything is sent: noted (so the bill shows why) and returned
   const refuse=(error,code,field)=>{note(sid,{channel,status:"refused",error,field,t:Date.now()});return {error,code,field}};
   if(target.error) return refuse(target.error,ERROR_CODES.VALIDATION,"contact");
   if(!online()) return refuse("You're offline. Sending needs the internet: try again when you're back online, or use Download or Share.",ERROR_CODES.NETWORK);
   if(store.sbOfflineQueue.some(q=>q.type==="sale"&&q.sale&&q.sale.id===sid)) return refuse("This bill is still uploading. Try again in a moment.",ERROR_CODES.NETWORK);
   // the server sends to the customer as saved in the cloud: a change to them still uploading must arrive first
-  if(s.cust&&s.cust.id&&store.sbOfflineQueue.some(q=>q.type==="cust"&&q.id===s.cust.id)) return refuse("This customer's details are still uploading. Try again in a moment.",ERROR_CODES.NETWORK);
-  const entry=note(sid,{channel,to:target.to,status:"sending",t:Date.now()});
+  const custId=s.cust&&s.cust.id||walkInTo&&walkInTo.id;
+  if(custId&&store.sbOfflineQueue.some(q=>q.type==="cust"&&q.id===custId)) return refuse("This customer's details are still uploading. Try again in a moment.",ERROR_CODES.NETWORK);
+  const requestId=pressOf(sid,channel);
+  const entry=note(sid,{channel,to:target.to,status:"sending",requestId,t:Date.now()});
+  // the bill's one invoice PDF first: every channel carries that same file (none when the server keeps no PDFs)
+  const I=await ensureInvoice(sid);
+  if(I.error){ Object.assign(entry,{status:"failed",error:I.error,t:Date.now()}); return {error:I.error,code:I.code}; }
   try{
-    const r=await messageDelivery().send({channel,saleId:sid});
-    Object.assign(entry,{status:"sent",to:r.to||target.to,provider:r.provider,providerId:r.id,t:Date.now()});
-    return {ok:true,to:entry.to};
+    const r=await messageDelivery().send({channel,saleId:sid,requestId,...(walkInTo?{customerId:walkInTo.id}:{})});
+    Object.assign(entry,{status:"sent",to:r.to||target.to,provider:r.provider,providerId:r.id,format:r.format||"",invoiceId:r.invoiceId||(I.invoice&&I.invoice.id)||null,t:Date.now()});
+    return {ok:true,to:entry.to,format:entry.format};
   }catch(e){
     const msg=userMessage(e,"The message wasn't sent. Try again.");
     if(!(e&&e.code===ERROR_CODES.NOT_CONFIGURED)) logger.event((channel === "whatsapp" ? "whatsapp" : channel === "sms" ? "sms" : "email"),"send-failed",{op:"receipt",code:e&&e.code});
-    Object.assign(entry,{status:e&&e.code===ERROR_CODES.NOT_CONFIGURED?"unavailable":"failed",error:msg,t:Date.now()});
+    // no answer came back (the connection dropped): it may have gone out, so it is "unknown", never "failed", and trying
+    // again asks about this same press first
+    const unknown=e&&e.code===ERROR_CODES.NETWORK&&!(e.details&&e.details.error);
+    Object.assign(entry,{status:e&&e.code===ERROR_CODES.NOT_CONFIGURED?"unavailable":unknown?"unknown":"failed",error:msg,t:Date.now()});
     return {error:msg,code:e&&e.code};
   }
 }

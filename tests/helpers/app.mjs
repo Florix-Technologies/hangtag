@@ -34,11 +34,12 @@ export async function seedProfile(pg, uid, email, shop = {}){
       state = EXCLUDED.state, gstin = EXCLUDED.gstin, onboarded_at = EXCLUDED.onboarded_at`, [uid, email, p.full_name, p.shop_name, p.phone, p.address, p.city, p.state, p.gstin || null]);
 }
 
-/* The shop's cloud and a browser: { pg, sql, openDevice, close }. users: more accounts in the same database ({ id, email, shop? }) */
-export async function startShop({ report, uid, email, shop = {}, users = [], functions = {}, headless = true } = {}){
+/* The shop's cloud and a browser: { pg, sql, openDevice, close }. users: more accounts in the same database ({ id, email, shop? });
+   after: more SQL run after schema.sql (a migration the scenario needs) */
+export async function startShop({ report, uid, email, shop = {}, users = [], functions = {}, headless = true, after = [] } = {}){
   if(!report) throw new Error('startShop needs the suite\'s report');
   await H.ensureServer();
-  const pg = await createPgRest(H.SCHEMA_PATH, { uid, email, users: users.map(({ shop: _s, ...u }) => u) });
+  const pg = await createPgRest(H.SCHEMA_PATH, { uid, email, users: users.map(({ shop: _s, ...u }) => u), after });
   await seedProfile(pg, uid, email, shop);
   for(const u of users) if(u.shop) await seedProfile(pg, u.id, u.email, u.shop);
   const browser = await puppeteer.launch({ executablePath: H.CHROME, headless });

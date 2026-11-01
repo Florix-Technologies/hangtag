@@ -46,6 +46,7 @@ The database suites check the report at the end of `schema.sql` against `supabas
 - **`tenancy.mjs`**: `readLeaks` and `writeLeaks` sweep every shop table for rows of one shop that others can see, change, delete or add. Every write attempt is rolled back.
 - **`pg-rest.mjs`** and **`env.mjs`**: the PostgREST and Auth stand-in, and paths.
 - **`isolation.cjs`**: the network isolation below.
+- **`vercel-routes.mjs`**: `redirectFor(vercel, host, path)` applies `vercel.json`'s redirects as Vercel does (a `has` host condition, a `/:name(regex)` source, the query passed through). It refuses any rule shape it doesn't know, so a new kind of rule fails the tests instead of being matched wrongly.
 
 ## Network isolation (every test)
 
@@ -113,6 +114,14 @@ When the answer depends on new data, update both `agent/shop.mjs` and the fixtur
 
 - **`sync-scenarios.test.mjs`**: offline sales, offline UPI (never shown as verified), a save whose answer is lost (no duplicate), 503s and an unreachable server, two tills offline at once (distinct bill numbers), the same customer edited on both tills (both changes kept), an offline return, a double tap on Pay, and every device converging.
 - **`vercel-site.test.mjs`**: what Vercel serves. Exactly the files of `dist/site` (`siteFiles` in `scripts/sw-cache.mjs`), with `vercel.json`'s headers, on its own port (3219), Supabase blocked (`config.js` names the live project). The shop app, the receipt, order and store pages and the Platform Console open with no Content-Security-Policy violation, page error or missing file, and the service worker installs every file under the committed cache name. The other browser suites load the repository through a test page with a loosened policy, so they can't see any of this.
+- **`pos-billing-delivery.test.mjs`**: the cashier on a phone (390 × 844).
+  - Payment: no box takes the focus (no keyboard) on opening or on changing the method. Cash shows the exact amount filled in, and the quick amounts give the change at once. The method, the total and Complete sale stay in view. A triple tap on Complete sale makes one sale.
+  - Checkout's Customer step: Search, Add and Walk-in.
+  - After the sale: what each channel carries. A walk-in bill gets a contact added and is sent; it stays the same bill, with no new sale. Email, WhatsApp and SMS carry the one invoice PDF, registered once, and a refused SMS is tried again on its own.
+
+  The rules are in `tests/unit/canonical-invoice.test.mjs`, and the database's side in `supabase/tests/canonical-invoices.test.mjs`.
+- **`legacy-sw-retire.test.mjs`**: the move from `hangtag.vercel.app` to the custom domain, with two addresses on this computer playing the two. The worker as deployed before the fix (`tests/fixtures/sw-before-retirement.js`) shows the app unstyled from the second visit once the old address redirects (the bug, reproduced); the current one stays styled. With `vercel.json`'s rule, the old address serves `/sw.js` and redirects everything else. The new worker then deletes only Hangtag's caches there, unregisters, and moves the page to the same path, query and `#part` on the custom domain, once. The custom domain's own worker stays and still opens the app offline. The worker's rules, case by case, are in `tests/unit/service-worker.test.mjs`.
+- **`oauth-redirect-origin.test.mjs`**: the pages at `https://app.hangtag.florixtechnologies.com` itself, every request answered by the test and a stand-in project in `config.js`. The `redirect_to` the real Supabase library sends is the custom domain for Google, Microsoft and the password-reset email, and `/platform/` for the console's Google sign-in. Served on another address, the app asks for that one: nothing hard-codes a host.
 - **`responsive-matrix.test.mjs`**: 33 screens, sheets and forms on four sizes. `SHOTS=1` also saves a picture of each one (`tests/.artifacts/rm-<size>-<screen>.png`) to look at by eye.
 - **`custom-fields.test.mjs`**: an owner with no template for their products (LED grow lights, a rug sold by the square foot) does everything without a code change:
   - makes fields and a unit in Settings;

@@ -251,6 +251,9 @@ console.log('=== the subscription function ===');
     vOk.status === 200 && vOk.body.status === 'paid' && vTransient.status === 503 && /Try again/.test(vTransient.body.message) && vForGood.status === 409, { vOk, vTransient, vForGood });
   const theirs = await call({ action: 'verify', payment_id: PID }, { script: { 'from:hangtag_subscription_payments': { data: { ...payRow, owner_id: 'someone-else' }, error: null } } });
   check('verify: another shop\'s payment → 404', theirs.status === 404);
+  const vDone = await call({ action: 'verify', payment_id: PID }, { routes: link, script: { 'from:hangtag_subscription_payments': { data: { ...payRow, status: 'paid', plan_code: 'm3', period_end: '2027-01-01T00:00:00Z' }, error: null } } });
+  check('verify: already paid (the notification got there first) → paid, with the plan it bought, the provider not asked', vDone.status === 200 && vDone.body.status === 'paid'
+    && vDone.body.plan_code === 'm3' && vDone.body.period_end === '2027-01-01T00:00:00Z' && vDone.api.length === 0, vDone);
 }
 
 console.log('=== the billing remediation, through the subscription function ===');

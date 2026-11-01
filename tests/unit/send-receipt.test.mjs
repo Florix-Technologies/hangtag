@@ -33,9 +33,9 @@ check('only the server-configured receipt URL is used', receiptBase({ RECEIPT_UR
   && receiptBase({}) === '' && validateRequest({ action: 'link', sale_id: 's1', receipt_url: 'https://evil.test/receipt.html' }).receiptUrl == null);
 
 // ---------- providers set up from secrets ----------
-check('nothing set up → every channel off', eq(configuredChannels({}), { email: false, whatsapp: false, sms: false, quote_email: false, quote_whatsapp: false }));
+check('nothing set up → every channel off', eq(configuredChannels({}), { email: false, whatsapp: false, sms: false, quote_email: false, quote_whatsapp: false, whatsapp_pdf: false }));
 const env = { RESEND_API_KEY: 're_key', EMAIL_FROM: 'bills@shop.in', TWILIO_ACCOUNT_SID: 'AC1', TWILIO_AUTH_TOKEN: 'tok', TWILIO_SMS_FROM: '+15550001111', WHATSAPP_TOKEN: 'wa', WHATSAPP_PHONE_NUMBER_ID: '123', WHATSAPP_TEMPLATE: 'bill_ready' };
-check('each channel on once its secrets are there (quotations by WhatsApp need their own template)', eq(configuredChannels(env), { email: true, whatsapp: true, sms: true, quote_email: true, quote_whatsapp: false }));
+check('each channel on once its secrets are there (quotations by WhatsApp need their own template)', eq(configuredChannels(env), { email: true, whatsapp: true, sms: true, quote_email: true, quote_whatsapp: false, whatsapp_pdf: false }));
 check('email needs a From address too; SMS needs a From number', !providerConfig('email', { RESEND_API_KEY: 'k' }) && !providerConfig('sms', { TWILIO_ACCOUNT_SID: 'a', TWILIO_AUTH_TOKEN: 'b' }));
 const twWa = { WHATSAPP_PROVIDER: 'twilio', TWILIO_ACCOUNT_SID: 'a', TWILIO_AUTH_TOKEN: 'b', TWILIO_WHATSAPP_FROM: '+14155238886', TWILIO_WHATSAPP_CONTENT_SID: 'HX0123' };
 check('WhatsApp through Twilio when chosen, with its approved template', providerConfig('whatsapp', twWa).whatsapp === true && providerConfig('whatsapp', twWa).contentSid === 'HX0123');
@@ -161,8 +161,9 @@ const walk = (d) => fs.readdirSync(d).flatMap((f) => { const p = path.join(d, f)
 const app = [...walk(path.join(ROOT, 'src')), path.join(ROOT, 'index.html'), path.join(ROOT, 'config.js')].map((f) => fs.readFileSync(f, 'utf8')).join('\n');
 check('the app never talks to a messaging provider directly or holds its keys', !/api\.resend\.com|api\.twilio\.com|graph\.facebook\.com|RESEND_API_KEY|TWILIO_AUTH_TOKEN|WHATSAPP_TOKEN/.test(app));
 check('the app never writes the message: the send request carries no text, HTML or subject', !/message:\s*messageFor|message-templates/.test(app)
-  && /send\(\{\s*channel,\s*saleId,\s*auto\s*\}\)/.test(fs.readFileSync(path.join(ROOT, 'src/infrastructure/messaging/delivery-client.js'), 'utf8'))
-  && /sendReceipt\(\{ channel, sale_id: saleId, \.\.\.\(auto \? \{ auto: true \} : \{\}\) \}\)/.test(fs.readFileSync(path.join(ROOT, 'src/infrastructure/messaging/delivery-client.js'), 'utf8')));
+  // only ids: the bill, the channel, automatic or not, the press of Send, and (a walk-in bill) a saved customer's id
+  && /send\(\{\s*channel,\s*saleId,\s*auto,\s*requestId,\s*customerId\s*\}\)/.test(fs.readFileSync(path.join(ROOT, 'src/infrastructure/messaging/delivery-client.js'), 'utf8'))
+  && /sendReceipt\(\{ channel, sale_id: saleId, \.\.\.\(auto \? \{ auto: true \} : \{\}\), \.\.\.\(requestId \? \{ request_id: requestId \} : \{\}\), \.\.\.\(customerId \? \{ customer_id: customerId \} : \{\}\) \}\)/.test(fs.readFileSync(path.join(ROOT, 'src/infrastructure/messaging/delivery-client.js'), 'utf8')));
 const fn = fs.readFileSync(path.join(ROOT, 'supabase/functions/send-receipt/index.ts'), 'utf8');
 check('the function takes a place under the limit before sending, counts it, and fails closed', fn.indexOf('reservationRow(') < fn.indexOf('count: "exact"') && fn.indexOf('count: "exact"') < fn.indexOf('await deliver(')
   && /countErr \|\| count == null/.test(fn) && /saleErr\) \{[^}]*unavailable\(\)/.test(fn) && /custErr\) \{[^}]*unavailable\(\)/.test(fn) && /count > MAX_PER_HOUR/.test(fn) && /billMessage\(r\.channel/.test(fn) && !/body\.message|\.\.\.r\.message/.test(fn));

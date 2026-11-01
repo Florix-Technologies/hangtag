@@ -60,7 +60,7 @@ const paymentGateway = async (r) => {
   return reply(r, 400, { ok: false, error: 'bad_request', message: 'Unknown action.' });
 };
 // ---------- send-receipt, stubbed: SMS set up; automatic sends recorded once ----------
-const sent = [];
+const sent = [], invoices = {};
 const sendReceipt = async (r) => {
   const b = JSON.parse(r.postData() || '{}');
   if (b.action === 'channels') return reply(r, 200, { ok: true, channels: { email: false, whatsapp: false, sms: true } });
@@ -68,6 +68,13 @@ const sendReceipt = async (r) => {
   if (b.action === 'link') return reply(r, 200, { ok: true, url: 'https://shop.example/receipt.html#' + 'x'.repeat(43) });
   const s = (await q(`SELECT s.id, c.phone FROM public.hangtag_sales s LEFT JOIN public.hangtag_customers c ON c.owner_id = s.owner_id AND c.id = s.customer_id WHERE s.id = $1`, [b.sale_id]))[0];
   if (!s) return reply(r, 404, { ok: false, error: 'not_found', message: "That bill isn't in the cloud yet." });
+  // the bill's one invoice PDF (send-receipt "invoice"): registered once from the phone's copy, then reused
+  if (b.action === 'invoice') {
+    if (invoices[b.sale_id]) return reply(r, 200, { ok: true, already: true, invoice: invoices[b.sale_id], url: 'https://files.example/x' });
+    if (!b.pdf) return reply(r, 404, { ok: false, error: 'no_invoice', message: 'This bill has no invoice PDF yet.' });
+    invoices[b.sale_id] = { id: 'inv-' + b.sale_id, number: 'x', sha256: 'h', size: b.pdf.length, filename: 'Invoice-x.pdf' };
+    return reply(r, 200, { ok: true, invoice: invoices[b.sale_id], url: 'https://files.example/x' });
+  }
   sent.push(b);
   const to = '+91' + String(s.phone || '').replace(/\D/g, '').slice(-10);
   await pg.db.query(`INSERT INTO public.hangtag_deliveries (owner_id, sale_id, channel, recipient, status, provider, provider_message_id, mode) VALUES ($1,$2,$3,$4,'sent','twilio',$5,$6)`,

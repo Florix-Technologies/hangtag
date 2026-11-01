@@ -4,9 +4,17 @@
   "installCommand": "npm ci",
   "buildCommand": "npm run build",
   "outputDirectory": "dist/site",
+  "redirects": [
+    {
+      "source": "/:path((?!sw\\.js$).*)",
+      "has": [{ "type": "host", "value": "hangtag\\.vercel\\.app" }],
+      "destination": "https://app.hangtag.florixtechnologies.com/:path",
+      "permanent": false
+    }
+  ],
   "headers": [
     {
-      "source": "/(.*)",
+      "source": "/:path((?!autopay\\.html$).*)",
       "headers": [
         { "key": "Content-Security-Policy", "value": "default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self' https://cdn.jsdelivr.net; script-src-attr 'none'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https:; connect-src 'self' https: wss: http:; media-src 'self' blob:; frame-src 'self' blob: data:; worker-src 'self' blob:; manifest-src 'self'; form-action 'self'; frame-ancestors 'none'" },
         { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
@@ -14,6 +22,18 @@
         { "key": "X-Frame-Options", "value": "DENY" },
         { "key": "Permissions-Policy", "value": "camera=(self), microphone=(self), geolocation=(), payment=(self)" },
         { "key": "Strict-Transport-Security", "value": "max-age=31536000; includeSubDomains" }
+      ]
+    },
+    {
+      "source": "/autopay.html",
+      "headers": [
+        { "key": "Content-Security-Policy", "value": "default-src 'none'; base-uri 'none'; object-src 'none'; script-src 'self' https://sdk.cashfree.com; style-src 'unsafe-inline'; img-src 'self' data: https:; connect-src https://*.cashfree.com; frame-src https://*.cashfree.com; form-action https://*.cashfree.com; frame-ancestors 'none'" },
+        { "key": "Referrer-Policy", "value": "no-referrer" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Permissions-Policy", "value": "camera=(self), microphone=(self), geolocation=(), payment=(self)" },
+        { "key": "Strict-Transport-Security", "value": "max-age=31536000; includeSubDomains" },
+        { "key": "Cache-Control", "value": "no-store" }
       ]
     }
   ]

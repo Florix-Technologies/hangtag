@@ -1,7 +1,7 @@
 # Hangtag controlled pilot: checklist
 
 For the owner running the pilot with the client's shop (or a few shops the owner names). The pilot runs on what
-Production serves today (`262dbdb`, build `hangtag-1601181284`) and the live database as it is: contained, not yet
+Production serves today (`7e77c74`, build `hangtag-db09103bf2`, since 2026-10-22) and the live database as it is: contained, not yet
 repaired (RELEASE.md §2a). **Online payment, AutoPay and bill reading stay off throughout**: no provider secret, no
 `subscription` / `subscription-webhook` deploy, AutoPay not switched on (RELEASE.md §6e). Nothing uncommitted in the
 repository is needed for the pilot.
@@ -29,6 +29,7 @@ client's real devices, network and sign-in.
 | Stock changes | A stock count adjustment; a product sold by the kg, if the shop has one | Stock moves by exactly what was counted or sold; history shows why | e2e `purchases-import-count`, `units-weighing`, `serial-batch-expiry`; database `stock-guards`, `tracking` |
 | Purchase bills | A supplier purchase entered by hand (bill reading is off: "Upload bill" offers entry by hand) | Stock in; what the supplier is owed; the same invoice number flagged | e2e `purchases-import-count`, `bill-import`; database `purchases`, `supplier-bills` |
 | Sales | Bills as the shop works (cash or UPI received as the shop records it today) | Bill numbers in order; totals and GST as printed; stock down | e2e `sell-pos`, `checkout-flow`, `bills`, `payments-cash-gst`, `units-weighing` |
+| Payments (no gateway: it stays off for the pilot) | Cash; a card on the shop's own machine; UPI to the shop's own QR marked received by the cashier. Then the owner, in Reports → Reconciliation, marks each UPI payment **Received** after seeing it in the bank or UPI app (a cashier can't) | Cash and card say what was taken (a card machine "Payment recorded"); UPI stays **Unverified** until Received, then **Confirmed** on every device; the bank book shows it. Before the shop payments migration (RELEASE §6f) on live, Received says the database needs its update: note it, don't retry | e2e `payments-cash-gst`, `payment-settings`, `shop-payments`; database `shop-payments` |
 | Returns | A return from a bill, back on the shelf or not; an exchange | Refund and stock as chosen; never more back than bought | e2e `returns-after-sales`, `serial-batch-expiry`; database `returns-events` |
 | Offline sync | A sale with the phone's network off, then on; the computer refreshes | The sale reaches the cloud once; the other device shows it after a refresh (note how long: RELEASE.md §6a check 5) | e2e `offline-queue-sw`, `sync-scenarios`, `sync-catch-up`, `cloud-roundtrip`, `team-devices` |
 | Trial expiry and extension | Plans & Billing; near the end, the owner's Extend in the console | "N days remaining — Trial ends on …": 30 days after setup, or the end the owner gave; after Extend (audited) the new end when the app is reopened, or at once with "Check again" on the lock screen; at the end, the lock screen and nothing else | e2e `subscription`, `platform-console`; database `subscriptions`, `plans-autopay-platform`, `owner-operations` |

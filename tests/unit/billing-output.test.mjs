@@ -189,7 +189,7 @@ const gw = createCloudGateway({ getClient: () => fnClient, url: 'https://x.supab
 const dc = createDeliveryClient({ cloud: gw });
 invokeAnswer = { data: { ok: true, status: 'sent', recipient: 'a@b.in', provider: 'resend', provider_message_id: 're_1' }, error: null };
 const okSend = await dc.send({ channel: 'email', saleId: 's1' });
-check('sent: the provider\'s id comes back; the request names only the bill and channel (the server writes the message)', eq(okSend, { status: 'sent', to: 'a@b.in', provider: 'resend', id: 're_1', again: false }) && eq(fnCalls[0], { name: 'send-receipt', body: { action: 'send', channel: 'email', sale_id: 's1' } }));
+check('sent: the provider\'s id comes back; the request names only the bill and channel (the server writes the message)', eq(okSend, { status: 'sent', to: 'a@b.in', provider: 'resend', id: 're_1', again: false, invoiceId: null, format: '' }) && eq(fnCalls[0], { name: 'send-receipt', body: { action: 'send', channel: 'email', sale_id: 's1' } }));
 const sendErr = async () => { try { await dc.send({ channel: 'sms', saleId: 's1' }); return null; } catch (e) { return e; } };
 invokeAnswer = { data: { ok: true, status: 'sent' }, error: null };
 check('an answer without a message id is not a send', (await sendErr()).code === C.DELIVERY);
@@ -220,7 +220,8 @@ override({ messageDelivery: { channels: async () => ({ email: true, whatsapp: fa
 store.sbClient = {}; store.sbStatus = 'connected';
 portAnswer = { status: 'sent', to: 'accounts@blr.in', provider: 'resend', id: 're_9' };
 let r = await sendInvoice(b2b.id, 'email');
-check('send by email: the bill and channel go to the server and it is noted as sent', r.ok && r.to === 'accounts@blr.in' && eq(portCalls[0], { channel: 'email', saleId: b2b.id })
+check('send by email: the bill, the channel and the press of Send go to the server and it is noted as sent', r.ok && r.to === 'accounts@blr.in'
+  && eq({ ...portCalls[0], requestId: 0 }, { channel: 'email', saleId: b2b.id, requestId: 0 }) && /^[A-Za-z0-9_-]{8,64}$/.test(portCalls[0].requestId)
   && deliveriesOf(b2b.id)[0].status === 'sent' && deliveriesOf(b2b.id)[0].providerId === 're_9');
 portAnswer = new AppError(C.DELIVERY, "The SMS service didn't accept the message: invalid number");
 r = await sendInvoice(b2b.id, 'sms');

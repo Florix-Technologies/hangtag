@@ -3,8 +3,8 @@
 // Money is counted only in the database's billing mode (hangtag_billing_mode, after the post-repair migration): a function
 // whose keys are in the other mode refuses every action but config (which then says payment isn't available). Before the
 // migration (or after its undo) the older database functions are used, and only live keys pass.
-import { PHONE_NEEDED, autopayPlanMatches, autopayStartAt, billingModeAllows, callbackUrl, cancelOrConfirm, description, missingRpc, notifyUrl, payerPhone,
-  rpcErrorReply, validateRequest, verifyDecision } from "./core.js";
+import { PHONE_NEEDED, autopayPlanMatches, autopayReturnUrl, autopayStartAt, billingModeAllows, callbackUrl, cancelOrConfirm, description, missingRpc, notifyUrl,
+  payerPhone, rpcErrorReply, validateRequest, verifyDecision } from "./core.js";
 import { checkMandate } from "./reconcile.js";
 
 const out = (status, body) => ({ status, body });
@@ -33,11 +33,13 @@ export async function handleSubscription(req, { env, provider, autopay = null, n
     // owner (its terms: switched on and its notifications proven) — any refusal (a team member, an older database) is "no"
     const payOk = !!provider && await billingModeAllows(sr, provider);
     let autopayOk = false;
-    if (autopay && planId && await billingModeAllows(sr, autopay)) {
+    if (autopay && (autopay.autopayInline || planId) && await billingModeAllows(sr, autopay)) {
       const { data: q, error } = await db.rpc("hangtag_autopay_quote");
       autopayOk = !error && !!q && q.available === true;
     }
-    return out(200, { ok: true, available: payOk, provider: payOk ? provider.name : null, autopay: autopayOk });
+    // autopay_verify: what the owner's bank or UPI app may take to confirm AutoPay (₹, refunded) — said before they agree
+    return out(200, { ok: true, available: payOk, provider: payOk ? provider.name : null, autopay: autopayOk,
+      ...(autopayOk && +autopay.autopayAuthAmount > 0 ? { autopay_verify: +autopay.autopayAuthAmount } : {}) });
   }
   const autopayRow = async () => (await sr.from("hangtag_subscriptions").select("autopay_provider, autopay_subscription_id, autopay_status").eq("owner_id", user.id).maybeSingle()).data;
   /* An AutoPay report through the registry (the older function before the post-repair migration) */
@@ -58,7 +60,7 @@ export async function handleSubscription(req, { env, provider, autopay = null, n
   };
 
   if (r.action === "autopay_start") {
-    if (!autopay || !planId) return notConfigured("AutoPay isn't set up yet. Choose a plan instead.");
+    if (!autopay || (!autopay.autopayInline && !planId)) return notConfigured("AutoPay isn't set up yet. Choose a plan instead.");
     if (!(await billingModeAllows(sr, autopay))) return notConfigured("AutoPay isn't available right now. Choose a plan instead.");
     const notReady = () => notConfigured("AutoPay isn't available right now. Choose a plan instead.");
     // the terms first (the shop's owner only), then the provider's plan against them: no consent is recorded for a
@@ -68,10 +70,23 @@ export async function handleSubscription(req, { env, provider, autopay = null, n
     const lim = await callAllowed("autopay_start");
     if (!lim.ok) return lim.retryAfter ? out(429, { ok: false, error: "too_many", message: "Too many tries in a short time. Wait a minute and try again.", retry_after: lim.retryAfter })
       : out(503, { ok: false, error: "server_error", message: "AutoPay couldn't be started. Try again." });
-    let plan;
-    try { plan = await autopay.getPlan(planId); }
-    catch (e) { log.error("subscription: the AutoPay plan couldn't be read:", e && e.status || ""); return out(502, { ok: false, error: "provider_error", message: "AutoPay couldn't be started. Try again." }); }
-    if (!autopayPlanMatches(plan, q)) { log.error("subscription: the AutoPay plan at the provider is not the AutoPay plan's price"); return notReady(); }
+    // a provider whose mandate carries its own terms (Cashfree: made from the AutoPay plan's price) has no plan to check
+    let plan = null;
+    if (!autopay.autopayInline) {
+      try { plan = await autopay.getPlan(planId); }
+      catch (e) { log.error("subscription: the AutoPay plan couldn't be read:", e && e.status || ""); return out(502, { ok: false, error: "provider_error", message: "AutoPay couldn't be started. Try again." }); }
+      if (!autopayPlanMatches(plan, q)) { log.error("subscription: the AutoPay plan at the provider is not the AutoPay plan's price"); return notReady(); }
+    }
+    // a provider that needs the payer's contact (Cashfree: a mobile number and an email) gets the shop's saved number, or
+    // the one the owner typed now, and the sign-in email — asked for before any consent is recorded
+    let phone = "", email = "";
+    if (autopay.needsPhone) {
+      const { data: prof } = await db.from("hangtag_profiles").select("phone").eq("id", user.id).maybeSingle();
+      phone = payerPhone((prof && prof.phone) || "") || payerPhone(user.phone || "") || r.phone || "";
+      if (!phone) return out(400, { ok: false, error: "phone_required", message: PHONE_NEEDED });
+      email = String(user.email || "").trim();
+      if (!email) return out(400, { ok: false, error: "email_required", message: "AutoPay needs an email address on your account. Sign in with email, then try again." });
+    }
     // the consent is recorded AS the owner (the database checks the owner, the terms' version and AutoPay's state)
     const { data: t, error: bErr } = await db.rpc("hangtag_autopay_begin", { p_consent: true, p_consent_version: r.consentVersion });
     if (bErr || !t) { const e = rpcErrorReply(bErr); return out(e.status, e.body); }
@@ -84,10 +99,12 @@ export async function handleSubscription(req, { env, provider, autopay = null, n
         if (c.confirmed) await report(autopay, old.subscription_id, "cancelled");
       } catch { /* the reconciler retries it */ }
     }
-    if (!autopayPlanMatches(plan, t)) { log.error("subscription: the AutoPay terms changed while setting up"); return notReady(); }
+    if (!autopay.autopayInline && !autopayPlanMatches(plan, t)) { log.error("subscription: the AutoPay terms changed while setting up"); return notReady(); }
     try {
       const made = await autopay.createAutopay({ planId, startAt: autopayStartAt(t, now()), expireBy: now() + 24 * 3600e3,
-        notes: { hangtag_owner: user.id, ...(t.mandate_id ? { hangtag_mandate: t.mandate_id } : {}) } });
+        notes: { hangtag_owner: user.id, ...(t.mandate_id ? { hangtag_mandate: t.mandate_id } : {}) },
+        // Cashfree's mandate: named after the set-up, its terms from the ones just agreed, the owner sent back to the app
+        ref: t.mandate_id || user.id + now().toString(36), terms: t, phone, email, appUrl: env.APP_URL, returnUrl: autopayReturnUrl(env) });
       let current = true, atErr = null;
       if (t.mandate_id) {
         const a = await sr.rpc("hangtag_autopay_attach_mandate", { p_mandate: t.mandate_id, p_provider: autopay.name, p_subscription: made.subscriptionId,
@@ -120,8 +137,15 @@ export async function handleSubscription(req, { env, provider, autopay = null, n
       if (!(await billingModeAllows(sr, ap))) return notConfigured("AutoPay can't be reached right now. Try again.");
       let st = null;
       try { st = await cancelOrConfirm(ap, c.subscription_id); } catch { st = null; }
-      // turned off at the provider (or already off there) — only then recorded
-      if (!st || !st.confirmed) return out(502, { ok: false, error: "provider_error", message: "AutoPay couldn't be turned off. Try again." });
+      // turned off at the provider (or already off there) — only then recorded. Not confirmed now: kept owed (the Cashfree
+      // migration), so the reconciler retries the cancel first and asks for no new charge on it meanwhile
+      if (!st || !st.confirmed) {
+        const { error: owedErr } = await sr.rpc("hangtag_autopay_cancel_owed", { p_provider: ap.name, p_subscription: c.subscription_id, p_mode: ap.mode });
+        if (owedErr && !missingRpc(owedErr)) log.error("subscription: an AutoPay cancel owed wasn't kept:", owedErr.code);
+        return out(502, { ok: false, error: "provider_error", message: owedErr
+          ? "AutoPay couldn't be turned off. Try again."
+          : "AutoPay couldn't be turned off just now. Hangtag keeps trying and asks for no new charge meanwhile; check again in a few minutes." });
+      }
       const { error: evErr } = await report(ap, c.subscription_id, "cancelled");
       if (evErr) { log.error("subscription: AutoPay cancel not recorded:", evErr.code); return out(503, { ok: false, error: "server_error", message: "AutoPay was turned off; the app will show it shortly." }); }
     }
@@ -162,13 +186,14 @@ export async function handleSubscription(req, { env, provider, autopay = null, n
     // console staff who manage settings (the database checks it, once in 10 minutes, and logs it before anything is made)
     const { error: allowErr } = await db.rpc("hangtag_billing_selfcheck_allowed");
     if (allowErr) return out(403, { ok: false, error: "forbidden", message: allowErr.code === "P0001" ? String(allowErr.message || "").slice(0, 160) : "Only console staff who manage settings can run this." });
-    if (!autopay || !planId || typeof autopay.createProbeLink !== "function") return notConfigured("AutoPay's provider isn't set up here.");
+    if (!autopay || (!autopay.autopayInline && !planId) || typeof autopay.createProbeLink !== "function") return notConfigured("AutoPay's provider isn't set up here.");
     if (!(await billingModeAllows(sr, autopay))) return notConfigured("This database counts money in another mode than the provider's keys.");
     const ref = newId(), steps = {};
     const step = async (name, fn) => { try { await fn(); steps[name] = "ok"; } catch (e) { steps[name] = "failed"; log.error(`subscription: self-check ${name} failed:`, e && (e.status || e.code) || ""); } };
     let link = null, sub = null;
     await step("link_made", async () => {
-      link = await autopay.createProbeLink(ref);
+      // (a provider whose links carry their own notify address, Cashfree, gets this function's webhook on it)
+      link = await autopay.createProbeLink(ref, { notifyUrl: notifyUrl(env) });
       const { error } = await sr.rpc("hangtag_billing_probe_record", { p_provider: autopay.name, p_kind: "payment_link", p_entity: link, p_mode: autopay.mode });
       if (error) throw Object.assign(new Error("db"), { code: error.code });
     });
@@ -180,7 +205,7 @@ export async function handleSubscription(req, { env, provider, autopay = null, n
     });
     if (sub) await step("subscription_cancelled", async () => { const c = await cancelOrConfirm(autopay, sub); if (!c.confirmed && c.status !== "created") throw new Error("cancel"); });
     return out(200, { ok: Object.values(steps).every((v) => v === "ok"), steps,
-      next: "Within a few minutes the webhook's payment_link.cancelled and subscription.cancelled notifications appear in billing health." });
+      next: "Within a few minutes the provider's notifications about the withdrawn link and set-up appear in billing health." });
   }
 
   if (r.action === "checkout") {
@@ -190,11 +215,12 @@ export async function handleSubscription(req, { env, provider, autopay = null, n
     if (q && q.promo && q.promo.valid === false) return out(400, { ok: false, error: "promo", reason: q.promo.reason, message: q.promo.message });
     if (!provider && Number(q && q.amount) > 0) return notConfigured("Online payment isn't set up yet. Contact Hangtag support to renew.");
     if (provider && Number(q && q.amount) > 0 && !(await billingModeAllows(sr, provider))) return notConfigured("Online payment isn't available right now. Contact Hangtag support to renew.");
-    // a provider that needs the payer's mobile number (Cashfree) gets the shop's — asked for before any payment is made
+    // a provider that needs the payer's mobile number (Cashfree) gets the shop's — or, when that can't be used, the one the
+    // owner typed for this payment — asked for before any payment is made
     let phone = "";
     if (provider && provider.needsPhone && Number(q && q.amount) > 0) {
       const { data: prof } = await db.from("hangtag_profiles").select("phone").eq("id", user.id).maybeSingle();
-      phone = payerPhone((prof && prof.phone) || user.phone || "");
+      phone = payerPhone((prof && prof.phone) || "") || payerPhone(user.phone || "") || r.phone || "";
       if (!phone) return out(400, { ok: false, error: "phone_required", message: PHONE_NEEDED });
     }
     const { data: c, error: cErr } = await db.rpc("hangtag_subscription_checkout", { p_plan: r.plan, p_promo: r.promo, p_provider: provider ? provider.name : "none" });
@@ -241,10 +267,11 @@ export async function handleSubscription(req, { env, provider, autopay = null, n
   }
 
   // verify: the payment must be one of the caller's own (row security: the owner reads only the shop's payments)
-  const { data: row, error: rowErr } = await db.from("hangtag_subscription_payments").select("id, owner_id, amount, currency, status, provider, provider_order_id, period_end").eq("id", r.paymentId).maybeSingle();
+  const { data: row, error: rowErr } = await db.from("hangtag_subscription_payments").select("id, owner_id, plan_code, amount, currency, status, provider, provider_order_id, period_end").eq("id", r.paymentId).maybeSingle();
   if (rowErr) { const e = rpcErrorReply(rowErr); return out(e.status, e.body); }
   if (!row || row.owner_id !== user.id) return out(404, { ok: false, error: "not_found", message: "Unknown payment." });
-  if (row.status === "paid") return out(200, { ok: true, status: "paid", period_end: row.period_end });
+  // already paid (often by the notification first): the plan it bought, so the app names the right one
+  if (row.status === "paid") return out(200, { ok: true, status: "paid", plan_code: row.plan_code || null, period_end: row.period_end });
   // asked of the provider that took it (still answered after the provider for new payments changed)
   const taker = named(row.provider) || (provider && provider.name === row.provider ? provider : null);
   if (!taker || !row.provider_order_id) return out(200, { ok: true, status: row.status === "created" ? "pending" : row.status });

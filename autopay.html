@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<!-- The only Hangtag page that loads Cashfree's script: it opens Cashfree's own page for the AutoPay mandate the server
+     made, and nothing else. vercel.json serves it with this same policy. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; object-src 'none'; script-src 'self' https://sdk.cashfree.com; style-src 'unsafe-inline'; img-src 'self' data: https:; connect-src https://*.cashfree.com; frame-src https://*.cashfree.com; form-action https://*.cashfree.com">
+<title>Hangtag AutoPay</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<style>
+  :root { color-scheme: light dark; --bg: #ffffff; --fg: #1f2328; --muted: #57606a; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0d1117; --fg: #e6edf3; --muted: #9da7b3; } }
+  body { margin: 0; padding: 24px 16px; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 420px; margin: 12vh auto 0; text-align: center; }
+  h1 { font-size: 1.25rem; margin: 0 0 8px; }
+  p { color: var(--muted); margin: 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Hangtag AutoPay</h1>
+  <p id="msg" role="status">Opening Cashfree's secure page…</p>
+</main>
+<script src="https://sdk.cashfree.com/js/v3/cashfree.js"></script>
+<script src="autopay-checkout.js"></script>
+</body>
+</html>

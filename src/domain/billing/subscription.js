@@ -64,7 +64,7 @@ export const autopayLive = ap => !!ap && (ap.status === "active" || ap.status ==
 export function autopayText(ap){
   if(!ap) return "";
   if(ap.status === "active") return ap.next_charge_at ? `On · next charge on ${when(ap.next_charge_at)}` : "On";
-  if(ap.status === "past_due") return "On · the last charge failed, the bank is asked again";
+  if(ap.status === "past_due") return "On · the last charge didn't go through";
   if(ap.status === "pending") return ap.set_up ? "Waiting for your approval" : "Not set up";
   if(ap.status === "halted") return "Stopped · the charges failed";
   if(ap.status === "cancelled") return "Off";
@@ -117,7 +117,7 @@ export function lockCopy(status, now, owner){
 /* Home's slim banner for the owner and managers: during the trial, and when a paid plan has a week or less left */
 export function bannerFor(status, now){
   const s = stateAt(status, now), n = daysLeft(status, now), lc = lifecycleOf(status, now), ap = status && status.autopay;
-  if(lc === "past_due") return { tone: "warn", text: "AutoPay couldn't collect your plan's renewal. Your bank is asked again — or pay now.", cta: "Pay now" };
+  if(lc === "past_due") return { tone: "warn", text: "AutoPay couldn't collect your plan's renewal. It may be tried again — or pay now.", cta: "Pay now" };
   if(lc === "renewing") return { tone: "info", text: "Your plan is renewing by AutoPay.", cta: "View" };
   if(s === "trial_active"){
     const on = ap && ap.status === "active", ending = n <= 2 || lc === "trial_ending";

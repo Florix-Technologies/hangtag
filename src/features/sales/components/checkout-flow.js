@@ -20,11 +20,14 @@ export function customerRequired(){
 }
 const customerCard = () => {
   const c = store.cartCust, need = customerRequired();
-  if(c && c.name) return `<div class="checkout-customer"><span>${statusChip("Customer", "info")}</span><div><b>${esc(c.name)}</b><small>${esc(c.phone || "Saved customer")}</small></div>${need ? "" : `<button type="button" class="btn sm" data-act="pickcust">Change</button>`}</div>`
+  // the customer as saved (their email too: where the bill can be sent)
+  const saved = c && c.id && store.customers && store.customers[c.id] || c || {}, contact = [saved.phone, saved.email].filter(Boolean).join(" · ");
+  if(c && c.name) return `<div class="checkout-customer"><span>${statusChip("Customer", "info")}</span><div><b>${esc(c.name)}</b><small>${esc(contact || "No mobile or email yet")}</small></div>${need ? "" : `<button type="button" class="btn sm" data-act="pickcust">Change</button>`}</div>`
     + (need ? `<p class="note" data-custneed>${esc(need)}</p>` : `<button type="button" class="btn text" data-checkoutwalkin>Use Walk-in instead</button>`);
   return `<div class="checkout-choices" role="group" aria-label="Who is this sale for?">
-    <button type="button" class="checkout-choice" data-checkoutwalkin><b>Walk-in customer</b><small>No details kept on the bill</small></button>
-    <button type="button" class="checkout-choice" data-act="pickcust"><b>Add customer</b><small>Find or add a saved customer</small></button></div>`;
+    <button type="button" class="checkout-choice" data-act="pickcust"><b>Search customer</b><small>Find a saved customer by name or mobile</small></button>
+    <button type="button" class="checkout-choice" data-checkoutaddcust><b>Add customer</b><small>Name, mobile and email: the bill can be sent to them</small></button>
+    <button type="button" class="checkout-choice" data-checkoutwalkin><b>Walk-in customer</b><small>No details kept on the bill</small></button></div>`;
 };
 const reviewLines = () => store.cart.map(c => `<div class="checkout-line"><span><b>${esc(c.name)}</b>${c.vl || c.s ? `<small>${esc(c.vl || c.s)}</small>` : ""}</span><span>${esc(String(c.q))} × ${inr(c.price)}</span></div>`).join("");
 

@@ -4,6 +4,7 @@
 // is faked at its network address (ePOS-Print answers, including out-of-paper and unreachable).
 import puppeteer from 'puppeteer-core';
 import fs from 'fs';
+import crypto from 'node:crypto';
 import H from '../helpers/env.mjs';
 import { createPgRest, CORS } from '../helpers/pg-rest.mjs';
 await H.ensureServer();
@@ -16,20 +17,31 @@ await pg.db.query(`INSERT INTO public.hangtag_profiles (id, email, full_name, sh
 const q = async (sql) => (await pg.as(sql, [])).rows;
 
 // ---------- the send-receipt function, stubbed: email works, SMS is refused by its provider, WhatsApp isn't set up ----------
-const fnCalls = [];
+const fnCalls = [], invoices = {};
 const sendReceipt = async (r) => {
   const body = JSON.parse(r.postData() || '{}'); fnCalls.push(body);
   const reply = (status, b) => r.respond({ status, contentType: 'application/json', headers: CORS, body: JSON.stringify(b) });
   if (body.action === 'channels') return reply(200, { ok: true, channels: { email: true, whatsapp: false, sms: true } });
-  const sale = (await q(`SELECT s.id, s.is_void, c.email, c.phone FROM public.hangtag_sales s LEFT JOIN public.hangtag_customers c ON c.owner_id = s.owner_id AND c.id = s.customer_id WHERE s.id = '${body.sale_id.replace(/'/g, "''")}'`))[0];
+  const sale = (await q(`SELECT s.id, s.bill_no, s.is_void, c.email, c.phone FROM public.hangtag_sales s LEFT JOIN public.hangtag_customers c ON c.owner_id = s.owner_id AND c.id = s.customer_id WHERE s.id = '${body.sale_id.replace(/'/g, "''")}'`))[0];
   if (!sale) return reply(404, { ok: false, error: 'not_found', message: "That bill isn't in the cloud yet." });
   if (sale.is_void) return reply(409, { ok: false, error: 'cancelled', message: "A cancelled bill can't be sent." });
+  // the bill's one invoice PDF (as the function keeps it): the first copy registered is kept, every send reuses it
+  if (body.action === 'invoice') {
+    const have = invoices[sale.id];
+    if (have) return reply(200, { ok: true, already: true, invoice: have, url: 'https://files.example/' + have.id });
+    if (!body.pdf) return reply(404, { ok: false, error: 'no_invoice', message: 'This bill has no invoice PDF yet.' });
+    const pdf = Buffer.from(body.pdf, 'base64').toString('latin1');
+    if (!pdf.startsWith('%PDF-') || !pdf.includes(`(${sale.bill_no})`)) return reply(422, { ok: false, error: 'invoice_mismatch', message: "That PDF isn't this bill's invoice." });
+    invoices[sale.id] = { id: 'inv-' + Object.keys(invoices).length, number: sale.bill_no, sha256: crypto.createHash('sha256').update(Buffer.from(body.pdf, 'base64')).digest('hex'), size: pdf.length, filename: `Invoice-${sale.bill_no}.pdf` };
+    return reply(200, { ok: true, invoice: invoices[sale.id], url: 'https://files.example/' + invoices[sale.id].id });
+  }
+  const inv = invoices[sale.id];
   const to = body.channel === 'email' ? sale.email : '+91' + String(sale.phone || '').replace(/\D/g, '').slice(-10);
   if (body.channel === 'whatsapp') return reply(503, { ok: false, error: 'not_configured', message: "Sending by WhatsApp isn't set up for this shop yet." });
   const ok = body.channel === 'email';
   await pg.db.query(`INSERT INTO public.hangtag_deliveries (owner_id, sale_id, channel, recipient, status, provider, provider_message_id, error) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
     [UID, body.sale_id, body.channel, to, ok ? 'sent' : 'failed', ok ? 'resend' : 'twilio', ok ? 're_' + fnCalls.length : null, ok ? null : 'The To number is not a valid mobile number']);
-  return ok ? reply(200, { ok: true, status: 'sent', channel: 'email', recipient: to, provider: 'resend', provider_message_id: 're_' + fnCalls.length })
+  return ok ? reply(200, { ok: true, status: 'sent', channel: 'email', recipient: to, provider: 'resend', provider_message_id: 're_' + fnCalls.length, ...(inv ? { invoice_id: inv.id, format: 'attachment' } : {}) })
     : reply(502, { ok: false, status: 'failed', error: 'provider_error', message: "The SMS service didn't accept the message: The To number is not a valid mobile number" });
 };
 // ---------- a fake Epson printer at https://192.168.1.50 ----------
@@ -100,18 +112,23 @@ await A.type('[data-payf="ref:upi"]', '412345678901'); await sleep(100);
 await A.click('[data-upireceived]'); await sleep(100);
 await A.click('#payDone'); await sleep(400);
 const sid = await run('return lastSale.id');
-check('payment confirmed: the sheet offers Print, Download and Send to customer (Email, WhatsApp, SMS)', await vis('#sheetHost [data-paid]') && !!(await A.$(`#sheetHost [data-print="${sid}"]`)) && !!(await A.$(`#sheetHost [data-dlreceipt="${sid}"]`))
+check('payment confirmed: the sheet offers Print, Download PDF and Send to customer (Email, WhatsApp, SMS)', await vis('#sheetHost [data-paid]') && !!(await A.$(`#sheetHost [data-print="${sid}"]`)) && !!(await A.$(`#sheetHost [data-dlinvoice="${sid}"]`))
   && (await A.$$eval('#sheetHost [data-send]', (b) => b.map((x) => x.textContent))).join() === 'Email,WhatsApp,SMS');
 await run('await flushSbQueue()');
 await A.screenshot({ path: H.ARTIFACTS + '/bo1_paid_desktop.png' });
 
 // ---------- Phase 15: send ----------
 await A.click(`#sheetHost [data-send="email:${sid}"]`); await sleep(600);
-check('Email: sent — the server confirmed with the provider\'s id', /✓ Emailed to accounts@blr\.in/.test(await text(`#sheetHost [data-sendstate="${sid}"]`)), await text(`#sheetHost [data-sendstate="${sid}"]`));
+check('Email: sent — the server confirmed with the provider\'s id, the invoice PDF attached', /✓ Emailed to accounts@blr\.in with the invoice PDF attached/.test(await text(`#sheetHost [data-sendstate="${sid}"]`)), await text(`#sheetHost [data-sendstate="${sid}"]`));
 const emailCall = fnCalls.find((c) => c.channel === 'email');
-check('the request carries only the bill and the channel — no recipient and no message (the function writes it from the saved bill)', emailCall.sale_id === sid && emailCall.action === 'send'
-  && JSON.stringify(Object.keys(emailCall).sort()) === JSON.stringify(['action', 'channel', 'sale_id']), emailCall);
+check('the send carries only the bill, the channel and the id of this press of Send — no recipient and no message (the function writes it from the saved bill)', emailCall.sale_id === sid && emailCall.action === 'send'
+  && JSON.stringify(Object.keys(emailCall).sort()) === JSON.stringify(['action', 'channel', 'request_id', 'sale_id']) && /^[A-Za-z0-9_-]{8,64}$/.test(emailCall.request_id), emailCall);
+check('before sending, the bill\'s invoice PDF is registered once: the app\'s own A4 invoice, with the bill\'s number', fnCalls.filter((c) => c.action === 'invoice' && c.pdf).length === 1 && !!invoices[sid],
+  fnCalls.filter((c) => c.action === 'invoice').map((c) => ({ pdf: !!c.pdf })));
+check('the email\'s badge says sent', await A.$eval(`#sheetHost [data-send="email:${sid}"] .dlb`, (e) => e.className).then((c) => /\bok\b/.test(c), () => false));
 await A.click(`#sheetHost [data-send="sms:${sid}"]`); await sleep(600);
+check('the SMS reuses the same invoice: nothing registered again', fnCalls.filter((c) => c.action === 'invoice' && c.pdf).length === 1 && fnCalls.filter((c) => c.action === 'invoice').length === 2,
+  fnCalls.filter((c) => c.action === 'invoice').map((c) => ({ pdf: !!c.pdf })));
 const smsState = await text(`#sheetHost [data-sendstate="${sid}"]`);
 check('SMS: the provider refused — shown as not sent, with Try again (no false success)', /didn't accept the message/.test(smsState) && !/✓/.test(smsState) && !!(await A.$(`#sheetHost [data-sendstate="${sid}"] [data-send="sms:${sid}"]`)), smsState);
 const waUrl = await A.evaluate(async (sid) => { let u = null; const o = window.open; window.open = (x) => { u = x; return {}; }; document.querySelector(`#sheetHost [data-send="whatsapp:${sid}"]`).click(); await new Promise((r) => setTimeout(r, 400)); window.open = o; return u; }, sid);

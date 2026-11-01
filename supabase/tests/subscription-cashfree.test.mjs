@@ -75,7 +75,9 @@ async function fakeFetch(url, init = {}) {
     return res(200, links.get(b.link_id));
   }
   if ((m = /^\/links\/([^/]+)$/.exec(p))) return links.has(m[1]) ? res(200, links.get(m[1])) : res(404, {});
-  if ((m = /^\/links\/([^/]+)\/orders$/.exec(p))) return res(200, [...orders.values()].filter((o) => o.link_id === m[1] && o.order_status === 'PAID'));
+  // as Cashfree's sandbox answers (2026-10-27): status must be ALL, and every order on the link comes back
+  if ((m = /^\/links\/([^/]+)\/orders$/.exec(p))) return u.searchParams.get('status') !== 'ALL' ? res(400, { code: 'status_invalid' })
+    : res(200, [...orders.values()].filter((o) => o.link_id === m[1]));
   if ((m = /^\/orders\/([^/]+)\/payments$/.exec(p))) return res(200, (orders.get(m[1]) || {}).payments || []);
   if ((m = /^\/orders\/([^/]+)$/.exec(p))) return orders.has(m[1]) ? res(200, { order_id: m[1], order_tags: { link_id: orders.get(m[1]).link_id } }) : res(404, {});
   return res(404, {});

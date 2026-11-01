@@ -19,12 +19,16 @@
 //   uses (Settings → receiptUrl, written by the owner's app; only an https …/receipt.html address is ever used).
 // - A shop's team member sends for the shop: the shop is what the database says (hangtag_shop_id() with the caller's
 //   session and device key, forwarded as x-hangtag-device), never the caller's own id; the member needs create_sale.
+// - "invoice": the bill's one invoice PDF (core.js, canonical invoice). The phone registers its copy once; the first copy
+//   registered for a bill is kept for good (hangtag_invoices, unique per bill; the file in the private bucket). From then on
+//   every channel uses that file: the email's one attachment, WhatsApp's document (or link), the SMS's download link.
+//   A walk-in bill can go to a saved customer named in the request (customer_id): the bill and its invoice don't change.
 // Deploy with JWT verification on (the default).
 import { createClient } from "npm:@supabase/supabase-js@2.117.2";
 import { planGate } from "../_shared/plan-gate.js";
-import { CHANNEL_LABELS, ITEM_COLUMNS, RETURN_COLUMNS, MAX_PER_HOUR, ORDER_COLUMNS, ORDER_ITEM_COLUMNS, PAYMENT_COLUMNS, PROFILE_COLUMNS, QUOTE_PERMISSION, SALE_COLUMNS, SEND_PERMISSION,
-  allowedToSend, billMessage, configuredChannels, emailLogo, failureAnswer, failureKind, deliveryOutcome, fromName, linkRow, linkUrl, liveLink, newToken, providerConfig, providerStatus, quoteMessage,
-  receiptBase, recipientFor, requestedReceiptBase, reservationRow, validateRequest } from "./core.js";
+import { CHANNEL_LABELS, INVOICE_BUCKET, INVOICE_COLUMNS, ITEM_COLUMNS, RETURN_COLUMNS, MAX_PER_HOUR, ORDER_COLUMNS, ORDER_ITEM_COLUMNS, PAYMENT_COLUMNS, PROFILE_COLUMNS, QUOTE_PERMISSION, SALE_COLUMNS, SEND_PERMISSION,
+  allowedToSend, base64Of, billMessage, checkInvoicePdf, configuredChannels, emailLogo, failureAnswer, failureKind, deliveryOutcome, fromName, invoiceFileName, invoicePath, invoiceView, linkRow, linkUrl, liveLink,
+  newToken, pdfFromBase64, providerConfig, providerStatus, quoteMessage, receiptBase, recipientFor, requestedReceiptBase, reservationRow, sha256Hex, validateRequest } from "./core.js";
 import { deliver } from "./providers/index.js";
 import { fetchStatus } from "./providers/status.js";
 
@@ -122,12 +126,56 @@ Deno.serve(async (req) => {
     return reply(200, { ok: true, updated });
   }
 
+  /* The bill's one invoice PDF, if it has one ({ row } | { row: null } | { error }: the table isn't there yet = none) */
+  const currentInvoice = async (saleId: string) => {
+    const { data, error } = await admin.from("hangtag_invoices").select(INVOICE_COLUMNS).eq("owner_id", shop).eq("sale_id", saleId).maybeSingle();
+    if (error && /hangtag_invoices|42P01|does not exist|schema cache/i.test(`${error.code} ${error.message}`)) return { row: null, missing: true };
+    return error ? { error } : { row: data };
+  };
+  /* A short-lived address of the stored file (the private bucket has no public access) */
+  const invoiceUrl = async (row: { storage_path: string; number: string }, seconds: number) => {
+    const { data, error } = await admin.storage.from(INVOICE_BUCKET).createSignedUrl(row.storage_path, seconds, { download: invoiceFileName(row.number) });
+    if (error || !data) { console.error("send-receipt: couldn't sign the invoice address:", error && error.message); return ""; }
+    return data.signedUrl as string;
+  };
+  if (r.action === "invoice") {
+    const { data: s, error: sErr } = await db.from("hangtag_sales").select("id,bill_no,total,is_void").eq("id", r.saleId).maybeSingle();   // the caller's own bill
+    if (sErr) { console.error("send-receipt: couldn't read the bill:", sErr.message); return unavailable(); }
+    if (!s) return reply(404, { ok: false, error: "not_found", message: "That bill isn't in the cloud yet. Try again once it has uploaded." });
+    if (s.is_void) return reply(409, { ok: false, error: "cancelled", message: "A cancelled bill has no invoice to send." });
+    const cur = await currentInvoice(s.id);
+    if (cur.missing) return reply(503, { ok: false, error: "not_configured", message: "Invoice PDFs aren't set up on the server yet." });
+    if (cur.error) { console.error("send-receipt: couldn't read the invoice:", cur.error.message); return unavailable(); }
+    if (cur.row) return reply(200, { ok: true, already: true, invoice: invoiceView(cur.row), url: await invoiceUrl(cur.row, 600) });
+    if (!r.pdf) return reply(404, { ok: false, error: "no_invoice", message: "This bill has no invoice PDF yet." });
+    const bytes = pdfFromBase64(r.pdf);
+    if (!bytes) return reply(400, { ok: false, error: "bad_pdf", message: "That isn't an invoice PDF." });
+    const chk = checkInvoicePdf(bytes, s);
+    if (!chk.ok) return reply(chk.status, { ok: false, error: chk.error, message: chk.message });
+    const sha = await sha256Hex(bytes), path = invoicePath(shop, sha);
+    // the same file is stored once (its path is its hash): "already exists" is the same file
+    const up = await admin.storage.from(INVOICE_BUCKET).upload(path, bytes, { contentType: "application/pdf", upsert: false });
+    if (up.error && !/exist|duplicate|409/i.test(`${up.error.message} ${(up.error as { statusCode?: string }).statusCode || ""}`)) { console.error("send-receipt: couldn't store the invoice:", up.error.message); return unavailable(); }
+    const ins = await admin.from("hangtag_invoices").insert({ owner_id: shop, sale_id: s.id, number: String(s.bill_no), total: s.total, sha256: sha, size_bytes: bytes.length, storage_path: path, created_by: user.id })
+      .select(INVOICE_COLUMNS).single();
+    if (ins.error) {
+      // another phone (or channel) registered the bill's invoice first: that one is the invoice; this copy's file goes
+      const won = await currentInvoice(s.id);
+      if (won.row) {
+        if (won.row.storage_path !== path) await admin.storage.from(INVOICE_BUCKET).remove([path]);
+        return reply(200, { ok: true, already: true, invoice: invoiceView(won.row), url: await invoiceUrl(won.row, 600) });
+      }
+      console.error("send-receipt: couldn't record the invoice:", ins.error.message); return unavailable();
+    }
+    return reply(200, { ok: true, invoice: invoiceView(ins.data), url: await invoiceUrl(ins.data, 600) });
+  }
+
   /* Sends one message with its place in the delivery log: written by the function only (the app can read these rows,
      not write them). Take a place first, then count: if two requests race, both see each other's row, so the limit can't
-     be passed; if the log fails, nothing is sent. A request id (a quotation's press of Send) is used once per shop. */
-  const sendLogged = async (target: { saleId?: string; orderId?: string; requestId?: string; auto?: boolean }, to: { to: string }, cfg: { name: string }, message: Record<string, unknown>, shopName: string) => {
-    const held = await admin.from("hangtag_deliveries").insert(reservationRow({ ownerId: shop, saleId: target.saleId, orderId: target.orderId, requestId: target.requestId, channel: r.channel, to: to.to, provider: cfg.name, auto: target.auto })).select("id").single();
-    if (held.error && (target.auto || target.requestId) && /duplicate|unique/i.test(held.error.message || "")) return reply(409, { ok: false, error: "busy", message: target.requestId ? "This quotation is being sent already." : "This receipt is being sent already." });
+     be passed; if the log fails, nothing is sent. A request id (one press of Send) is used once per shop. */
+  const sendLogged = async (target: { saleId?: string; orderId?: string; requestId?: string; invoiceId?: string; format?: string; auto?: boolean }, to: { to: string }, cfg: { name: string }, message: Record<string, unknown>, shopName: string) => {
+    const held = await admin.from("hangtag_deliveries").insert(reservationRow({ ownerId: shop, saleId: target.saleId, orderId: target.orderId, requestId: target.requestId, invoiceId: target.invoiceId, channel: r.channel, to: to.to, provider: cfg.name, auto: target.auto })).select("id").single();
+    if (held.error && (target.auto || target.requestId) && /duplicate|unique/i.test(held.error.message || "")) return reply(409, { ok: false, error: "busy", message: target.orderId ? "This quotation is being sent already." : "This receipt is being sent already." });
     if (held.error || !held.data) { console.error("send-receipt: couldn't write the delivery log:", held.error && held.error.message); return unavailable(); }
     const heldId: string = held.data.id;
     const release = () => admin.from("hangtag_deliveries").delete().eq("owner_id", shop).eq("id", heldId);
@@ -136,11 +184,13 @@ Deno.serve(async (req) => {
     if (countErr || count == null) { console.error("send-receipt: couldn't count recent messages:", countErr && countErr.message); await release(); return unavailable(); }
     if (count > MAX_PER_HOUR) { await release(); return reply(429, { ok: false, error: "rate_limited", message: "Too many messages in the last hour. Try again later." }); }
 
-    const result = await deliver(cfg, r.channel, { to: to.to, fromName: fromName(shopName), ...message }, fetch);
+    // the provider's own guard against a repeat of this request (where it has one: Resend)
+    const result = await deliver(cfg, r.channel, { to: to.to, fromName: fromName(shopName), ...message, idempotencyKey: `${shop}:${target.requestId || heldId}` }, fetch);
     const outcome = deliveryOutcome(result);
     const saved = await admin.from("hangtag_deliveries").update(outcome).eq("owner_id", shop).eq("id", heldId);
     if (saved.error) console.error("send-receipt: couldn't finish the delivery record:", saved.error.message);
-    if (outcome.status === "sent") return reply(200, { ok: true, status: "sent", channel: r.channel, recipient: to.to, provider: cfg.name, provider_message_id: outcome.provider_message_id });
+    if (outcome.status === "sent") return reply(200, { ok: true, status: "sent", channel: r.channel, recipient: to.to, provider: cfg.name, provider_message_id: outcome.provider_message_id,
+      ...(target.invoiceId ? { invoice_id: target.invoiceId } : {}), format: target.format || "text" });
     // worth trying again (the service busy or down) or not (the customer's contact, the shop's set-up): the app retries only the first
     const kind = failureKind(cfg.name, result), answer = failureAnswer(r.channel, kind, outcome.error);
     console.error("send-receipt: provider refused:", cfg.name, result && result.status, result && result.code, kind);
@@ -181,14 +231,31 @@ Deno.serve(async (req) => {
   if (saleErr) { console.error("send-receipt: couldn't read the bill:", saleErr.message); return unavailable(); }
   if (!sale) return reply(404, { ok: false, error: "not_found", message: "That bill isn't in the cloud yet. Try again once it has uploaded." });
   if (sale.is_void) return reply(409, { ok: false, error: "cancelled", message: "A cancelled bill can't be sent." });
-  const { data: customer, error: custErr } = sale.customer_id
-    ? await db.from("hangtag_customers").select("name,phone,email").eq("id", sale.customer_id).maybeSingle()
+  // this press of Send was handled already (a retry, the queue sending it again, a second tap): its answer, never a second message
+  if (r.requestId) {
+    const { data: prev } = await admin.from("hangtag_deliveries").select("status,channel,recipient,provider,provider_message_id,error,invoice_id").eq("owner_id", shop).eq("request_id", r.requestId).limit(1);
+    const p0 = (prev || [])[0];
+    if (p0 && p0.status === "pending") return reply(409, { ok: false, error: "busy", message: "This receipt is being sent already." });
+    if (p0 && p0.status === "failed") return reply(502, { ok: false, status: "failed", already: true, error: "provider_error", message: `The ${CHANNEL_LABELS[p0.channel as "email"]} service didn't accept the message: ${p0.error || "not accepted"}` });
+    if (p0) return reply(200, { ok: true, status: p0.status, already: true, channel: p0.channel, recipient: p0.recipient, provider: p0.provider, provider_message_id: p0.provider_message_id, ...(p0.invoice_id ? { invoice_id: p0.invoice_id } : {}) });
+  }
+  // the bill's customer; a walk-in bill may go to a saved customer named in the request (the bill itself doesn't change)
+  if (r.customerId && sale.customer_id && r.customerId !== sale.customer_id) return reply(409, { ok: false, error: "has_customer", message: "This bill has its own customer: it goes to them." });
+  const custId = sale.customer_id || r.customerId || null;
+  const { data: customer, error: custErr } = custId
+    ? await db.from("hangtag_customers").select("name,phone,email").eq("id", custId).maybeSingle()
     : { data: null, error: null };
   if (custErr) { console.error("send-receipt: couldn't read the customer:", custErr.message); return unavailable(); }
+  if (custId && !customer && !sale.customer_id) return reply(404, { ok: false, error: "not_found", message: "That customer isn't in the cloud yet. Try again once their details have uploaded." });
   const to = recipientFor(r.channel, { customer, sale });
   if (!to.ok) return reply(to.status, { ok: false, error: to.error, message: to.message });
   const cfg = providerConfig(r.channel, env());
   if (!cfg) return reply(503, { ok: false, error: "not_configured", message: `Sending by ${CHANNEL_LABELS[r.channel]} isn't set up for this shop yet.` });
+  // the bill's one invoice PDF: every channel uses that same file once it exists
+  const cur = await currentInvoice(sale.id);
+  if (cur.error) { console.error("send-receipt: couldn't read the invoice:", cur.error.message); return unavailable(); }
+  const invoice = cur.row || null;
+  if (!invoice && (cfg as { documentHeader?: boolean }).documentHeader) return reply(409, { ok: false, error: "no_invoice", message: "The bill's invoice PDF isn't ready yet. Try again in a moment." });
 
   // the message, written from the saved bill
   const [items, payments, profile, rets] = await Promise.all([
@@ -207,11 +274,28 @@ Deno.serve(async (req) => {
     if (p) return reply(409, { ok: false, error: "busy", message: "This receipt is being sent already." });
   }
   const link = r.channel === "email" ? null : await billLink(sale.id);
-  // an email carries the shop's logo (as the shop prints it: Settings → Bills & Documents → Logo)
-  const logoMeta = r.channel === "email" ? (await admin.from("hangtag_meta").select("value").eq("owner_id", shop).eq("key", "logo").maybeSingle()).data : null;
+  // SMS can't carry a file: with the invoice PDF it carries the link to download it, so without a link it isn't sent
+  if (invoice && r.channel === "sms" && !link) return reply(503, { ok: false, error: "not_configured", message: "Invoice links aren't set up yet, so the SMS can't carry the bill: open Settings once as the shop's owner (or set RECEIPT_URL on the server)." });
+  // email: the stored PDF itself, as the one attachment; WhatsApp: the same file as a document (a template with a document
+  // header) through a short-lived address WhatsApp fetches once
+  let pdf: { base64: string; filename: string } | null = null, document: { link: string; filename: string } | null = null;
+  if (invoice && r.channel === "email") {
+    const file = await admin.storage.from(INVOICE_BUCKET).download(invoice.storage_path);
+    if (file.error || !file.data) { console.error("send-receipt: couldn't read the invoice file:", file.error && file.error.message); return unavailable(); }
+    pdf = { base64: base64Of(new Uint8Array(await file.data.arrayBuffer())), filename: invoiceFileName(invoice.number) };
+  }
+  if (invoice && r.channel === "whatsapp" && (cfg as { documentHeader?: boolean }).documentHeader) {
+    const url = await invoiceUrl(invoice, 3600);
+    if (!url) return unavailable();
+    document = { link: url, filename: invoiceFileName(invoice.number) };
+  }
+  // an email without the PDF carries the shop's logo (as the shop prints it: Settings → Bills & Documents → Logo)
+  const logoMeta = r.channel === "email" && !pdf ? (await admin.from("hangtag_meta").select("value").eq("owner_id", shop).eq("key", "logo").maybeSingle()).data : null;
   const message = billMessage(r.channel, { sale, items: items.data || [], payments: payments.data || [], returns: rets.data || [], shop: profile.data || {}, customer, region, link: link && link.url || "",
-    linkParam: String(Deno.env.get("WHATSAPP_LINK_PARAM") || "").toLowerCase() === "on",
+    linkParam: String(Deno.env.get("WHATSAPP_LINK_PARAM") || "").toLowerCase() === "on", pdf, document, pdfLink: !!invoice,
     logo: logoMeta ? emailLogo(logoMeta.value, regionRow && regionRow.value) : null });
+  // what the customer gets: the PDF attached (email), the PDF as a document (WhatsApp), a link to the PDF, or the text only
+  const format = pdf ? "attachment" : document ? "document" : invoice && link ? "pdf_link" : link ? "link" : "text";
 
-  return await sendLogged({ saleId: sale.id, auto: r.auto }, to, cfg, message, profile.data && profile.data.shop_name);
+  return await sendLogged({ saleId: sale.id, auto: r.auto, requestId: r.requestId, invoiceId: invoice ? invoice.id : undefined, format }, to, cfg, message, profile.data && profile.data.shop_name);
 });

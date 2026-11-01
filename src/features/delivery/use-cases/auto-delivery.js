@@ -14,6 +14,7 @@ import { saveDeliveryQueue } from '../../../shared/state/persistence.js';
 import { ERROR_CODES, userMessage } from '../../../shared/errors/app-error.js';
 import { logger } from '../../../shared/logging/logger.js';
 import { uid } from '../../../shared/utils/ids.js';
+import { ensureInvoice } from './canonical-invoice.js';
 
 const online=()=>!!store.sbClient&&store.sbStatus==="connected";
 const listeners=new Set();
@@ -84,11 +85,18 @@ async function run(){
     const uploading=store.sbOfflineQueue.some(q=>(q.type==="sale"&&q.sale&&q.sale.id===j.saleId)||(q.type==="cust"&&s.cust&&q.id===s.cust.id));
     if(uploading){ if(j.wait!=="upload"){ j.wait="upload"; touched.add(j.saleId); } continue; }
     Object.assign(j,{status:"sending",wait:"",attempts:(j.attempts||0)+1}); touched.add(j.saleId); changed(j.saleId);
+    // the bill's one invoice PDF first (canonical-invoice.js): every channel of the bill carries that same file
+    const I=await ensureInvoice(j.saleId);
+    if(I.error){
+      const again=I.temporary?nextAttemptAt(j,Date.now()):null;
+      Object.assign(j,again?{status:"queued",nextAt:again,error:I.error}:{status:"failed",error:I.error,t:Date.now()});
+      saveDeliveryQueue(); changed(j.saleId); continue;
+    }
     try{
       const r=await messageDelivery().send({channel:j.channel,saleId:j.saleId,auto:true});
-      Object.assign(j,{status:r.status==="delivered"?"delivered":"sent",to:r.to,providerId:r.id,error:"",t:Date.now()});
+      Object.assign(j,{status:r.status==="delivered"?"delivered":"sent",to:r.to,providerId:r.id,format:r.format||"",invoiceId:r.invoiceId||(I.invoice&&I.invoice.id)||null,error:"",t:Date.now()});
       // the server's own record of it, for the bill's history
-      store.deliveries[j.saleId]=[{channel:j.channel,to:r.to,status:j.status,provider:r.provider,providerId:r.id,mode:"auto",t:j.t},...(store.deliveries[j.saleId]||[]).filter(e=>e.status!=="sending")];
+      store.deliveries[j.saleId]=[{channel:j.channel,to:r.to,status:j.status,provider:r.provider,providerId:r.id,format:j.format,mode:"auto",t:j.t},...(store.deliveries[j.saleId]||[]).filter(e=>e.status!=="sending")];
     }catch(e){
       const passing=temporary(e)&&!(j.channel==="whatsapp"&&j.fallback&&e.code===ERROR_CODES.DELIVERY), msg=userMessage(e,"The receipt wasn't sent."), again=passing?nextAttemptAt(j,Date.now()):null;
       if(again) Object.assign(j,{status:"queued",nextAt:again,error:msg});

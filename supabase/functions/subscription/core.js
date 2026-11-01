@@ -16,6 +16,15 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const PLAN = /^[a-z0-9_]{1,20}$/;
 export const PROMO = /^[A-Za-z0-9_-]{0,32}$/;
 
+/* The payer's mobile number typed by the owner when the shop's saved one can't be used (a provider that asks for it:
+   Cashfree): "" when none, the number, or null when it isn't one. Only ever given to the provider for that page, never
+   saved; text only, and refused whole (never cut short) when it is too long. */
+function typedPhone(body) {
+  const typed = body.phone == null ? "" : typeof body.phone === "string" ? body.phone.trim() : null;
+  if (typed === null || typed.length > 20) return null;
+  return typed ? payerPhone(typed) || null : "";
+}
+
 export function validateRequest(body) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return fail(400, "bad_request", "Send the request as JSON.");
   const action = body.action;
@@ -24,14 +33,18 @@ export function validateRequest(body) {
     const plan = str(body.plan).trim(), promo = str(body.promo).trim();
     if (!PLAN.test(plan)) return fail(400, "bad_plan", "Choose a plan.");
     if (!PROMO.test(promo)) return fail(400, "bad_promo", "This promo code isn't valid.");
+    const phone = typedPhone(body);
+    if (phone === null) return fail(400, "bad_phone", "Enter a 10-digit Indian mobile number.");
     // anything else in the request (an amount, a discount, a price…) is ignored on purpose
-    return { ok: true, action, plan, promo: promo || null };
+    return { ok: true, action, plan, promo: promo || null, ...(phone ? { phone } : {}) };
   }
   if (action === "autopay_start") {
     // the owner's explicit consent to the terms shown (the database checks the version is the current one)
     const version = str(body.consent_version).trim();
     if (body.consent !== true || !/^[a-z0-9._-]{3,40}$/.test(version)) return fail(400, "consent_required", "Agree to the AutoPay terms first.");
-    return { ok: true, action, consentVersion: version };
+    const phone = typedPhone(body);
+    if (phone === null) return fail(400, "bad_phone", "Enter a 10-digit Indian mobile number.");
+    return { ok: true, action, consentVersion: version, ...(phone ? { phone } : {}) };
   }
   if (action === "autopay_verify" || action === "autopay_cancel" || action === "billing_selfcheck") return { ok: true, action };
   if (action === "verify") {
@@ -81,6 +94,11 @@ export function autopayStartAt(terms, now = Date.now()) {
   return Number.isFinite(t) && t > now + 10 * 60e3 ? t : null;
 }
 export const description = (q) => `Hangtag ${str(q && q.plan_label) || "plan"}`.slice(0, 120);
+/* How long a payment page stays open: 10 minutes short of the 30 a capped offer holds a checkout's place
+   (hangtag_promo_evaluate, post-repair migration), room for a payment begun at the last moment (a bank's page, a UPI
+   request) to finish inside the hold. One that lands later still is honoured: hangtag_subscription_activate handles an
+   offer that filled meanwhile ("offer full when paid"). */
+export const PAGE_MINUTES = 20;
 export const callbackUrl = (env, paymentId) => {
   const base = str(env.APP_URL).trim().replace(/\/+$/, "");
   return /^https:\/\//.test(base) ? `${base}/#plans?payment=${encodeURIComponent(paymentId)}` : null;
@@ -89,6 +107,13 @@ export const callbackUrl = (env, paymentId) => {
 export const notifyUrl = (env) => {
   const base = str(env.SUPABASE_URL).trim().replace(/\/+$/, "");
   return /^https:\/\//.test(base) ? `${base}/functions/v1/subscription-webhook` : null;
+};
+/* Where Cashfree sends the owner after approving a mandate (it may POST there, which a static site can't take): the webhook
+   function, which only sends the browser on to the app (appBackUrl) and touches nothing else */
+export const autopayReturnUrl = (env) => { const n = notifyUrl(env); return n ? `${n}?back=autopay` : null; };
+export const appBackUrl = (env, which) => {
+  const base = str(env && env.APP_URL).trim().replace(/\/+$/, "");
+  return which === "autopay" && /^https:\/\//.test(base) ? `${base}/#plans?autopay=back` : null;
 };
 /* The payer's mobile number a provider may ask for (Cashfree): 10 digits from what the shop saved (+91, 0, spaces and
    dashes allowed), or "" when there is none that works */
@@ -99,7 +124,9 @@ export function payerPhone(v) {
   else if (/^0[0-9]{10}$/.test(d)) d = d.slice(1);
   return /^[6-9][0-9]{9}$/.test(d) ? d : "";
 }
-export const PHONE_NEEDED = "Add the shop's 10-digit mobile number in Settings → Business, then choose Pay again.";
+/* Said when there is no usable number: the app then asks for one beside Pay (Settings may be out of reach: a shop whose
+   plan ended is locked to Plans & Billing) */
+export const PHONE_NEEDED = "The payment page needs a 10-digit mobile number. Enter it below, then choose Pay again.";
 /* The browser origin the subscription function answers (CORS): the app's own (APP_URL) and SUBSCRIPTION_ALLOWED_ORIGINS
    (comma-separated origins; a "*" stands for one part of a host name, e.g. https://hangtag-*-team.vercel.app for
    Previews). Neither set → "*" (the function authenticates by the caller's token; no cookie is involved). Not allowed →

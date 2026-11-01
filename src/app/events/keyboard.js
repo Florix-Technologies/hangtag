@@ -62,7 +62,8 @@ export function installKeyboard(){
       toast(`Nothing found for “${q}”.`);return;
     }
     if(e.key==="Enter"&&store.pick&&e.target.matches&&e.target.matches("[data-cellqty]")){e.preventDefault();addPicked();return}
-    if($("#sheetHost [data-paid]")&&(e.key==="Enter"||e.key===" ")&&!(e.target.closest&&e.target.closest("button"))){closeSheets();e.preventDefault();return}
+    // Enter / Space on the paid screen starts the next sale — but not while typing in a box there (the customer's contact)
+    if($("#sheetHost [data-paid]")&&(e.key==="Enter"||e.key===" ")&&!(e.target.closest&&e.target.closest("button,input,textarea,select,form"))){closeSheets();e.preventDefault();return}
     // Enter on the payment screen completes the sale (when the payments add up); in the line discount box it applies
     if(e.key==="Enter"&&store.payState&&e.target.closest&&e.target.closest("#paySheet")&&!(e.target.closest("button"))){e.preventDefault();const b=$("#payDone");if(b&&!b.disabled)completePayment();return}
     if(e.key==="Enter"&&store.lineDisc&&e.target.id==="ldVal"){e.preventDefault();applyLineDiscount(false);return}

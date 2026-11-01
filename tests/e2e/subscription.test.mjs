@@ -12,7 +12,7 @@
 import puppeteer from 'puppeteer-core';
 import H from '../helpers/env.mjs';
 import { createPgRest } from '../helpers/pg-rest.mjs';
-import { validateRequest, verifyDecision } from '../../supabase/functions/subscription/core.js';
+import { PHONE_NEEDED, validateRequest, verifyDecision } from '../../supabase/functions/subscription/core.js';
 await H.ensureServer();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let fails = 0; const check = (n, ok, i) => { if (!ok) fails++; console.log((ok ? 'PASS ' : 'FAIL ') + n + (!ok && i !== undefined ? '  ' + JSON.stringify(i).slice(0, 600) : '')); };
@@ -27,14 +27,22 @@ await sql(`INSERT INTO public.hangtag_promo_codes (code, kind, value, plans, end
 
 // the subscription function, stood in: the real request rules, the real database functions
 let providerPaid = new Set(), payable = true, apApproved = false;
+// needPhone: answer as the function does with a provider that asks for the payer's mobile (Cashfree) and a shop with no
+// usable saved number: phone_required until the request carries one (validateRequest checks it); phonesSeen: what came
+let needPhone = false;
+// autopayVerify: what the function says UPI or a card takes to confirm AutoPay (Cashfree: ₹1, refunded); 0 = nothing said
+let autopayVerify = 0;
+const phonesSeen = [];
 const stub = async (r) => {
   const body = JSON.parse(r.postData() || '{}'), who = pg.subOf(r.headers()['authorization']) || UID;
   const reply = (status, b) => r.respond({ status, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(b) });
   const v = validateRequest(body);
   if (!v.ok) return reply(v.status, { ok: false, error: v.error, message: v.message });
-  if (v.action === 'config') return reply(200, { ok: true, available: payable, provider: payable ? 'razorpay' : null, autopay: payable });
+  if (v.action === 'config') return reply(200, { ok: true, available: payable, provider: payable ? 'razorpay' : null, autopay: payable, ...(payable && autopayVerify ? { autopay_verify: autopayVerify } : {}) });
   try {
     if (v.action === 'checkout') {
+      if (needPhone && !v.phone) return reply(400, { ok: false, error: 'phone_required', message: PHONE_NEEDED });
+      if (v.phone) phonesSeen.push(v.phone);
       if (!payable) {   // as index.ts: the price first; with something to pay and no provider, nothing is created
         const q = (await pg.as(`SELECT public.hangtag_subscription_quote($1, $2) AS q`, [v.plan, v.promo], who)).rows[0].q;
         if (+q.amount > 0) return reply(503, { ok: false, error: 'not_configured', message: "Online payment isn't set up yet. Contact Hangtag support to renew." });
@@ -72,15 +80,17 @@ const stub = async (r) => {
 const FUNCTIONS = { '/functions/v1/subscription': stub };
 
 const browser = await puppeteer.launch({ executablePath: H.CHROME, headless: true });
-async function openDevice({ clockShift = 0, width = 1280 } = {}) {
-  const ctx = await browser.createBrowserContext(), page = await ctx.newPage();
+async function openDevice({ clockShift = 0, width = 1280, ctx: shared = null } = {}) {
+  // shared: another tab of a device already open (the same browser storage)
+  const ctx = shared || await browser.createBrowserContext(), page = await ctx.newPage();
   await page.setViewport({ width, height: 900 });
   page.on('pageerror', (e) => { fails++; console.log('[pageerror]', e.message); });
   page.on('dialog', (d) => d.accept());
   await page.setRequestInterception(true);
   page.on('request', async (r) => {
     const u = r.url();
-    if (u.startsWith('http://localhost:3210/')) return (u === 'http://localhost:3210/' || u.includes('/?')) ? r.respond({ status: 200, contentType: 'text/html', body: H.hookedHtml() }) : r.continue();
+    const bare = u.split('#')[0];   // the request's address carries the #part too (the return from the payment page)
+    if (u.startsWith('http://localhost:3210/')) return (bare === 'http://localhost:3210/' || bare.includes('/?')) ? r.respond({ status: 200, contentType: 'text/html', body: H.hookedHtml() }) : r.continue();
     if (u.includes('.supabase.co/')) { if (!(await pg.handle(r, FUNCTIONS))) r.abort(); return; }
     if (u.startsWith('https://pay.example.test/')) return r.respond({ status: 200, contentType: 'text/html', body: '<title>Pay</title>The payment page' });
     r.continue();
@@ -212,11 +222,59 @@ await A.setViewport({ width: 1280, height: 900 });
 console.log('--- renewing opens everything at once ---');
 await A.click('#lockScreen input[name="subPlan"][value="m1"]'); await sleep(300);
 await until('!!document.querySelector("#lockScreen [data-sub-act=pay]")&&!document.querySelector("#lockScreen [data-sub-act=pay]").disabled');
+// the payment page needs a mobile number the shop hasn't saved (Cashfree): asked for right here — Settings is out of reach
+needPhone = true;
 await A.click('#lockScreen [data-sub-act="pay"]');
-check('Pay on the lock screen → waiting for the payment', await until('!!document.querySelector("#lockScreen .subwait")'));
+check('no usable saved mobile number: the lock screen asks for one beside Pay (Settings is out of reach while locked); nothing opened',
+  await until('!!document.querySelector("#lockScreen input[name=subPhone]")') && /needs a 10-digit mobile number/.test(await text('#lockScreen .subpromo-msg') || '')
+  && !(await vis('#lockScreen .subwait')) && (await A.evaluate(() => window.__opened.filter((w) => !w.closed).length)) === 0, await text('#lockScreen .subck'));
+await A.type('#lockScreen input[name="subPhone"]', '12345'); await A.click('#lockScreen [data-sub-act="pay"]'); await sleep(400);
+check('…a number that isn\'t a mobile: said so, still asked, nothing made', /10-digit Indian mobile number/.test(await text('#lockScreen .subpromo-msg') || '') && !!(await A.$('#lockScreen input[name="subPhone"]'))
+  && !(await vis('#lockScreen .subwait')) && phonesSeen.length === 0, await text('#lockScreen .subpromo-msg'));
+await A.click('#lockScreen input[name="subPhone"]', { count: 3 }); await A.type('#lockScreen input[name="subPhone"]', '98450 22222');
+await A.click('#lockScreen [data-sub-act="pay"]');
+check('Pay on the lock screen with the typed number → waiting for the payment; the page was made with that number', await until('!!document.querySelector("#lockScreen .subwait")') && phonesSeen.includes('9845022222'), phonesSeen);
+needPhone = false;
 const pend2 = await run('return storage.get("hangtag_sub_pending", null)');
+// the owner pays slowly: 20 minutes into the wait the app has stopped checking by itself
+const slowPay = `storage.set("hangtag_sub_pending", Object.assign({}, storage.get("hangtag_sub_pending", null), { startedAt: Date.now() - 20 * 60e3 }))`;
+await run(slowPay);
+const failsBefore = fails;
+await A.reload({ waitUntil: 'networkidle0' });   // the app reopened while locked, with that old wait (no return link)
+check('reopened 20 minutes into the wait (checking has stopped): the lock screen draws and still waits — no freeze, no error',
+  await until('!!document.querySelector("#lockScreen .subwait")', 15000) && fails === failsBefore, await text('#lockScreen .subck'));
+await A.click('#lockScreen [data-sub-act="check"]');
+check('…"I\'ve paid" still asks the server: not confirmed yet', await until('/isn.t confirmed yet/.test((document.querySelector("#lockScreen .subck")||{}).innerText||"")', 10000)
+  && fails === failsBefore, await text('#lockScreen .subck'));
+// …and comes back from the payment page: the wait starts again from the return
+await run(slowPay);
+// the provider's page sends the browser back to APP_URL/#plans?payment=<id>: the app loads afresh there
+await A.evaluate((h) => history.replaceState(null, '', '/' + h), '#plans?payment=' + pend2.paymentId);
+await A.reload({ waitUntil: 'networkidle0' });
+const backAt = await A.evaluate(() => Date.now());
+check('back from the payment page 20 minutes later: still waiting for the plan being paid for (Monthly stays chosen), checking again from the return (not stuck)',
+  await until('!!document.querySelector("#lockScreen .subwait")&&!!document.querySelector("#lockScreen input[name=subPlan][value=m1]:checked")', 15000)
+  && (await run('return storage.get("hangtag_sub_pending", null).startedAt')) > backAt - 60e3 && (await A.evaluate(() => location.hash)) === '',
+  await run('return { hash: location.hash, pending: storage.get("hangtag_sub_pending", null), wait: !!document.querySelector("#lockScreen .subwait") }').catch((e) => String(e)));
+// "Choose again", then that page is paid anyway and its return link opens in the app already open here (only the #part changes)
+await A.click('#lockScreen [data-sub-act="forget"]');
+await until('!!document.querySelector("#lockScreen [data-sub-act=pay]")');
+await A.goto('http://localhost:3210/#plans?payment=' + pend2.paymentId);
+check('…its return into the already-open app shows the wait at once (Pay not offered meanwhile), checking again from the return',
+  await until('!!document.querySelector("#lockScreen .subwait") && !document.querySelector("#lockScreen [data-sub-act=pay]")', 1500)
+  && await until('!!storage.get("hangtag_sub_pending", null) && storage.get("hangtag_sub_pending", null).startedAt > Date.now() - 60e3 && location.hash === ""', 5000),
+  await run('return { hash: location.hash, pending: storage.get("hangtag_sub_pending", null) }').catch((e) => String(e)));
+// a second tab on this device (it shares the wait), both past their checking window: each checks only when asked
+await run(slowPay);
+const { page: A2 } = await openDevice({ ctx: ctxA });
+await until('!!document.querySelector("#lockScreen .subwait")', 15000, A2);
 providerPaid.add(pend2.paymentId);
-check('confirmed → the lock screen disappears and the app is back without a reload', await until('!document.getElementById("lockScreen")', 20000) && await vis('.nav'));
+await run('const b = document.querySelector("#lockScreen [data-sub-act=check]"); if(b) b.click();');
+check('confirmed ("I\'ve paid") → the lock screen disappears and the app is back without a reload', await until('!document.getElementById("lockScreen")', 20000) && await vis('.nav'));
+await run('const b = document.querySelector("#lockScreen [data-sub-act=check]"); if(b) b.click();', A2);
+check('…the other tab, its wait settled by the first: "I\'ve paid" there opens the app too (never a dead button, never Pay again)',
+  await until('!document.getElementById("lockScreen")', 15000, A2), await text('#lockScreen .subck', A2));
+await A2.close();
 const st2 = await run('return subscriptionStatus()');
 check('…a new month from now', st2.state === 'paid_active' && st2.plan_code === 'm1' && Math.abs(Date.parse(st2.period_start) - Date.now()) < 5 * 60e3, st2);
 check('the change kept while locked goes up now', await until('sbOfflineQueue.length===0', 15000) && (await sql(`SELECT count(*)::int n FROM public.hangtag_customers WHERE owner_id = $1 AND name = 'Meena'`, [UID]))[0].n === 1);
@@ -235,6 +293,10 @@ await sleep(300);
 const mem = await text('#lockScreen', Bp);
 check('a team member sees "Ask the owner to renew" — no plans, no Pay', /Ask the owner to renew/.test(mem || '') && !(await vis('#lockScreen [data-sub-act="pay"]', Bp)) && /Sign out/.test(mem || ''), mem);
 await ctxB.close();
+// the device that paid, still open when the plan ends: its "Payment received" no longer holds
+await run('window.dispatchEvent(new Event("online"))');
+check('the device that paid earlier, still open when the plan ends: locked, Pay offered again (not the old "Payment received")',
+  await until('!!document.querySelector("#lockScreen [data-sub-act=pay]")', 15000) && !(await A.$('#lockScreen .subdone')), await text('#lockScreen .subck'));
 
 console.log('--- Plans & Billing fits ---');
 await sql(`UPDATE public.hangtag_subscriptions SET period_end = now() + interval '20 days' WHERE owner_id = $1`, [UID]);
@@ -263,6 +325,7 @@ payable = true;
 
 console.log('--- AutoPay: a new trial needs it — nothing to pay today, the plan after the trial ---');
 await sql(`UPDATE public.hangtag_platform_config SET autopay_enabled = TRUE`);
+autopayVerify = 1;   // AutoPay with Cashfree: UPI or a card takes ₹1 to confirm the mandate (refunded)
 const capturedBefore = (await sql(`SELECT count(*)::int n FROM public.hangtag_subscription_payments WHERE owner_id = $1 AND captured_at IS NOT NULL`, [UID]))[0].n;
 await sql(`UPDATE public.hangtag_subscriptions SET plan_code = NULL, period_start = NULL, period_end = NULL, trial_started_at = now(), trial_ends_at = now() + interval '30 days',
   autopay_required = TRUE, autopay_status = 'none', autopay_subscription_id = NULL, autopay_provider = NULL, autopay_authorized_at = NULL WHERE owner_id = $1`, [UID]);
@@ -272,6 +335,10 @@ await until('!!document.querySelector("#lockScreen [data-apcard]")', 15000);
 const apText = await text('#lockScreen [data-apcard]');
 check('AutoPay\'s terms: ₹0 today, ₹599 / month after the trial (the AutoPay plan\'s price from the database), the first charge, "Required for the free trial"',
   /Today ₹0/.test(apText || '') && /After your trial ₹599 \/ month/.test(apText || '') && /First charge \d{1,2} \w{3} \d{4}/.test(apText || '') && /Required for the free trial/.test(apText || ''), apText);
+// (the lock screen's own fresh read of the function's settings, a moment after it appears, carries what confirming takes)
+const shown = await until('/To confirm AutoPay/.test((document.querySelector("#lockScreen [data-apcard]")||{}).innerText||"")', 15000), apText2 = await text('#lockScreen [data-apcard]');
+check('…what confirming AutoPay takes is said before agreeing: ₹1 by UPI or a card, refunded; nothing else charged before the first charge',
+  shown && /To confirm AutoPay ₹1, refunded/.test(apText2 || '') && /UPI or a card takes ₹1, which is refunded .+ nothing else is charged before \d{1,2} \w{3} \d{4}/.test(apText2 || ''), apText2);
 check('…the consent says how much, how often, from when, until cancelled; Set up stays off until it is ticked', /charges ₹599 every month from .+ until I cancel/.test(apText || '')
   && await A.$eval('#lockScreen [data-sub-act="ap-start"]', (b) => b.disabled));
 check('…a prepaid plan is offered instead ("Or pay for a plan now")', /Or pay for a plan now/.test(await text('#lockScreen') || '') && await vis('#lockScreen [data-sub-act="pay"]'));
@@ -303,6 +370,34 @@ for (const w of [320, 768]) {
   await A.setViewport({ width: w, height: 800 }); await sleep(250);
   check(`AutoPay in Plans & Billing at ${w}px: no horizontal overflow`, !(await overflow()) && await vis('#plansBlk [data-apcard]'));
 }
+
+console.log('--- a mobile number typed for a payment is not kept ---');
+await A.setViewport({ width: 1280, height: 900 }); await sleep(250);
+// clicked and typed inside the page: the section redraws itself as answers arrive (a puppeteer click can land between)
+const payNow = async () => { await until('!!document.querySelector("#plansBlk [data-sub-act=pay]") && !document.querySelector("#plansBlk [data-sub-act=pay]").disabled'); await run('document.querySelector("#plansBlk [data-sub-act=pay]").click()'); };
+const typePhone = (v) => run(`const i = document.querySelector("#plansBlk input[name=subPhone]"); i.value = ${JSON.stringify(v)}; i.dispatchEvent(new Event("input", { bubbles: true }));`);
+needPhone = true;
+await payNow();
+await until('!!document.querySelector("#plansBlk input[name=subPhone]")');
+await typePhone('98450 33333');
+await payNow();
+await until('!!document.querySelector("#plansBlk .subwait")');
+const pend3 = await run('return storage.get("hangtag_sub_pending", null)');
+providerPaid.add(pend3.paymentId);
+check('paid with a number typed for it (no reload between): "Payment received", and that number is gone from the screen',
+  await until('!!document.querySelector("#plansBlk .subdone")', 15000) && !(await A.$('#plansBlk input[name="subPhone"]'))
+  && !(await A.$eval('body', (b) => b.innerHTML.includes('98450 33333'))), await text('#plansBlk .subck'));
+// another plan, the number asked for again and typed; then the owner signs out and another signs in on this tab (the app
+// swaps the local data without reloading the page)
+await run('document.querySelector("#plansBlk input[name=subPlan]:not(:checked)").click()');
+await payNow();
+await until('!!document.querySelector("#plansBlk input[name=subPhone]")');
+await typePhone('98450 44444');
+needPhone = false;
+await run('authUser = Object.assign({}, authUser, { id: "00000000-0000-4000-8000-0000000000b2" }); openSettings("plans")');
+await until('!!document.querySelector("#plansBlk")');
+check('another account signed in on this tab: the mobile number typed for the previous one is gone (not shown, not sent)',
+  !(await A.$('#plansBlk input[name="subPhone"]')) && !(await A.$eval('body', (b) => b.innerHTML.includes('98450 44444'))), await text('#plansBlk .subck'));
 
 await browser.close();
 console.log(fails ? `\n${fails} FAILED` : '\nall passed');

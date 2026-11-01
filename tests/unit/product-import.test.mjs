@@ -97,5 +97,35 @@ check('xlsx: the template reads back row for row', back2.length === T.length && 
 check("opening stock from the file keeps its cost: the row's, else the product's (AUDIT 62)", plan.moves.length > 0 && plan.moves.some((x) => x.cost != null)
   && plan.moves.every((x) => { const p = plan.products.find((q) => q.id === x.p), v = p.variants.find((y) => y.id === x.v); return x.cost === (v.cost != null ? v.cost : p.cost != null ? p.cost : null); }),
   plan.moves.map((x) => [x.v, x.cost]));
+// ---------- a file as shops make them: a title above the columns, a description per row, stock not yet counted ----------
+const HEAD = ['Product name (required)', 'Colour', 'Size', 'Selling price (required)', 'Stock quantity', 'SKU', 'Description'];
+const SOCK_ROWS = [['Socks', 'Teal Green', 'Small', '750', '4', 'SOCK-TG-S', 'Teal Green socks, size Small'], ['Socks', 'Teal Green', 'Medium', '750', '', 'SOCK-TG-M', 'Teal Green socks, size Medium'],
+  ['Socks', 'Grape', 'Small', '750', '0', 'SOCK-GR-S', 'Grape socks, size Small'], ['Tote Bag', '', '', '399', '', 'TOTE', '']];
+const titled = [['Marigold Threads — stock update'], ['Prices from the latest message; quantities to confirm.'], [], HEAD, ...SOCK_ROWS];
+const ti = validateImport(titled, {});
+check('a title and a line of notes above the column names: the columns are found (row 4), the 2 rows above left out and counted', !ti.error && ti.headerRow === 4 && ti.above === 2 && ti.summary.products === 2 && ti.rows.map((x) => x.line).join() === '5,6,7,8', ti.error || [ti.headerRow, ti.above]);
+const noHead = validateImport([['Stock tracker'], ['Colour', 'Size', 'Current stock'], ['Grape', 'Small', '3']], {});
+check('…a sheet with no Product name column anywhere near the top: still refused, with the same reason as before', /No Product name column was found/.test(noHead.error || ''), noHead);
+check('a description written per row: refused by default (one product has one description), saying how to keep the first', ti.errorCount === 2 && ti.summary.descConflicts === 2
+  && ti.rows.filter((x) => x.errors.length).every((x) => /one product has one description — write it once, or choose “Keep each product's first description”/.test(x.errors.join(' '))), errs(ti));
+const tf = validateImport(titled, { firstDescription: true });
+const tfPlan = importPlan(tf, { ids: { product: (() => { let n = 0; return () => 'p' + ++n; })(), variant: (() => { let n = 0; return () => 'v' + ++n; })() }, colors: ['#111'], now: 1, dev: 'd' });
+check('…with "Keep each product\'s first description": nothing to fix; the product keeps its first row\'s, and the other rows say theirs is left out', tf.ok && tf.errorCount === 0
+  && tfPlan.products.find((p) => p.name === 'Socks').desc === 'Teal Green socks, size Small' && tf.rows.filter((x) => x.notes && x.notes.some((n) => /keeps row 5's/.test(n))).length === 2, errs(tf));
+check('stock left empty is "not given", a 0 is a count: 2 rows without a quantity, neither given an opening stock record; the 0 row counted as given',
+  tf.summary.noQty === 2 && tf.rows.find((x) => x.sku === 'SOCK-TG-M').qtyGiven === false && tf.rows.find((x) => x.sku === 'SOCK-GR-S').qtyGiven === true
+  && tfPlan.moves.length === 1 && tfPlan.moves[0].q === 4, { noQty: tf.summary.noQty, moves: tfPlan.moves });
+// the shop has Socks (Teal Green / Small): which rows are its variants, which would be new sizes or colours of it
+const shopSocks = { id: 'p1', name: 'Socks', opts: [{ n: 'Colour', v: ['Teal Green'] }, { n: 'Size', v: ['Small'] }], variants: [{ id: 'v1', o: ['Teal Green', 'Small'], sku: 'OLD-1' }] };
+const exi = validateImport([HEAD, ...SOCK_ROWS], { products: [shopSocks], firstDescription: true });
+const kind = (sku) => exi.rows.find((x) => x.sku === sku).existingKind;
+check('rows of a product the shop has: the variant it has is told apart from a new colour or size of it (Teal Green / Small, then Medium and Grape)',
+  kind('SOCK-TG-S') === 'variant' && kind('SOCK-TG-M') === 'new_variant' && kind('SOCK-GR-S') === 'new_variant' && exi.summary.newVariantsOfExisting === 2
+  && /would be a new colour or size of it\. Import adds new products only: add it to Socks in Products/.test(exi.rows.find((x) => x.sku === 'SOCK-TG-M').errors.join(' ')), exi.rows.map((x) => [x.sku, x.existingKind, x.errors]));
+const exSkip = validateImport([HEAD, ...SOCK_ROWS], { products: [shopSocks], skipExisting: true, firstDescription: true });
+const probs = importProblemRows([['A title'], HEAD, ...SOCK_ROWS], validateImport([['A title'], HEAD, ...SOCK_ROWS], { products: [shopSocks], skipExisting: true, firstDescription: true }));
+check('…left out on request: the shop\'s Socks unchanged, the new Tote Bag imported, and the problems file says which rows were new sizes or colours (under its title row)',
+  exSkip.ok && exSkip.products.map((p) => p.name).join() === 'Tote Bag' && probs[1].at(-1) === 'Problems'
+  && /new colour or size of a product your shop has: left out/.test(probs[3].at(-1)) && /Already in your shop: left out, nothing about it changes/.test(probs[2].at(-1)), probs.map((r) => r.at(-1)));
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

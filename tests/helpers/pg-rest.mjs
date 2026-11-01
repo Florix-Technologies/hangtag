@@ -13,6 +13,9 @@
 // A password grant's token says so in its amr ("password"), a link sign-in's doesn't ("otp"), as Supabase Auth does.
 // Writes honour Prefer: return=representation (the rows written, e.g. .update().select('id')) and
 // resolution=ignore-duplicates (upsert with ignoreDuplicates).
+// For Edge Function handlers run in Node (tests/helpers/pg-client.mjs): serviceToken() is a service-role key (its requests
+// run as the database itself, row security off, as Supabase's service role does), /auth/v1/admin/users/<id> is that
+// user, and after: [sql, …] runs more SQL after schema.sql (a migration).
 import { PGlite } from '@electric-sql/pglite';
 import fs from 'fs';
 
@@ -36,7 +39,16 @@ export function subOf(authorization) {
   try { const c = JSON.parse(Buffer.from(t[1], 'base64url').toString('utf8')); return typeof c.sub === 'string' && c.sub ? c.sub : null; } catch { return null; }
 }
 
-export async function createPgRest(schemaPath, { uid, email, users = [] }) {
+/* the role a "Bearer <jwt>" header claims (service_role for a service key), or null */
+export function roleOf(authorization) {
+  const t = String(authorization || '').replace(/^Bearer\s+/i, '').split('.');
+  if (t.length !== 3) return null;
+  try { const c = JSON.parse(Buffer.from(t[1], 'base64url').toString('utf8')); return typeof c.role === 'string' ? c.role : null; } catch { return null; }
+}
+export const serviceToken = () => b64({ alg: 'HS256' }) + '.' + b64({ role: 'service_role', iss: 'supabase' }) + '.x';
+const SERVICE = Symbol('service role');
+
+export async function createPgRest(schemaPath, { uid, email, users = [], after = [] }) {
   const ARG_TYPES = new Map();
   const db = new PGlite();
   await db.exec(SUPABASE);
@@ -46,6 +58,7 @@ export async function createPgRest(schemaPath, { uid, email, users = [] }) {
   await db.query(`INSERT INTO auth.users (id, email) VALUES ($1, $2)`, [uid, email]);
   for (const u of users) { people.set(u.id, { password: null, meta: {}, provider: 'email', ...u }); await insertUser(u); }
   await db.exec(fs.readFileSync(schemaPath, 'utf8'));
+  for (const sql of after) await db.exec(sql);
   /* another account after start-up (e.g. a staff account the stubbed team function "created") */
   async function addUser(u) { people.set(u.id, { password: null, meta: {}, provider: 'email', ...u }); await insertUser(u); return u; }
   /* a new password for an account (the stubbed team function's reset_access) */
@@ -76,9 +89,10 @@ export async function createPgRest(schemaPath, { uid, email, users = [] }) {
   const magicLink = (mail) => { const p = byEmail(mail); if (!p) throw new Error('no user ' + mail); const h = 'th_' + Math.random().toString(36).slice(2) + Date.now().toString(36); otps.set(h, p.id); return h; };
   /* run SQL as a user (default: the owner; null = signed out), with the request's headers (e.g. { 'x-hangtag-device': key }); one statement */
   async function as(sql, params, who = uid, headers = null) {
-    await db.exec(`SET ROLE ${who ? 'authenticated' : 'anon'}`);
-    await db.query(`SELECT set_config('request.jwt.claim.sub', $1, false), set_config('request.headers', $2, false)`, [who || '', JSON.stringify(headers || {})]);
-    try { return await db.query(sql, params); } finally { await db.exec('RESET ROLE'); }
+    const service = who === SERVICE;
+    if (!service) await db.exec(`SET ROLE ${who ? 'authenticated' : 'anon'}`);
+    await db.query(`SELECT set_config('request.jwt.claim.sub', $1, false), set_config('request.headers', $2, false)`, [service ? '' : who || '', JSON.stringify(headers || {})]);
+    try { return await db.query(sql, params); } finally { if (!service) await db.exec('RESET ROLE'); }
   }
   const val = (t, c, v) => (colType[t] && colType[t][c] === 'jsonb' && v !== null && v !== undefined ? JSON.stringify(v) : v);
   const ident = (c) => { if (!/^[a-z_][a-z0-9_]*$/.test(c)) throw new Error('bad column ' + c); return '"' + c + '"'; };
@@ -133,6 +147,8 @@ export async function createPgRest(schemaPath, { uid, email, users = [] }) {
       json(r, 200, session(who, 'otp')); return true;
     }
     if (u.pathname.startsWith('/auth/v1/user')) { json(r, 200, userOf(sub || uid)); return true; }
+    const au = /^\/auth\/v1\/admin\/users\/([0-9a-f-]{36})$/.exec(u.pathname);
+    if (au) { if (roleOf(hdrs['authorization']) !== 'service_role') json(r, 401, { msg: 'not allowed' }); else if (people.has(au[1])) json(r, 200, userOf(au[1])); else json(r, 404, { msg: 'User not found' }); return true; }
     if (u.pathname.startsWith('/auth/v1/logout')) { r.respond({ status: 204, headers: CORS }); return true; }
     if (u.pathname.startsWith('/auth/v1/settings')) { json(r, 200, { external: { google: true, email: true } }); return true; }
     if (u.pathname.startsWith('/auth/v1/')) { json(r, 200, {}); return true; }
@@ -140,7 +156,7 @@ export async function createPgRest(schemaPath, { uid, email, users = [] }) {
     const mt = /^\/rest\/v1\/(rpc\/)?(\w+)$/.exec(u.pathname); if (!mt) return false;
     const t = mt[2], q = [...u.searchParams.entries()];
     // the request runs as its token's user; without one, as the owner (single-owner tests) or signed out (multi-user)
-    const who = sub || (multi() ? null : uid);
+    const who = roleOf(hdrs['authorization']) === 'service_role' ? SERVICE : sub || (multi() ? null : uid);
     const run = (sql, params) => as(sql, params, who, hdrs);
     calls.push({ m, t, rpc: !!mt[1], who });
     // Prefer: return=representation (supabase-js .select() after an insert, update or delete): the written rows come back

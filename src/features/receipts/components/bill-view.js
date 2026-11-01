@@ -6,6 +6,7 @@ import { D } from '../../inventory/services/ledger.js';
 import { receiptHTML } from './receipt-view.js';
 import { saleReturns } from '../services/receipt-model.js';
 import { historyHTML, refreshHistory, sendBoxHTML } from '../../delivery/components/send-actions.js';
+import { downloadInvoice, shareInvoice } from '../../delivery/components/invoice-actions.js';
 import { printStateHTML } from '../../printing/components/print-actions.js';
 import { store } from '../../../shared/state/store.js';
 import { userLabel } from '../../shop/services/access.js';
@@ -81,8 +82,9 @@ export function openCreditNote(retId){
 /* The bill view's own clicks (app/events/dom-events.js) → true when it was one */
 export function billViewClick(t){
   const ret=id=>(D().rets||[]).find(x=>x.id===id);
-  const b=t.closest("[data-billpdf]"); if(b){ const s=D().saleById[b.dataset.billpdf]; if(s) downloadDocumentPdf(invoiceModel(s)); return true; }
-  const bs=t.closest("[data-billsharepdf]"); if(bs){ const s=D().saleById[bs.dataset.billsharepdf]; if(s) shareDocumentPdf(invoiceModel(s)); return true; }
+  // the bill's one invoice PDF: the same file its email, WhatsApp and SMS carry (delivery/use-cases/canonical-invoice.js)
+  const b=t.closest("[data-billpdf]"); if(b){ if(D().saleById[b.dataset.billpdf]) downloadInvoice(b.dataset.billpdf); return true; }
+  const bs=t.closest("[data-billsharepdf]"); if(bs){ if(D().saleById[bs.dataset.billsharepdf]) shareInvoice(bs.dataset.billsharepdf); return true; }
   const gs=t.closest("[data-gosend]"); if(gs){ const el=$("#sendBox-"+gs.dataset.gosend); if(el){ el.scrollIntoView({block:"center",behavior:"smooth"}); el.classList.add("flash"); setTimeout(()=>el.classList.remove("flash"),1600); } return true; }
   const co=t.closest("[data-cnopen]"); if(co){ openCreditNote(co.dataset.cnopen); return true; }
   const cp=t.closest("[data-cnprint]"); if(cp){ const r=ret(cp.dataset.cnprint); if(r) printDocument(creditNoteModel(r)); return true; }

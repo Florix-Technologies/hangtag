@@ -23,6 +23,11 @@ console.log('=== requests ===');
   check('no promo → null', validateRequest({ action: 'checkout', plan: 'm1', promo: '' }).promo === null);
   check('a bad plan is refused', !validateRequest({ action: 'checkout', plan: "m1'; drop table" }).ok);
   check('a bad promo is refused', !validateRequest({ action: 'checkout', plan: 'm1', promo: 'x'.repeat(40) }).ok && !validateRequest({ action: 'checkout', plan: 'm1', promo: 'a b' }).ok);
+  const ph = (phone) => validateRequest({ action: 'checkout', plan: 'm1', promo: '', phone });
+  check('a typed mobile number: normalised (spaces, +91); refused whole when it isn\'t one, when it is too long (never cut short) or isn\'t text; none is fine',
+    ph(' +91 98450 22222 ').phone === '9845022222' && ph('').ok && !('phone' in ph('')) && ph(null).ok && ph('12345').error === 'bad_phone'
+    && ph('9876543210' + ' '.repeat(10) + '12345').error === 'bad_phone' && ph(['9876543210']).error === 'bad_phone' && ph(9876543210).error === 'bad_phone',
+    { spaced: ph(' +91 98450 22222 '), padded: ph('9876543210' + ' '.repeat(10) + '12345'), list: ph(['9876543210']) });
   check('verify needs a payment id (uuid)', validateRequest({ action: 'verify', payment_id: PID }).ok && !validateRequest({ action: 'verify', payment_id: '1' }).ok);
   check('unknown action / not JSON', !validateRequest({ action: 'activate' }).ok && !validateRequest(null).ok && !validateRequest([1]).ok);
   const e = rpcErrorReply({ code: 'P0001', message: 'Only the shop owner can choose a plan.' });
@@ -55,7 +60,7 @@ console.log('=== Razorpay payment links ===');
   const body = JSON.parse(calls[0].init.body);
   check('a payment link for the amount in paise, the payment as reference, no partial payment', page.orderId === 'plink_ABC123xyz' && page.payUrl === 'https://rzp.io/i/abc'
     && body.amount === 107920 && body.accept_partial === false && body.reference_id === PID.replace(/-/g, '') && body.notes.hangtag_payment === PID, body);
-  check('…valid for an hour, Razorpay itself sends nothing, back to the app afterwards', body.expire_by === 1_800_000_000 + 3600 && body.notify.sms === false && body.callback_url === 'https://app/#plans', body);
+  check('…valid for 20 minutes (10 short of the 30 a capped offer holds a place), Razorpay itself sends nothing, back to the app afterwards', body.expire_by === 1_800_000_000 + 20 * 60 && body.notify.sms === false && body.callback_url === 'https://app/#plans', body);
   check('…with the key in the Authorization header (Basic), never in the URL', /^Basic /.test(calls[0].init.headers.Authorization) && !/sec/.test(calls[0].url));
   const v = await p.getPayment('plink_ABC123xyz');
   check('a paid link: paid, in paise, with the provider\'s payment id', v.state === 'paid' && v.paid === 107920 && v.paymentId === 'pay_9', v);
@@ -112,10 +117,11 @@ console.log('=== the plan gate of the business Edge Functions ===');
   const err = await planGate(fake({ data: null, error: { code: '57014' } }), 's'), thrown = await planGate(fake(new Error('network')), 's');
   check('the check failing otherwise: refused (503), never let through', err.status === 503 && thrown.status === 503);
   for (const fn of ['agent', 'extract-bill', 'send-receipt', 'payment-gateway']) {
-    const src = readFileSync(new URL(`../../supabase/functions/${fn}/index.ts`, import.meta.url), 'utf8');
+    // (payment-gateway's logic is its handler.js, which answers with out(…); its index.ts only serves it)
+    const src = readFileSync(new URL(`../../supabase/functions/${fn}/${fn === 'payment-gateway' ? 'handler.js' : 'index.ts'}`, import.meta.url), 'utf8');
     const at = src.indexOf('await planGate('), after = (re) => { const m = src.slice(at).search(re); return m >= 0; }, before = (re) => src.slice(0, at).search(re) < 0;
     check(`${fn}: checks the shop's plan before any provider call or service-role write`, at > 0 && /import \{ planGate \} from "\.\.\/_shared\/plan-gate\.js"/.test(src)
-      && before(/fetch\(|\.extract\(|admin\.from\(|admin\.rpc\("hangtag_agent_take"|createPayment|sendVia|\.insert\(|\.update\(/) && after(/return reply\(gate\.status, gate\.body\)/), fn);
+      && before(/fetch\(|\.extract\(|admin\.from\(|admin\.rpc\("hangtag_agent_take"|createPayment|sendVia|\.insert\(|\.update\(/) && after(/return (reply|out)\(gate\.status, gate\.body\)/), fn);
   }
 }
 

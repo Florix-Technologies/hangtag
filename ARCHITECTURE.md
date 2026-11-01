@@ -191,7 +191,7 @@ export const archiveProduct = (pid, on) => productRepository().setArchived(pid, 
 | `receiptPrinter` | `infrastructure/printing/epson-epos.js` (Epson ePOS-Print; logo via `raster.js`) | `features/printing/use-cases/print-receipt.js` |
 | `messageDelivery` | `infrastructure/messaging/delivery-client.js` → Edge Function `send-receipt` | `features/delivery/repositories/delivery-service.js` |
 | `returnRepository` / `eventRepository` | `infrastructure/repositories/local-first-return-repository.js` / `…-event-repository.js` | `features/returns`, `features/events` |
-| `paymentGateway` | `infrastructure/payments/payment-gateway-client.js` → Edge Function `payment-gateway` (Razorpay) | `features/sales/use-cases/provider-payment.js` |
+| `paymentGateway` | `infrastructure/payments/payment-gateway-client.js` → Edge Function `payment-gateway` (the shop's own Razorpay account) | `features/sales/use-cases/provider-payment.js` |
 | `cashRepository` | `infrastructure/repositories/local-first-cash-repository.js` | `features/finance/repositories/cash-repository.js` |
 | `teamService` | `infrastructure/team/team-client.js` → Edge Function `team` (changes) + the cloud gateway (members, devices, roles, `hangtag_touch_device`) | `features/shop/services/team.js` (access, Team & devices, staff sign-in, enrollment) |
 
@@ -899,8 +899,8 @@ an `AppError`.
   secrets belong in Supabase Edge Function secrets, called through `infrastructure/supabase`.
 - Edge Function secrets by function: `extract-bill` (its README), `send-receipt` (email / SMS / WhatsApp providers,
   `SEND_ALLOWED_USERS`, optional `RECEIPT_URL`, `WHATSAPP_LINK_PARAM`), `payment-gateway` / `payment-webhook`
-  (`RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `PAYMENT_ALLOWED_USERS`, `RAZORPAY_WEBHOOK_SECRET`, optional
-  `PAYMENT_CARD_LINK=off`). `receipt` and `payment-webhook` are deployed with `--no-verify-jwt` (a token / a signature
+  (`PAYMENT_ACCOUNTS_KEY`, `PAYMENT_ALLOWED_USERS`, optional `PAYMENT_LIVE_MODE=on`: no Razorpay keys of Hangtag's —
+  each shop connects its own account, kept sealed in `hangtag_payment_accounts`; see the function's README). `receipt` and `payment-webhook` are deployed with `--no-verify-jwt` (a token / a signature
   is their key), and `team` too (a phone redeeming a QR has no session; it checks every other caller itself); the others
   keep JWT verification on. `team` needs no secrets beyond the defaults.
 

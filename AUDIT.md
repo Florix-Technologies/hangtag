@@ -5,6 +5,110 @@ Newest session first. The audit never changed production data or services (no mi
 2026-10-13 the live project's catalog and query statistics were read through the Supabase CLI, which creates a
 short-lived login role (`cli_login_postgres`) to connect. Code is pushed only on the owner's word.
 
+## 2026-10-23 (eighteenth session: payment-first — shop payments on each shop's own account, verified)
+
+The owner's brief: establish what is really deployed; keep production safe; finish the payment model for many independent
+shops (cash and card machine, the shop's own UPI QR, an optional gateway on the shop's own merchant account, verification
+and reliability, plan billing apart); test it; defer the rest. Nothing was run on the live project: no SQL, no migration,
+no deploy, no secret, no trial change, no payment. Nothing staged, committed or pushed, and no Preview: a Preview needs a
+push (not asked for). This session's files also share several files with session 17's uncommitted work, so they can't
+be committed apart without splitting hunks.
+Baseline: `ux-productization` at `7e77c74` (equal to `origin`), with session 17's work uncommitted.
+
+| # | Area | Finding | Status |
+|---|------|---------|--------|
+| 215 | What Production really serves | `hangtag.vercel.app` serves 7e77c74's app: `sw.js` cache `hangtag-db09103bf2`, the same as 1294817 and 7e77c74 (7e77c74 changed only documents). `sw.js`, `index.html`, `billing-settings.js`, `payment-sheet.js` and `payments.js` are byte for byte 7e77c74's, once line endings are ignored. The files carry Windows line endings, so they were uploaded from a Windows copy (the Vercel CLI), not built by Vercel from GitHub. GitHub's last "Production" deployment record is still `ee76f74` (2026-10-14); 7e77c74 has only a Preview record (2026-10-20) | Recorded; RELEASE §6 unchanged (rollback order already names 7e77c74 first) |
+| 216 | Live security and recovery | Not re-checked: there is no access to the live project, and doing so isn't authorised. As last recorded: contained on 2026-10-13 23:45 IST (the open policies dropped), not repaired, no backup (0 physical backups, PITR off). The repair, its undo, the restore rehearsal (local) and the post-repair migration are prepared (RELEASE §2a, §3; `supabase/REPAIR-RUNBOOK.md`) | **BLOCKER**, unchanged: a backup first, then the repair, each the owner's |
+| 217 | Shop payments went through one Hangtag Razorpay account | `payment-gateway` read `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` from its own secrets: every shop's customer payments would have gone through one Hangtag/Florix merchant account. It was off (`PAYMENT_ALLOWED_USERS` unset) | **Removed from the code.** Each shop connects its OWN Razorpay account. Its keys are checked with Razorpay, then sealed with AES-256-GCM (`PAYMENT_ACCOUNTS_KEY`, bound to the account and field); no app account can read the table. Every intent names its account, of the same shop (a two-column foreign key), and is checked and refunded with that account's keys. Test keys only until `PAYMENT_LIVE_MODE=on`; shop by shop (`PAYMENT_ALLOWED_USERS`). The functions don't read the old keys at all |
+| 218 | One webhook secret for every payment | `payment-webhook` checked every notification with one shared secret and found intents by the provider's id across all shops | Each account has its own address (`?a=<random hook id>`) and secret. A notification is checked with that account's secret before its body is read, and changes only that account's intents. It is recorded once per account and event id (`hangtag_payment_events`); a repeat changes nothing, and a failure lets Razorpay retry. Refund outcomes (`refund.processed` / `refund.failed`) are kept on the return or the receipt |
+| 219 | Retries | Asking again for the same bill part (a retry, a double tap) made a second QR the customer could also pay. A return's refund, or an unmatched receipt's, asked twice at once could be sent twice | The open QR or link for the same account, bill part and amount is given back (`reusable`). Refunds are claimed in the database before Razorpay is asked; a refusal releases the claim. Two at once make one refund (tested) |
+| 220 | UPI paid to the shop's own QR | It could become "verified" only by a match with Hangtag's Razorpay account, which never sees money paid to the shop's own UPI ID. It stayed Unverified forever, or a phone could upload it as "recorded" (silently trusted) | The shop confirms it: Reports → Reconciliation → **Received** (the owner, or a role that sees the books; never a cashier). This calls `hangtag_confirm_upi_payment`; the database keeps who and when, and the audit log and bank book show it. A phone can't upload UPI as recorded or confirmed, sending a bill again never undoes a confirmation, and a changed amount needs confirming again |
+| 221 | A card on the shop's own machine | The done sheet said "Payment successful" for a payment only the cashier had marked approved | "Payment recorded", with "recorded as approved by the cashier. Keep the machine's slip" |
+| 222 | Plan billing apart from shop payments | — | Checked: the shop payment functions read no plan-billing setting or table, and the plan functions no shop-payment table or setting. The plan keys are never used for a shop, and no plan payment is made by shop payments (tested) |
+| 223 | Where the new database rules live | `schema.sql` is the repair's script and its scope is pinned (`repair-inventory.test.mjs`), so the rules couldn't go there without changing what the owner is asked to approve | A migration of its own (`20261023120000_hangtag_shop_payments.sql`). It refuses before the repair or while a shop table is open to every account. It applies twice, before or after the post-repair migration, and refuses to commit unless its 7-row report is ok. Read-only check: `checks/shop-payments-report.sql`; undo (keeps every row): `operations/shop-payments-undo.sql` |
+| 224 | Not done | — | Razorpay's sandbox (no test account or test project here): every provider answer in these tests is scripted. Which account model Razorpay expects of a platform (own keys, or its partner OAuth): the owner asks Razorpay. Cashfree for shops: not built (plan billing only). No Preview: it needs a push, and its database is the unrepaired live one |
+| 225 | Found in this session's own review: a confirmed payment couldn't become verified | The rule that keeps a confirmation from being undone also kept it from being upgraded. A UPI payment the shop had confirmed, then matched with Razorpay's own record (`verify`), stayed "confirmed" in the cloud while the app said "verified" | A confirmation now yields only to "verified", which `hangtag_payment_verified_check` still allows only with a verified intent of the same shop, method and amount. Tested, with a phone's later upload keeping it verified. Also tested: a migration run whose report isn't ok commits nothing (one step left out on purpose: "report not ok", no table, no trigger) |
+| 226 | How this session was reviewed | A three-agent independent review (security and tenancy, payment correctness, migration and operations) stopped on the account's session limit after about 10 minutes: **no result**, so it is not counted | Reviewed in this session instead: forging "confirmed" (it needs the confirmation function's own role, not just its setting), trigger order (by name; checked by report row 5), the webhook's claim-then-process (supabase-js upsert with `ignoreDuplicates` returns no row on a repeat), a crash between the provider's refund and the database (the claim stays: never refunded twice), and the repair's scope (`repair-inventory` still 6/6: `schema.sql` untouched) |
+
+### Test results (run, not assumed)
+- **What these runs prove.** Everything below is local: PGlite and a local PostgreSQL 17, Chrome against the app served
+  from this computer, network-isolated. **Every Razorpay answer is scripted** (`tests/helpers/razorpay-fake.mjs`): this
+  proves Hangtag's side of each payment, not Razorpay's. No sandbox, no test project and no live system was touched, and
+  none of it shows the live database is safe (item 216).
+- **`npm test`** (2026-10-23, 18:01:38–18:26:51 UTC, the final working tree, build `hangtag-cddc0b1baf`, nothing else
+  running, Windows asked not to sleep): **exit 0 — 196/196 files**: 89 unit (2,841 checks), 40 database on PGlite
+  (1,870), 4 eval (122), 63 browser (2,229) = 7,062 checks; then **`test:db:pg17` 40/40** (1,870). None failed, timed out
+  or was skipped. Browser isolation: 64 files, 13,523 requests answered by the tests, 294 refused, **0 violations**.
+- **New this session:**
+  - database `shop-payments` 51;
+  - database `shop-payments-gateway` 61 (the real function logic on the real schema; each on PGlite and PostgreSQL 17);
+  - browser `shop-payments` 21 (the app → the real function logic → the database, with a scripted Razorpay).
+- **Changed:** browser `payment-settings` 16 (two expectations reworded); unit `payments-delivery-cash` 129 (+5), `team`
+  52, `subscription-function` 59 (two static checks now read the function's `handler.js`).
+- **Around them, unchanged and passing:** `payments-cash-gst` 44, `checkout-flow` 21, `checkout-payments` 52,
+  `release-preflight` 41, `repair-inventory` 6, `post-repair-integrity` 48, `tenant-rpc-isolation` 27.
+- **`npm run check`** (exit 0): `sw.js` up to date, 465 files, `hangtag-cddc0b1baf`; 427 modules; 0 rule violations;
+  0 cycles; lint 0 errors 0 warnings. **`npm run lint`** (exit 0). **`npm run build`** (exit 0: `dist/site`, 466 files).
+  All at 18:27 UTC, after the run, on the same tree.
+- **Scans:** no secret pattern and no owner account id in the 61 changed or new files.
+- **Not run:** Razorpay's sandbox and a deployed test project (none here); the concurrent-returns test (no PostgreSQL
+  server for two sessions); anything on the live project.
+
+The owner's brief: audit every outstanding feature request, UI change and launch flow against the code (a requirement
+matrix: LAUNCH-READINESS.md), finish the safe, in-scope work, keep every production-safety rule. Nothing was run on the
+live project, nothing deployed, no secret set, no trial changed; nothing staged, committed or pushed (not authorised).
+Baseline: `ux-productization` at `7e77c74`, clean, equal to `origin/ux-productization`.
+
+| # | Area | Finding | Status |
+|---|------|---------|--------|
+| 198 | What Production serves | `hangtag.vercel.app` serves `7e77c74` (build `hangtag-db09103bf2`; `index.html`, `src/app/main.js` and the console's payments page byte for byte; `sw.js` Last-Modified 2026-10-22 10:31 UTC), promoted outside this work; GitHub's list still names `ee76f74` as the last Production deployment | RELEASE §6 (rollback order), §6a, §6c and the pilot checklist updated |
+| 199 | The POS variant picker (the owner's screenshot: "Socks", ten colours, sizes running off the right) | The sheet was capped at 720 px and each colour was one row with a column per size (`min-width:max-content`) in a sideways-scrolling box, inside a sheet that scrolled as a whole — the footer's "Add to bill" scrolled away with many variants, and choosing a colour sent a long list back to the top | Sizes now wrap (`auto-fill`) into as many columns as fit; the sheet is as wide as its sizes need (560–1180 px, never wider than the screen); one scroll (the variants) between a fixed header and footer; long size names in smaller type on two lines; the colour's stock beside its name; the scroll kept on redraw. `tests/e2e/variant-picker-layout.test.mjs` (97 checks: 1600, 1280, 768 and 375 px; 1, 6, 30, 96 and 40 variants; taps, typed quantities, the stock cap, sold-out sizes, the cart lines and prices): the previous picker fails 23 of them, this one none |
+| 200 | Import: a title above the column names | The first filled row had to be the column names: a file with a title and notes on top (the owner's "Updated Stock") was refused ("No Product name column was found") | The column names are found among the first 15 filled rows (`findImportHeader`, used by the check and by the problems file); the rows above are left out and said so |
+| 201 | Import: a description written on every row | A product has one description, so 89 of 94 rows of the owner's "All Columns Filled" and "Prices Updated" were refused, one by one | Still refused by default (with how to fix it), and the merchant may choose "Keep each product's first description": the other rows say theirs is left out |
+| 202 | Import: stock not yet counted | An empty stock cell and a 0 both showed as nothing and made no stock record, without a word (60 rows of the owner's "Import Fixed" were "left blank until confirmed") | "Not given" is kept apart from 0: shown as —, counted in a notice ("added without stock … Nothing is assumed"), in the footer and in the result. No stock record is made for either; a 0 is a count |
+| 203 | Import: what each row becomes | A row of a product the shop has was "already in your shop", whether it was one of its variants or a new colour or size | Each row says: new product, new variant of it, a variant the shop has (nothing changes), or a new colour or size of a product it has (left out: add it in Products) — in the list, the grid, the refusal and the problems file. Updating products from a file stays planned (PLAN I5–I11) |
+| 204 | Import: a large file | The preview showed the first 500 rows, with no search and no other view | Search (name, codes, category, brand, colours and sizes, row number), the filters with the search's counts, List (one line per row) and Grid (one card per product: what it becomes, its colours and sizes, its stock, its problems by row), 50 per page. `tests/e2e/product-import-preview.test.mjs` (27 checks, a 230-row file shaped like the owner's): what the database then holds matches the preview row for row |
+| 205 | Payments: "Connect a payment gateway" | No such place; the Payments & Banks note named "payment-gateway secrets" to shop owners. The `payment-gateway` function takes UPI and card through one Hangtag Razorpay account (off: `PAYMENT_ALLOWED_USERS` unset) — a model that must not be switched on for shops | The section: cash and the card machine (always on); the shop's own UPI QR (no gateway: set, check with a QR that carries no amount, change, remove after a warning; kept Unverified until reconciled); a gateway, plainly "not connected" and not yet available for a shop's own account — no switch that pretends. The gateway model is the owner's decision (RELEASE §6e). `tests/e2e/payment-settings.test.mjs` (16), unit `upiCheckUri` |
+| 206 | Payments: saving | The test found that after Save the section kept its old state (the UPI QR still "Off", no test QR or Remove) until reopened | It redraws on save |
+| 207 | Onboarding | The sign-up screen said nothing of the trial; a new shop's Home had no first steps | Sign-up: "its free trial starts when you finish setting the shop up". Home → "Getting started" for whoever manages settings (never a cashier): add products (or import), the first bill, how payments are taken, the receipt — each ticked from the shop's own records (or once its settings section was shown), hidden when done or on request. `tests/e2e/getting-started.test.mjs` (12) |
+| 208 | The domain | `hangtag.florixtechnologies.com` has no DNS record (Google's and Cloudflare's resolvers: non-existent); the company's DNS is at Hostinger (`dns-parking.com`); the company site is served by LiteSpeed | Not changed (the owner's): the steps are in RELEASE §6e |
+| 209 | The public website, assisted onboarding, trial-ending messages | None exists; each needs the owner's choices first (where the site lives, its words, the industries, how help is asked for; email or WhatsApp reminders) | **Not implemented — needs decision** (RELEASE §6e, LAUNCH-READINESS.md). A site's "Start free trial" can link to `<app>/#signup` (already supported) |
+| 210 | Words for shop users | Four messages named the platform's internals: Google or email sign-in off ("ask the owner to turn it on in Supabase", twice), email sending ("set up email sending in Supabase") and the sync chip ("Run the latest schema.sql in the Supabase SQL Editor") | Each now says what it means for the shop and "contact Hangtag support"; Diagnostics (the owner's) keeps the technical words |
+| 211 | `tests/e2e/business-capabilities`, again | With Home a little longer to draw, its "Home: today, stock, sync and quick actions" failed 2 runs in 3: the test's `vis` and `text` found a node with one call and read it with the next, and Home redraws itself as the sync status changes | They read in one step in the page (found and read together); no check changed. 5 runs of 5 (48 each) |
+| 212 | GSTR-1 | The export is a dataset with GSTR-1's sections (B2B, B2CL, B2CS, CDNR, CDNUR, nil, HSN, document summary), marked as prepared by Hangtag "for checking" — not validated against the GSTN schema or offline tool | **Partial**, documented (LAUNCH-READINESS.md): checked with an accountant and the official schema before it is called upload-ready |
+| 213 | The pilot client's own import files (local, read only, nothing written anywhere) | 16 files (3 of them problems reports the app gave back) run through the app's own reader and check | Two with a title now read (row 5); the description conflicts resolve with the new choice; 60 not-yet-counted rows announced; 4 rows without a selling price still refused (required); the stock tracker workbook isn't in the template's columns. The files stay out of the repository |
+| 214 | A real client's name in this session's files | The pilot client's name was in two new tests' fixtures and in AUDIT and LAUNCH-READINESS, and the picker test copied the client's distinctive colour names (the repository is public) | Replaced with a fictional brand ("Marigold Threads") and generic colours; searched again: none left in the working tree's own files, and none in any commit. One older committed test (`supabase/tests/legacy_schema.test.mjs`, `63b48d9`, 2026-10-10) has two product names in its fixture that may come from the same catalogue — no client name; already in the public history, so left as it is and reported |
+
+### Test results (run, not assumed)
+- **What these runs prove, and what they don't.** Every run below is local: the app's code against PGlite (the unit and
+  database suites), Chrome against the app served from this computer with PGlite behind a PostgREST stand-in (the browser
+  suites; network-isolated, so no request left this computer), and the database suites again on a local PostgreSQL 17.
+  They show the code does what it should. They do **not** show the live database is safe: it is contained, not repaired,
+  and has no backup (RELEASE §2a). No payment provider's sandbox and no real payment ran (no keys, no test project); no
+  signed-in check on Production ran (the owner's and the client's).
+- **Final `npm test`** (2026-10-22, 18:16:06–18:50:03 UTC, the final working tree, build `hangtag-24d6eb6d7c`, nothing else
+  running, Windows asked not to sleep): **exit 0 — 193/193 files**: 89 unit (2,836 checks), 38 database on PGlite (1,758),
+  4 eval (122), 62 browser (2,208) = 6,924 checks; then **`test:db:pg17` 38/38** (1,758). None failed, timed out or was
+  skipped. Browser isolation: 63 files, 13,095 requests answered by the tests, 308 refused, **0 violations**.
+- New or changed this session, in that run: `variant-picker-layout` 97, `product-import-preview` 27, `payment-settings` 16,
+  `getting-started` 12, `business-capabilities` 48, unit `product-import` 39 (+7), unit `payments-delivery-cash` 124 (+1).
+  Around them, unchanged: `pos-variants` 58, `sell-pos` 29, `product-import` 23, `custom-fields` 33, `home` 43,
+  `signin-tabs` 35, `accounts-isolation` 28, `responsive-matrix` 427; database `restore-rehearsal` 16,
+  `post-repair-integrity` 48, `tenant-rpc-isolation` 27, `billing-consistency` 76.
+- The previous picker under the new layout test (its two files put back for one run, then restored and compared byte for
+  byte): 74 of 97, the 23 failures being the reported faults (sideways scroll at 30 and 96 variants, cells outside the
+  sheet, the footer out of view, the list jumping to the top). The new picker: 97/97.
+- An earlier full run (2026-10-22, 11:22–11:35 UTC) was stopped by Windows when the previous session closed (exit
+  1073807364, 0x40010004) after 162 files, all passing: not counted.
+- After the fixtures were renamed (item 214), before the final run: unit `product-import` 39, `product-import-preview` 27,
+  `variant-picker-layout` 97 (3/3, exit 0).
+- **`npm run check`** (exit 0: `sw.js` up to date, 465 files, `hangtag-24d6eb6d7c`; 427 modules; 0 rule violations; 0
+  cycles; lint 0 errors 0 warnings), **`npm run lint`** (exit 0), **`npm run build`** (exit 0: `dist/site`, 466 files) —
+  2026-10-23, after the final run, on the same tree.
+- Not run, and why: Cashfree's sandbox, a deployed test project and the Razorpay test-mode proof (no keys, no project);
+  the concurrent-returns test (no PostgreSQL server for two sessions here); the signed-in checks on Production and anything
+  on the live project (the owner's; not authorised). The owner's client files were read locally only (item 213).
+
 ## 2026-10-20 (sixteenth session: the last safe work before the pilot, and the gates made runnable)
 
 The owner's brief: finish every safe, locally achievable task — verification, the remaining billing work (refunds,
@@ -219,6 +323,23 @@ database: `supabase/tests/subscription-cashfree` (real schema and post-repair mi
 | Money taken after a link expired: honoured | Pass | database |
 | A plan that ended: a new payment starts from now | Pass | database |
 | One Cashfree payment for two Hangtag payments: refused, kept for review | Pass | database |
+| A success reported just after the link expired, its paid order not listed yet: sent again (503), never marked expired; the app's check hears "pending" for 15 minutes after the expiry | Pass | unit 16 (2026-10-27) |
+| A "paid" notification the API never confirms once the link has closed: sent again (503) and kept for review once (`unmatched_payment`) | Pass | unit 16 (2026-10-27) |
+| The payment page lasts 20 minutes, 10 short of a capped offer's 30-minute hold (Cashfree and Razorpay) | Pass | unit (2026-10-27) |
+| No usable saved mobile: the owner types one beside Pay (the lock screen too); refused whole when it isn't a mobile; never saved; gone after paying and for another account on the tab | Pass | unit 17; function unit; browser `subscription` (2026-10-27) |
+| The return from the payment page (a full load, or only the #part in an open app): the wait restarts from the return and the plan paid for stays chosen; a second tab whose wait the first settled opens too | Pass | browser `subscription` (2026-10-27) |
+| The lock screen with a wait older than its 10-minute checking window: drawn once (it redrew itself until the stack overflowed, a defect from before this session), "I've paid" works | Pass | browser `subscription` (2026-10-27) |
+| Verify of a payment already paid (the notification got there first): answers with the plan it bought | Pass | handlers unit (2026-10-27) |
+| AutoPay with Cashfree: an on-demand mandate named after the set-up, for up to the AutoPay price, ₹1 to confirm (refunded); approved on Cashfree's page from the app's own `autopay.html` | Pass (fake Cashfree) | unit A1–A2, A7–A8; browser `vercel-site` (2026-10-27) |
+| …no usable mobile number: asked for before any consent or mandate; the ₹1 confirmation shown before the owner agrees | Pass | unit A8; browser `subscription` (2026-10-27) |
+| …turned off during the free month: cancelled at Cashfree first (a charge asked for and not begun withdrawn), then recorded; never charged | Pass (fake Cashfree) | unit A5, A9, A12 (2026-10-27) |
+| …the first charge asked for 4 days before the trial ends, once per due date, at the price agreed; a charge no notification recorded found by the reconciler | Pass (fake Cashfree) | unit A4, A11, A13 (2026-10-27) |
+| …signed subscription notifications: approval, cancelled at the bank, a charge (counted once), a failed charge, a refunded charge for review; the ₹1 authorisation never counted | Pass (fake Cashfree) | unit A6, A10 (2026-10-27) |
+| AutoPay with Cashfree's real sandbox: the mandate made as the app makes it, a charge refused before approval, approved on Cashfree's page from `autopay.html` (ACTIVE), a charge for 3 days out accepted, then cancelled with that charge withdrawn | **Pass (real sandbox, 2026-10-27)** | `npm run eval:cashfree-sandbox` with `HANGTAG_EVAL_CASHFREE_AUTOPAY_*` |
+| Plan payment links on the real sandbox: made, the same request again the same link, read back, an unknown link 404. Found: link orders take only `status=ALL` (Cashfree answered 400 to `PAID`); fixed, and both fake Cashfrees now refuse `PAID` | **Pass (real sandbox, 2026-10-27)** | `npm run eval:cashfree-sandbox` |
+| AutoPay readiness with Cashfree: its notifications never counted (Razorpay's only), so AutoPay could never be offered; fixed in migration 20261027120000 (each proof from its own kind of probe or Hangtag's own object) | Pass (database; fails without the fix) | `supabase/tests/cashfree-readiness` (2026-10-27) |
+| The console's webhook self-check with Cashfree (it refused Cashfree): a ₹1 link carrying the webhook and a ₹1 mandate, each withdrawn at once and recorded as probes. The real sandbox found the mandate refused (422) for reusing the link's idempotency key; fixed | Pass (unit A14; real sandbox, 2026-10-27) | `npm run eval:cashfree-sandbox` |
+| Signed subscription webhooks delivered by Cashfree; the trial on a deployed database | **Blocked** (needs an isolated test project, its functions and a Preview) | RELEASE §6d step 7b |
 | The real Cashfree sandbox (link made, read back, paid) | **Blocked** (no keys) | `npm run eval:cashfree-sandbox` |
 | The deployed webhook's signature check (probe) | Pass against a local server wrapping the real handler; **blocked** on a deployed test project | `npm run probe:cashfree-webhook` |
 | Real webhook delivery and signature from Cashfree | **Blocked** (needs sandbox keys and a deployed test project) | RELEASE §6d step 2e |

@@ -25,7 +25,7 @@ export async function signInWith(provider, loginHint){
     try{ settings = await loadAuthSettings(); }catch(e){ /* couldn't check; let Supabase answer */ }
     if(settings && settings.external && settings.external[provider] === false){
       setAuthBusy(false);
-      setAuthError(p.label + " sign-in isn't switched on for this app yet. Ask the owner to turn it on in Supabase.");
+      setAuthError(p.label + " sign-in isn't switched on for this app yet. Sign in with your email and password instead, or contact Hangtag support.");
       return;
     }
     storage.set(RESET_KEY, "");

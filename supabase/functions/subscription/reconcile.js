@@ -65,9 +65,13 @@ export async function reconcile({ sr, mode, named, autopay, now = () => Date.now
     await sweepA(ctx, begun.payments || []);
     if (autopay) {
       await sweepB(ctx, begun.mandates || []);
-      run.c_until = await sweepC(ctx, Date.parse(begun.c_since) || startedAt - 7 * DAY, startedAt);
-      run.d_until = await sweepD(ctx, Date.parse(begun.d_since) || startedAt - 7 * DAY, startedAt);
-      if (run.c_until !== new Date(startedAt).toISOString() || run.d_until !== new Date(startedAt).toISOString()) run.complete = false;
+      // the account-wide lists (sweeps C and D) are Razorpay's: a provider without them (Cashfree) has its mandates and
+      // their charges read one by one in sweep B
+      const lists = [autopay, typeof named === "function" ? named("razorpay") : null].find((p) => p && typeof p.listSubscriptions === "function" && typeof p.listPayments === "function");
+      const until = new Date(startedAt).toISOString();
+      run.c_until = lists ? await sweepC({ ...ctx, autopay: lists }, Date.parse(begun.c_since) || startedAt - 7 * DAY, startedAt) : until;
+      run.d_until = lists ? await sweepD({ ...ctx, autopay: lists }, Date.parse(begun.d_since) || startedAt - 7 * DAY, startedAt) : until;
+      if (run.c_until !== until || run.d_until !== until) run.complete = false;
     }
   } catch (e) {
     if (e && e.budget) run.complete = false;   // capped: ok, resumes next run
@@ -139,10 +143,43 @@ async function sweepA(ctx, rows) {
 /* B: AutoPay set-ups */
 async function sweepB(ctx, mandates) {
   for (const m of mandates) {
-    if (m.provider !== ctx.autopay.name) continue;
-    await checkMandate(ctx, m);
+    // each set-up with the provider that made it (an older Razorpay one keeps being read after AutoPay moved to Cashfree)
+    const ap = m.provider === ctx.autopay.name ? ctx.autopay : typeof ctx.named === "function" ? ctx.named(m.provider) : null;
+    if (!ap || typeof ap.getAutopay !== "function") continue;
+    try { await checkMandate({ ...ctx, autopay: ap }, m); }
+    catch (e) {
+      // the provider, the budget or the database: the run stops (its window stays); a 4xx on this one set-up (turned off
+      // meanwhile, gone): kept for review against it, and the run goes on to the others
+      if ((e && e.budget) || stopsRun(e)) throw e;
+      await keep(ctx, m.provider, "reconcile_error", m.subscription_id, { owner: m.shop_owner_id, detail: { status: e.status, reason: str(e.code || e.message).slice(0, 120) } });
+    }
     ctx.run.checked_mandates.push(m.id);
   }
+}
+
+/* A provider whose mandates charge only when asked (Cashfree): the charge due next is asked for once it is within the
+   provider's lead time — on a live, current set-up, for the price agreed, once per due date (a charge already asked for
+   that date, whatever became of it, is never asked for again; a failed one is the owner's to settle) — and never while
+   turning it off is owed (the owner turned AutoPay off and the provider couldn't be told then) */
+async function chargeWhenDue(ctx, ap, m, st, charges) {
+  const due = Date.parse(m.next_charge_at), now = ctx.now();
+  if (!m.current || m.reason === "cancel" || st.event !== "authenticated" || !Number.isFinite(due) || due - now > ap.chargeLeadMs || !(+m.price > 0)) return;
+  const ref = ap.chargeRef(m.subscription_id, due);
+  if (charges.some((c) => c.ref === ref)) return;
+  ctx.spend();
+  const r = await ap.raiseCharge({ subscriptionId: m.subscription_id, ref, amount: +m.price, scheduleAt: Math.max(due, now + ap.chargeMinAheadMs) });
+  if (!r.already) ctx.run.charges_asked = (ctx.run.charges_asked || 0) + 1;
+}
+
+/* The charge asked for on the date now due (one per due date: chargeRef) ended untaken: every attempt failed or was
+   cancelled, none taken or still in progress (Cashfree retries a failed UPI charge itself, and may list each attempt under
+   the same payment_id). Asked of a mandate still on at the provider only, where a cancelled charge was declined by the
+   payer (Hangtag withdraws charges only of a set-up it turns off) */
+function failedWhenDue(ap, m, charges) {
+  const due = Date.parse(m.next_charge_at);
+  if (!Number.isFinite(due) || typeof ap.chargeRef !== "function") return false;
+  const ref = ap.chargeRef(m.subscription_id, due), same = charges.filter((c) => c.ref === ref);
+  return same.length > 0 && same.every((c) => c.status === "failed" || c.status === "cancelled");
 }
 
 /* One AutoPay set-up read back and repaired (also the owner's own check, autopay_verify): a cancel owed is retried; the
@@ -160,10 +197,35 @@ export async function checkMandate(ctx, m) {
   ctx.spend();
   const st = await ap.getAutopay(sub);
   ctx.run.checked++;
-  if (st.event && st.event !== "charged") await report(ctx.sr, ctx.mode, ap.name, sub, st.event, { nextChargeAt: st.nextChargeAt, eventAt: readAt });
+  // a mandate without invoices (Cashfree): its charges read whole
+  let charges = null;
+  if (typeof ap.listCharges === "function") { ctx.spend(); charges = await ap.listCharges(sub); }
+  // on (Cashfree keeps the mandate ACTIVE) while its charge for the date now due failed: past due, never reported as fine
+  // (its notification may have been missed, or have come before this read); told once, not again each day
+  const failed = st.event === "authenticated" && !!charges && failedWhenDue(ap, m, charges);
+  if (failed ? m.provider_status !== "pending" : st.event && st.event !== "charged") {
+    await report(ctx.sr, ctx.mode, ap.name, sub, failed ? "pending" : st.event, { nextChargeAt: st.nextChargeAt, eventAt: readAt });
+  }
   const recorded = new Set(m.recorded || []);
   let found = 0;
-  if (st.paidCount > recorded.size || m.reason === "final" || m.reason === "charge_overdue") {
+  if (charges) {
+    // the successful ones no one recorded are recorded once (the registry checks each against the price agreed), as of
+    // this read — Cashfree's own times on a charge are when it was asked for, days before, and a charge found now must
+    // still move the next charge on (never be "older" than the state this read just reported) — then the next one asked
+    // for if it is due
+    for (const ch of charges.filter((c) => c.status === "success" && c.id && !recorded.has(c.id))) {
+      const r = await report(ctx.sr, ctx.mode, ap.name, sub, "charged", { payment: ch.id, amount: ch.amount / 100, currency: ch.currency, eventAt: readAt });
+      if (r.recorded && !r.already) { ctx.run.repaired++; found++; }
+      recorded.add(ch.id);
+    }
+    // a mandate that has ended keeps no charge asked for and not yet begun (a cancel that errored, or a read that failed,
+    // left it): withdrawn now
+    if (TERMINAL.includes(st.status) && typeof ap.withdrawPending === "function" && charges.some((c) => c.status === "initialized")) {
+      ctx.spend();
+      if (await ap.withdrawPending(sub)) ctx.run.repaired++;
+    }
+    if (typeof ap.raiseCharge === "function") await chargeWhenDue(ctx, ap, m, st, charges);
+  } else if (st.paidCount > recorded.size || m.reason === "final" || m.reason === "charge_overdue") {
     ctx.spend();
     const invoices = await ap.listInvoices(sub);
     for (const inv of invoices.filter((i) => i.status === "paid" && i.paymentId && !recorded.has(i.paymentId))) {

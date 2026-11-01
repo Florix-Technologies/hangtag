@@ -9,8 +9,10 @@
 //   Test credentials (Razorpay rzp_test_…, Cashfree's sandbox) move no money, so they are accepted only on a test project
 //   (SUBSCRIPTION_TEST_MODE=true), and live ones never there: a test payment can't add paid time to a real shop, and a
 //   test project can't take real money.
-//   AutoPay stays Razorpay Subscriptions (SUBSCRIPTION_RAZORPAY_AUTOPAY_PLAN_ID, a monthly plan at the AutoPay plan's
-//   price made in the Razorpay dashboard), whichever provider takes plan payments.
+//   AutoPay: SUBSCRIPTION_AUTOPAY_PROVIDER = cashfree (Cashfree Subscriptions with the Cashfree keys above: an on-demand
+//   mandate for up to the AutoPay plan's price that Hangtag charges when each period falls due; UPI AutoPay needs Cashfree
+//   to turn it on for the account) — or Razorpay Subscriptions (the default; SUBSCRIPTION_RAZORPAY_AUTOPAY_PLAN_ID, a
+//   monthly plan at the AutoPay plan's price made in the Razorpay dashboard), whichever provider takes plan payments.
 // A payment already made is always checked with the provider that took it (providerNamed), so changing the provider never
 // strands a payment or a notification still on its way.
 import { razorpay } from "./razorpay.js";
@@ -58,9 +60,15 @@ export function providerFor(env, fetchImpl = fetch, now = () => Date.now()) {
   const name = str(env.SUBSCRIPTION_PROVIDER).toLowerCase() || (str(env.SUBSCRIPTION_RAZORPAY_KEY_ID) ? "razorpay" : "");
   return providerNamed(name, env, fetchImpl, now);
 }
-/* AutoPay's provider: Razorpay with Hangtag's keys and the AutoPay plan, or null (AutoPay not set up) */
+/* AutoPay's provider: Cashfree when SUBSCRIPTION_AUTOPAY_PROVIDER says so (its keys allowed here), else Razorpay with
+   Hangtag's keys and the AutoPay plan — or null (AutoPay not set up) */
 export function autopayProviderFor(env, fetchImpl = fetch, now = () => Date.now()) {
-  if (!autopayPlanId(env)) return null;
+  const want = str(env && env.SUBSCRIPTION_AUTOPAY_PROVIDER).toLowerCase();
+  if (want === "cashfree") {
+    const p = providerNamed("cashfree", env, fetchImpl, now);
+    return p && typeof p.createAutopay === "function" ? p : null;
+  }
+  if ((want && want !== "razorpay") || !autopayPlanId(env)) return null;
   const p = providerNamed("razorpay", env, fetchImpl, now);
   return p && typeof p.createAutopay === "function" ? p : null;
 }

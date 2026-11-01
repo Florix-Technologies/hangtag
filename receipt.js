@@ -12,9 +12,12 @@ import { inrx } from './src/shared/formatting/money.js';
   function fail(msg){ box.textContent = ""; box.appendChild(el("h1", "", "Invoice")); box.appendChild(el("p", "muted", msg)); }
   if(!/^[A-Za-z0-9_-]{32,64}$/.test(token)){ fail("This invoice link is incomplete. Open the full link from your message."); return; }
   if(!cfg.SUPABASE_URL || !cfg.SUPABASE_ANON_KEY){ fail("This page isn't set up yet."); return; }
-  fetch(String(cfg.SUPABASE_URL).replace(/\/+$/, "") + "/functions/v1/receipt", {
-    method: "POST", headers: { "Content-Type": "application/json", apikey: cfg.SUPABASE_ANON_KEY, Authorization: "Bearer " + cfg.SUPABASE_ANON_KEY }, body: JSON.stringify({ token: token })
-  }).then(function(r){ return r.json().catch(function(){ return {}; }); }).then(function(d){
+  function call(body){
+    return fetch(String(cfg.SUPABASE_URL).replace(/\/+$/, "") + "/functions/v1/receipt", {
+      method: "POST", headers: { "Content-Type": "application/json", apikey: cfg.SUPABASE_ANON_KEY, Authorization: "Bearer " + cfg.SUPABASE_ANON_KEY }, body: JSON.stringify(body)
+    }).then(function(r){ return r.json().catch(function(){ return {}; }); });
+  }
+  call({ token: token }).then(function(d){
     if(!d || !d.ok || !d.bill){ fail((d && d.message) || "This invoice link isn't valid any more. Ask the shop for a new one."); return; }
     var B = d.bill;
     document.title = B.title + " " + B.number + " · " + B.shop;
@@ -37,6 +40,18 @@ import { inrx } from './src/shared/formatting/money.js';
     (B.rows || []).forEach(function(r){ var tr = el("tr", r[2] ? "tot" : ""); tr.appendChild(el("td", "", r[0])); tr.appendChild(el("td", "r", r[1])); s.appendChild(tr); });
     box.appendChild(s);
     box.appendChild(el("p", "foot", "This link shows only this invoice. Issued by " + B.shop + " with Hangtag."));
-    var p = el("button", "", "Print or save as PDF"); p.type = "button"; p.onclick = function(){ window.print(); }; box.appendChild(p);
+    // the bill's own invoice PDF (the file the shop issued: the same one its email and WhatsApp carry), when it has one
+    if(d.pdf){
+      var dl = el("button", "", "Download PDF"); dl.type = "button";
+      dl.onclick = function(){
+        dl.disabled = true; dl.textContent = "Preparing the PDF…";
+        call({ token: token, pdf: true }).then(function(x){
+          dl.disabled = false; dl.textContent = "Download PDF";
+          if(x && x.ok && /^https:\/\//.test(x.url || "")) location.href = x.url; else alert((x && x.message) || "The PDF couldn't be downloaded. Try again.");
+        }).catch(function(){ dl.disabled = false; dl.textContent = "Download PDF"; alert("The PDF couldn't be downloaded. Check your internet connection and try again."); });
+      };
+      box.appendChild(dl);
+    }
+    var p = el("button", "", "Print or save as PDF"); p.type = "button"; p.onclick = function(){ window.print(); }; if(d.pdf) p.style.marginLeft = "8px"; box.appendChild(p);
   }).catch(function(){ fail("The invoice couldn't be loaded. Check your internet connection and try again."); });
 })();

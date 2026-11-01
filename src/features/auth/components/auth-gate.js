@@ -32,7 +32,7 @@ export function setEmailMode(mode){
   aEl("staffPass").value = "";
   aEl("backBtn").hidden = !forgot;
   aEl("resendBtn").hidden = true;
-  aEl("authMsg").textContent = up ? "Create your Hangtag account. Every account gets its own private shop."
+  aEl("authMsg").textContent = up ? "Create your Hangtag account. Every account gets its own private shop, and its free trial starts when you finish setting the shop up."
     : forgot ? "Enter your email and we'll send you a link to choose a new password."
     : staff ? "Staff sign-in"
     : "Sign in to your shop";

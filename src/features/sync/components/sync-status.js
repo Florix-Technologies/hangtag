@@ -22,7 +22,7 @@ export function syncSummary(){
     else if(n || store.syncing){ cls+=" wait"; txt=n?"Syncing "+n+"…":"Syncing…"; tip=n?n+" change"+(n===1?"":"s")+" uploading to the cloud.":"Checking for changes from your other devices."; }
     else { cls+=" ok"; txt="Synced"+(store.lastSyncAt?" · "+agoText(store.lastSyncAt).replace(" ago",""):""); tip="Cloud synced"+(store.lastSyncAt?" · last synced "+agoText(store.lastSyncAt):"")+". Your devices stay in step."; }
   } else if(store.sbStatus === "connecting"){ cls+=" wait"; txt="Connecting…"; tip="Connecting to the cloud…"; }
-  else if(store.sbStatus === "update"){ cls+=" off"; txt="Database update needed"; tip="Run the latest schema.sql in the Supabase SQL Editor. Until then everything is saved on this device"+(n?" ("+n+" change"+(n===1?"":"s")+" waiting)":"")+"."; }
+  else if(store.sbStatus === "update"){ cls+=" off"; txt="Database update needed"; tip="Hangtag's server needs an update. Everything is saved on this device"+(n?" ("+n+" change"+(n===1?"":"s")+" waiting)":"")+" and uploads once it is done; if this lasts, contact Hangtag support."; }
   else if(store.sbStatus === "error"){ cls+=" off"; txt=n?"Offline · "+n+" pending":"Cloud error"; tip="Couldn't reach the cloud"+(store.sbErrorText?": "+store.sbErrorText:"")+". Everything is saved on this device and uploads when it's back."; }
   else if(store.authUser || storage.get("hangtag_auth_email","")){ cls+=" off"; txt=n?"Offline · "+n+" pending":"Offline"; tip=n?n+" change"+(n===1?"":"s")+" saved on this device, waiting to upload.":"Working offline. Everything is saved on this device."; }
   else { cls+=" off"; txt="Local Storage"; tip="Running locally in browser storage."; }

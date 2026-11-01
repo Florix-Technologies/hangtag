@@ -77,17 +77,24 @@ to the shop's own fields and units are not noticed by the change check until ste
 ## 2. Backups
 - **Platform backup.** In the Supabase dashboard, Database → Backups, note the time of the latest daily backup. With
   point-in-time recovery, note the current time instead: it is the point to return to.
-- **Your own copy (recommended).** Take a logical dump with the database password, on a machine with `pg_dump` 17.
-  Use the connection string from Supabase → Connect: the session pooler where the network has no IPv6.
-  ```
-  pg_dump "<connection string>" -n public -n auth -F c -f hangtag-before-release.dump
-  ```
-  The dump holds customers' and staff's personal data:
-  - keep it encrypted and off shared drives;
-  - never commit it, attach it or upload it;
-  - delete it once the release has settled.
-
-  `npx supabase db dump --linked` is an alternative on a machine with Docker.
+- **The scripted way (2026-10-25).**
+  - `scripts/backup/hangtag-backup.ps1`, run in your own PowerShell: pg_dump asks for the database password itself and writes
+    a custom-format archive of every schema but Supabase's own (so `public`, `private`, `auth`, `storage` metadata,
+    `supabase_migrations`), in UTC; it refuses to call it a backup when `public`, `auth` or `private` is missing. The archive goes to a
+    folder only you can read (`%USERPROFILE%\hangtag-backups`), with its size, SHA-256 and `pg_restore --list` result.
+  - Then `node scripts/backup/verify-restore.mjs <archive>` (and `--target supabase-sim`, which rehearses the recovery
+    command as a `postgres` that isn't a superuser) restores it into a throwaway PostgreSQL on 127.0.0.1. It compares
+    every definition, right, row and sequence, and deletes the throwaway copy afterwards. What a backup holds, what
+    Supabase provides instead, and the recovery into a new project (psql 17.6 or newer): `supabase/RESTORE-RUNBOOK.md`.
+  - The files in Storage (bucket `hangtag-bills`) are not in any database dump: copy them separately.
+  - The Free plan has no platform backups. The database password can't be read back from Supabase, only reset.
+- **Your own copy:** the scripted way above, always.
+  - Never dump by hand with `-n public -n auth`. Such a dump lacks `private`, `storage` and `supabase_migrations`, and
+    the recovery (`supabase/RESTORE-RUNBOOK.md` §5) can't use it.
+  - The dump holds customers' and staff's personal data:
+    - keep it encrypted and off shared drives;
+    - never commit it, attach it or upload it;
+    - delete it once the release has settled.
 
 ## 2a. Before the repair can be approved: the evidence
 The repair (section 3) stays blocked until each item below exists and the owner approves the run itself, separately. As of
@@ -228,7 +235,9 @@ npx supabase secrets set --env-file C:\path\outside\the\repo\hangtag-live.env --
   limit. Without it, bill reading says "Reading bills isn't set up yet".
 - **`AGENT_ALLOWED_USERS`:** only if the Agent's AI is wanted (it also uses `ANTHROPIC_API_KEY`).
 - **Providers, only when each goes live:**
-  - payments: `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `PAYMENT_ALLOWED_USERS`;
+  - shop payments (§6f): `PAYMENT_ACCOUNTS_KEY` and `PAYMENT_ALLOWED_USERS`, and `PAYMENT_LIVE_MODE=on` only on the owner's
+    approval. **Never Hangtag's own Razorpay keys for shops' customers**: each shop connects its own account; the
+    functions don't read `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` any more, so unset them if they were ever set;
   - receipt sending: `SEND_ALLOWED_USERS` and a channel's keys;
   - subscriptions: `SUBSCRIPTION_RAZORPAY_KEY_ID`, `SUBSCRIPTION_RAZORPAY_KEY_SECRET`, `SUBSCRIPTION_WEBHOOK_SECRET`, `APP_URL`;
   - webhooks: `WEBHOOK_DISPATCH_SECRET`.
@@ -255,6 +264,7 @@ npx supabase functions deploy <name> --project-ref wcorlmgkwcahyfastjoz
   - The gates are unit-tested: `tests/unit/team.test.mjs`, `tests/unit/webhooks.test.mjs`.
 - **With verification on:** `extract-bill`, `agent`, `payment-gateway`, `send-receipt` and `subscription`.
 - Deploy `subscription` and `subscription-webhook` only when subscriptions go live.
+- Deploy `payment-gateway` and `payment-webhook` only after the shop payments migration, and on a test project first (§6f).
 - Then `npm run preflight:live` should list only providers left off on purpose.
 - **Rollback.** Deploy the previous version of a function from the previous release's commit (`git worktree add` that
   commit, deploy from there).
@@ -264,9 +274,10 @@ npx supabase functions deploy <name> --project-ref wcorlmgkwcahyfastjoz
    `ux-productization`) → Promote to Production.
 2. Open Production in a private window. Phones pick up the update the next time the app starts with a connection. The
    service worker's cache name changes with every release.
-- **Rollback.** Deployments → the deployment Production had before → Promote to Production. Since 2026-10-18 13:47 UTC
-  Production serves `262dbdb` (build `hangtag-1601181284`); before it, a tree deployed outside git (`hangtag-1803427d85`,
-  AUDIT 125); before that, `ee76f74`'s deployment (7059827088). It is instant, and the database needs nothing (step 3).
+- **Rollback.** Deployments → the deployment Production had before → Promote to Production. Since 2026-10-22 (about 10:31
+  UTC) Production serves `7e77c74` (build `hangtag-db09103bf2`, promoted outside this work); before it `262dbdb` (build
+  `hangtag-1601181284`, its Preview 7155346710); before that a tree deployed outside git (`hangtag-1803427d85`, AUDIT 125);
+  then `ee76f74`'s deployment (7059827088). It is instant, and the database needs nothing (step 3).
 
 ## 6a. Checking signed in: Production now, and a Preview before any later promotion
 Production and every Preview read and write the **live** shop: check without changing real stock or making real bills, sign in only
@@ -294,7 +305,7 @@ with your own accounts, and run no SQL. Tick each:
    available).
 7. Note anything wrong with its time, and download the Diagnostics report.
 
-**Who does each check.** Production has served the pushed commit `262dbdb` since 2026-10-18 13:47 UTC (AUDIT 163), so
+**Who does each check.** Production serves the pushed commit `7e77c74` (since 2026-10-22; `262dbdb` from 2026-10-18), so
 these checks now apply to Production as it is; it uses the same live database as a Preview.
 | Check | Who | Why |
 |---|---|---|
@@ -367,6 +378,16 @@ the migration and the deploys of §6d. Its verification, 2026-10-20 (AUDIT.md, t
 (`sw.js` `hangtag-db09103bf2`, unchanged). **Not run** (no infrastructure or keys here): the concurrent-returns test, Cashfree's
 sandbox, a deployed test project, the Razorpay test-mode proof; and nothing on the live project.
 
+**Not committed (2026-10-22, AUDIT 198–214):** the responsive variant picker, the import preview (title rows, a
+description per row by choice, stock not given never 0, what each row becomes, search, List and Grid, 50 a page),
+Settings → "Connect a payment gateway", Home's "Getting started", plainer messages; and LAUNCH-READINESS.md (the
+requirement matrix). Its verification (AUDIT.md, the seventeenth session's "Test results"), **local only**: `npm test`
+**193/193 files** (6,924 checks: 89 unit, 38 database on PGlite, 4 eval, 62 browser; 0 isolation violations) and **38/38
+on PostgreSQL 17** (1,758), exit 0, none failed, timed out or skipped; `npm run check`, `lint` and `build` exit 0 (`sw.js`
+`hangtag-24d6eb6d7c`). These prove the code, not the live database (contained, not repaired, no backup) and not any
+payment provider (no sandbox or real payment has run). It reaches Production only through a commit, a Preview — which
+uses the live database — the §6a checks, and a promotion: each the owner's.
+
 **Committed and pushed to `ux-productization` on 2026-10-18; in Production since 13:47 UTC that day (promoted outside this work).** App build `hangtag-1601181284`
 (the cache name in `sw.js`). Before the push: `npm test` 178/178 files and 31/31 on PostgreSQL 17, `npm run check` and
 `npm run lint` clean (AUDIT, 2026-10-18 twelfth session). In it, beyond Production's `ee76f74`:
@@ -378,9 +399,10 @@ sandbox, a deployed test project, the Razorpay test-mode proof; and nothing on t
 - Purchases and stock: line money as sales, "Received today", opening stock's cost, history labels (AUDIT 139).
 - The owner's SQL (§6b) and the restore checks (§2a), each under test (AUDIT 138, 144).
 
-**What `hangtag.vercel.app` serves:** `262dbdb`, build `hangtag-1601181284` (its `sw.js`, Last-Modified 2026-10-18
-13:47:30 UTC; read again 2026-10-19). It was promoted outside this work; GitHub's deployment list may still name
-`ee76f74` as Production. The signed-in checks (§6a) now apply to Production itself; if one fails, roll back (§6).
+**What `hangtag.vercel.app` serves:** `7e77c74`, build `hangtag-db09103bf2` (read 2026-10-22: its `sw.js` cache name, and
+`index.html`, `src/app/main.js` and the console's payments page byte for byte; Last-Modified 2026-10-22 10:31 UTC). Promoted
+outside this work; GitHub's deployment list still names `ee76f74` as the last Production deployment. Before it: `262dbdb`
+(2026-10-18 13:47 UTC). Nothing of 2026-10-22's working tree (AUDIT 198 on) is in it. The signed-in checks (§6a) now apply to Production itself; if one fails, roll back (§6).
 
 **The owner's approvals, in order.** Nothing below has been run.
 1. Read-only: `supabase/checks/2026-10-18-console-access.sql`, your account ID filled in.
@@ -392,7 +414,7 @@ sandbox, a deployed test project, the Razorpay test-mode proof; and nothing on t
    `supabase/operations/2026-10-18-trial-corrections.sql` with those account IDs (part 9).
 6. Optional: `supabase/operations/2026-10-18-console-permissions.sql` (Suspend, Restore, End all sign-ins before the
    repair; the undo is beside it).
-7. The signed-in check (§6a) on Production, which already serves `262dbdb`; keep it, or roll back (§6) if a check
+7. The signed-in check (§6a) on Production, which serves `7e77c74`; keep it, or roll back (§6) if a check
    fails.
 8. The client: after step 5, reopen the app (or "Check again" on the lock screen), then §6a's checks with their sign-in.
 
@@ -462,7 +484,9 @@ but a payment webhook set in the dashboard to this function's address also sends
       `HANGTAG_EVAL_CASHFREE_NOTIFY_URL=` that same address and `HANGTAG_EVAL_CASHFREE_WAIT=300`; pay the printed link
       with Cashfree's sandbox test details. In the test project, `SELECT kind, ref, amount FROM
       hangtag_billing_exceptions` shows one `unknown_order` row for that link (a paid Hangtag link no checkout recorded:
-      kept for review, nothing activated), and Cashfree's webhook logs show the delivery answered 200.
+      kept for review, nothing activated), and Cashfree's webhook logs show the delivery answered 200. Then, in the
+      sandbox dashboard → Developers → Webhooks, add that same address (version 2025-01-01) with the refund and dispute
+      events: a link's own `notify_url` carries its payments, not its refunds or disputes (step f checks a refund arrives).
    f. *The app end to end (before any real payment):* a copy of the app whose `config.js` names the test project, served
       at an https address (the one in `APP_URL`, and in `SUBSCRIPTION_ALLOWED_ORIGINS` if different), never a commit of
       that `config.js`. Sign up a test shop there and finish its setup (its trial starts). Each line is read in the test
@@ -495,17 +519,51 @@ but a payment webhook set in the dashboard to this function's address also sends
    Billing review shows it), then `subscription`. The schedule (the owner's choice of scheduler) makes, hourly, a `POST` to
    `https://<live-ref>.supabase.co/functions/v1/subscription-webhook` with the headers `x-hangtag-reconcile: 1` and
    `Authorization: Bearer <the live SUBSCRIPTION_RECONCILE_SECRET>`, the secret kept in the scheduler's own secret store
-   (`probe:reconcile` refuses the live project on purpose). Each link carries the webhook as its `notify_url`; in
-   Cashfree's dashboard, add the webhook only if Hangtag has its own account.
+   (`probe:reconcile` refuses the live project on purpose). Each link carries the webhook as its `notify_url`, which
+   covers its payments. **Refunds and disputes** come through a webhook set in Cashfree's dashboard (production → Developers
+   → Webhooks): the same address, webhook version 2025-01-01 (each delivery then carries `x-idempotency-key`), with the
+   refund and dispute events. On a shared Florix account it also receives the other products' events, which the function
+   ignores (200, nothing written). Without it a refund or a dispute reaches Billing review only by hand, and step 5's
+   refund check fails. Confirm it in the sandbox first (step 2f's refund must appear for review).
 5. **One real low-value payment** end to end (the owner's own shop): one paid row, the months added once, the money
    counted; then a refund in Cashfree's dashboard appears for review and removes no time; the next reconciliation repairs
    nothing, and Payments → Billing review says money and time agree.
 6. **Then** the app offers online payment to everyone (it does as soon as the function says `available`: provider keys
-   set, in the database's billing mode). AutoPay stays off: it is Razorpay's. It can be switched on only after the
-   Razorpay test-mode proof (REMEDIATION.md), its live keys and webhook, the console's billing self-check, and a complete
-   reconciliation — the database refuses it before (readiness), and offers it to no shop while that proof lapses.
+   set, in the database's billing mode). AutoPay stays off until it is proven as in step 7. It can be switched on only
+   after that proof, its live keys and webhook, the console's billing self-check, and a complete reconciliation — the
+   database refuses it before (readiness), and offers it to no shop while that proof lapses.
+7. **AutoPay with Cashfree (the 30-day free trial, then the AutoPay plan monthly)** — code ready and tested with a fake
+   Cashfree (2026-10-27); never run against Cashfree yet. How it works: the owner agrees to the terms on the lock screen,
+   the function makes an **on-demand mandate** for up to the AutoPay plan's price (`POST /pg/subscriptions`, named
+   `htap_<set-up id>`), and the owner approves it on Cashfree's page, opened from the app's own `autopay.html` (the only
+   page that loads Cashfree's script, with its own headers in `vercel.json`). The mandate charges nothing by itself: the
+   hourly reconciler asks for each charge 4 days before it is due (`POST /pg/subscriptions/pay`, one `payment_id` per due
+   date), so a mandate turned off during the free month is never charged. Cashfree's periodic plans can't wait 30 days:
+   their first charge must fall within 14 days of approval. UPI or a card takes **₹1** to confirm the mandate, which
+   Cashfree refunds; the app says so before the owner agrees.
+   0. **Database:** run `supabase/migrations/20261027120000_hangtag_cashfree_readiness.sql` after the post-repair
+      migration (undo: `supabase/operations/cashfree-readiness-undo.sql`). Without it, Cashfree's notifications never
+      prove billing readiness, so AutoPay is never offered. The console's webhook self-check then proves it with a ₹1
+      Cashfree link and a ₹1 mandate, each withdrawn at once.
+   a. **Cashfree, sandbox first:** ask Cashfree to enable **Subscriptions** and **UPI AutoPay** on the account (UPI AutoPay
+      isn't self-serve; without it only cards and eNACH are offered). Under Developers → Webhooks → **Subscriptions**,
+      add this function's address, webhook version **2026-01-01**, with the subscription events. The signing key is
+      assumed to be the secret key (as for payments); the docs call it "your webhook secret key", so step b proves it.
+   b. **Secrets on a test project** (step 2): `SUBSCRIPTION_AUTOPAY_PROVIDER=cashfree` beside the Cashfree keys; `APP_URL`
+      must be an address that serves `autopay.html` (a Preview), since the mandate's return goes through the webhook
+      function to `APP_URL/#plans?autopay=back`. Then run `HANGTAG_EVAL_CASHFREE_AUTOPAY_APP_URL=<that Preview>
+      HANGTAG_EVAL_CASHFREE_AUTOPAY_WAIT=600 npm run eval:cashfree-sandbox`: it makes a mandate, checks a charge is refused before
+      approval, waits while you approve with Cashfree's sandbox details, asks for a charge 3 days out, and turns it off.
+      Then, in the app on the test project, start the trial, approve, and confirm that the trial opens, that the
+      subscription webhook arrives signed, and that turning AutoPay off cancels the mandate at Cashfree with nothing
+      charged.
+   c. **Live:** the same secrets on the live project, the production Subscriptions webhook, and the reconciler's hourly
+      schedule (step 4), which is what asks for the charges. Turned off in Hangtag: AutoPay at Cashfree is cancelled
+      first, and any charge already asked for that hasn't begun is withdrawn.
 **Undo:** remove the provider's secrets (the function answers "not set up" at once; payments already made stay
-honoured); the webhook keeps settling notifications still on their way.
+honoured); the webhook keeps settling notifications still on their way. AutoPay: remove `SUBSCRIPTION_AUTOPAY_PROVIDER`.
+New set-ups stop at once. Mandates already made keep being read by the reconciler, and each is turned off when its shop
+turns AutoPay off.
 
 ## 6e. The controlled pilot, and the gates before money
 **For the pilot, payments stay off.** Today, on the live project: `subscription` and `subscription-webhook` are not
@@ -538,6 +596,40 @@ built as a policy until the owner chooses:
 | Provider calls per account (REMEDIATION step 11) | The app's payment check 60 a minute and 900 an hour; starting AutoPay 6 and 30 (`hangtag_billing_call_claim`, post-repair migration) | Keep, or other numbers (a change to the migration) | Gate 7 |
 | A missed Cashfree refund notification | Not found by any sweep (Cashfree's account-level listing is unverified); refunds are made by the owner in Cashfree's dashboard, so each is known | Keep; or a Cashfree refund sweep, built after the sandbox shows its API | Gate 7 |
 | AutoPay | Off; the database refuses it without proof | Offer it only after the Razorpay test-mode proof (REMEDIATION.md), its live keys and webhook, the self-check and a complete reconciliation | — |
+| A payment gateway for a shop's own customers | **Built in the working tree (2026-10-23, AUDIT 215–), not deployed, never run against Razorpay itself.** Each shop connects **its own** Razorpay account (its own keys, sealed server-side; Razorpay settles to the shop's bank). The shared Hangtag account is gone from the code. Test keys only (`PAYMENT_LIVE_MODE` unset), named shops only (`PAYMENT_ALLOWED_USERS`), after the shop payments migration (§6f). Without it: cash, the card machine, the shop's own UPI QR (Unverified until the shop confirms it) | (a) the shop's own keys, as built; (b) Razorpay's partner programme (the shop authorises Hangtag by OAuth instead of pasting keys): ask Razorpay which it expects of a platform like Hangtag — only the connect step changes; (c) Cashfree for shops: an adapter not built (each shop's own Cashfree app id and secret, its own webhook; Cashfree's platform/partner terms to be confirmed with Cashfree). Marketplace / split settlement (Razorpay Route, Cashfree Easy Split) is not recommended for a POS and needs the provider's approval | Before any shop takes verified payments: (a) or (b) confirmed with the provider, then §6f's sandbox steps |
+| The public website and the domain | No marketing site; the app's own page is the sign-in. `hangtag.florixtechnologies.com` does not exist (no DNS record; the company's DNS is at Hostinger, `dns-parking.com`). The app opens on "Create account" at `<app>/#signup` | Where the site lives (the company site, or a page served with the app), its words, the industries shown, how assisted onboarding is asked for (form, WhatsApp or email), and no prices; then the DNS record (`hangtag` CNAME to Vercel), the domain in Vercel, and Supabase Auth's Site URL and redirect URLs, `APP_URL` and `SUBSCRIPTION_ALLOWED_ORIGINS` updated | Paid launch |
+| Trial-ending reminders | In the app only: Home's banner with the days left, then the lock screen | Email or WhatsApp a few days before the end (a sending provider and a daily job); or in-app only | Paid launch |
+
+## 6f. Shop payments: the order, each step the owner's approval (2026-10-23)
+What a shop's customers pay is never Hangtag's money and never goes through a Hangtag account. Three ways, each optional:
+- **Cash and the card machine:** recorded on the bill. A card on the shop's own machine is "Payment recorded" (the cashier
+  marked it approved), never "successful".
+- **The shop's own UPI QR:** paid straight to its UPI ID. It stays **Unverified** until the owner, or a role that sees the
+  books, marks it **Received** in Reports → Reconciliation. The database keeps who confirmed it and when; a phone can't
+  set it, and a bill sent again never undoes it.
+- **A gateway on the shop's own Razorpay account** (`supabase/functions/payment-gateway/README.md`).
+
+What runs where:
+- **The app** (this working tree, once committed) works with or without the steps below. On a database without the
+  migration, Received says "needs the latest database update" and the gateway "isn't switched on for your shop yet". So a
+  Preview of it against the live database changes no data by itself. But it isn't the place to try payments.
+- **Step 1, the database.** After the repair (§3), run `supabase/migrations/20261023120000_hangtag_shop_payments.sql`
+  whole, as one transaction (the SQL Editor runs a script as one; with psql, `-1 -f`).
+  - It refuses to run before the repair, or while a shop table is open to every account, and changes nothing then.
+  - Its report must be all ok, or nothing commits. Check it any time with `supabase/checks/shop-payments-report.sql`
+    (7 rows). The undo is `supabase/operations/shop-payments-undo.sql`.
+  - Run it again after any run of `schema.sql`.
+- **Step 2, a test project first.** Deploy `payment-gateway` and `payment-webhook` to a test Supabase project with the
+  migration. Set `PAYMENT_ACCOUNTS_KEY` (new, 32 random bytes) and `PAYMENT_ALLOWED_USERS` (the test shop). Then run the
+  README's sandbox steps 1–6 with the owner's own Razorpay **test** account, and a second one for the isolation step.
+  None of this has run yet.
+- **Step 3, the live project, test keys.** Only after the provider confirms the account model (§6e) and step 2 passes:
+  1. run the migration;
+  2. set the secrets, with `PAYMENT_ALLOWED_USERS` = the named pilot shops;
+  3. deploy;
+  4. each shop connects its own **test** keys and takes one test payment.
+- **Step 4, live money.** Only on the owner's explicit approval: `PAYMENT_LIVE_MODE=on`. Then the shop connects its live
+  keys and takes one real low-value payment, refunded and reconciled.
 
 ## 7. After the release
 Use a test product and a test customer, and cancel what you create afterwards:

@@ -151,11 +151,13 @@ check('sending: a team member may send when its shop\'s owner is listed (by emai
   && allowedToSend(owner, { SEND_ALLOWED_USERS: 'owner@shop.in' }) && !allowedToSend(staff, {}, owner) && SEND_PERMISSION === 'create_sale');
 check('payments: the same for PAYMENT_ALLOWED_USERS', allowedToPay(staff, { PAYMENT_ALLOWED_USERS: 'OWNER@shop.in' }, owner) && !allowedToPay(staff, { PAYMENT_ALLOWED_USERS: 'x@y.z' }, owner)
   && !allowedToPay(null, { PAYMENT_ALLOWED_USERS: '*' }, owner));
-check('each payment action needs its permission from a member (refunds and settling unmatched money perform_return; seeing it view_reports); an unknown action the most',
+check('each payment action needs its permission from a member (refunds and settling unmatched money perform_return; seeing it view_reports; connecting the shop\'s own account manage_settings); an unknown action the most',
   permissionFor('create') === 'create_sale' && permissionFor('refund_return') === 'perform_return' && permissionFor('resolve') === 'perform_return' && permissionFor('unmatched') === 'view_reports' && permissionFor('config') === null
-  && permissionFor('nope') === 'manage_settings' && Object.keys(ACTION_PERMISSIONS).length === 8);
+  && permissionFor('connect') === 'manage_settings' && permissionFor('disconnect') === 'manage_settings'
+  && permissionFor('nope') === 'manage_settings' && Object.keys(ACTION_PERMISSIONS).length === 10);
 for (const name of ['send-receipt', 'payment-gateway']) {
-  const src = read(`supabase/functions/${name}/index.ts`);
+  // (payment-gateway's logic is in handler.js; index.ts makes the clients with the caller's session and device key)
+  const src = read(`supabase/functions/${name}/index.ts`) + (name === 'payment-gateway' ? read('supabase/functions/payment-gateway/handler.js') : '');
   const after = src.slice(src.indexOf('db.rpc("hangtag_shop_id")'));
   check(`${name}: the shop comes from the database with the caller's session and device key; every owner_id is the shop, never user.id`,
     /"x-hangtag-device": device/.test(src) && src.includes('db.rpc("hangtag_shop_id")') && !/owner_id", user\.id|ownerId: user\.id|owner_id: user\.id|eq\("id", user\.id\)/.test(src)

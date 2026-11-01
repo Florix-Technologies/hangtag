@@ -64,7 +64,7 @@ export function cashBook(txns,{from=-Infinity,to=Infinity}={}){
     reversals:add(e=>e.type==="reversal"?toPaise(e.in)-toPaise(e.out):0),collections:of("collection","in"),closing:toRupees(bal),cancelled:entries.length-P.length};
 }
 /* Bank book (UPI and card) between two times: entries and totals per method; UPI checked only by hand is also shown on
-   its own (upiUnverified), within the UPI figure */
+   its own (upiUnverified, and upiConfirmed once the shop confirmed it reached its account), within the UPI figure */
 export function bankBook(txns,{from=-Infinity,to=Infinity}={}){
   const live=x=>x.status==="posted";
   const entries=(txns||[]).filter(x=>(x.method==="upi"||x.method==="card")&&x.t>=from&&x.t<=to).sort(byTime).map(x=>({id:"bb:"+x.id,finTxnId:x.id,
@@ -73,7 +73,8 @@ export function bankBook(txns,{from=-Infinity,to=Infinity}={}){
     ...(x.collectionId?{collectionId:x.collectionId,customerId:x.customerId,customerName:x.customerName}:{})}));
   const P=entries.filter(live), add=f=>toRupees(sumP(P.map(f)));
   return {entries,upiIn:add(e=>e.method==="upi"?toPaise(e.in):0),cardIn:add(e=>e.method==="card"?toPaise(e.in):0),
-    upiUnverified:add(e=>e.method==="upi"&&e.verification==="unverified"?toPaise(e.in):0),verifiedIn:add(e=>e.verification==="verified"?toPaise(e.in):0),
+    upiUnverified:add(e=>e.method==="upi"&&e.verification==="unverified"?toPaise(e.in):0),upiConfirmed:add(e=>e.method==="upi"&&e.verification==="confirmed"?toPaise(e.in):0),
+    verifiedIn:add(e=>e.verification==="verified"?toPaise(e.in):0),
     refunds:add(e=>toPaise(e.out)),net:add(e=>toPaise(e.in)-toPaise(e.out)),collections:add(e=>e.type==="collection"?toPaise(e.in):0),cancelled:entries.length-P.length};
 }
 /* Does a bill's money add up? Posted receipts must equal what was due now (nothing for a cancelled bill; the part left on

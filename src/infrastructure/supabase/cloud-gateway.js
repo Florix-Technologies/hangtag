@@ -513,6 +513,14 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
        body { action, ... } → its answer. Throws an AppError: NOT_CONFIGURED, VALIDATION, CONFLICT, NOT_FOUND, AUTH,
        DELIVERY (the provider refused), NETWORK. */
     paymentIntent: body => callFunction("payment-gateway", body, "Verified payments"),
+    /* The shop confirms a UPI payment checked by hand reached its account (hangtag_confirm_upi_payment: the owner, or a
+       role that sees the books) → { status: "confirmed"|"verified"|"recorded"|"not_found"|"cancelled", already?, confirmedAt? }.
+       Throws an AppError (PERMISSION; OUTDATED_DATABASE before the shop payments migration). */
+    async confirmUpiPayment(paymentId){
+      const r = await db().rpc("hangtag_confirm_upi_payment", { p_payment_id: paymentId });
+      if(r.error) throw toAppError(r.error, "confirm_upi");
+      return r.data || null;
+    },
     /* agent: the Hangtag Agent's optional AI provider ({ action: "config" } or one "step") */
     agentStep: body => callFunction("agent", body, "The Hangtag Agent's AI"),
     /* Hangtag plans (schema.sql section 3t): the shop's plan (works while it is locked), the plans on sale, a plan's price
@@ -532,6 +540,9 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
     deliveryRefresh: saleId => callFunction("send-receipt", { action:"refresh", sale_id:saleId }, "Sending bills"),
     /* send-receipt: the bill's secure invoice link (made once, kept 12 months) → { url, token, expiresAt } */
     invoiceLink: saleId => callFunction("send-receipt", { action:"link", sale_id:saleId }, "Invoice links"),
+    /* send-receipt: the bill's one invoice PDF → { invoice: { id, number, sha256, size, filename }, url, already }. pdf (base64,
+       this phone's copy) registers it when the bill has none yet; the first copy registered is kept */
+    invoiceFile: (saleId, pdf) => callFunction("send-receipt", { action:"invoice", sale_id:saleId, ...(pdf ? { pdf } : {}) }, "Invoice PDFs"),
     /* Stops every invoice link of a bill from working */
     async revokeInvoiceLinks(saleId){
       await mustReach('hangtag_invoice_links', 'token', q => q.update({ revoked_at:new Date().toISOString() }), q => q.eq('sale_id', saleId).is('revoked_at', null));

@@ -65,6 +65,26 @@ function.
   `SEND_ALLOWED_USERS` may name the member or, for the whole team, the shop's owner.
 - A channel without its secrets answers `503 not_configured`. Nothing is recorded, and the app offers Download, Share or
   "Open WhatsApp" instead.
+- **One invoice PDF per bill (canonical invoice)**: `{ action: "invoice", sale_id, pdf? }`. The phone makes the bill's PDF
+  with the app's own A4 invoice (the file the shop downloads and prints) and registers it once. The function takes it only
+  for a saved, not cancelled bill of the caller's shop, and only when the PDF shows that bill's number and total. It stores
+  it in the private bucket `hangtag-invoices` (`<shop>/<sha256>.pdf`) and records it in `hangtag_invoices`, one row per
+  bill, so the first copy registered is the invoice for good (a second phone or channel gets that one back). Without
+  `pdf` it answers the bill's invoice, or `404 no_invoice`. From then on every channel uses that file:
+  - **email:** the PDF is the only attachment;
+  - **WhatsApp:** the PDF is sent as a document (with `WHATSAPP_TEMPLATE_DOCUMENT=on`: the approved bill template has a
+    DOCUMENT header), otherwise the message carries the invoice link;
+  - **SMS:** one message with the secure link, whose page downloads the same PDF (`receipt` function, `pdf: true`). An
+    SMS never claims an attachment, and without invoice links it isn't sent.
+
+  Each delivery record names the invoice (`invoice_id`). The answer says what the customer got (`format`:
+  `attachment`, `document`, `pdf_link`, `link` or `text`). Needs `supabase/migrations/20261026150000_hangtag_canonical_invoices.sql`;
+  before it runs, bills go as before (no PDF).
+- **One press of Send** (`request_id`, made by the phone): a retry of the same press gets the first answer, never a second
+  message, and Resend gets it as its idempotency key. The app uses the same press again only when no answer came back
+  (the outcome is unknown); trying again after a refusal is a new press.
+- **A walk-in bill** can go to a saved customer named in the request (`customer_id`, read with the caller's session): the
+  bill itself, its customer and its invoice don't change.
 
 ## Deploy
 
@@ -82,7 +102,7 @@ Set the secrets of the channels you want (`supabase secrets set NAME=value --pro
 |---|---|
 | Email (Resend) | `RESEND_API_KEY`, `EMAIL_FROM` (an address on a domain verified in Resend, e.g. `bills@yourshop.in`), optional `EMAIL_REPLY_TO` |
 | SMS (Twilio) | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_SMS_FROM` (a Twilio number or a Messaging Service SID `MG…`) |
-| WhatsApp (Meta) | `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_TEMPLATE` (an approved template whose body has `{{1}}` customer name, `{{2}}` shop, `{{3}}` bill number, `{{4}}` amount), optional `WHATSAPP_TEMPLATE_LANG` (default `en`), `WHATSAPP_API_VERSION` (default `v21.0`) |
+| WhatsApp (Meta) | `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_TEMPLATE` (an approved template whose body has `{{1}}` customer name, `{{2}}` shop, `{{3}}` bill number, `{{4}}` amount), optional `WHATSAPP_TEMPLATE_LANG` (default `en`), `WHATSAPP_API_VERSION` (default `v21.0`), `WHATSAPP_TEMPLATE_DOCUMENT=on` (the template has a DOCUMENT header: the invoice PDF goes with the message; turn it on only after the app that registers invoices is deployed) |
 | WhatsApp (Twilio) | `WHATSAPP_PROVIDER=twilio`, the Twilio secrets above, `TWILIO_WHATSAPP_FROM` (the WhatsApp sender, `+14155238886` or `whatsapp:+14155238886`), `TWILIO_WHATSAPP_CONTENT_SID` (an approved WhatsApp template in Twilio Content, variables `{{1}}`–`{{4}}` as above) |
 | Who may send (**required**) | `SEND_ALLOWED_USERS`: the accounts allowed to send, as user ids or sign-in emails, comma-separated, or `*` for every signed-in account. **Unset = nobody sends.** Sign-up is open and the messages go out from your provider accounts, so list your shops' accounts rather than using `*` |
 

@@ -1,4 +1,4 @@
-// SaveCapabilities: what this shop uses (Settings → Capabilities). The choices are part of the shop's synced settings
+// SaveCapabilities: what this shop uses (Settings → Business → Features). The choices are part of the shop's synced settings
 // (settings.caps: only where they differ from the business type's defaults; settings.capsAt: when they changed, so an
 // older copy on another phone never undoes them — domain/shop/capabilities.js keepNewerCaps, schema.sql section 3j).
 // Saved on this device first, then uploaded. Needs manage_settings (the database refuses the upload without it too).

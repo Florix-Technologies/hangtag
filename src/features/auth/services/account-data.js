@@ -1,4 +1,6 @@
 // Keeps each account's local data separate on a shared device.
+import { mergeLogs } from '../../../domain/automation/rules.js';
+import { docImagesOf } from '../../../domain/documents/doc-settings.js';
 import { store } from '../../../shared/state/store.js';
 import { DEFAULT_SETTINGS } from '../../../domain/shop/settings.js';
 import { discountInput } from '../../../domain/sales/discounts.js';
@@ -8,13 +10,28 @@ import { closeModal } from '../../../shared/components/modal.js';
 import { storage } from '../../../shared/state/persistence.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { objOr } from '../../../shared/utils/objects.js';
+import { resetAssistant } from '../../assistant/pages/assistant-page.js';
+import { resetProductDraftAssistant } from '../../products/components/product-draft-assistant.js';
+import { refreshShopUnits } from '../../products/services/shop-fields.js';
 
 /* ---------- Each account keeps its own data on this device ----------
    The app works on the plain keys below. When a different account signs in, the current data is put away
    under its owner and that account's own data (or a fresh start) is brought back. */
 
-export const USER_KEYS = ["hangtag_sb_queue", "hangtag_sync_review", "rc_local", "rc_dirty", "rc_moves", "rc_returns", "rc_customers", "rc_events", "rc_settings", "rc_pend", "rc_cart", "rc_disc", "rc_cartcust", "rc_catalog", "rc_imgs", "hangtag_profile", "rc_logo", "hangtag_pay_pending", "hangtag_delivery_queue", "rc_cash_moves", "rc_day_closes", "hangtag_access", "rc_collections", "rc_held", "rc_orders", "rc_cartorder", "rc_suppliers", "rc_purchases", "rc_supplier_pays"];
-export const MUST_KEEP = ["hangtag_sb_queue", "hangtag_sync_review", "rc_local", "rc_dirty", "rc_moves", "rc_returns", "rc_customers", "rc_events", "rc_cash_moves", "rc_day_closes", "rc_collections", "rc_held", "rc_orders", "rc_suppliers", "rc_purchases", "rc_supplier_pays"];   // unsent work: never drop these
+export const USER_KEYS = ["hangtag_sb_queue", "hangtag_sync_review", "rc_local", "rc_dirty", "rc_moves", "rc_returns", "rc_customers", "rc_events", "rc_settings", "rc_pend", "rc_cart", "rc_disc", "rc_cartcust", "rc_catalog", "rc_imgs", "rc_docimg", "rc_autolog", "hangtag_profile", "rc_logo", "hangtag_pay_pending", "hangtag_delivery_queue", "rc_cash_moves", "rc_day_closes", "hangtag_access", "rc_collections", "rc_held", "rc_orders", "rc_cartorder", "rc_suppliers", "rc_purchases", "rc_supplier_pays",
+  "rc_tables", "rc_table_sessions", "rc_carttable", "rc_pending_docs", "rc_quote_sends", "rc_biz", "rc_cartpl", "hangtag_subscription", "hangtag_sub_pending",
+  // when this account's data was last fully saved, and its backups: another account's must not hide this one's
+  // "not in the cloud yet" warning or its backup reminder
+  "hangtag_last_sync", "hangtag_backup_log",
+  // this device's bill-number series in this shop (another shop's would number its bills in a stray series), and an
+  // AutoPay approval this account is waiting for
+  "hangtag_till", "hangtag_ap_pending"];
+/* What stays with the device, whoever signs in: the email last typed (to fill in sign-in), this device's id and name,
+   its printer and scale, display preferences, sign-in flow flags, whose data is out, and the device's own diagnostics. */
+export const DEVICE_KEYS = ["hangtag_auth_email", "hangtag_data_owner", "hangtag_pick_account", "hangtag_pw_reset", "hangtag_recovery", "hangtag_device_id",
+  "hangtag_device_key", "hangtag_device_user", "hangtag_scale", "hangtag_welcome_hidden", "rc_dev", "rc_prefs", "rc_printer", "hangtag_diagnostics_v1",
+  "hangtag_latency_v1", "hangtag_agent_traces_v1"];
+export const MUST_KEEP = ["hangtag_sb_queue", "hangtag_sync_review", "rc_local", "rc_dirty", "rc_moves", "rc_returns", "rc_customers", "rc_events", "rc_cash_moves", "rc_day_closes", "rc_collections", "rc_held", "rc_orders", "rc_suppliers", "rc_purchases", "rc_supplier_pays", "rc_tables", "rc_table_sessions", "rc_pending_docs", "rc_quote_sends", "rc_biz"];   // unsent work: never drop these
 export const DATA_OWNER = "hangtag_data_owner";
 export const stashKey = (owner, k) => "hangtag_u_" + owner + "_" + k;
 export function switchLocalDataTo(userId){
@@ -33,7 +50,7 @@ export function switchLocalDataTo(userId){
       // Settings, the logo or photos couldn't be put away: their queued uploads send whatever the app holds when they run,
       // which would then be empty and wipe the shop's copy in the cloud. Drop those uploads; the cloud copy comes back
       // down when the account returns.
-      const type = { rc_settings: "settings", rc_logo: "logo", rc_imgs: "img" }[k];
+      const type = { rc_settings: "settings", rc_logo: "logo", rc_docimg: "docimg", rc_autolog: "autolog", rc_imgs: "img" }[k];
       if(type) try{
         const qk = stashKey(owner, "hangtag_sb_queue"), q = JSON.parse(storage.getRaw(qk) || "[]");
         if(Array.isArray(q)) storage.setRaw(qk, JSON.stringify(q.filter(x => !x || x.type !== type)));
@@ -67,17 +84,29 @@ export function loadUserState(){
   store.events = objOr(storage.get("rc_events", {}), {});
   store.syncReview = storage.get("hangtag_sync_review", []); if(!Array.isArray(store.syncReview)) store.syncReview = [];
   store.payPending = objOr(storage.get("hangtag_pay_pending", null), null); store.payConfig = null; store.unmatched = null;
+  store.lastSyncAt = +storage.get("hangtag_last_sync", 0) || 0;
   store.cashMoves = objOr(storage.get("rc_cash_moves", {}), {}); store.dayCloses = objOr(storage.get("rc_day_closes", {}), {});
   store.suppliers = objOr(storage.get("rc_suppliers", {}), {}); store.purchases = objOr(storage.get("rc_purchases", {}), {}); store.supplierPays = objOr(storage.get("rc_supplier_pays", {}), {});
+  // credit, held bills and orders (section 3m), a restaurant's tables (3o), supplier bills' originals and quotations still to send
+  store.collections = objOr(storage.get("rc_collections", {}), {}); store.heldCarts = objOr(storage.get("rc_held", {}), {}); store.orders = objOr(storage.get("rc_orders", {}), {});
+  store.cartOrder = objOr(storage.get("rc_cartorder", null), null); store.cartTable = objOr(storage.get("rc_carttable", null), null);
+  store.tables = objOr(storage.get("rc_tables", {}), {}); store.tableSessions = objOr(storage.get("rc_table_sessions", {}), {});
+  store.pendingDocs = objOr(storage.get("rc_pending_docs", {}), {});
+  store.quoteSends = storage.get("rc_quote_sends", []); if(!Array.isArray(store.quoteSends)) store.quoteSends = [];
+  // the commerce batch (section 3r): price lists, purchase orders, GST readiness, repacks, vouchers; the bill's price list
+  store.biz = objOr(storage.get("rc_biz", {}), {}); refreshShopUnits(); store.cartPriceList = storage.get("rc_cartpl", null) || null; store.bizView = null;
+  store.orderForm = null; store.collectForm = null; store.tableView = null; store.quoteDoc = null;
   store.deliveryQueue = storage.get("hangtag_delivery_queue", []); if(!Array.isArray(store.deliveryQueue)) store.deliveryQueue = [];
   store.settings = Object.assign({}, DEFAULT_SETTINGS, objOr(storage.get("rc_settings", {}), {}));
   store.sbOfflineQueue = storage.get("hangtag_sb_queue", []); if(!Array.isArray(store.sbOfflineQueue)) store.sbOfflineQueue = [];
   store.profile = storage.get("hangtag_profile", null);
   store.access = objOr(storage.get("hangtag_access", null), null); store.team = null;
-  store.logo = storage.get("rc_logo", "") || ""; store.deliveries = {}; store.channels = null; store.printState = null;
+  store.subscription = objOr(storage.get("hangtag_subscription", null), null);   // this account's shop plan as the server last said (features/billing)
+  store.logo = storage.get("rc_logo", "") || ""; store.docImages = docImagesOf(storage.get("rc_docimg", null)); store.autoLog = mergeLogs(storage.get("rc_autolog", []) || []); store.deliveries = {}; store.channels = null; store.printState = null;
   applyCatalogMigration();
   store.editor = null; store.lastSale = null; store.retState = null; store.stockOp = null; store.showAllBills = false;
   store.purchaseForm = null; store.supplierView = null; store.stockCount = null; store.prodImport = null; store.quickProduct = null; store.invSub = "levels";
+  resetAssistant(); resetProductDraftAssistant();
   closeSheets(); closeModal();
   renderAll();
 }

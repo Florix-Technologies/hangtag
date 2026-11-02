@@ -8,6 +8,12 @@ export function checkVpa(v){
   if(!s) return null;
   return validVpa(s)?null:{error:"Enter the UPI ID as name@bank, e.g. myshop@okaxis."};
 }
+/* A QR to check the UPI ID before using it: no amount, so scanning it shows the name the money would go to without paying
+   anything — or "" without a valid UPI ID */
+export function upiCheckUri({vpa,name}){
+  if(!validVpa(vpa)) return "";
+  return "upi://pay?"+[["pa",String(vpa).trim()],["pn",String(name||"Shop").slice(0,40)],["cu","INR"]].map(([k,v])=>k+"="+encodeURIComponent(v)).join("&");
+}
 /* upi://pay?pa=…&pn=…&am=…&cu=INR&tn=… — or "" without a valid UPI ID or a positive amount */
 export function upiPayUri({vpa,name,amount,note}){
   const a=+amount;

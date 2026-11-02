@@ -4,6 +4,7 @@ import { CUSTOMER_TYPES, searchCustomers, typeLabel } from '../../../domain/cust
 import { custStats } from '../services/customer-stats.js';
 import { purchaseHistory } from '../services/purchase-history.js';
 import { accountHTML } from './customer-account.js';
+import { insightHTML } from './customer-insight-view.js';
 import { customerRepository } from '../repositories/customer-repository.js';
 import { saveCustomer, setBillCustomer } from '../use-cases/save-customer.js';
 import { flushSbQueue } from '../../sync/services/outbox.js';
@@ -15,6 +16,9 @@ import { dayKey, dayLab, hhmm } from '../../../shared/formatting/dates.js';
 import { inr } from '../../../shared/formatting/money.js';
 import { renderAll } from '../../../shared/ui/render.js';
 import { initials } from '../../../shared/utils/text.js';
+import { priceLists } from '../../sales/services/pricing.js';
+import { can } from '../../shop/services/access.js';
+import { resumeCheckoutAfterCustomer } from '../../sales/components/checkout-flow.js';
 
 /* store.custForm = { id?, name, phone, email, gstin, type, from: "sell" | "page", err, field, dup } while the form is open */
 const badge = c => c.type === "business" ? `<span class="ctype">Business</span>` : "";
@@ -52,7 +56,7 @@ export function custFormHTML(){
     <label class="f full"><span class="lab">${biz?"Business name":"Name"}<span class="req">*</span></span><input name="name" value="${esc(c.name||"")}" maxlength="80" autocomplete="off" required></label>
     <label class="f"><span class="lab">Mobile</span><input name="phone" type="tel" inputmode="tel" value="${esc(c.phone||"")}" maxlength="20" autocomplete="off" placeholder="10-digit mobile"></label>
     <label class="f"><span class="lab">Email</span><input name="email" type="email" inputmode="email" value="${esc(c.email||"")}" maxlength="120" autocomplete="off"></label>
-    <label class="f full"><span class="lab">GSTIN${biz?"":" (optional)"}</span><input name="gstin" value="${esc(c.gstin||"")}" maxlength="15" autocomplete="off" autocapitalize="characters" placeholder="e.g. 27ABCDE1234F1Z5"></label></div>
+    <label class="f full"><span class="lab">GSTIN${biz?"":" (optional)"}</span><input name="gstin" value="${esc(c.gstin||"")}" maxlength="15" autocomplete="off" autocapitalize="characters" placeholder="e.g. 27ABCDE1234F1Z5"></label>${priceListFieldHTML(c)}</div>
     <p id="custErr" class="autherr"${c.err?"":" hidden"} role="alert">${esc(c.err||"")} ${dupBtn}</p>
     <div class="setactions"><button class="btn sm primary" type="submit">${c.id?"Save":c.from==="sell"?"Save and add to bill":"Save customer"}</button><button class="btn sm" type="button" data-act="custback">${c.id||c.from==="sell"?"Back":"Cancel"}</button></div></form>`;
 }
@@ -64,7 +68,14 @@ function renderCustForm(){
 }
 /* The type switch relabels the form without losing what was typed */
 export function custFormType(form){ store.custForm=Object.assign(store.custForm||{},formValues(form)); renderCustForm(); }
-const formValues=form=>{const f=new FormData(form);return {name:String(f.get("name")||""),phone:String(f.get("phone")||""),email:String(f.get("email")||""),gstin:String(f.get("gstin")||""),type:String(f.get("type")||"individual")}};
+const formValues=form=>{const f=new FormData(form);return Object.assign({name:String(f.get("name")||""),phone:String(f.get("phone")||""),email:String(f.get("email")||""),gstin:String(f.get("gstin")||""),type:String(f.get("type")||"individual")},
+  f.has("priceList")?{priceList:String(f.get("priceList")||"")||null}:{})};
+/* The customer's own price list (shops with price lists; set by someone who may change prices) */
+function priceListFieldHTML(c){
+  const lists=priceLists(); if(!lists.length||!can("manage_products")) return "";
+  const cur=c.priceList!==undefined?c.priceList:(c.id&&store.customers[c.id]&&store.customers[c.id].priceList)||"";
+  return `<label class="f full"><span class="lab">Price list</span><select name="priceList"><option value="">Shop's default prices</option>${lists.map(l=>`<option value="${esc(l.id)}"${cur===l.id?" selected":""}>${esc(l.name)}</option>`).join("")}</select></label>`;
+}
 export function saveCustomerForm(form){
   const cur=store.custForm||{from:"sell"}, v=formValues(form), r=saveCustomer(v,{id:cur.id});
   if(r.error){
@@ -74,7 +85,7 @@ export function saveCustomerForm(form){
   }
   flushSbQueue();
   const c=r.customer; store.custForm=null;
-  if(r.created&&cur.from==="sell"){ setBillCustomer(c); closeModal(); renderAll(); toast(c.name+" added to the bill."); return; }
+  if(r.created&&cur.from==="sell"){ setBillCustomer(c); closeModal(); renderAll(); resumeCheckoutAfterCustomer(); toast(c.name+" added to the bill."); return; }
   renderAll(); openCustHistory(c.id); toast(r.created?"Customer saved.":"Customer details saved.");
 }
 export function custBack(){
@@ -86,7 +97,7 @@ export function custBack(){
 /* Pick a customer for the bill (from the Sell picker, a profile or the "Use …" button) */
 export function pickCustomer(id){
   const c=customerRepository().get(id); if(!c) return;
-  setBillCustomer(c); store.custForm=null; closeModal(); renderAll(); toast(c.name+" added to the bill.");
+  setBillCustomer(c); store.custForm=null; closeModal(); renderAll(); resumeCheckoutAfterCustomer(); toast(c.name+" added to the bill.");
 }
 
 /* ---------- profile: details and purchase history ---------- */
@@ -98,7 +109,7 @@ export function openCustHistory(cid){
     <span class="cb-foot">${b.pieces} piece${b.pieces===1?"":"s"}${b.kind==="exchange"?" · exchange":""}${b.returnedPieces?` · ${b.returnedPieces} returned${b.creditNotes.length?" ("+esc(b.creditNotes.join(", "))+")":""}`:""}${b.returned?` · ${inr(b.returned)} refunded`:""}</span></button>`;
   $("#modalHost").innerHTML=sheet(c.name,`
     <div class="sh-head"><span class="avatar lg">${esc(initials(c.name))}</span><div class="sh-t"><h3>${esc(c.name)}${badge(c)}</h3><p>${esc([c.phone,c.email].filter(Boolean).join(" · ")||"No contact details")}${c.gstin?`<br><span class="cgst">GSTIN ${esc(c.gstin)}</span>`:""}</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
-    <div class="tmini cust3"><div><span>Bills</span><b>${h.count}</b></div><div><span>Total spent</span><b>${inr(h.spent)}</b></div><div><span>Last visit</span><b>${h.last?esc(dayLab(dayKey(h.last))):"—"}</b></div></div>
+    ${insightHTML(c)}
     ${accountHTML(c.id)}
     <h4 class="custh">Purchase history</h4>
     <div class="custbills">${h.bills.length?h.bills.map(billHTML).join(""):`<p class="muted">No completed bills yet.</p>`}</div>

@@ -4,19 +4,22 @@
 // time) and the later payments (a reversal takes one back); a cancelled purchase is owed nothing. Cash paid out of the
 // drawer is a cash book "Cash out" entry: the database adds it (pur:<purchase>, spay:<payment>) and the phone shows the same
 // entry at once under the same id. Pure.
-//   Line hooks for serial numbers and batches (a later batch): a line may carry `serials` (array) and `batch`
-//   ({ no, mfg, exp }); they are kept on the line as they are and sent with the purchase (RPC p_tracking).
-import { toPaise, toRupees, tooPrecise } from '../sales/paise.js';
+//   Serial numbers and batches (domain/inventory/tracking.js): a line of a product tracked by serial number carries
+//   `serials` (one per piece), one tracked by batch `batch` ({ no, exp }); its stock-in record carries them (sn / b, exp),
+//   so they come into stock, and leave it again when the purchase is cancelled, with the same records as the stock.
+import { linePaise, toPaise, toRupees, tooPrecise } from '../sales/paise.js';
 import { validEmail } from '../../shared/validation/email.js';
 import { validGstin } from '../../shared/validation/gstin.js';
 import { validPhone } from '../../shared/validation/phone.js';
+import { checkBatchNo, checkExpiry, incomingSerialError, normSerial, validSerial } from './tracking.js';
+import { inr, inrx, stripMoney } from '../../shared/formatting/money.js';
 
 export const PURCHASE_METHODS=["cash","upi","card","bank","cheque"];
 export const PURCHASE_METHOD_LABELS={cash:"Cash",upi:"UPI",card:"Card",bank:"Bank transfer",cheque:"Cheque"};
 export const MAX_CASH_PAID=1000000;   // one cash book entry (hangtag_cash_moves.amount)
 export const MAX_PURCHASE_LINES=200;
 const clean=(s,max)=>String(s==null?"":s).replace(/[\u0000-\u001f\u007f]/g," ").trim().replace(/\s+/g," ").slice(0,max||500);
-const num=v=>{const t=String(v==null?"":v).trim().replace(/[₹,\s]/g,"");return t===""?null:Number(t)};
+const num=v=>{const t=stripMoney(String(v==null?"":v).trim());return t===""?null:Number(t)};
 
 /* ---------- suppliers ---------- */
 /* input: { id, name, phone, email, address, gstin, notes, active } · others: the shop's suppliers (duplicates by name / GSTIN)
@@ -40,9 +43,10 @@ export function checkSupplier(input,others=[]){
 }
 
 /* ---------- purchase lines and totals ---------- */
-/* One line's money in paise: taxable value = qty × cost per piece (before GST), the GST on it, and the line total */
+/* One line's money in paise: taxable value = qty × cost per piece (before GST), the GST on it, and the line total. The
+   quantity times the cost is worked out as a bill line's is (paise.js linePaise), so 1.005 at ₹1 is ₹1.01 on both */
 export function lineMoney({q,cost,gst}){
-  const tx=Math.round((+q||0)*toPaise(cost)), tax=Math.round(tx*(+gst||0)/100);
+  const tx=linePaise(q,cost), tax=Math.round(tx*(+gst||0)/100);
   return {tx,tax,total:tx+tax};
 }
 /* The first problem with a line (n: its number on the screen), or null. dec: decimals its quantity may have (0: whole pieces) */
@@ -54,7 +58,7 @@ export function lineError(l,n){
   if(Math.abs(q*10**dec-Math.round(q*10**dec))>1e-6) return dec?`${lab}: use at most ${dec} decimal places.`:`${lab}: the quantity is a whole number of pieces.`;
   if(q>1000000) return `${lab}: that quantity is too large.`;
   const c=num(l.cost);
-  if(c==null||!Number.isFinite(c)||c<0) return `${lab}: enter the cost per piece (₹0 or more).`;
+  if(c==null||!Number.isFinite(c)||c<0) return `${lab}: enter the cost per piece (${inr(0)} or more).`;
   if(tooPrecise(c)) return `${lab}: the cost can have at most 2 decimal places.`;
   const g=num(l.gst==null?"":String(l.gst).replace("%",""));
   if(g!=null&&(!Number.isFinite(g)||g<0||g>100||tooPrecise(g))) return `${lab}: GST % should be between 0 and 100.`;
@@ -69,9 +73,28 @@ export function purchaseTotals(lines){
 /* A stock-in record's note for a purchase */
 export const purchaseNote=(invoiceNo,supplier)=>["Purchase",clean(invoiceNo,40),supplier?"· "+clean(supplier,60):""].filter(Boolean).join(" ").slice(0,200);
 
+/* A line's serial numbers or batch, for how its product is tracked (trk: { tracking, expiry } or none) → error text or null.
+   seen: serials already on the purchase · ctx: { serialState(sn), batchOf(vid, b), today } */
+export function lineTrackingError(l,n,trk,seen,ctx={}){
+  const lab=`Line ${n}${l&&l.n?` (${l.n})`:""}`, t=trk&&trk.tracking;
+  if(t==="serial"){
+    const sn=Array.isArray(l.serials)?l.serials.map(normSerial):[];
+    if(!sn.length) return `${lab}: enter the serial number of each piece.`;
+    if(sn.length!==+l.q) return `${lab}: ${+l.q} piece${+l.q===1?"":"s"} but ${sn.length} serial number${sn.length===1?"":"s"}.`;
+    const bad=sn.find(x=>!validSerial(x)); if(bad) return `${lab}: "${bad.slice(0,30)}" isn't a serial number.`;
+    for(const x of sn){ if(seen.has(x)) return `${lab}: serial ${x} is on this purchase twice.`; seen.add(x); }
+    const e=ctx.serialState?incomingSerialError(sn,ctx.serialState):null; if(e) return `${lab}: ${e}`;
+  } else if(t==="batch"){
+    const b=l.batch&&typeof l.batch==="object"?l.batch:{}, c=checkBatchNo(b.no); if(c.error) return `${lab}: ${c.error}`;
+    const known=ctx.batchOf?ctx.batchOf(l.v,c.b):null, x=checkExpiry(b.exp,{required:!!trk.expiry,today:ctx.today,known:known&&known.exp||null});
+    if(x.error) return `${lab}: ${x.error}`;
+  }
+  return null;
+}
 /* input: { id, supplierId, supplierName, supplierGstin, invoiceNo, invoiceDate ("yyyy-mm-dd"), lines: [{ p, v, n, vl, sku, q, cost, gst,
      dec?, serials?, batch? }], paid, method, note, t, dev }
-   ctx: { today ("yyyy-mm-dd"), purchases (this shop's, to spot the same invoice entered twice), allowDuplicate, moveId(i) }
+   ctx: { today ("yyyy-mm-dd"), purchases (this shop's, to spot the same invoice entered twice), allowDuplicate, moveId(i),
+     trackingOf(line) ({ tracking, expiry } of its product), serialState(sn), batchOf(vid, b) }
    → { error, field?, duplicate? } or { purchase, moves, totals }. Nothing is changed here. */
 export function buildPurchase(input,ctx={}){
   const x=input||{}, lines=(x.lines||[]).filter(l=>l&&!(l.blank&&!l.v));
@@ -79,6 +102,8 @@ export function buildPurchase(input,ctx={}){
   if(!lines.length) return {error:"Add at least one line: scan or type a code, or pick a product.",field:"lines"};
   if(lines.length>MAX_PURCHASE_LINES) return {error:`A purchase can have up to ${MAX_PURCHASE_LINES} lines.`,field:"lines"};
   for(let i=0;i<lines.length;i++){const e=lineError(lines[i],i+1);if(e)return {error:e,field:"lines",line:i}}
+  const seen=new Set(), trkOf=ctx.trackingOf||(()=>null);
+  for(let i=0;i<lines.length;i++){const e=lineTrackingError(lines[i],i+1,trkOf(lines[i]),seen,ctx);if(e)return {error:e,field:"lines",line:i}}
   const invoiceNo=clean(x.invoiceNo,60), date=String(x.invoiceDate||"").trim();
   if(invoiceNo.length>40) return {error:"The invoice number can be at most 40 characters.",field:"invoiceNo"};
   if(date&&!/^\d{4}-\d{2}-\d{2}$/.test(date)) return {error:"Enter the invoice date.",field:"invoiceDate"};
@@ -86,12 +111,15 @@ export function buildPurchase(input,ctx={}){
   const note=clean(x.note,400); if(note.length>200) return {error:"The note can be at most 200 characters.",field:"note"};
   const priced=lines.map(l=>{
     const q=num(l.q), cost=toRupees(toPaise(num(l.cost))), gst=num(l.gst==null?"":String(l.gst).replace("%",""))||0, m=lineMoney({q,cost,gst});
+    const trk=trkOf(l)||{}, bt=trk.tracking==="batch"&&l.batch?checkBatchNo(l.batch.no):null;
+    const exp=bt&&bt.b?checkExpiry(l.batch.exp,{known:(ctx.batchOf&&ctx.batchOf(l.v,bt.b)||{}).exp||null}).exp:null;
     return Object.assign({p:l.p,v:l.v,n:clean(l.n,120),vl:clean(l.vl,120),sku:clean(l.sku,64),q,cost,gst,tx:toRupees(m.tx),tax:toRupees(m.tax),total:toRupees(m.total)},
-      Array.isArray(l.serials)&&l.serials.length?{serials:l.serials.slice()}:{}, l.batch&&typeof l.batch==="object"?{batch:{...l.batch}}:{});
+      trk.tracking==="serial"&&Array.isArray(l.serials)&&l.serials.length?{serials:l.serials.map(normSerial)}:{},
+      bt&&bt.b?{batch:Object.assign({no:bt.b},exp?{exp}:{})}:{});
   });
   const T=purchaseTotals(lines);
   const paidRaw=num(x.paid), paid=paidRaw==null?0:paidRaw;
-  if(!Number.isFinite(paid)||paid<0) return {error:"Enter the amount paid (₹0 or more).",field:"paid"};
+  if(!Number.isFinite(paid)||paid<0) return {error:`Enter the amount paid (${inr(0)} or more).`,field:"paid"};
   if(tooPrecise(paid)) return {error:"The amount paid can have at most 2 decimal places.",field:"paid"};
   if(toPaise(paid)>toPaise(T.total)) return {error:"More than the purchase total can't be paid on it.",field:"paid"};
   const method=paid>0?String(x.method||""):"";
@@ -105,9 +133,12 @@ export function buildPurchase(input,ctx={}){
   }
   const t=+x.t||0, supplier=clean(x.supplierName,80);
   const purchase={id:x.id,kind:"purchase",supplierId:sid,supplier,gstin:clean(x.supplierGstin,20),invoiceNo,invoiceDate:date,t,lines:priced,
-    sub:T.sub,tax:T.tax,total:T.total,paid:toRupees(toPaise(paid)),method:method||null,status:"posted",note,dev:x.dev||""};
+    sub:T.sub,tax:T.tax,total:T.total,paid:toRupees(toPaise(paid)),method:method||null,status:"posted",note,dev:x.dev||"",
+    // received on a purchase order (domain/inventory/purchase-orders.js): the database checks it against what is still to come
+    ...(x.poId?{poId:x.poId,...(x.allowOver?{allowOver:true}:{})}:{})};
   const moveId=ctx.moveId||(i=>x.id+":"+i), mnote=purchaseNote(invoiceNo,supplier);
-  const moves=priced.map((l,i)=>({id:moveId(i),v:l.v,p:l.p,type:"RESTOCK",q:l.q,cost:Math.round(l.cost),note:mnote,t,dev:x.dev||"",imp:x.id}));
+  const moves=priced.map((l,i)=>Object.assign({id:moveId(i),v:l.v,p:l.p,type:"RESTOCK",q:l.q,cost:Math.round(l.cost),note:mnote,t,dev:x.dev||"",imp:x.id},
+    l.serials?{sn:l.serials.slice()}:{}, l.batch?{b:l.batch.no,...(l.batch.exp?{exp:l.batch.exp}:{})}:{}));
   return {purchase,moves,totals:T};
 }
 
@@ -133,7 +164,7 @@ export function checkSupplierPayment(input,ctx={}){
   const x=input||{};
   if(!x.supplierId) return {error:"Which supplier?",field:"supplier"};
   const a=num(x.amount);
-  if(a==null||!Number.isFinite(a)||a<=0) return {error:"Enter an amount more than ₹0.",field:"amount"};
+  if(a==null||!Number.isFinite(a)||a<=0) return {error:`Enter an amount more than ${inr(0)}.`,field:"amount"};
   if(tooPrecise(a)) return {error:"Use at most 2 decimal places.",field:"amount"};
   if(a>100000000) return {error:"That amount is too large.",field:"amount"};
   if(!PURCHASE_METHODS.includes(x.method)) return {error:"Choose how it was paid.",field:"method"};
@@ -143,7 +174,7 @@ export function checkSupplierPayment(input,ctx={}){
     if(!p||p.supplierId!==x.supplierId) return {error:"That purchase isn't from this supplier.",field:"purchase"};
     if(p.status==="cancelled") return {error:"That purchase is cancelled: nothing is owed on it.",field:"purchase"};
     const due=purchaseDue(p,ctx.payments);
-    if(toPaise(a)>toPaise(due)) return {error:`Only ₹${due.toLocaleString("en-IN")} is still owed on that invoice.`,field:"amount"};
+    if(toPaise(a)>toPaise(due)) return {error:`Only ${inrx(due)} is still owed on that invoice.`,field:"amount"};
   }
   const ref=clean(x.ref,80), note=clean(x.note,300);
   if(ref.length>60) return {error:"The reference can be at most 60 characters.",field:"ref"};
@@ -165,7 +196,9 @@ export function cancelPurchaseMoves(p,moves,{reason,t,dev}){
   if(!p||p.kind!=="purchase") return {error:"That purchase wasn't found."};
   if(p.status==="cancelled") return {error:"This purchase is cancelled already."};
   const why=clean(reason,300); if(why.length<3) return {error:"Say why the purchase is cancelled (at least 3 characters)."};
-  const out=(moves||[]).filter(m=>m&&m.imp===p.id&&m.type==="RESTOCK").map(m=>({id:"pcx:"+m.id,v:m.v,p:m.p,type:"ADJUST",q:-m.q,cost:null,note:("Purchase cancelled: "+why).slice(0,200),t,dev,imp:p.id}));
+  // serials and batches leave with the stock they came with (the database does the same)
+  const out=(moves||[]).filter(m=>m&&m.imp===p.id&&m.type==="RESTOCK").map(m=>Object.assign({id:"pcx:"+m.id,v:m.v,p:m.p,type:"ADJUST",q:-m.q,cost:null,note:("Purchase cancelled: "+why).slice(0,200),t,dev,imp:p.id},
+    Array.isArray(m.sn)&&m.sn.length?{sn:m.sn.slice()}:{}, m.b?{b:m.b}:{}));
   return {moves:out,reason:why.slice(0,200)};
 }
 

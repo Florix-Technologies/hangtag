@@ -87,7 +87,7 @@ check('import plan: products, variants, OPENING records', P.products.length === 
 const bad = validateImport([['Name', 'Price', 'SKU', 'Opening stock'], ['A', '10', 'X1', '1.5'], ['B', 'abc', 'X1', ''], ['Tee', '5', '', '']], { products: [{ name: 'Tee', variants: [{ sku: 'TEE-1' }] }] });
 check('all-or-nothing: every bad row is reported, nothing imported', !bad.ok && bad.errorCount === 3 && !!importPlan(bad, { ids: {} }).error, bad.rows.map((r) => r.errors));
 check('opening stock refused when the role cannot set stock', validateImport([['Name', 'Price', 'Opening stock'], ['A', '10', '3']], { stockAllowed: false }).errorCount === 1);
-check('template rows validate cleanly', validateImport(importTemplateRows(), {}).ok);
+check('template rows: every example is recognised and left out, nothing else to fix', (() => { const t = validateImport(importTemplateRows(), {}); return !t.ok && t.errorCount === 0 && t.summary.examples === 5 && t.summary.products === 0; })());
 
 // ---------- Excel (.xlsx) reading: a stored (uncompressed) ZIP built here ----------
 function zip(files) {

@@ -157,16 +157,18 @@ try {
   await A.goto('http://localhost:3210/', { waitUntil: 'networkidle0' });
   check('owner: signed in and connected', await A.until('sbStatus==="connected"'));
   check('owner: nothing hidden, every tab, no role marks on the page (unchanged for owners)', await A.run(`return !isMember()&&!document.documentElement.hasAttribute("data-noperm")&&!document.documentElement.hasAttribute("data-member")`)
-    && await A.vis('.nav [data-tab="report"]') && await A.vis('.nav [data-tab="products"]'));
+    && await A.vis('.nav [data-tab="report"]') && await A.vis('.nav [data-tab="stock"]') && await A.run('return tabOpen("products")&&tabOpen("report")&&tabOpen("customers")'));
   check('owner: requests carry no device header (owners have none)', A.sbRequests.length > 0 && A.sbRequests.every((x) => !x.device));
   await A.run('loadExamples();await new Promise(r=>setTimeout(r,300));await flushSbQueue()');
   check('owner: products uploaded', +(await q(`SELECT count(*) AS n FROM public.hangtag_products WHERE owner_id = $1`, [OWNER]))[0].n === 10);
 
   console.log('--- the owner adds a cashier with a sign-in QR ---');
-  await A.run('openSettings()'); await sleep(200);
-  check('Settings shows Team & devices with the shop code', await A.vis('#teamSec [data-team="open"]') && (await A.text('#teamSec')).includes(core.shopCode(OWNER)));
-  await A.click('#teamSec [data-team="open"]');
-  check('Team & devices opens (empty team)', await A.until('team&&!team.loading') && /No team members yet/.test(await A.text('.teamsheet') || ''));
+  await A.run('openSettings("devices")'); await sleep(200);
+  check('Settings → This device doesn\'t repeat the team (its one place is More → Team)', !(await A.$('#teamSec')) && !(await A.$('#set-devices [data-team]')));
+  await A.click('.nav [data-navmore]'); await sleep(200);
+  await A.click('.navsheet [data-tab="team"]');
+  check('More → Team opens the team (empty), with the shop code staff need', await A.until('team&&!team.loading') && /No team members yet/.test(await A.text('.teamsheet') || '')
+    && (await A.text('.teamsheet') || '').toUpperCase().includes(core.shopCode(OWNER).toUpperCase()), await A.text('.teamsheet'));
   await A.click('[data-team="add"]'); await sleep(150);
   const roleOpts = await A.$$eval('#teamAddForm [name=role] option', (o) => o.map((x) => x.value));
   check('roles offered for a clothing shop: manager and cashier (cashier chosen)', JSON.stringify(roleOpts) === '["manager","cashier"]' && await A.$eval('#teamAddForm [name=role]', (s) => s.value) === 'cashier', roleOpts);
@@ -202,10 +204,18 @@ try {
   check('no live updates for a member\'s phone (it polls)', await B.run('return !sbRealtimeChannel'));
 
   console.log('--- what a cashier may and may not do ---');
-  check('Reports hidden; Sell, Stock, Products, Customers shown (Products may sit behind More on a phone)', !(await B.vis('.nav [data-tab="report"]')) && await B.vis('.nav [data-tab="sell"]') && await B.run('return tabOpen("products")&&tabOpen("stock")&&tabOpen("customers")&&!tabOpen("report")'));
+  // the phone bar is the role's (domain/shop/role-workspace.js): a cashier sells, finds bills and serves customers; Stock is in More
+  const cashierBar = await B.$$eval('.nav .navi.pb', (l) => l.filter((x) => x.getClientRects().length).map((x) => x.dataset.tab));
+  check('cashier phone workflow: Home · Sell · Bills · Customers and More; no Reports, no Products', JSON.stringify(cashierBar) === JSON.stringify(['home', 'sell', 'bills', 'customers'])
+    && !(await B.vis('.nav [data-tab="report"]')) && !(await B.vis('.nav [data-tab="products"]'))
+    && await B.run('return tabOpen("products")&&tabOpen("stock")&&tabOpen("customers")&&!tabOpen("report")'), cashierBar);
+  await B.run('openNavMore()'); await sleep(150);
+  check('...Stock (to look stock up) is in the cashier\'s More, Reports is not', await B.vis('#modalHost .navsheet [data-tab="stock"]') && !(await B.vis('#modalHost .navsheet [data-tab="report"]')));
+  await B.run('closeModal()');
   await B.run('setTab("report")'); await sleep(100);
   check('...and Reports can\'t be opened', (await B.run('return prefs.tab')) !== 'report');
-  await B.run('setTab("products")'); await sleep(200);
+  // The desktop workflow still exposes Products read-only; permission enforcement hides every write control there.
+  await B.setViewport({ width: 800, height: 880 }); await B.run('renderAll();setTab("products")'); await sleep(200);
   check('Products: the Edit and Add buttons are hidden', await B.run('return document.querySelectorAll("#prodBody [data-editp]").length>0') && !(await B.vis('#prodBody [data-editp]')) && !(await B.vis('#prodBody [data-act="addp"]')));
   await B.run('openEditor("p1")'); await sleep(150);
   check('opening the product editor anyway is refused, with a plain reason', (await B.run('return editor')) === null && /can't add or edit products/.test(await B.text('#toastHost') || ''), await B.text('#toastHost'));
@@ -213,7 +223,7 @@ try {
   const p1 = (await q(`SELECT name FROM public.hangtag_products WHERE owner_id = $1 AND id = 'p1'`, [OWNER]))[0];
   check('the database refuses a direct product write from the cashier (insert refused, update changes nothing)', direct.a === '42501' && p1.name !== 'Hacked'
     && !(await q(`SELECT 1 FROM public.hangtag_products WHERE id = 'hack1'`)).length, { direct, p1 });
-  await B.run('setTab("sell")'); await sleep(150);
+  await B.setViewport({ width: 420, height: 880 }); await B.run('renderAll();setTab("sell")'); await sleep(150);
   await B.run(`const v=prod("p1").variants[0].id;addToLines(cart,v,1);await checkout("cash");closeSheets();await flushSbQueue()`);
   const sales = await q(`SELECT id, owner_id::text, total FROM public.hangtag_sales`);
   check('the cashier sells: the bill is saved in the owner\'s shop', sales.length === 1 && sales[0].owner_id === OWNER && (await B.run('return sbOfflineQueue.length')) === 0, sales);
@@ -240,7 +250,7 @@ try {
     && !polled.some((p) => /hangtag_(images|products|variants|sales|sale_items|payments|stock_moves)$/.test(p)), polled);
   B.sbRequests.length = 0;
   await B.run('await memberPoll()');
-  check('nothing new: the check downloads nothing', B.sbRequests.every((x) => /rpc\/hangtag_(touch_device|shop_changes|purchase_changes|order_changes)$|hangtag_(members|roles)$/.test(x.path)), B.sbRequests.map((x) => x.path));
+  check('nothing new: the check downloads nothing', B.sbRequests.every((x) => /rpc\/hangtag_(touch_device|shop_changes|purchase_changes|order_changes|biz_changes)$|hangtag_(members|roles)$/.test(x.path)), B.sbRequests.map((x) => x.path));
 
   console.log('--- the cashier\'s cash drawer (no Reports tab) ---');
   await B.click('#acctBtn'); await sleep(100);
@@ -287,8 +297,8 @@ try {
   const D = await phone('manager');
   await D.goto('http://localhost:3210/', { waitUntil: 'domcontentloaded' });
   await D.until('!document.getElementById("authForms").hidden');
-  check('the sign-in screen has a Staff tab', await D.vis('[data-authtab="staff"]') && await D.vis('[data-authtab="signin"]') && await D.vis('[data-authtab="signup"]'));
-  await D.click('[data-authtab="staff"]'); await sleep(100);
+  check('the sign-in screen has a secondary Staff sign-in link and no mode tabs', await D.vis('#staffSwitch [data-switchto="staff"]') && !(await D.$('[data-authtab]')));
+  await D.click('#staffSwitch [data-switchto="staff"]'); await sleep(100);
   check('Staff: shop code, username and password; no Google, no email', await D.vis('#staffShop') && await D.vis('#staffUser') && await D.vis('#staffPass') && !(await D.vis('#authEmail')) && !(await D.vis('[data-provider="google"]')));
   await D.fill('#staffShop', core.shopCode(OWNER).toUpperCase()); await D.fill('#staffUser', 'meera'); await D.fill('#staffPass', 'wrong-pass-9');
   await D.click('#staffSubmit');
@@ -296,11 +306,16 @@ try {
   await D.fill('#staffPass', 'counter-pass-1'); await D.click('#staffSubmit');
   check('the right one: signed in as the manager, this phone registered', await D.until('authUser&&sbStatus==="connected"&&isMember()', 20000) && await D.run('return access.role==="manager"')
     && +(await q(`SELECT count(*) AS n FROM public.hangtag_devices WHERE user_id = $1`, [meera]))[0].n === 1, await D.text('#authErr'));
-  check('a manager sees Reports and can edit products, but has no Team & devices', await D.vis('.nav [data-tab="report"]') && await D.run('return can("manage_products")&&!can("manage_users")')
-    && await D.run('openSettings();return !document.getElementById("teamSec")&&/Signed in as Meera \\(Manager\\) at Aura Threads/.test(document.getElementById("setSub").textContent)'));
+  // on a phone Reports is under More (the bar is Home · Sell · Stock)
+  await D.click('.nav [data-navmore]'); await sleep(200);
+  const reportInMore = await D.vis('.navsheet [data-tab="report"]');
+  await D.run('closeModal()'); await sleep(100);
+  const managerAccess = { report: reportInMore, permissions: await D.run('return {products:can("manage_products"),users:can("manage_users")}'), settings: await D.run('openSettings("devices");return {team:!!document.getElementById("teamSec"),you:!!document.getElementById("kvRole"),sub:document.getElementById("setSub").textContent}') };
+  check('a manager sees Reports and can edit products, but has no Team & devices', managerAccess.report && managerAccess.permissions.products && !managerAccess.permissions.users
+    && !managerAccess.settings.team && managerAccess.settings.you && /Signed in as Meera \(Manager\) at Aura Threads/.test(managerAccess.settings.sub), managerAccess);
   await D.run('closeSettings();await requestSignOut()'); await sleep(300);
   check('signing out puts the key away (not sent any more)', await D.run('return !authUser&&localStorage.getItem("hangtag_device_key")===null'));
-  await D.click('[data-authtab="staff"]'); await sleep(100);
+  await D.click('#staffSwitch [data-switchto="staff"]'); await sleep(100);
   await D.fill('#staffShop', core.shopCode(OWNER)); await D.fill('#staffUser', 'meera'); await D.fill('#staffPass', 'counter-pass-1'); await D.click('#staffSubmit');
   check('signing in again reuses the phone\'s key: no second device', await D.until('authUser&&sbStatus==="connected"&&isMember()', 20000)
     && +(await q(`SELECT count(*) AS n FROM public.hangtag_devices WHERE user_id = $1`, [meera]))[0].n === 1 && teamCalls.filter((x) => x === 'register_device').length === 1, teamCalls);
@@ -325,7 +340,7 @@ try {
   check('saved to hangtag_roles for this shop', await A.until('team&&!team.busy&&!team.draft') && ((await q(`SELECT permissions FROM public.hangtag_roles WHERE owner_id = $1 AND role = 'cashier'`, [OWNER]))[0] || {}).permissions.includes('view_reports'));
   await A.screenshot({ path: H.ARTIFACTS + '/team4_roles.png' });
 
-  const staffSignIn = async (p, user, pw) => { await p.until('!document.getElementById("authForms").hidden'); await p.click('[data-authtab="staff"]'); await sleep(80);
+  const staffSignIn = async (p, user, pw) => { await p.until('!document.getElementById("authForms").hidden'); await p.click('#staffSwitch [data-switchto="staff"]'); await sleep(80);
     await p.fill('#staffShop', core.shopCode(OWNER)); await p.fill('#staffUser', user); await p.fill('#staffPass', pw); await p.click('#staffSubmit'); };
   console.log('--- reset access without a password: the phone is signed out and the old password dies ---');
   await A.run(`await teamService().createMember({name:"Sunil",username:"sunil",role:"cashier",password:"sunil-pass-1"})`);
@@ -333,7 +348,7 @@ try {
   const E = await phone('sunil');
   await E.goto('http://localhost:3210/', { waitUntil: 'domcontentloaded' });
   await staffSignIn(E, 'sunil', 'sunil-pass-1');
-  check('Sunil signs in on the Staff tab and the phone is registered', await E.until('authUser&&sbStatus==="connected"&&isMember()', 20000));
+  check('Sunil signs in through Staff sign-in and the phone is registered', await E.until('authUser&&sbStatus==="connected"&&isMember()', 20000));
   await A.run('openTeam("members")'); await A.until('team&&!team.loading&&team.members.some(m=>m.username==="sunil")');
   await A.click(`[data-team="reset:${sunil}"]`); await sleep(80); await A.click(`[data-team="reset:${sunil}"]`);
   check('the owner resets his access (no new password)', await A.until('team&&!team.busy') && (await q(`SELECT status FROM public.hangtag_devices WHERE user_id = $1`, [sunil])).every((d) => d.status === 'revoked'));

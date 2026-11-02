@@ -5,7 +5,7 @@ import { inFilter } from '../../../domain/events/event.js';
 import { returnLineMoney, saleLineMoney, salesSummary } from '../../../domain/reports/sales-report.js';
 import { D } from '../../inventory/services/ledger.js';
 import { esc } from '../../../shared/dom.js';
-import { addDays, dayKey, dayLab, dayLong, daysBetween, hourLab, pad, parseDay } from '../../../shared/formatting/dates.js';
+import { addDays, dayKey, dayLab, dayLong, daysBetween, hourLab, pad, parseDay, fmtDate } from '../../../shared/formatting/dates.js';
 import { roundQty } from '../../../domain/catalog/units.js';
 
 /* ================= report ================= */
@@ -68,12 +68,12 @@ export function timeSeries(live,rets,R){
   const span=daysBetween(R.from,R.to);
   if(span<=62){
     const by={};ev.forEach(e=>add(by,dayKey(e.t),e));
-    for(let i=0;i<=span;i++){const k=addDays(R.from,i),o=by[k]||{v:0,n:0,p:0};rows.push({short:span<=7?parseDay(k).toLocaleDateString("en-IN",{weekday:"short"}):String(parseDay(k).getDate()),label:dayLong(k),v:o.v,n:o.n,p:o.p})}
+    for(let i=0;i<=span;i++){const k=addDays(R.from,i),o=by[k]||{v:0,n:0,p:0};rows.push({short:span<=7?fmtDate(parseDay(k),{weekday:"short"}):String(parseDay(k).getDate()),label:dayLong(k),v:o.v,n:o.n,p:o.p})}
     return {title:"Sales by day",unit:"Day",rows,labelW:span<=7?32:20};
   }
   const by={};ev.forEach(e=>add(by,dayKey(e.t).slice(0,7),e));
   let y=+R.from.slice(0,4),m=+R.from.slice(5,7);const ey=+R.to.slice(0,4),em=+R.to.slice(5,7);
-  while(y<ey||(y===ey&&m<=em)){const k=y+"-"+pad(m),o=by[k]||{v:0,n:0,p:0},d=new Date(y,m-1,1);rows.push({short:d.toLocaleDateString("en-IN",{month:"short"}),label:d.toLocaleDateString("en-IN",{month:"long",year:"numeric"}),v:o.v,n:o.n,p:o.p});m++;if(m>12){m=1;y++}}
+  while(y<ey||(y===ey&&m<=em)){const k=y+"-"+pad(m),o=by[k]||{v:0,n:0,p:0},d=new Date(y,m-1,1);rows.push({short:fmtDate(d,{month:"short"}),label:fmtDate(d,{month:"long",year:"numeric"}),v:o.v,n:o.n,p:o.p});m++;if(m>12){m=1;y++}}
   return {title:"Sales by month",unit:"Month",rows,labelW:30};
 }
 export function byProduct(lines){const m={};lines.forEach(l=>{const o=m[l.pid]||(m[l.pid]={id:l.pid,n:l.name,q:0,a:0});o.q=roundQty(o.q+l.q);o.a+=l.amt});return m}

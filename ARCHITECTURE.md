@@ -191,7 +191,7 @@ export const archiveProduct = (pid, on) => productRepository().setArchived(pid, 
 | `receiptPrinter` | `infrastructure/printing/epson-epos.js` (Epson ePOS-Print; logo via `raster.js`) | `features/printing/use-cases/print-receipt.js` |
 | `messageDelivery` | `infrastructure/messaging/delivery-client.js` → Edge Function `send-receipt` | `features/delivery/repositories/delivery-service.js` |
 | `returnRepository` / `eventRepository` | `infrastructure/repositories/local-first-return-repository.js` / `…-event-repository.js` | `features/returns`, `features/events` |
-| `paymentGateway` | `infrastructure/payments/payment-gateway-client.js` → Edge Function `payment-gateway` (Razorpay) | `features/sales/use-cases/provider-payment.js` |
+| `paymentGateway` | `infrastructure/payments/payment-gateway-client.js` → Edge Function `payment-gateway` (the shop's own Razorpay account) | `features/sales/use-cases/provider-payment.js` |
 | `cashRepository` | `infrastructure/repositories/local-first-cash-repository.js` | `features/finance/repositories/cash-repository.js` |
 | `teamService` | `infrastructure/team/team-client.js` → Edge Function `team` (changes) + the cloud gateway (members, devices, roles, `hangtag_touch_device`) | `features/shop/services/team.js` (access, Team & devices, staff sign-in, enrollment) |
 
@@ -550,6 +550,250 @@ One app and one database for every kind of shop; the type of business only chang
   product that has them keeps showing them), tracking none/serial/batch with `uses_serials` / `uses_batches`
   (`hangtag_products.tracking`), an expiry note with `uses_expiry`, weight guidance with `uses_weight`.
 
+## Wave 3: restaurant, supplier bills, quotations, invoice links, capability enforcement
+
+### Restaurant / hotel (schema.sql section 3o)
+
+- **No second billing engine.** A table's orders are orders of kind `table` (the orders engine, section 3m: New →
+  Accepted → Preparing → Ready → Served, or Cancelled; forward only, a step may be skipped). They never change stock.
+  The table is billed through the ordinary checkout (`billTable` puts the session's lines on the bill at the orders'
+  prices; discounts, GST, payments and the receipt are the shop's usual ones); the bill carries `table_id`/`session_id`,
+  and paying it closes the table's sessions (`closeTableForSale` here, trigger `hangtag_close_table_sale` in the cloud).
+- **Tables and sessions**: `hangtag_tables` (name, area, seats, in use, `qr_token`), `hangtag_table_sessions`
+  (open → billing → closed with the bill). Floor state from the live sessions and their orders
+  (`domain/restaurant/tables.js` `tableState`: billing > ready > preparing > occupied > available).
+- **Table QR**: the QR opens `order.html#t=<token>`; the token (32 random bytes) identifies the shop's table and nothing
+  else; a new QR makes the old one stop working. The guest page talks only to `hangtag_table_menu` (names, options,
+  prices; never stock, costs, suppliers or staff) and `hangtag_place_table_order` (priced from the catalog, joined to the
+  table's open session, refused while the table is being billed, at most 10 orders per table in 10 minutes), both
+  SECURITY DEFINER and checked against the shop's capabilities (`hangtag_cap_on`).
+- **Who does what**: table set-up `manage_settings`; seating and taking orders `create_order` (a server only while
+  Server ordering is on); kitchen steps `manage_kitchen`; billing `create_sale`. The kitchen screen shows tickets
+  (table, number, items, quantities, notes, time) and nothing financial.
+
+### Supplier bills (section 3p (c))
+
+- Upload (camera, image, PDF) → read (extract-bill) → review → confirm → stock (and a purchase, with a supplier chosen).
+  The original is kept the moment it is chosen: on this device (`blobStore`, IndexedDB) and in the shop's private
+  Storage folder (`hangtag-bills/<shop id>/<import id>.<ext>`, policies by shop and permission). A failed reading keeps
+  it and offers Try again / enter by hand; one that couldn't reach the cloud waits in `pendingDocs` and goes up on the
+  next connect, then the saved bill points at it (`hangtag_stock_imports.document_path`, set once, never replaced).
+  Closing a bill without saving it drops its waiting original.
+- Serial-tracked lines carry one serial per piece, batch lines their batch and (where kept) expiry date, quantities as
+  their unit allows; `hangtag_import_stock` checks the same and section 3n's triggers keep the serial register and
+  batches. Nothing is added before the merchant confirms the reviewed lines.
+
+### Quotations and sales orders (section 3p (b), (e))
+
+- Quotation actions: view, edit, preview, print, download PDF, send, duplicate, convert to a sales order, bill. One
+  document model (`components/quotation-document.js`) feeds the preview, print (`shared/ui/print-doc.js`) and the PDF
+  (`shared/utils/pdf.js`, with the JPEG logo). Headed with the shop's title (never "invoice"), with the template from
+  Settings → Receipt → Quotations (`settings.quoteTitle`, `quotePrefix`, `quoteFooter`, `quoteTerms` for a new
+  quotation, `quoteSignature`, `quoteGst`). Orders keep their total (`hangtag_orders.total`).
+- **Sending**: email / WhatsApp through `send-receipt` (`use-cases/send-quotation.js`): each press of Send is a job on
+  the phone (`quoteSends`: Queued while offline or still uploading → Sending → Sent / Failed); its `request_id` is used
+  once by the server, so a retry never sends twice. Share PDF from the phone stays available.
+- Quotation → sales order (Pending → Confirmed → Partly fulfilled → Fulfilled) keeps customer, lines, variants,
+  quantities, prices, discounts, GST, notes, terms and the quotation's reference (`quote_id`, `quote_no`). A quotation
+  billed directly is marked converted with its bill. Stock changes only on the bill.
+
+### Invoice links (receipt URL)
+
+`send-receipt` makes a bill's secure link on `RECEIPT_URL`, or — without that secret — on the shop's own receipt page:
+the owner's app saves the address of its `receipt.html` (`settings.receiptUrl`, `features/shop/use-cases/receipt-page.js`,
+after the shop's settings came down; never from a team member's phone; only https …/receipt.html). The `receipt`
+function shows one bill for a live token (its own shop's bill only; revoked, expired or unknown tokens are "not found";
+cancelled bills say CANCELLED). The page sends the token with the publishable key; no service key reaches the browser.
+
+### Manual UPI and sign-in
+
+- Manual UPI: show the QR → the customer pays → the cashier taps **Mark payment received** → Complete sale. The UTR is
+  optional (kept when typed); the payment is saved as `unverified` for reconciliation. `settlePayments` refuses a manual
+  UPI part that wasn't marked received.
+- Sign-in is one screen: Google, or email and password (Forgot password?), "New to Hangtag? Create an account" and a
+  Staff sign-in button for team members (shop code, username, password). Authentication itself is unchanged.
+
+### Capability enforcement
+
+A capability is switched off in four places at once: navigation (the module registry hides the module), direct routes
+(`app/navigation.js` never opens a module that isn't shown), use cases (restaurant use cases, orders and quotation
+sending, `saveProduct` refusing to start serial / batch / expiry / weighed units, supplier-bill planning) and the
+database (`hangtag_cap_on` in the restaurant RPCs, `hangtag_save_order`, `hangtag_order_status`, `hangtag_import_stock`).
+A product already using a capability keeps working when it is switched off; Weight covers kg, g, l and ml (metres are
+for every shop). Business types give the defaults (retail basic; grocery batches, expiry, weight; electronics serials;
+hotel / restaurant tables, table QR, guest and server ordering, kitchen; other a simple POS); the owner overrides them.
+
+### Database relationships (schema.sql sections 3o, 3p)
+
+| Table / column | Relationship |
+|---|---|
+| `hangtag_tables` | one per table of a shop; `qr_token` unique across all shops |
+| `hangtag_table_sessions.table_id` | → `hangtag_tables (owner_id, id)`; a closed session keeps its bill (`sale_id`) |
+| `hangtag_orders.table_id`, `session_id` | a table order's table and session |
+| `hangtag_sales.table_id`, `session_id` | the table bill's table and session (closing trigger) |
+| `hangtag_orders.quote_id`, `quote_no`, `terms`, `total` | a sales order's quotation (same shop), the terms, the saved total |
+| `hangtag_stock_imports.document_path` | the original in `hangtag-bills/<owner_id>/…` |
+| `hangtag_deliveries.order_id`, `request_id` | a quotation's messages (one bill **or** one order per row); a press of Send logged once |
+
+Migration report rows 60–65 check them: tables with their own QR, table orders for tables that exist, closed sessions
+with their bill, bill originals in the shop's own folder, sales orders from a quotation of the same shop, one target per
+message.
+
+## Commerce batch: price lists, purchase orders, kits, GST documents, repack, vouchers, webhooks (section 3r)
+
+Each part is a capability (`domain/shop/capabilities.js`: `uses_price_lists`, `uses_purchase_orders`, `uses_bundles`,
+`uses_repack`, `uses_vouchers`, `uses_einvoice`, `uses_eway`) checked in navigation, use cases and the database
+(`hangtag_cap_on`). Permissions are the existing ones. Records the phone keeps (price lists, POs, e-invoice / e-way bill
+readiness, repacks, vouchers) go through one local-first channel: `features/commerce/repositories/biz-repository.js` →
+`store.biz[kind]` (`rc_biz`) → the outbox (`biz` / `bizdel` jobs, `domain/sync/queue-rules.js`) → `cloud-gateway.js`
+(`infrastructure/supabase/biz-mappers.js`). Vouchers and webhooks are online only.
+
+- **Price lists** (`domain/sales/pricing.js` `resolvePrice`, the one resolver): the customer's own list → the list chosen
+  on the bill → the shop's default list → the item's price; a list counts only while active and in its dates, and never
+  resolves to ₹0. POS, quotations, sales orders and the assisted cart price through `features/sales/services/pricing.js`;
+  the public mobile store uses the default list only (anyone can type a phone number). A bill keeps the prices it was made
+  with. UI: a chip on the bill ("Wholesale · customer's"), a list picker on the customer, Settings → Selling.
+- **Purchase orders** (`domain/inventory/purchase-orders.js`): Draft → Sent → (Partially received → Received, derived from
+  the receipts) → Closed, or Cancelled. A PO never changes stock. Smart Reorder groups its suggestion by last supplier into
+  draft POs the owner reviews. **Receiving** shows Ordered / Previously received / Receiving now / Remaining per line
+  (starting at what is still to come; barcode scan counts one; serials, batch and expiry, decimals by unit) and saves an
+  ordinary purchase (`hangtag_save_purchase` with `po_id`): the PO row is locked, more than is still to come needs
+  "receive as extra", the same receipt twice is a no-op. **Differences** between PO, receipts and the supplier's bill are
+  listed (short, extra, price) and accepted / reviewed / noted in the PO's `review` log (audited); source documents are
+  never rewritten.
+- **Kits** (`domain/catalog/bundles.js`): a product with `bundle: [{ v, q }]` (not kits, not serial-tracked). Available =
+  the fewest kits the items' stock makes. Sold as its items' lines (`explodeKits`: the kit price shared out as fixed
+  discounts, each line remembering `kit: { v, p, name, n }`), so stock, returns and reports use the ledger as before.
+- **Partial fulfilment** of sales orders: each order on the Orders page shows "N available now · M remaining" and a
+  **Fulfil N** button (`fulfilmentPlan`): the bill takes what stock allows; the rest stays on the same order (no separate
+  backorder record). Customers see Confirmed → Partially ready → Ready → Completed. The database refuses a bill that
+  would deliver more of a line than was ordered (deferred trigger `hangtag_check_order_fulfilment`).
+- **E-invoice / e-way bill readiness** (`domain/gst/einvoice.js`, `eway.js`): a normalized payload, validation, and a
+  sheet that asks only for what is missing; JSON export. Applicability is the shop's setting (Settings → Selling → GST
+  documents). The IRN, acknowledgement, signed QR and EWB number are written only by a provider adapter with the service
+  role (`hangtag_compliance_check`); the app can't invent one.
+- **Repack** (`domain/inventory/repack.js`): source → target with a per-unit factor; one audited conversion and two stock
+  records (`hangtag_save_repack`), quantity and value reconcile; not for serial-tracked products.
+- **Gift vouchers** (`domain/sales/vouchers.js`): issued online (code from the database), spent as a **payment method**
+  (`voucher`, not a discount) on the payment screen. `hangtag_redeem_voucher` locks the voucher row (no double spend), one
+  redemption per bill payment, own shop only; cancelling the bill gives it back, restoring takes it again; not money in
+  the cash or bank book.
+- **Webhooks** (Settings → Advanced → Integrations, owner only): endpoints in the cloud; the signing secret lives in
+  `hangtag_webhook_secrets` (service role only) and is shown once. Events are written by triggers once per change
+  (`event_key`); `supabase/functions/webhook-dispatch` claims due deliveries, signs `X-Hangtag-Signature: sha256=HMAC(secret,
+  "<timestamp>.<body>")` with `X-Hangtag-Event-Id` and `X-Hangtag-Timestamp`, retries with back-off and logs each attempt.
+
+### Database relationships (schema.sql section 3r)
+
+| Table / column | Relationship |
+|---|---|
+| `hangtag_price_lists` | per shop; one `is_default` (partial unique index) |
+| `hangtag_customers.price_list_id` | → `hangtag_price_lists (owner_id, id)` (same shop), set null on delete |
+| `hangtag_purchase_orders.supplier_id` | → `hangtag_suppliers (owner_id, id)` |
+| `hangtag_stock_imports.po_id` | → `hangtag_purchase_orders (owner_id, id)`: a receipt of a PO |
+| `hangtag_products.bundle`, `hangtag_sale_items.kit` | a kit's items; the kit a bill line was sold in |
+| `hangtag_einvoices.sale_id`, `hangtag_eway_bills.sale_id` | → `hangtag_sales (owner_id, id)` |
+| `hangtag_repacks` | one per conversion; its stock records are `rpk:<id>:out` / `rpk:<id>:in` |
+| `hangtag_vouchers.customer_id` | → `hangtag_customers (owner_id, id)`; `code` unique across shops |
+| `hangtag_voucher_redemptions.voucher_id` | → `hangtag_vouchers`; one `redeem` (and at most one `reverse`) per payment |
+| `hangtag_webhook_secrets.endpoint_id`, `hangtag_webhook_deliveries` | → `hangtag_webhook_endpoints (id)`, cascade |
+
+Migration report rows 66–72 check them: one default list per shop, customers on their own shop's list, PO receipts from
+the PO's supplier, voucher balances, kit items, repacks with both stock records, provider numbers only when generated.
+Migration: `supabase/migrations/20261003120000_hangtag_commerce_batch.sql` (exactly section 3r plus its row security).
+
+## UX pass: design system, navigation, Settings page, banks, documents, Store (section 3s)
+
+- **Design system.** Tokens (colour, type scale, 4 px spacing, radii, elevation, motion) live in `styles/00-base.css`; the
+  shared components (buttons, status chips, cards, fields, sheets, action menus, object lists, detail views, empty and
+  loading states) in `styles/15-ui.css`, drawn by `shared/ui/kit.js` (`UI_ICON`, `statusChip`, `emptyStateHTML`,
+  `sheetHTML`, `formActionsHTML`, `kvHTML`, `actionsMenuHTML` + `installMenus`). Colour says something (a state, a payment
+  method, a chart series); it is never decoration.
+- **Navigation.** `features/shop/services/nav-model.js` groups destinations into areas (Sales, Stock, Purchases, Reports …).
+  A desktop shows them in a sidebar; a phone keeps three places for the role and kind of shop (`domain/shop/mobile-workflow.js`
+  `phoneBarFor`: Home · Sell · Stock, a restaurant Home · Tables · Kitchen) and puts the other areas under More. Stock and
+  Purchases are one module (`stock`) whose parts split over two areas; Products sits in the Stock area's bar.
+- **Settings** is a page (`features/shop/components/settings-page.js`): searchable sections (`services/settings-sections.js`)
+  shown by role, capability and business type; every form has Save and Cancel. Backup and restore are in Advanced.
+- **Bank accounts** (`domain/finance/bank-accounts.js`, `features/finance/use-cases/bank-accounts.js`): accounts with opening
+  balances, money in / out, transfers, adjustments with a reason, reversals, and which account UPI and card money lands in.
+  They travel with the commerce records (`bizRepository` kinds `ba`, `bm`) to `hangtag_bank_accounts` and
+  `hangtag_bank_moves`.
+- **Documents.** One model per document (`features/receipts/services/doc-models.js`: tax invoice / bill, quotation, sales
+  order, delivery challan, credit note, purchase order), one A4 renderer with three templates
+  (`components/doc-render.js`; settings in `domain/documents/doc-settings.js`), the same model as a PDF
+  (`shared/utils/pdf.js` `docPdfBytes`). The 80 mm receipt keeps its own layout. Each document's actions show only what can
+  be done with it; e-invoice and e-way bill open from the invoice's Actions and say plainly that generating needs a provider.
+- **Store area** (`features/commerce/pages/store-page.js`): status, Share Store, link, QR (show, download, print), store
+  orders, and the separate assisted-cart link. The public page is `store.html` (see README → Pages your customers open).
+
+### Database (schema.sql section 3s)
+
+| Table / column | Relationship |
+|---|---|
+| `hangtag_bank_accounts` | per shop; switched off, never deleted; `methods` ⊆ {upi, card} |
+| `hangtag_bank_moves.account_id`, `.to_account` | → `hangtag_bank_accounts (owner_id, id)`; a transfer names another account |
+| `hangtag_bank_moves.reverses` | → `hangtag_bank_moves (owner_id, id)`: a reversal of a whole entry, at most once |
+
+Read: `view_reports` or `manage_settings`; accounts written with `manage_settings`; entries added with `view_reports` or
+`manage_settings`, never changed or removed. `hangtag_mobile_catalog` also returns the shop's city and logo. Migration report
+row 73 checks the entries. Migration: `supabase/migrations/20261004120000_hangtag_bank_accounts.sql` (exactly section 3s plus
+its row security and grants).
+
+## Any kind of product: the shop's own fields and units (section 3z)
+
+A product is the built-in record that money and stock depend on, plus the shop's own words for everything else. No product
+type is built in. Business types only switch on default capabilities, and every shop can change them.
+
+- **Built in, structured:**
+  - name, category, brand, description;
+  - price and cost (per variant too);
+  - GST and HSN, unit, low-stock alert, barcode type;
+  - variants: up to 3 options of any name, each variant with its own SKU, barcode, price, cost and stock;
+  - tracking per product: none, serial/IMEI, batch, or batch with expiry;
+  - kits and repack conversions.
+
+  Stock is always the sum of stock records, so purchases, sales, returns, costing, expiry and serial uniqueness work the
+  same for every product.
+- **The shop's fields** (`domain/catalog/attributes.js`):
+  - a field has a name and a kind: text, whole number, decimal, date, yes/no, one choice or several choices;
+  - its rules: choices, required, lowest/highest, decimals, a unit shown after the number, longest text;
+  - its scope: the categories it applies to, or none for every product.
+
+  A product keeps its values in `attrs: { field id: value }`. The editor shows the fields of the product's category and any
+  field it already has a value for, in a folded "More details" section. A field can't take a built-in field's name (Price,
+  Stock, SKU, IMEI, Expiry…), so custom fields never replace what calculations need. A product option may take its values from
+  a field (`opts[i].a`). Variant tuples stay text, so stock, sales and returns code is unchanged.
+- **The shop's units** (`domain/catalog/units.js`): codes such as `roll` or `sqft`, with decimals (0–3), counted or measured,
+  and a GST unit code. One registry (`setShopUnits`) gives every quantity rule the shop's units.
+  - A code this device hasn't downloaded yet keeps its code, so re-saving a product never turns its unit into pieces.
+  - Conversions between units are repack conversions (one product opened into another).
+- **On the device:** fields and units are records of the commerce batch's repository (kinds `at` and `un`), synced like price
+  lists.
+  - A product's upload waits for the fields it uses (`need: ["biz:at:<id>"]`, `domain/sync/queue-rules.js`).
+  - A full upload sends units and fields first.
+  - Backups carry both.
+- **Import and export** (`domain/catalog/product-import.js`):
+  - A column named as a field imports into it.
+  - A field's value the same on every row of a product is the product's; one that differs makes its rows variants.
+  - A column the shop has no field for is listed with the kind its values suggest, and "Add as fields" makes it one.
+  - The template and the export are built from the shop's fields and option names.
+
+### Database (schema.sql section 3z)
+
+| Table / column | Relationship |
+|---|---|
+| `hangtag_attributes` | per shop; name unique among fields in use; kind fixed while used; archived (never deleted) while used |
+| `hangtag_products.attrs` | `{ field id: value }`; each key must be a field of the same shop, each value of its field's kind (trigger) |
+| `hangtag_products.options.opts[].attr` | → `hangtag_attributes.id` of the same shop |
+| `hangtag_units` | per shop; code not one of Hangtag's nine; decimals fixed and never deleted while a product uses it |
+| `unit` on products and bill, return and order lines | any unit code (`^[a-z][a-z0-9]{0,11}$`); report row 36 flags a code the shop doesn't have |
+
+Read: everyone in the shop; written with `manage_products`; the plan-ended guard as on every business table. The database
+checks each value's kind; the app also checks choices, limits and required fields. Choices aren't checked in the database
+because a field's choices can change while a till is offline. Report rows 36 and 91–93. Migration:
+`supabase/migrations/20261012120000_hangtag_custom_fields_units.sql` (exactly section 3z plus its row security).
+
 ## State
 
 One store object (`shared/state/store.js`) holds the app's state. `app/state-init.js` restores it at start-up.
@@ -655,8 +899,8 @@ an `AppError`.
   secrets belong in Supabase Edge Function secrets, called through `infrastructure/supabase`.
 - Edge Function secrets by function: `extract-bill` (its README), `send-receipt` (email / SMS / WhatsApp providers,
   `SEND_ALLOWED_USERS`, optional `RECEIPT_URL`, `WHATSAPP_LINK_PARAM`), `payment-gateway` / `payment-webhook`
-  (`RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `PAYMENT_ALLOWED_USERS`, `RAZORPAY_WEBHOOK_SECRET`, optional
-  `PAYMENT_CARD_LINK=off`). `receipt` and `payment-webhook` are deployed with `--no-verify-jwt` (a token / a signature
+  (`PAYMENT_ACCOUNTS_KEY`, `PAYMENT_ALLOWED_USERS`, optional `PAYMENT_LIVE_MODE=on`: no Razorpay keys of Hangtag's —
+  each shop connects its own account, kept sealed in `hangtag_payment_accounts`; see the function's README). `receipt` and `payment-webhook` are deployed with `--no-verify-jwt` (a token / a signature
   is their key), and `team` too (a phone redeeming a QR has no session; it checks every other caller itself); the others
   keep JWT verification on. `team` needs no secrets beyond the defaults.
 
@@ -724,7 +968,9 @@ an `AppError`.
 
 - `sw.js` serves the saved copy first and refreshes it in the background. Supabase requests always go to the network.
 - The service worker saves the app shell plus every module and stylesheet under `src/`. Its cache name is a hash of
-  those files, so each deploy installs a complete new offline copy and removes the old one.
+  those files, so each deploy installs a complete new offline copy and removes the old one. The hash reads text with
+  CRLF as LF and lists files by URL (`scripts/sw-cache.mjs`), so a Windows checkout and a Linux one compute the same
+  `sw.js`.
 - The service worker holds no business logic. Offline behaviour for data (queueing, retries) lives in `features/sync`.
 
 ## Build
@@ -750,6 +996,7 @@ after changing any file under `src/`, and commit the updated `sw.js` with it.**
 | Integration (app ↔ cloud) | `tests/e2e/cloud-roundtrip.test.mjs` | Two devices sync through the real supabase-js against a stand-in PostgREST that rejects unknown columns |
 | Bills out | `tests/unit/billing-output.test.mjs`, `send-receipt.test.mjs`, `supabase/tests/deliveries.test.mjs`, `tests/e2e/billing-output.test.mjs` | The invoice model, thermal layout, messages, the Epson adapter against a fake printer, the send-receipt function and its providers against a fake fetch, the delivery records, and the whole flow in Chrome (logo, invoice, sending, printing, failures) |
 | Payments, receipts, cash, GST filing | `tests/unit/payments-delivery-cash.test.mjs`, `supabase/tests/payments-cash.test.mjs`, `tests/e2e/payments-cash-gst.test.mjs` | Verification rules and the card-number guard; the payment-gateway core (Razorpay states, idempotent confirmations, unmatched money, manual-UPI matching, webhook signature); automatic receipts (plan, retries, fallback, once per channel) and invoice links; cash entries, reversals and day close; GST filing sections, checks, xlsx / PDF / JSON; in the database: verified only with a verified intent, never downgraded, function-only tables, immutable cash entries; in Chrome: QR → verified → bill completes, hand-checked UPI then verified, card machine, automatic SMS, a pending QR after reload, provider refund, cash and day close, cancel with a reason, GST exports |
+| Wave 3 | `tests/unit/restaurant.test.mjs`, `quotations.test.mjs`, `capability-enforcement.test.mjs`, `send-receipt.test.mjs`; `supabase/tests/restaurant.test.mjs`, `supplier-bills.test.mjs`, `credit-orders.test.mjs`; `tests/e2e/restaurant.test.mjs`, `quotations.test.mjs`, `receipt-link.test.mjs`, `bill-import.test.mjs` | Tables, QR, guest and server ordering, kitchen and table billing (the guest page signed out against the real schema); supplier bills with serial / batch / expiry lines, decimals and the original kept until the cloud has it; the quotation template, document, PDF, print, sending (queued, sent once), duplicate, sales-order lifecycle; the public receipt page (right bill and shop, cancelled, revoked, expired); capabilities hidden, unreachable and refused when off |
 | E2E | `tests/e2e` | Sign-in (Google, email, tabs), per-account data, offline queue and service worker, POS flows (variants, returns, exchanges, receipts), shop setup and settings. `checkout-payments.test.mjs`: discounts, GST (CGST + SGST and IGST), cash, UPI, card and split payments on desktop and phone against the real schema, the books, cancel and restore, returns, a second device |
 
 Commands:
@@ -758,7 +1005,7 @@ Commands:
 - `npm run test:unit`, `npm run test:db` and `npm run test:e2e` run one group.
 - `npm run lint` runs ESLint on its own.
 
-E2E tests need Chrome (set `CHROME_PATH` to override) and serve the repository on `http://localhost:3210`.
+E2E tests need a Chromium-based browser — Chrome, Chromium or Edge where Windows, macOS or Linux install it, Puppeteer's own download, or `CHROME_PATH` — and serve the repository on `http://localhost:3210` (as root on Linux, Chrome is started with `--no-sandbox`). Without a browser, `tests/run.mjs` reports those suites as skipped for the environment (exit 77), not as failures. Other suites run side by side (`TEST_JOBS`, default the cores less one, at most 4); a file running longer than `TEST_TIMEOUT_MS` (20 minutes) is stopped and reported as a timeout.
 
 The browser tests call app internals through `window.__ev`. The names they use are listed in
 `tests/test-api.json` and checked by `scripts/test-api.mjs`. When you move a function, keep it exported under the

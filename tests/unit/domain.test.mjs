@@ -6,7 +6,8 @@ import { upgradeCatalog } from '../../src/domain/catalog/catalog-migration.js';
 import { checkQty } from '../../src/domain/sales/cart-rules.js';
 import { szRank } from '../../src/domain/catalog/sizes.js';
 import { computeCheckout } from '../../src/domain/sales/checkout-totals.js';
-import { formatInvoiceNo, pcsOf } from '../../src/domain/sales/sale.js';
+import { pcsOf } from '../../src/domain/sales/sale.js';
+import { formatDocNo } from '../../src/domain/documents/numbering.js';
 import { lowStockThreshold, stockLevel } from '../../src/domain/inventory/stock-levels.js';
 import { buildStockMoves } from '../../src/domain/inventory/stock-operation.js';
 import { checkProfile, tidyProfile } from '../../src/domain/shop/profile-validation.js';
@@ -86,7 +87,8 @@ check('no GST: total = subtotal − discount', eq(shopTotals(lines, 50, { taxOn:
 check('GST included in prices: tax is taken out (to the paisa), total unchanged', eq(shopTotals(lines, 0, { taxOn: true, taxRate: 5, taxIncl: true }), { sub: 1250, disc: 0, tax: 59.52, total: 1250, rate: 5, incl: true }));
 check('GST added on top: total grows by the tax', eq(shopTotals(lines, 250, { taxOn: true, taxRate: 12, taxIncl: false }), { sub: 1250, disc: 250, tax: 120, total: 1120, rate: 12, incl: false }));
 check('a discount larger than the bill is capped at the subtotal', shopTotals(lines, 9999, { taxOn: false }).total === 0);
-check('invoice number: prefix + yymmdd + running number', formatInvoiceNo('INV-', new Date(2026, 8, 5, 10).getTime(), 7) === 'INV-260905-007' && formatInvoiceNo('', new Date(2026, 0, 1).getTime(), 123) === '260101-123');
+check('invoice number: short configurable prefix + automatic padded running number', formatDocNo({ prefix: 'INV-', padding: 6 }, new Date(2026, 8, 5, 10).getTime(), 7) === 'INV-000007'
+  && formatDocNo({ prefix: 'INV/{FY}/', padding: 4 }, new Date(2026, 8, 5, 10).getTime(), 123) === 'INV/26-27/0123');
 check('pieces on a bill', pcsOf({ items: [{ q: 2 }, { q: 3 }] }) === 5);
 
 // ---------- stock levels and stock operations ----------
@@ -108,8 +110,10 @@ check('a complete profile passes', checkProfile(full) === null && profileComplet
 check('a missing required field is named', eq(checkProfile(Object.assign({}, full, { city: null })), { error: 'City is required.', field: 'city' }));
 check('phone needs 10–15 digits', eq(checkProfile(Object.assign({}, full, { phone: '12345' })), { error: 'Enter a valid phone number (at least 10 digits).', field: 'phone' }));
 check('GST number format is checked when given', eq(checkProfile(Object.assign({}, full, { gstin: '27ABC' })), { error: 'GST number should be 15 letters and digits, like 27ABCDE1234F1Z5.', field: 'gstin' }));
-check('billing settings: valid input becomes the settings to save', eq(checkBillingSettings({ lowStock: '4', taxOn: 'on', taxRate: '5.555', taxIncl: null, prefix: ' INV/ ', paper: 'a4', footer: ' Thanks ' }).patch, { lowStock: 4, prefix: 'INV/', taxOn: true, taxRate: 5.56, taxIncl: false, paper: 'a4', footer: 'Thanks' }));
-check('billing settings: refused values', checkBillingSettings({ lowStock: '-1' }).error === 'Low-stock alert must be 0 or more.' && checkBillingSettings({ lowStock: '1', taxOn: 'on', taxRate: '41' }).error === 'Enter a GST rate between 0 and 40.' && checkBillingSettings({ lowStock: '1', prefix: 'bad prefix!' }).error === 'Bill number prefix can use letters, numbers, - / _ only.');
+check('billing settings: valid input becomes the settings to save', eq(checkBillingSettings({ lowStock: '4', taxOn: 'on', taxRate: '5.555', taxIncl: null, prefix: ' INV/ ', paper: 'a4', footer: ' Thanks ' }).patch,
+  { lowStock: 4, prefix: 'INV/', invoiceStart: 1, invoicePadding: 6, invoiceSuffix: '', taxOn: true, taxRate: 5.56, taxIncl: false, paper: 'a4', footer: 'Thanks' }));
+check('billing settings: refused values', checkBillingSettings({ lowStock: '-1' }).error === 'Low-stock alert must be 0 or more.' && checkBillingSettings({ lowStock: '1', taxOn: 'on', taxRate: '41' }).error === 'Enter a GST rate between 0 and 40.'
+  && checkBillingSettings({ lowStock: '1', prefix: 'bad prefix!' }).field === 'prefix');
 check('billing settings: GST rate is ignored when GST is off', !checkBillingSettings({ lowStock: '1', taxRate: '99' }).error);
 
 // ---------- shared validators ----------

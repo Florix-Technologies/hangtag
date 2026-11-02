@@ -4,7 +4,7 @@
 // Run: npm run test:unit
 import { createHmac } from 'crypto';
 import { checkLast4, checkReference, isUnverified, looksLikeCardNumber, paymentsOf, settlePayments, verificationOf } from '../../src/domain/sales/payments.js';
-import { checkVpa, upiPayUri } from '../../src/domain/sales/upi.js';
+import { checkVpa, upiCheckUri, upiPayUri } from '../../src/domain/sales/upi.js';
 import * as PG from '../../supabase/functions/payment-gateway/core.js';
 import * as SR from '../../supabase/functions/send-receipt/core.js';
 import { autoDeliveryPlan, nextAttemptAt, MAX_ATTEMPTS } from '../../src/domain/invoices/delivery.js';
@@ -34,11 +34,14 @@ const eq = (a, b) => JSON.stringify(sortKeys(a)) === JSON.stringify(sortKeys(b))
   check('a reference that looks like a card number is refused', !!checkReference('4111111111111111').error && !checkReference('UTR412345678901'));
   check('last 4 digits only: exactly 4 digits', !checkLast4('') && !checkLast4('4242') && !!checkLast4('424').error && !!checkLast4('42424').error && !!checkLast4('ab12').error);
   let S = settlePayments(500, [{ method: 'upi', amount: 500 }]);
-  check('UPI checked by hand needs its transaction reference', S.error && S.field === 'ref' && /UTR/.test(S.error), S);
-  S = settlePayments(500, [{ method: 'upi', amount: 500, ref: '412345678901' }]);
-  check('…with it the bill completes and the part is "unverified"', S.ok && S.payments[0].verification === 'unverified' && S.payments[0].via === 'manual' && S.payments[0].ref === '412345678901', S);
+  check('UPI checked by hand needs the cashier to mark the payment received', S.error && S.field === 'confirmed' && /Mark the UPI payment received/.test(S.error), S);
+  S = settlePayments(500, [{ method: 'upi', amount: 500, confirmed: true }]);
+  check('the UTR is optional; an explicitly received manual UPI payment is saved unverified', S.ok && S.payments[0].verification === 'unverified' && S.payments[0].via === 'manual' && !('ref' in S.payments[0]), S);
+  S = settlePayments(500, [{ method: 'upi', amount: 500, ref: '412345678901', confirmed: true }]);
+  check('an optional UTR is kept when entered', S.ok && S.payments[0].ref === '412345678901');
   S = settlePayments(800, [{ method: 'card', amount: 800 }]);
-  check('card on a card machine needs its reference', S.error && S.field === 'ref' && /card machine/.test(S.error));
+  check('card on a card machine: marked received (or its approval number typed) before the sale completes; never a required reference', S.error && S.field === 'confirmed' && /card machine/.test(S.error)
+    && settlePayments(800, [{ method: 'card', amount: 800, confirmed: true }]).ok && settlePayments(800, [{ method: 'card', amount: 800, confirmed: true }]).payments[0].verification === 'recorded');
   S = settlePayments(800, [{ method: 'card', amount: 800, ref: 'APPR77', last4: '4242' }]);
   check('…then it is "recorded", with the last 4 digits kept and nothing else', S.ok && S.payments[0].verification === 'recorded' && S.payments[0].last4 === '4242' && S.payments[0].via === 'terminal');
   S = settlePayments(800, [{ method: 'card', amount: 800, ref: 'APPR77', last4: '4242424242424242' }]);
@@ -60,15 +63,39 @@ const eq = (a, b) => JSON.stringify(sortKeys(a)) === JSON.stringify(sortKeys(b))
   check('shop UPI ID: name@bank', !checkVpa('') && !checkVpa('myshop@okaxis') && !!checkVpa('myshop').error && !!checkVpa('a b@x').error);
   const uri = upiPayUri({ vpa: 'myshop@okaxis', name: 'Riya Boutique', amount: 1890, note: 'Bill INV-1' });
   check('static UPI QR carries the exact amount', uri === 'upi://pay?pa=myshop%40okaxis&pn=Riya%20Boutique&am=1890.00&cu=INR&tn=Bill%20INV-1' && upiPayUri({ vpa: 'x', amount: 5 }) === '' && upiPayUri({ vpa: 'a@b', amount: 0 }) === '', uri);
+  const test = upiCheckUri({ vpa: ' myshop@okaxis ', name: 'Riya Boutique' });
+  check('the settings\' test QR: the UPI ID and the shop\'s name, never an amount (scanning it pays nothing); none for an ID that isn\'t name@bank',
+    test === 'upi://pay?pa=myshop%40okaxis&pn=Riya%20Boutique&cu=INR' && !/[?&]am=/.test(test) && upiCheckUri({ vpa: 'myshop', name: 'X' }) === '', test);
 }
 
 // ---------- payment-gateway (Edge Function core) ----------
 {
   const env = { RAZORPAY_KEY_ID: 'rzp_test_1', RAZORPAY_KEY_SECRET: 's3cret', PAYMENT_ALLOWED_USERS: 'shop@x.in' };
-  const cfg = PG.razorpayConfig(env);
-  check('provider set up only with both keys; the card link can be turned off', !!cfg && cfg.cardLink && !PG.razorpayConfig({ RAZORPAY_KEY_ID: 'x' }) && !PG.razorpayConfig({ ...env, PAYMENT_CARD_LINK: 'off' }).cardLink);
+  check('no shared Hangtag keys: the core has no reader of RAZORPAY_KEY_ID / _SECRET any more (each shop connects its own account)', !('razorpayConfig' in PG));
   check('only the accounts named may take provider payments (unset = off)', PG.allowedToPay({ id: 'u1', email: 'shop@x.in' }, env) && !PG.allowedToPay({ id: 'u2', email: 'x@y.z' }, env) && !PG.allowedToPay({ id: 'u1' }, {}) && PG.allowedToPay({ id: 'u9' }, { PAYMENT_ALLOWED_USERS: '*' }));
-  check('config: all off unless set up and allowed; keys never in the answer', eq(PG.configView(cfg, false), { ok: true, provider: null, upi: false, cardLink: false }) && eq(PG.configView(cfg, true), { ok: true, provider: 'razorpay', upi: true, cardLink: true }) && !JSON.stringify(PG.configView(cfg, true)).includes('s3cret'));
+  const keys = { keyId: 'rzp_test_AbCd1234', keySecret: 'S3cretS3cretS3cret', webhookSecret: 'hook-secret-1' };
+  check('the shop\'s own keys: a test key id, a secret, a webhook secret of its own; live keys only once live is switched on',
+    PG.checkKeys(keys, false).mode === 'test' && PG.checkKeys({ ...keys, keyId: 'rzp_live_AbCd1234' }, false).error === 'live_not_allowed' && PG.checkKeys({ ...keys, keyId: 'rzp_live_AbCd1234' }, true).mode === 'live'
+    && PG.checkKeys({ ...keys, keyId: 'AbCd1234' }, true).error === 'bad_key_id' && PG.checkKeys({ ...keys, webhookSecret: keys.keySecret }, true).error === 'bad_webhook_secret'
+    && PG.liveAllowed({ PAYMENT_LIVE_MODE: 'on' }) && !PG.liveAllowed({}) && !PG.liveAllowed({ PAYMENT_LIVE_MODE: 'true' }));
+  const acct = { id: 'a1', key_id: 'rzp_test_AbCd1234', mode: 'test', card_link: true, hook_id: 'h'.repeat(43), checked_at: null, last_event_at: null };
+  check('config: all off without the shop\'s own account or when not switched on; the key masked; the webhook address only for who manages settings',
+    eq(PG.configView(null, { allowed: true, available: true }), { ok: true, provider: null, upi: false, cardLink: false, gateway: { available: true, connected: false } })
+    && PG.configView(acct, { allowed: false, available: true }).upi === false && PG.configView(acct, { allowed: true, available: true }).upi === true
+    && PG.configView(acct, { allowed: true, available: true }).gateway.keyId === 'rzp_test_…1234' && PG.configView(acct, { allowed: true, available: true }).gateway.webhookUrl === undefined
+    && PG.configView(acct, { allowed: true, available: true, manage: true, supabaseUrl: 'https://p.supabase.co/' }).gateway.webhookUrl === 'https://p.supabase.co/functions/v1/payment-webhook?a=' + 'h'.repeat(43));
+  const sk = await PG.accountsKey({ PAYMENT_ACCOUNTS_KEY: Buffer.alloc(32, 1).toString('base64') });
+  const box = await PG.seal(sk, 'S3cretS3cretS3cret', 'acct-1', 'secret');
+  check('sealing: "v1.<iv>.<ciphertext>", opens only for the same account and field and key; no key for a key that isn\'t 32 bytes',
+    /^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{24,}$/.test(box) && !box.includes('S3cret') && (await PG.unseal(sk, box, 'acct-1', 'secret')) === 'S3cretS3cretS3cret'
+    && (await PG.unseal(sk, box, 'acct-2', 'secret')) === null && (await PG.unseal(sk, box, 'acct-1', 'webhook')) === null
+    && (await PG.unseal(await PG.accountsKey({ PAYMENT_ACCOUNTS_KEY: Buffer.alloc(32, 2).toString('base64') }), box, 'acct-1', 'secret')) === null
+    && (await PG.accountsKey({ PAYMENT_ACCOUNTS_KEY: 'c2hvcnQ=' })) === null && (await PG.accountsKey({})) === null && box !== (await PG.seal(sk, 'S3cretS3cretS3cret', 'acct-1', 'secret')));
+  const T0 = 1_800_000_000_000, open = { account_id: 'a1', client_sale_id: 's1', method: 'upi', amount: '500.00', status: 'pending', kind: 'qr', expires_at: new Date(T0 + 5 * 60000).toISOString() };
+  check('the same bill part asked for again gets its open QR back (same account, bill, method and amount, over a minute left); not another one\'s',
+    PG.reusable(open, { accountId: 'a1', saleId: 's1', method: 'upi', amount: 500 }, T0) && !PG.reusable(open, { accountId: 'a2', saleId: 's1', method: 'upi', amount: 500 }, T0)
+    && !PG.reusable(open, { accountId: 'a1', saleId: 's1', method: 'upi', amount: 501 }, T0) && !PG.reusable(open, { accountId: 'a1', saleId: 's1', method: 'upi', amount: 500 }, T0 + 4.5 * 60000)
+    && !PG.reusable({ ...open, status: 'verified' }, { accountId: 'a1', saleId: 's1', method: 'upi', amount: 500 }, T0));
   let v = PG.validateRequest({ action: 'create', method: 'upi', amount: 1890.5, sale_id: 's1', note: 'Bill <INV-1>', expiry_min: 99 });
   check('create: amount, bill id, note cleaned, expiry kept within 2-30 minutes', v.ok && v.amount === 1890.5 && v.note === 'Bill INV-1' && v.expiryMin === 30);
   check('create refuses a bad amount, method or missing bill', !PG.validateRequest({ action: 'create', method: 'upi', amount: 0, sale_id: 's1' }).ok && !PG.validateRequest({ action: 'create', method: 'upi', amount: 1.001, sale_id: 's1' }).ok
@@ -105,6 +132,11 @@ const eq = (a, b) => JSON.stringify(sortKeys(a)) === JSON.stringify(sortKeys(b))
   check('webhook: which QR and what it says', tgt.kind === 'qr' && tgt.providerIntentId === 'qr_1' && tgt.view.state === 'paid' && tgt.view.paymentId === 'pay_1');
   const lt = PG.webhookTarget({ event: 'payment_link.paid', payload: { payment_link: { entity: { id: 'plink_1', status: 'paid', amount_paid: 80000 } }, payment: { entity: { id: 'pay_9', amount: 80000, status: 'captured', method: 'card' } } } }, now);
   check('webhook: a paid card link', lt.kind === 'link' && lt.view.state === 'paid' && lt.view.paymentId === 'pay_9' && PG.webhookTarget({ event: 'order.paid', payload: {} }) === null);
+  const rf = PG.webhookTarget({ event: 'refund.failed', payload: { refund: { entity: { id: 'rfnd_1', payment_id: 'pay_9', status: 'failed' } } } });
+  check('webhook: a refund\'s outcome (processed / failed); Razorpay\'s refund states read as pending until then', rf.kind === 'refund' && rf.refundId === 'rfnd_1' && rf.state === 'failed'
+    && PG.webhookTarget({ event: 'refund.processed', payload: { refund: { entity: { id: 'rfnd_2' } } } }).state === 'processed' && PG.refundState('pending') === 'pending' && PG.refundState(undefined) === 'pending');
+  check('a notification\'s id: Razorpay\'s event id, else the body\'s hash (the same body again is the same notification)', (await PG.eventIdOf('evt_ABC123', body)) === 'evt_ABC123'
+    && (await PG.eventIdOf('', body)) === (await PG.eventIdOf(null, body)) && /^sha256:[0-9a-f]{64}$/.test(await PG.eventIdOf('', body)) && (await PG.eventIdOf('', body + ' ')) !== (await PG.eventIdOf('', body)));
   const R = PG.intentReply({ id: 'i', method: 'upi', kind: 'qr', status: 'pending', amount: '1890.00', reference: 'qr_1', qr_url: 'https://rzp.io/q', expires_at: new Date(now).toISOString(), provider_response: { secret: 1 } });
   check('the app\'s view of an intent: no provider response inside', R.amount === 1890 && R.qrUrl === 'https://rzp.io/q' && R.expiresAt === now && !('provider_response' in R));
 }
@@ -240,7 +272,7 @@ const eq = (a, b) => JSON.stringify(sortKeys(a)) === JSON.stringify(sortKeys(b))
   check('xlsx: every part stored with the right CRC (the file opens)', ok && n === 7, n);
   const pdf = pdfBytes({ title: 'GST filing preparation · September 2026', subtitle: 'Riya · ₹', footer: 'Hangtag does not file returns.', blocks: [{ heading: 'B2B', head: ['Invoice', 'Value'], rows: Array.from({ length: 80 }, (_, i) => ['INV-' + i, 1000 + i]) }] });
   const ptxt = Buffer.from(pdf).toString('latin1');
-  check('pdf: a PDF with pages, the fonts and the text (₹ written as Rs)', ptxt.startsWith('%PDF-1.4') && ptxt.trim().endsWith('%%EOF') && /\/Count 2/.test(ptxt) && ptxt.includes('(GST filing preparation') && ptxt.includes('Rs ') && ptxt.includes('Page 2 of 2'));
+  check('pdf: a PDF with pages, the fonts and the text (₹ written as Rs., its plain form, by the shared formatter)', ptxt.startsWith('%PDF-1.4') && ptxt.trim().endsWith('%%EOF') && /\/Count 2/.test(ptxt) && ptxt.includes('(GST filing preparation') && ptxt.includes('Rs.') && !ptxt.includes('₹') && ptxt.includes('Page 2 of 2'));
   const xref = +/startxref\n(\d+)/.exec(ptxt)[1], offs = [...ptxt.slice(xref).matchAll(/(\d{10}) 00000 n/g)].map((m) => +m[1]);
   check('pdf: the cross-reference table points at each object', offs.length > 3 && offs.every((o, i) => ptxt.slice(o).startsWith(`${i + 1} 0 obj`)));
 }
@@ -313,7 +345,7 @@ const { D, invalidate } = await import('../../src/features/inventory/services/le
   store.payState = null; PP.persistPending();
   check('nothing open: the kept payment is cleared', store.payPending === null && !('hangtag_pay_pending' in storage.mem));
   // later: a hand-checked UPI bill is matched with the provider once uploaded
-  const s = newSaleRecord([{ v: 'p1:', p: 'p1', name: 'Tee', q: 1, price: 500 }], null, [{ method: 'upi', amount: 500, ref: '412345678901' }]);
+  const s = newSaleRecord([{ v: 'p1:', p: 'p1', name: 'Tee', q: 1, price: 500 }], null, [{ method: 'upi', amount: 500, ref: '412345678901', confirmed: true }]);
   recordSale(s);
   let n = await PP.verifyManualUpi(D().sales);
   check('hand-checked UPI waits while its bill is still uploading', n === 0 && !calls.some((x) => x[0] === 'verify'));
@@ -389,6 +421,30 @@ const { D, invalidate } = await import('../../src/features/inventory/services/le
   const PP = await import('../../src/features/sales/use-cases/provider-payment.js');
   store.sbStatus = 'connected'; await PP.loadPayConfig(true); await PP.loadPayConfig();
   check('provider not set up: remembered for the session, UPI offered by hand', asked === 1 && store.payConfig.upi === false && !PP.providerReady('upi'));
+}
+
+// a second tap on "New QR" while the old QR is being closed (or the new one made): one QR at the provider, not two
+// (the other could take the customer's money without it reaching the bill)
+{
+  const made = [], closed = [];
+  let release; const slowCancel = new Promise((ok) => { release = ok; });
+  override({ paymentGateway: {
+    async config(){ return { provider: 'razorpay', upi: true, cardLink: true }; },
+    async create(r){ made.push(r); return { id: 'n' + made.length, method: r.method, status: 'pending', amount: r.amount, qrUrl: 'https://rzp.io/q', reference: 'qr_n' + made.length }; },
+    async cancel(id){ closed.push(id); await slowCancel; return { id, method: 'upi', status: 'cancelled', amount: 500 }; },
+  } });
+  const PP = await import('../../src/features/sales/use-cases/provider-payment.js');
+  store.sbStatus = 'connected'; await PP.loadPayConfig(true);
+  store.payState = { mode: 'single', method: 'upi', pi: { upi: { id: 'old', status: 'pending', amount: 500 } }, via: { upi: 'qr' }, amt: {} };
+  const first = PP.startIntent('upi', 500), second = PP.startIntent('upi', 500);
+  release();
+  const [a, b] = await Promise.all([first, second]);
+  check('two taps while the old QR closes: it is closed once and one new QR is made, the same for both taps', closed.length === 1 && made.length === 1 && a === b && a.id === 'n1' && store.payState.pi.upi.id === 'n1', { closed, made: made.length });
+  const third = await PP.startIntent('upi', 500);
+  check('…a tap after it is done makes a new one as before (closing the open one first)', made.length === 2 && closed.length === 2 && third.id === 'n2');
+  const [u, k] = await Promise.all([PP.startIntent('card', 300), PP.startIntent('upi', 500)]);
+  check('…a card link and a UPI QR for different parts still start side by side', u.method === 'card' && k.method === 'upi' && made.length === 4);
+  store.payState = null; PP.persistPending();
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

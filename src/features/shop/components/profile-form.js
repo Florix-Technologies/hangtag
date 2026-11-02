@@ -22,7 +22,7 @@ export function profileFieldsHTML(p, prefix, opts){
         (f.ac ? ' autocomplete="' + f.ac + '"' : "") + (f.im ? ' inputmode="' + f.im + '"' : "") +
         (f.max ? ' maxlength="' + f.max + '"' : "") + (f.req ? " required" : "") + (f.upper ? ' autocapitalize="characters"' : "") + ">";
     }
-    const hint = f.needType ? (needType ? "Sets up Hangtag for your kind of shop. You can change it any time in Settings." : "Changing it switches on what's recommended for that kind of shop (Capabilities below).") : f.hint;
+    const hint = f.needType ? (needType ? "Sets up Hangtag for your kind of shop. You can change it any time in Settings." : "Changing it switches on what's recommended for that kind of shop (Features below).") : f.hint;
     return '<label class="f' + (f.full ? " full" : "") + '" data-field="' + f.k + '">' + lab + input + (hint ? '<span class="fhint">' + esc(hint) + "</span>" : "") + "</label>";
   }).join("") + "</div>";
 }

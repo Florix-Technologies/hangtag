@@ -10,6 +10,7 @@ import { checkPrinterSettings, printerOf } from '../../src/domain/shop/printer-s
 import { createEpsonPrinter, eposUrl, eposXml, parseEposResponse, printerErrorMessage } from '../../src/infrastructure/printing/epson-epos.js';
 import { monoRaster } from '../../src/infrastructure/printing/raster.js';
 import { createDeliveryClient } from '../../src/infrastructure/messaging/delivery-client.js';
+import { docPdfBytes } from '../../src/shared/utils/pdf.js';
 import { createCloudGateway } from '../../src/infrastructure/supabase/cloud-gateway.js';
 import { AppError, ERROR_CODES as C } from '../../src/shared/errors/app-error.js';
 import { override } from '../../src/shared/di/services.js';
@@ -37,13 +38,13 @@ const put = (s) => { store.localDays.today_d1_0.sales.push(s); store._d = null; 
 // B2B customer in Karnataka: IGST; split payment
 store.cartCust = { id: 'c1', name: 'Blr Traders', phone: '98450 12345' };
 const due1 = (() => { const s = newSaleRecord(lines(), { type: 'fixed', value: 50 }, { method: 'card', ref: 'APPR1' }); return s.total; })();
-const b2b = put(newSaleRecord(lines(), { type: 'fixed', value: 50 }, [{ method: 'cash', amount: 1000, received: 1500 }, { method: 'upi', amount: due1 - 1000, ref: 'UTR998877' }]));
+const b2b = put(newSaleRecord(lines(), { type: 'fixed', value: 50 }, [{ method: 'cash', amount: 1000, received: 1500 }, { method: 'upi', amount: due1 - 1000, ref: 'UTR998877', confirmed: true }]));
 // walk-in, same state (CGST + SGST), cash
 store.cartCust = null;
 const walk = put(newSaleRecord([{ v: 'p2:', p: 'p2', name: 'Cap', q: 1, price: 500 }], null, 'cash'));
 // no GST shop setting: a plain invoice
 store.settings.taxOn = false;
-const noGst = put(newSaleRecord([{ v: 'p2:', p: 'p2', name: 'Cap', q: 2, price: 500 }], null, { method: 'upi', ref: '412345678901' }));
+const noGst = put(newSaleRecord([{ v: 'p2:', p: 'p2', name: 'Cap', q: 2, price: 500 }], null, { method: 'upi', ref: '412345678901', confirmed: true }));
 store.settings.taxOn = true;
 // a bill saved before line discounts / GST split (legacy shape)
 const legacy = { id: 'old1', no: 'INV-250101-001', t: Date.parse('2025-01-01T10:00:00Z'), items: [{ ln: 0, p: 'p2', n: 'Cap', c: '', s: '', q: 2, price: 525 }], sub: 1050, disc: 50, tax: 48, taxRate: 5, taxIncl: true, total: 1000, credit: 0, pay: 'cash', cust: null };
@@ -90,7 +91,7 @@ const text = th.lines.map((l) => l.text);
 check('every line fits the paper width (48 columns)', text.every((t) => t.length <= 48), text.filter((t) => t.length > 48));
 check('plain ASCII only (the printer has no ₹ or dashes)', text.every((t) => /^[\x20-\x7E]*$/.test(t)) && asciiText('Kurta – Blue ₹10 × 2') === 'Kurta - Blue Rs.10 x 2');
 check('header: shop name big and bold, address, phone, GSTIN, TAX INVOICE', th.lines[0].text === 'Aura Threads' && th.lines[0].big && th.lines[0].bold && text.includes('GSTIN: 27ABCDE1234F1Z5') && text.includes('TAX INVOICE'));
-check('bill number, customer, place of supply', text.some((t) => t.startsWith('Bill: ' + b2b.no)) && text.includes('Customer: Blr Traders') && text.includes('Place of supply: Karnataka (29)'));
+check('bill number, customer, place of supply', text.some((t) => t.startsWith('Invoice no. ' + b2b.no)) && text.includes('Customer: Blr Traders') && text.includes('Place of supply: Karnataka (29)'));
 check('items with quantity × price, the line amount and the discount', text.some((t) => /^  2 x 999\.00 +1,998\.00$/.test(t)) && text.some((t) => /^  Discount 10% +-199\.80$/.test(t)));
 check('totals: subtotal, discounts, taxable, IGST, TOTAL (bold, big)', text.some((t) => /^Subtotal +2,498\.00$/.test(t)) && text.some((t) => t.startsWith('IGST')) && th.lines.some((l) => /^TOTAL +Rs\./.test(l.text) && l.bold && l.big));
 check('split payment lines with received / change and the UPI reference', text.some((t) => /^Paid by Cash +1,000\.00$/.test(t)) && text.some((t) => /Received 1,500\.00 +Change 500\.00/.test(t)) && text.includes('  Ref: UTR998877'));
@@ -103,8 +104,19 @@ check('columns: one line when it fits, otherwise the left text wrapped and the r
   && eq(columns('  Discount Festive offer for loyal customers only', '-1,234.00', 32), ['  Discount Festive offer for', '  loyal customers only', '                       -1,234.00']));
 const narrow = thermalReceipt({ ...inv, placeOfSupply: { code: '26', name: 'Dadra and Nagar Haveli and Daman and Diu' }, payments: [{ ...inv.payments[1], ref: 'UTR-0123456789-ABCDEFGHIJ-0123456789' }] }, { cols: 32 }).lines.map((l) => l.text);
 check('58 mm: a long place of supply and a long payment reference wrap instead of running off the paper', narrow.every((t) => t.length <= 32) && narrow.join(' ').includes('Daman and Diu (26)') && narrow.join('').includes('UTR-0123456789-ABCDEFGHIJ-0123456789'.slice(0, 20)));
+// the A4 PDF: a long place of supply wraps in the header instead of losing its state code
+const a4pdf = Buffer.from(docPdfBytes({ seller: { name: 'Aura Threads', lines: ['12 MG Road'] }, title: 'Tax Invoice',
+  meta: [['Invoice no.', 'INV-1'], ['Date', '25 September 2026'], ['Place of supply', 'Dadra and Nagar Haveli and Daman and Diu (26)']],
+  parties: [], columns: ['#', 'Item', 'Amount'], left: 2, rows: [['1', { t: 'Kurta' }, 'Rs 999']], totals: [['Total', 'Rs 999', true]] })).toString('latin1');
+check('A4 PDF: a long place of supply wraps and keeps its code (26), nothing cut off', a4pdf.startsWith('%PDF') && a4pdf.includes('(Daman and Diu \\(26\\))') && !/Dadra and Nagar[^)]*\.\.\./.test(a4pdf), a4pdf.match(/\((?:Dadra|Haveli|Daman)[^)]*\)/g));
+const onAcct = { ...inv, payments: [{ ...inv.payments[0], amount: 1000, received: 1000, change: 0 }], paid: 1000, balance: inv.totals.due - 1000 };
+const acctLines = thermalReceipt(onAcct, { cols: 48 }).lines.map((l) => l.text);
+check('printed receipt of a bill left partly on account: what was paid, then BALANCE DUE (on account) — never "Paid" for the whole bill', acctLines.some((t) => /Paid by Cash\s+1,000\.00/.test(t))
+  && acctLines.some((t) => /BALANCE DUE \(on account\)\s+[\d,]+\.\d\d/.test(t)) && !acctLines.some((t) => /Nothing to pay/.test(t)), acctLines.slice(-12));
+const allAcct = thermalReceipt({ ...inv, payments: [], paid: 0, balance: inv.totals.due }, { cols: 48 }).lines.map((l) => l.text);
+check('...and of a bill all on account: no "Nothing to pay", only the balance due', !allAcct.some((t) => /Nothing to pay/.test(t)) && allAcct.some((t) => /BALANCE DUE/.test(t)), allAcct.slice(-8));
 const longNo = thermalReceipt({ ...inv, number: 'INV-260925-001' }, { cols: 32 }).lines.map((l) => l.text), cashBig = { ...inv, payments: [{ ...inv.payments[0], received: 12000, change: 1499.5 }] };
-check('58 mm: the bill number and the cash received are printed whole', longNo.some((t) => t.includes('Bill: INV-260925-001')) && longNo.every((t) => t.length <= 32)
+check('58 mm: the bill number and the cash received are printed whole', longNo.some((t) => t.includes('Invoice no. INV-260925-001')) && longNo.every((t) => t.length <= 32)
   && thermalReceipt(cashBig, { cols: 32 }).lines.some((l) => l.text.includes('Received 12,000.00')));
 check('double-width lines (shop name, TOTAL) are laid out at half the columns', [48, 42, 32].every((c) => thermalReceipt({ ...inv, seller: { ...inv.seller, name: 'Aura Threads Fashion House Pune' } }, { cols: c }).lines.filter((l) => l.big).every((l) => l.text.length <= c / 2))
   && thermalReceipt(inv, { cols: 48 }).lines.filter((l) => l.big && /TOTAL|Rs\./.test(l.text)).length >= 1);
@@ -177,7 +189,7 @@ const gw = createCloudGateway({ getClient: () => fnClient, url: 'https://x.supab
 const dc = createDeliveryClient({ cloud: gw });
 invokeAnswer = { data: { ok: true, status: 'sent', recipient: 'a@b.in', provider: 'resend', provider_message_id: 're_1' }, error: null };
 const okSend = await dc.send({ channel: 'email', saleId: 's1' });
-check('sent: the provider\'s id comes back; the request names only the bill and channel (the server writes the message)', eq(okSend, { status: 'sent', to: 'a@b.in', provider: 'resend', id: 're_1', again: false }) && eq(fnCalls[0], { name: 'send-receipt', body: { action: 'send', channel: 'email', sale_id: 's1' } }));
+check('sent: the provider\'s id comes back; the request names only the bill and channel (the server writes the message)', eq(okSend, { status: 'sent', to: 'a@b.in', provider: 'resend', id: 're_1', again: false, invoiceId: null, format: '' }) && eq(fnCalls[0], { name: 'send-receipt', body: { action: 'send', channel: 'email', sale_id: 's1' } }));
 const sendErr = async () => { try { await dc.send({ channel: 'sms', saleId: 's1' }); return null; } catch (e) { return e; } };
 invokeAnswer = { data: { ok: true, status: 'sent' }, error: null };
 check('an answer without a message id is not a send', (await sendErr()).code === C.DELIVERY);
@@ -208,7 +220,8 @@ override({ messageDelivery: { channels: async () => ({ email: true, whatsapp: fa
 store.sbClient = {}; store.sbStatus = 'connected';
 portAnswer = { status: 'sent', to: 'accounts@blr.in', provider: 'resend', id: 're_9' };
 let r = await sendInvoice(b2b.id, 'email');
-check('send by email: the bill and channel go to the server and it is noted as sent', r.ok && r.to === 'accounts@blr.in' && eq(portCalls[0], { channel: 'email', saleId: b2b.id })
+check('send by email: the bill, the channel and the press of Send go to the server and it is noted as sent', r.ok && r.to === 'accounts@blr.in'
+  && eq({ ...portCalls[0], requestId: 0 }, { channel: 'email', saleId: b2b.id, requestId: 0 }) && /^[A-Za-z0-9_-]{8,64}$/.test(portCalls[0].requestId)
   && deliveriesOf(b2b.id)[0].status === 'sent' && deliveriesOf(b2b.id)[0].providerId === 're_9');
 portAnswer = new AppError(C.DELIVERY, "The SMS service didn't accept the message: invalid number");
 r = await sendInvoice(b2b.id, 'sms');
@@ -258,13 +271,98 @@ store.sbOfflineQueue[0].sending = true; enqueue({ type: 'logo' });
 check('a logo changed while the old one is uploading gets its own upload', store.sbOfflineQueue.filter((q) => q.type === 'logo').length === 2);
 const { pullSettings } = await import('../../src/features/sync/services/pull.js');
 store.sbOfflineQueue = []; store.logo = 'data:old';
-override({ cloud: { fetchSettings: async () => null, fetchLogo: async () => { store.logo = 'data:new'; enqueue({ type: 'logo' }); return 'data:cloud'; } } });
+const IMGS = { signature: 'data:image/jpeg;base64,U0lH', stamp: '' };
+override({ cloud: { fetchSettings: async () => null, fetchDocImages: async () => IMGS, fetchLogo: async () => { store.logo = 'data:new'; enqueue({ type: 'logo' }); return 'data:cloud'; } } });
 await pullSettings();
 check('a logo picked while the cloud copy was downloading is kept (not replaced by the older cloud copy)', store.logo === 'data:new');
 store.sbOfflineQueue = [];
-override({ cloud: { fetchSettings: async () => null, fetchLogo: async () => 'data:cloud' } });
+override({ cloud: { fetchSettings: async () => null, fetchDocImages: async () => IMGS, fetchLogo: async () => 'data:cloud' } });
 await pullSettings();
 check('otherwise the cloud logo is brought down', store.logo === 'data:cloud');
+check('...and the signature and stamp with it', store.docImages && store.docImages.signature === IMGS.signature && store.docImages.stamp === '');
+// a signature picked on this device while the cloud copy was downloading is kept
+store.docImages = { signature: 'data:image/jpeg;base64,TUlORQ==', stamp: '' }; store.sbOfflineQueue = [];
+enqueue({ type: 'docimg', kind: 'signature' }); enqueue({ type: 'docimg', kind: 'signature' }); enqueue({ type: 'docimg', kind: 'stamp' });
+check('one waiting upload per picture (the signature twice → once; the stamp its own)', store.sbOfflineQueue.filter((q) => q.type === 'docimg').map((q) => q.kind).join() === 'signature,stamp');
+await pullSettings();
+check('a signature not yet uploaded is not replaced by the older copy in the cloud', store.docImages.signature === 'data:image/jpeg;base64,TUlORQ==');
+
+
+// ---------- document templates: Standard, Classic, Modern, Compact; the authorised signature and the company stamp ----------
+{
+  const { DOC_TEMPLATES, checkDocSettings, docSettingsOf, docImagesOf } = await import('../../src/domain/documents/doc-settings.js');
+  const { documentHTML } = await import('../../src/features/receipts/components/doc-render.js');
+  check('templates: Standard, Classic, Modern and Compact', DOC_TEMPLATES.map((t) => t.key).join() === 'standard,classic,modern,compact');
+  check('a shop that chose "Minimal" before gets Standard (the same look under its new name)', docSettingsOf({ docTpl: 'minimal' }).template === 'standard' && checkDocSettings({ docTpl: 'minimal', docAccent: '#1D5BBF' }).patch.docTpl === 'standard');
+  const saved = checkDocSettings({ docTpl: 'compact', docAccent: '#0B6B35', docGst: true, docTerms: '', docSign: '', docBank: '', docSignImg: false, docStampImg: true }).patch;
+  check('the signature and stamp are printed unless switched off (each on its own)', docSettingsOf({}).signImg && docSettingsOf({}).stampImg && saved.docSignImg === false && saved.docStampImg === true
+    && docSettingsOf(saved).signImg === false && docSettingsOf(saved).template === 'compact');
+  check('only pictures are kept as the signature or stamp (anything else from a device or backup is dropped)', docImagesOf({ signature: 'data:image/jpeg;base64,AAAA', stamp: 'javascript:alert(1)' }).stamp === '' && docImagesOf(null).signature === '');
+  // a tiny JPEG header (enough for the PDF writer to read its size)
+  const jpg = (w, h) => 'data:image/jpeg;base64,' + Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, h >> 8, h & 255, w >> 8, w & 255, 0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01, 0xff, 0xd9]).toString('base64');
+  const M = { seller: { name: 'Aura Threads', lines: ['12 MG Road'] }, title: 'Tax Invoice', meta: [['Invoice no.', 'INV-000001']], parties: [], columns: ['#', 'Item', 'Amount'], left: 2,
+    rows: [['1', { t: 'Kurta' }, 'Rs 999']], totals: [['Total', 'Rs 999', true]], signImg: jpg(300, 90), stampImg: jpg(200, 200) };
+  const html = documentHTML(M, { template: 'compact' });
+  check('the A4 document (preview, print) carries the signature above "Authorised signatory" and the stamp beside it, in the Compact template',
+    /class="doc t-compact/.test(html) && /<img class="d-signimg" src="data:image\/jpeg;base64,[^"]+" alt="Authorised signature">/.test(html) && /<img class="d-stamp" src="data:image\/jpeg;base64,[^"]+" alt="Company stamp">/.test(html)
+    && html.indexOf('d-signimg') < html.indexOf('Authorised signatory'));
+  check('...and without them, neither picture is drawn', !/d-signimg|d-stamp/.test(documentHTML({ ...M, signImg: '', stampImg: '' }, { template: 'standard' })));
+  const pdf = Buffer.from(docPdfBytes(M, { template: 'compact', accent: '#1D5BBF' })).toString('latin1');
+  check('the PDF embeds the signature and stamp once each (Im2, Im3) and draws them on the page', /\/XObject << \/Im2 \d+ 0 R \/Im3 \d+ 0 R >>/.test(pdf) && /\/Im2 Do/.test(pdf) && /\/Im3 Do/.test(pdf)
+    && (pdf.match(/\/Subtype \/Image/g) || []).length === 2, pdf.match(/\/XObject << [^>]+>>/));
+  const plain = Buffer.from(docPdfBytes({ ...M, signImg: '', stampImg: '' }, { template: 'standard' })).toString('latin1');
+  check('...a PDF without them has no pictures (and still the signatory line)', !/\/Subtype \/Image/.test(plain) && /Authorised signatory/.test(plain));
+}
+
+// ---------- the logo: printed or not, and where (Settings → Bills & Documents → Logo) ----------
+{
+  const { LOGO_ALIGNS, checkLogoDisplay, logoDisplayOf, logoPlace } = await import('../../src/domain/documents/doc-settings.js');
+  const { billContent } = await import('../../src/domain/documents/bill-content.js');
+  const { documentLogo, documentLogoPlace } = await import('../../src/features/receipts/services/logo-display.js');
+  const { setLogoDisplay } = await import('../../src/features/shop/use-cases/receipt-logo.js');
+  const { setAccess } = await import('../../src/features/shop/services/access.js');
+  check('the logo is printed unless the shop switched it off, in each output\'s own place until a side is chosen',
+    eq(logoDisplayOf({}), { show: true, align: 'auto' }) && eq(logoDisplayOf(null), { show: true, align: 'auto' }) && eq(logoDisplayOf({ docLogo: false, docLogoAlign: 'right' }), { show: false, align: 'right' })
+    && logoDisplayOf({ docLogoAlign: 'top' }).align === 'auto' && LOGO_ALIGNS.join() === 'auto,left,center,right');
+  check('saving: printed or not, and a side from the list (none chosen → Auto); any other side is refused',
+    eq(checkLogoDisplay({ show: true, align: 'right' }).patch, { docLogo: true, docLogoAlign: 'right' }) && eq(checkLogoDisplay({ show: false }).patch, { docLogo: false, docLogoAlign: 'auto' })
+    && eq(checkLogoDisplay({ show: 'false', align: '' }).patch, { docLogo: false, docLogoAlign: 'auto' }) && checkLogoDisplay({ show: true, align: 'middle' }).field === 'align');
+  check('Auto: the left of an A4 header, the centre of a receipt; a chosen side is the same on both',
+    logoPlace({ align: 'auto' }, 'a4') === 'left' && logoPlace({ align: 'auto' }, 'receipt') === 'center' && logoPlace(null, 'a4') === 'left'
+    && logoPlace({ align: 'right' }, 'a4') === 'right' && logoPlace({ align: 'right' }, 'receipt') === 'right' && logoPlace({ align: 'center' }, 'a4') === 'center' && logoPlace({ align: 'up' }, 'receipt') === 'center');
+  const onRight = buildInvoice(walk, { profile, logo: 'data:image/png;base64,AAA', logoAlign: 'right' });
+  check('the invoice and the receipt\'s content carry the side (none, or anything else → centred)', onRight.logoAlign === 'right' && billContent(onRight).logoAlign === 'right'
+    && billContent(buildInvoice(walk, { profile })).logoAlign === 'center' && billContent({ ...onRight, logoAlign: 'auto' }).logoAlign === 'center');
+  const raster = { logo: { width: 16, height: 1, base64: 'AAA=' } };
+  check('the thermal print puts the logo on the chosen side (Epson: that alignment just before the picture; centred otherwise)', thermalReceipt(onRight).logoAlign === 'right' && thermalReceipt(inv).logoAlign === 'center'
+    && /<text align="right"\/><image /.test(eposXml(thermalReceipt(onRight), raster)) && /<text align="center"\/><image /.test(eposXml(thermalReceipt(inv), raster)));
+  // the PDF (downloaded, emailed): a 180×60 JPEG logo is drawn 90×30 pt; the A4 page is 595 pt wide with 40 pt margins
+  const jpgLogo = 'data:image/jpeg;base64,' + Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0, 60, 0, 180, 0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01, 0xff, 0xd9]).toString('base64');
+  const pdfAt = (a) => { const p = Buffer.from(docPdfBytes({ seller: { name: 'Aura Threads', lines: ['12 MG Road'] }, logo: jpgLogo, logoAlign: a, title: 'Tax Invoice', meta: [['Invoice no.', 'INV-000001']], parties: [],
+    columns: ['#', 'Item', 'Amount'], left: 2, rows: [['1', { t: 'Kurta' }, '999']], totals: [['Total', '999', true]] }, { template: 'standard' })).toString('latin1');
+    return { logo: Number((/ ([\d.]+) [\d.]+ cm \/Im1 Do/.exec(p) || [])[1]), title: Number((/([\d.]+) [\d.]+ Td \(TAX INVOICE\) Tj/.exec(p) || [])[1]), shop: Number((/([\d.]+) [\d.]+ Td \(Aura Threads\) Tj/.exec(p) || [])[1]) }; };
+  const pl = pdfAt('left'), pr = pdfAt('right'), pc = pdfAt('center'), pn = pdfAt(undefined);
+  check('the PDF follows the side too: left — logo at the margin, the shop beside it, the title on the right', pl.logo === 40 && pl.shop === 140 && pl.title > 400 && JSON.stringify(pn) === JSON.stringify(pl), pl);
+  check('...right — logo against the right margin, the shop to its left, the title at the left margin', pr.logo === 465 && pr.shop < 455 && pr.shop > 300 && pr.title === 40, pr);
+  check('...centre — logo, shop and title centred on the page', pc.logo === 252.5 && pc.shop > 200 && pc.shop < 297.5 && pc.title > 200 && pc.title < 297.5, pc);
+  // the app's own outputs, from the shop's settings
+  const keep = { settings: store.settings, logo: store.logo, access: store.access, sbOfflineQueue: store.sbOfflineQueue };
+  store.logo = 'data:image/png;base64,TE9HTw=='; store.sbOfflineQueue = [];
+  store.settings = { ...keep.settings, docLogo: true, docLogoAlign: 'auto' };
+  check('Auto: the receipt centres the logo, the A4 invoice keeps it on the left of its header', documentLogo() === store.logo && documentLogoPlace('receipt') === 'center' && documentLogoPlace('a4') === 'left'
+    && /class="r-logo r-logo-center"/.test(receiptHTML(walk, '80mm')) && /<header class="d-head logo-left">/.test(receiptHTML(walk, 'a4')));
+  const moved = setLogoDisplay({ show: true, align: 'right' });
+  check('the owner moves it to the right: the receipt and the A4 invoice follow, and the setting goes up for the shop\'s other devices', moved.ok && store.settings.docLogoAlign === 'right' && store.settings.docLogo === true
+    && /class="r-logo r-logo-right"/.test(receiptHTML(walk, '80mm')) && /<header class="d-head logo-right">/.test(receiptHTML(walk, 'a4')) && store.sbOfflineQueue.some((q) => q.type === 'settings'), moved);
+  setLogoDisplay({ show: false, align: 'right' });
+  check('switched off: no logo on the receipt or the A4 invoice, but the picture is kept', store.logo === 'data:image/png;base64,TE9HTw==' && documentLogo() === ''
+    && !/r-logo/.test(receiptHTML(walk, '80mm')) && !/d-logo/.test(receiptHTML(walk, 'a4')) && store.settings.docLogo === false);
+  check('a side not on the list is refused, and nothing changes', setLogoDisplay({ show: true, align: 'middle' }).error === 'Choose where the logo goes.' && store.settings.docLogo === false);
+  setAccess({ userId: 'u-cashier', shopId: 's-1', role: 'cashier', perms: ['make_sales'], overrides: {} });
+  const denied = setLogoDisplay({ show: true, align: 'left' });
+  check('a cashier can\'t change how the logo prints (nothing changes)', !!denied.error && store.settings.docLogo === false && store.settings.docLogoAlign === 'right', denied);
+  Object.assign(store, keep);
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

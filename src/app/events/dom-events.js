@@ -10,6 +10,7 @@ import { chosenProduct, openProductChooser, renderChooser } from '../../features
 import { openStockOp, saveStockOp, updateStockOp } from '../../features/inventory/components/stock-operation.js';
 import { renderStock } from '../../features/inventory/pages/stock-page.js';
 import { applyGroup, openGroupPreview } from '../../features/products/components/colour-groups.js';
+import { edAttrChange, edAttrInput, refreshFieldsSection } from '../../features/products/components/product-fields.js';
 import { SIZE_PRESETS, edAction, edAddOption, edAddValues, edCombos, edFieldInput, edFocusKeep, edGenCode, edRemoveOption, edRemoveValue, edRenameOption, edRenameValue, edToggleOptions,
   openEditor, renderEditor, saveEditor } from '../../features/products/components/product-editor.js';
 import { openStickers, stickerAction, stickerChange } from '../../features/products/components/stickers.js';
@@ -22,22 +23,30 @@ import { photoFromFile } from '../../features/products/use-cases/product-photo.j
 import { openBillView } from '../../features/receipts/components/bill-view.js';
 import { downloadReceipt, shareReceipt, whatsappReceipt } from '../../features/receipts/services/receipt-output.js';
 import { onPrint } from '../../features/printing/components/print-actions.js';
-import { onDeliveryRefresh, onInvoiceLink, onRevokeLinks, onSend } from '../../features/delivery/components/send-actions.js';
-import { renderReport, showTable } from '../../features/reports/pages/report-page.js';
+import { onAddContact, onContactCancel, onContactSave, onDeliveryRefresh, onInvoiceLink, onRevokeLinks, onSend } from '../../features/delivery/components/send-actions.js';
+import { downloadInvoice, shareInvoice } from '../../features/delivery/components/invoice-actions.js';
+import { renderReport, reportOption, showTable } from '../../features/reports/pages/report-page.js';
 import { exportCsv } from '../../features/reports/services/csv-export.js';
-import { openReturn, renderReturnSheet, saveReturn, setReturnQty } from '../../features/returns/components/return-sheet.js';
+import { openReturn, renderReturnSheet, saveReturn, setReturnQty, setReturnReason, swapReturnLine } from '../../features/returns/components/return-sheet.js';
 import { exAvail } from '../../features/returns/services/return-rules.js';
 import { closeSheets, renderBill, renderBillSheet, updateBillTotals } from '../../features/sales/components/bill-panel.js';
 import { addPicked, openPicker, renderPicker, setPickQty } from '../../features/sales/components/variant-picker.js';
-import { renderGrid } from '../../features/sales/pages/sell-page.js';
+import { openKeyboardHelp, renderGrid, sellCatClick } from '../../features/sales/pages/sell-page.js';
+import { openProductView } from '../../features/products/components/product-view.js';
+import { importInput } from '../../features/products/components/product-import.js';
+import { billViewClick } from '../../features/receipts/components/bill-view.js';
+import { addPurchaseLine, openPurchaseEntry, renderPurchaseEntry } from '../../features/inventory/components/purchase-entry.js';
+import { variantsOf as variantsOfP } from '../../domain/catalog/variants.js';
+import { prod as prodOf } from '../../features/products/services/catalog.js';
 import { addOne, availOf, removeLine, setLineQty } from '../../features/sales/services/cart.js';
 import { unvoid } from '../../features/sales/use-cases/checkout.js';
 import { openVoidForm, submitVoidForm, voidFormChange } from '../../features/sales/components/void-form.js';
 import { setBillDiscount } from '../../features/sales/use-cases/discounts.js';
 import { applyLineDiscount, lineDiscountInput, lineDiscountType, openLineDiscount } from '../../features/sales/components/discount-sheet.js';
 import { cashFormChange, openCashForm, submitCashForm } from '../../features/finance/components/cash-form.js';
-import { checkUnverified, loadUnmatched, resolveUnmatched } from '../../features/finance/components/reconcile-view.js';
-import { completePayment, openPayment, payClosed, payInput, payIntent, payMode, payQuick, payRest, paySend, payVia } from '../../features/sales/components/payment-sheet.js';
+import { checkUnverified, confirmUpiReceived, loadUnmatched, resolveUnmatched } from '../../features/finance/components/reconcile-view.js';
+import { completePayment, openPayment, payCardReceived, payClosed, payExact, payInput, payIntent, payManualUpiReceived, payMode, payQuick, payRest, paySend, payVia, payVoucher, payVoucherRemove } from '../../features/sales/components/payment-sheet.js';
+import { checkoutBack, checkoutPayment, checkoutStep, checkoutWalkIn, openCheckout } from '../../features/sales/components/checkout-flow.js';
 import { openBook } from '../../features/finance/components/books-view.js';
 import { enqueue, flushSbQueue } from '../../features/sync/services/outbox.js';
 import { can } from '../../features/shop/services/access.js';
@@ -55,17 +64,29 @@ import { renderAll, setTab } from '../../shared/ui/render.js';
 import { logger } from '../../shared/logging/logger.js';
 import { creditOrdersChange, creditOrdersClick, creditOrdersInput, creditOrdersSubmit } from './credit-orders-events.js';
 import { inventoryChange, inventoryClick, inventoryInput, inventoryModalClose, inventorySubmit } from '../../features/inventory/components/inventory-views.js';
+import { trackingChange, trackingClick, trackingInput, trackingSubmit } from './tracking-events.js';
+import { restaurantChange, restaurantClick, restaurantInput, restaurantSubmit } from './restaurant-events.js';
+import { commerceChange, commerceClick, commerceInput, commerceSubmit } from './commerce-events.js';
+import { releaseTableBill } from '../../features/restaurant/use-cases/tables.js';
 
 /* Registered once at start-up (app/main.js). */
 export function installDomEvents(){
   /* ================= events ================= */
+  // the product editor's Advanced section stays as it was left (the editor redraws on every change)
+  document.addEventListener("toggle",e=>{if(e.target&&e.target.id==="ed-advanced"&&store.editor)store.editor.advOpen=e.target.open},true);
 
   document.addEventListener("click",async e=>{
     const t=e.target;if(!t.closest)return;
     const sc=t.closest("[data-scan]");if(sc&&store.scan){scanAction(sc.dataset.scan);return}
     const re=t.closest("[data-repevent]");if(re){store.prefs.repEvent=re.dataset.repevent;store.showAllBills=false;savePrefs();closeModal();if(re.dataset.tab)setTab(re.dataset.tab);else renderReport();return}
+    // Reports for a period, at one of its cards ("30d|reconcileCard"): Home's "UPI to verify" and the like
+    const rg=t.closest("[data-reportgo]");if(rg){const [per,card]=rg.dataset.reportgo.split("|");store.prefs.period=per;store.showAllBills=false;savePrefs();closeModal();setTab("report");const c=card&&document.getElementById(card);if(c)c.scrollIntoView({block:"start"});return}
     const tab=t.closest("[data-tab]");if(tab){closeModal();setTab(tab.dataset.tab);return}
     const tile=t.closest(".tile");if(tile){openPicker(tile.dataset.pid);return}
+    if(sellCatClick(t))return;
+    if(commerceClick(t))return;   // price lists, purchase orders, kits, vouchers, GST documents, repack, webhooks
+    if(trackingClick(t))return;   // serial numbers at the till, a bill line's serials, an exchange's serial items
+    if(restaurantClick(t))return;   // tables, table orders, the kitchen, table QR codes
     // variant picker
     const cp=t.closest("[data-cellplus]");if(cp&&store.pick){const v=cp.dataset.cellplus;setPickQty(v,(store.pick.qty[v]||0)+1);return}
     const cm=t.closest("[data-cellminus]");if(cm&&store.pick){const v=cm.dataset.cellminus;setPickQty(v,(store.pick.qty[v]||0)-1);return}
@@ -76,39 +97,61 @@ export function installDomEvents(){
     if(creditOrdersClick(t))return;   // customer credit, held bills, orders
     if((t.matches("[data-modal-scrim]")||t.closest("[data-modal-close]"))&&inventoryModalClose(t))return;
     if(inventoryClick(t))return;   // purchases, suppliers, stock count, stock in by barcode, product import
-    if(t.matches("[data-modal-scrim]")||t.closest("[data-modal-close]")){if(t.matches("[data-editor]")&&store.editor)return;if(t.matches("[data-billimp]")&&store.billImport)return;if(store.payState)payClosed();store.payState=null;store.lineDisc=null;store.syncOpen=false;store.evForm=null;store.cashForm=null;store.voidForm=null;closeModal();return}
+    if(t.matches("[data-modal-scrim]")||t.closest("[data-modal-close]")){if(t.matches("[data-editor]")&&store.editor)return;if(t.matches("[data-billimp]")&&store.billImport)return;if(store.payState)payClosed();store.payState=null;store.checkoutFlow=null;store.lineDisc=null;store.syncOpen=false;store.evForm=null;store.cashForm=null;store.voidForm=null;closeModal();return}
     // sync panel
     const sr=t.closest("[data-syncretry]");if(sr){syncRetry(+sr.dataset.syncretry);return}
     const sn=t.closest("[data-syncrenumber]");if(sn){syncRenumber(+sn.dataset.syncrenumber);return}
     const sd=t.closest("[data-syncdiscard]");if(sd){if(sd.dataset.confirm){syncDiscard(+sd.dataset.syncdiscard)}else{sd.dataset.confirm="1";sd.textContent="Tap again to discard"}return}
     if(t.closest("[data-edclose]")){store.editor=null;closeModal();return}
+    // the product editor's sections; Advanced opens when chosen
+    const eg=t.closest("[data-edgo]");if(eg){const sec=document.getElementById("ed-"+eg.dataset.edgo);if(sec){if(sec.tagName==="DETAILS"){sec.open=true;if(store.editor)store.editor.advOpen=true}sec.scrollIntoView({block:"start",behavior:"smooth"})}return}
+    // after adding a product kept by serial or batch: straight into receiving it (Stock in, or a purchase for a buyer)
+    const asf=t.closest("[data-addstockfor]");if(asf){const pid=asf.dataset.addstockfor;closeModal();if(can("manage_inventory"))openStockOp("in",pid);else{openPurchaseEntry({});const p=prodOf(pid);if(p)variantsOfP(p).filter(v=>v.active!==false).forEach(v=>addPurchaseLine(v.id));renderPurchaseEntry()}return}
     // discounts and payment
     const pay=t.closest("[data-pay]");if(pay&&!pay.disabled){openPayment(pay.dataset.pay);return}
+    const cs=t.closest("[data-checkoutstep]");if(cs&&store.checkoutFlow){checkoutStep(cs.dataset.checkoutstep);return}
+    if(t.closest("[data-checkoutpay]")&&store.checkoutFlow){checkoutPayment();return}
+    if(t.closest("[data-checkoutwalkin]")&&store.checkoutFlow){checkoutWalkIn();return}
+    if(t.closest("[data-checkoutback]")&&store.payState){checkoutBack();return}
     const pm=t.closest("[data-paymode]");if(pm&&store.payState){payMode(pm.dataset.paymode);return}
     const prs=t.closest("[data-payrest]");if(prs&&store.payState){payRest(prs.dataset.payrest);return}
     const pq=t.closest("[data-payquick]");if(pq&&store.payState){payQuick(pq.dataset.payquick);return}
+    if(t.closest("[data-payexact]")&&store.payState){payExact();return}
+    if(t.closest("[data-checkoutaddcust]")&&store.checkoutFlow){store.custQ="";store.custForm=null;newCustomerForm("sell");return}
     const cf=t.closest("[data-cashform]");if(cf){openCashForm(cf.dataset.cashform);return}
     const ge=t.closest("[data-gstexp]");if(ge){gstExport(ge.dataset.gstexp);return}
     const um=t.closest("[data-unm]");if(um){resolveUnmatched(um.dataset.unm);return}
+    const uc=t.closest("[data-upiconfirm]");if(uc&&!uc.disabled){confirmUpiReceived(uc.dataset.upiconfirm);return}
     const pvia=t.closest("[data-payvia]");if(pvia&&store.payState){payVia(pvia.dataset.payvia);return}
+    if(t.closest("[data-upireceived]")&&store.payState){payManualUpiReceived();return}
+    if(t.closest("[data-cardreceived]")&&store.payState){payCardReceived();return}
+    if(t.closest("[data-rtrecv]")&&store.retState){store.retState.collectRecv=true;renderReturnSheet();return}
+    if(t.closest("[data-payvoucher]")&&store.payState){payVoucher();return}
+    if(t.closest("[data-payvoucherrm]")&&store.payState){payVoucherRemove();return}
     const pi=t.closest("[data-payintent]");if(pi&&!pi.disabled&&store.payState){payIntent(pi.dataset.payintent);return}
     const ld=t.closest("[data-linedisc]");if(ld){openLineDiscount(+ld.dataset.linedisc);return}
     const ldt=t.closest("[data-ldtype]");if(ldt&&store.lineDisc){lineDiscountType(ldt.dataset.ldtype);return}
     const dty=t.closest("[data-disctype]");if(dty&&!dty.disabled){const d=store.disc||{value:""};setBillDiscount({type:dty.dataset.disctype,value:d.value});const w=dty.closest(".bp-foot"),id=w&&w.querySelector("[data-disc]")&&w.querySelector("[data-disc]").id;renderAll();if(store.billOpen)renderBillSheet();const i=id&&document.getElementById(id);if(i)i.focus();return}
     const bk=t.closest("[data-book]");if(bk){openBook(bk.dataset.book);return}
     const inc=t.closest("[data-inc]");if(inc){const c=store.cart[+inc.dataset.inc];if(c){if(availOf(c.v)<=0){toast("No more in stock.");return}c.q++;saveCart();renderAll()}return}
-    const rl=t.closest("[data-rmline]");if(rl){removeLine(+rl.dataset.rmline);renderAll();if(store.billOpen&&store.cart.length)renderBillSheet();return}
-    const dec=t.closest("[data-dec]");if(dec){const i=+dec.dataset.dec,c=store.cart[i];if(c){c.q--;if(c.q<=0)store.cart.splice(i,1);if(!store.cart.length)store.disc=null;saveCart();renderAll()}return}
+    const rl=t.closest("[data-rmline]");if(rl){removeLine(+rl.dataset.rmline);if(!store.cart.length)releaseTableBill();renderAll();if(store.billOpen&&store.cart.length)renderBillSheet();return}
+    const dec=t.closest("[data-dec]");if(dec){const i=+dec.dataset.dec,c=store.cart[i];if(c){c.q--;if(c.q<=0)store.cart.splice(i,1);if(!store.cart.length){store.disc=null;releaseTableBill()}saveCart();renderAll()}return}
     const den=t.closest("[data-density]");if(den){store.prefs.density=den.dataset.density;savePrefs();renderNav();renderGrid();return}
     const per=t.closest("[data-period]");if(per){store.prefs.period=per.dataset.period;if(per.dataset.period==="custom"&&!store.prefs.from){store.prefs.from=addDays(dayKey(Date.now()),-6);store.prefs.to=dayKey(Date.now())}store.showAllBills=false;savePrefs();renderReport();return}
     const tb=t.closest("[data-table]");if(tb){showTable[tb.dataset.table]=!showTable[tb.dataset.table];renderReport();return}
+    const ro=t.closest("[data-repopt]");if(ro){reportOption.name=ro.dataset.repopt;renderReport();return}
     // bills
     const bv=t.closest("[data-billview]");if(bv){closeSheets();openBillView(bv.dataset.billview);return}
     const bp=t.closest("[data-billpaper]");if(bp){const i=bp.dataset.billpaper.indexOf(":");openBillView(bp.dataset.billpaper.slice(i+1),bp.dataset.billpaper.slice(0,i));return}
-    const pr=t.closest("[data-print]");if(pr){onPrint(pr.dataset.print);return}
+    if(billViewClick(t))return;   // the bill view: PDF, share, send, credit notes
+    const pr=t.closest("[data-print]");if(pr){onPrint(pr.dataset.print,{paper:pr.dataset.paper});return}
     const pb=t.closest("[data-printbrowser]");if(pb){onPrint(pb.dataset.printbrowser,{browser:true});return}
     const dl=t.closest("[data-dlreceipt]");if(dl){downloadReceipt(dl.dataset.dlreceipt);return}
+    const di=t.closest("[data-dlinvoice]");if(di){downloadInvoice(di.dataset.dlinvoice);return}
+    const shi=t.closest("[data-shareinvoice]");if(shi){shareInvoice(shi.dataset.shareinvoice);return}
     const il=t.closest("[data-invlink]");if(il){onInvoiceLink(il.dataset.invlink);return}
+    const ac=t.closest("[data-addcontact]");if(ac){onAddContact(ac.dataset.addcontact);return}
+    const cc=t.closest("[data-contactcancel]");if(cc){onContactCancel(cc.dataset.contactcancel);return}
     const ir=t.closest("[data-invrevoke]");if(ir){onRevokeLinks(ir.dataset.invrevoke);return}
     const dr=t.closest("[data-dlrefresh]");if(dr){onDeliveryRefresh(dr.dataset.dlrefresh);return}
     const snd=t.closest("[data-send]");if(snd&&!snd.disabled){const i=snd.dataset.send.indexOf(":");onSend(snd.dataset.send.slice(i+1),snd.dataset.send.slice(0,i));return}
@@ -118,11 +161,13 @@ export function installDomEvents(){
     const v=t.closest("[data-void]");if(v){openVoidForm(v.dataset.void);return}
     const uv=t.closest("[data-unvoid]");if(uv){closeModal();unvoid(uv.dataset.unvoid);return}
     const rt=t.closest("[data-return]");if(rt){openReturn(rt.dataset.return);return}
+    const xc=t.closest("[data-exchange]");if(xc){openReturn(xc.dataset.exchange,"exchange");return}
     // returns / exchanges
     const rtm=t.closest("[data-rtm]");if(rtm&&store.retState){const ln=+rtm.dataset.rtm;store.retState.q[ln]=Math.max(0,(store.retState.q[ln]||0)-1);renderReturnSheet();return}
     const rtp=t.closest("[data-rtp]");if(rtp&&store.retState){const ln=+rtp.dataset.rtp;store.retState.q[ln]=(store.retState.q[ln]||0)+1;renderReturnSheet();return}
+    const rsw=t.closest("[data-rtswap]");if(rsw&&store.retState){const [ln,vid]=rsw.dataset.rtswap.split("|");swapReturnLine(+ln,vid);return}
     const rmo=t.closest("[data-rtmode]");if(rmo&&store.retState){store.retState.mode=rmo.dataset.rtmode;renderReturnSheet();return}
-    const rpy=t.closest("[data-rtpay]");if(rpy&&store.retState){const [k,val]=rpy.dataset.rtpay.split(":");store.retState[k]=val;renderReturnSheet();return}
+    const rpy=t.closest("[data-rtpay]");if(rpy&&store.retState){const [k,val]=rpy.dataset.rtpay.split(":");if(k==="collect"&&store.retState.collect!==val)store.retState.collectRecv=false;store.retState[k]=val;renderReturnSheet();return}
     const exm=t.closest("[data-exm]");if(exm&&store.retState){const i=+exm.dataset.exm,c=store.retState.newItems[i];if(c){c.q--;if(c.q<=0)store.retState.newItems.splice(i,1)}renderReturnSheet();return}
     const exp=t.closest("[data-exp]");if(exp&&store.retState){const c=store.retState.newItems[+exp.dataset.exp];if(c&&exAvail(c.v)>0)c.q++;renderReturnSheet();return}
     // events
@@ -148,6 +193,8 @@ export function installDomEvents(){
     const ar=t.closest("[data-archive]");if(ar){setArchived(ar.dataset.archive,true);return}
     const ua=t.closest("[data-unarchive]");if(ua){setArchived(ua.dataset.unarchive,false);return}
     const dp=t.closest("[data-delp]");if(dp){deleteProduct(dp.dataset.delp);return}
+    // a product in the list: its details (buttons and menus in the row do their own thing)
+    const po=t.closest("[data-prodopen]"),pin=t.closest("button,a,.menu,.menuwrap");if(po&&(!pin||pin===po)){openProductView(po.dataset.prodopen);return}
     const pv=t.closest("[data-prodview]");if(pv){store.prodView=pv.dataset.prodview;renderProducts();return}
     const gr=t.closest("[data-grouprev]");if(gr){openGroupPreview(gr.dataset.grouprev);return}
     const gg=t.closest("[data-groupgo]");if(gg){applyGroup(gg.dataset.groupgo);return}
@@ -160,6 +207,8 @@ export function installDomEvents(){
       const vn=t.closest("[data-valren]");if(vn){const [i,j]=vn.dataset.valren.split(":"),op=store.editor.opts[+i],cur=op&&op.v[+j];const x=cur!=null?prompt(`Rename ${cur} to:`,cur):null;if(x&&x.trim()&&x.trim()!==cur)edRenameValue(+i,+j,x);return}
       const or=t.closest("[data-optrm]");if(or){edRemoveOption(+or.dataset.optrm);return}
       const os=t.closest("[data-optsugg]");if(os){edAddOption(os.dataset.optsugg);return}
+      const of=t.closest("[data-optfield]");if(of){edAddOption(null,of.dataset.optfield);return}
+      const vp=t.closest("[data-valpick]");if(vp){edAddValues(+vp.dataset.valpick,[vp.dataset.val]);return}
       const gn=t.closest("[data-edgen]");if(gn){edGenCode(gn.dataset.edgen);return}
       const ea=t.closest("[data-edact]");if(ea){edAction(ea.dataset.edact);return}
       const ps=t.closest("[data-preset]");if(ps){const [i,k]=ps.dataset.preset.split(":"),pr=SIZE_PRESETS[+k];if(pr)edAddValues(+i,pr[1]);return}
@@ -170,17 +219,19 @@ export function installDomEvents(){
       case "openbill":store.billOpen=true;store.pick=null;renderBillSheet();break;
       case "addpicked":addPicked();break;
       case "newsale":closeSheets();{const s=$("#sellSearch");if(s&&window.innerWidth>=1000)s.focus()}break;
-      case "clear":store.cart=[];store.disc=null;store.cartCust=null;saveCart();closeSheets();renderAll();break;
+      case "clear":store.cart=[];store.disc=null;store.cartCust=null;releaseTableBill();saveCart();closeSheets();renderAll();break;
       case "paydone":completePayment();break;
+      case "checkout":openCheckout("cash");break;
       case "ldapply":applyLineDiscount(false);break;
       case "ldremove":applyLineDiscount(true);break;
       case "pickcust":openCustPicker();break;
-      case "nocust":setBillCustomer(null);store.custForm=null;closeModal();renderAll();break;
+      case "nocust":store.custForm=null;if(store.checkoutFlow)checkoutWalkIn();else{setBillCustomer(null);closeModal();renderAll()}break;
       case "custnew":newCustomerForm("sell");break;
       case "custadd":newCustomerForm("page");break;
       case "custback":custBack();break;
       case "gosetup":setTab("products");break;
       case "examples":loadExamples();break;
+      case "kbdhelp":openKeyboardHelp();break;
       case "export":exportCsv();break;
       case "backup":downloadBackup();break;
       case "restorego":applyRestore();break;
@@ -207,7 +258,11 @@ export function installDomEvents(){
   });
   document.addEventListener("input",e=>{
     const t=e.target;
+    if(commerceInput(t))return;
     if(creditOrdersInput(t))return;
+    if(trackingInput(t))return;
+    if(restaurantInput(t))return;
+    if(importInput(t))return;
     if(t.matches("[data-cellqty]")&&store.pick){const v=t.dataset.cellqty;setPickQty(v,t.value===""?0:t.value);return}
     if(t.matches("[data-disc]")){setBillDiscount({type:store.disc&&store.disc.type,value:t.value});updateBillTotals();return}
     if(t.id==="ldVal"){lineDiscountInput(t.value);return}
@@ -224,11 +279,16 @@ export function installDomEvents(){
       if(t.dataset.ed){store.editor[t.dataset.ed]=t.value;if(t.dataset.ed==="price"||t.dataset.ed==="cost"){const k=t.dataset.ed;$$("#modalHost [data-edf='"+k+"']").forEach(i=>{i.placeholder=t.value})}return}
       if(t.dataset.edf&&t.dataset.k!=null){edFieldInput(t);return}
       if(t.id==="optAdd"){store.editor.addName=t.value;return}
+      if(edAttrInput(t))return;
     }
   });
   document.addEventListener("submit",e=>{
+    if(commerceSubmit(e))return;
     if(creditOrdersSubmit(e))return;
+    if(trackingSubmit(e))return;
+    if(restaurantSubmit(e))return;
     if(e.target.id==="custForm"){e.preventDefault();saveCustomerForm(e.target);return}
+    if(e.target.dataset&&e.target.dataset.contactform){e.preventDefault();onContactSave(e.target.dataset.contactform,e.target);return}
     if(e.target.id==="edForm"){e.preventDefault();return}
     if(e.target.id==="evForm"){e.preventDefault();submitEventForm(e.target);return}
     if(e.target.id==="cashForm"){e.preventDefault();submitCashForm(e.target);return}
@@ -237,14 +297,17 @@ export function installDomEvents(){
   });
   document.addEventListener("change",async e=>{
     const t=e.target;
+    if(commerceChange(t))return;
     if(creditOrdersChange(t))return;
+    if(trackingChange(t))return;
+    if(restaurantChange(t))return;
     if(t.id==="repFrom"||t.id==="repTo"){if(t.value){store.prefs[t.id==="repFrom"?"from":"to"]=t.value;store.prefs.period="custom";savePrefs();renderReport()}return}
-    if(t.id==="sellCat"){store.sellCat=t.value;renderGrid();return}
     if(t.id==="sellAt"){chooseSellingAt(t.value);return}
     if(t.id==="shProd"||t.id==="shVar"||t.id==="shType"){const F=store.stockHist;if(F){if(t.id==="shProd"){F.pid=t.value;F.vid=""}else if(t.id==="shVar")F.vid=t.value;else F.type=t.value;F.n=30}renderStock();return}
     if(t.id==="prodCat"){store.prodCat=t.value;renderProducts();return}
     if(t.id==="rtReason"&&store.retState){store.retState.reason=t.value;return}
     if(t.matches("[data-rtnfr]")&&store.retState){store.retState.nfr[t.dataset.rtnfr]=t.checked;renderReturnSheet();return}
+    if(t.matches("[data-rtreason]")&&store.retState){setReturnReason(t.dataset.rtreason,t.value);return}
     if(t.matches("[data-rtkeep]")&&store.retState){store.retState.keepDisc=t.checked;renderReturnSheet();return}
     if(t.matches("[data-rtprov]")&&store.retState){store.retState.provRefund=t.checked;return}
     if(t.matches("[data-paysend]")&&store.payState){paySend(t.checked);return}
@@ -269,6 +332,10 @@ export function installDomEvents(){
       const tg=t.dataset.edtoggle;if(tg){if(tg==="hasOpts")edToggleOptions(t.checked);else{store.editor.codesOn=t.checked;edFocusKeep(renderEditor)}return}
       if(t.matches("[data-edcode]")){store.editor.code=t.value==="qr"?"qr":"barcode";renderEditor();return}
       if(t.id==="edUnit"){store.editor.unit=t.value;edFocusKeep(renderEditor);return}
+      // the category decides which of the shop's fields the product shows
+      if(t.dataset.ed==="cat"){store.editor.cat=t.value;refreshFieldsSection();return}
+      { const r=edAttrChange(t); if(r){ if(r==="render") edFocusKeep(renderEditor); return } }
+      if(t.id==="edTracking"){store.editor.tracking=t.value;edFocusKeep(renderEditor);return}
       if(t.dataset.edf==="active"){const c=store.editor.cells[t.dataset.k];if(c){c.active=t.checked;const tr=t.closest("tr");if(tr)tr.classList.toggle("off",!t.checked)}return}
       if(t.matches("[data-edsel]")){store.editor.sel[t.dataset.edsel]=t.checked;edFocusKeep(renderEditor);return}
       if(t.matches("[data-edselall]")){edCombos().forEach(x=>{store.editor.sel[x.key]=t.checked});renderEditor();return}

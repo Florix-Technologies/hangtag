@@ -9,11 +9,7 @@
 .pc-photo label{cursor:pointer;width:100%}
 .pc-f{flex:1;min-width:0;display:flex;flex-direction:column;gap:10px}
 .frow{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
-.f{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600;color:var(--ink-2);min-width:0}
-.f.grow{flex:1;min-width:120px}
 .f.pr{width:96px}
-.f input,.f textarea,.f select{padding:9px 10px;border:1px solid var(--line-2);border-radius:9px;background:var(--bg);font-size:14.5px;font-weight:500;color:var(--ink);width:100%}
-.f input:focus,.f textarea:focus,.f select:focus{border-color:var(--ink);outline:none;box-shadow:0 0 0 3px rgba(16,19,31,.08)}
 .hintx{font-weight:500;color:var(--ink-3)}
 .stockgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:8px}
 .stockgrid label{display:flex;flex-direction:column;align-items:center;gap:5px}
@@ -31,4 +27,12 @@
 .savebar{position:sticky;bottom:calc(12px + env(safe-area-inset-bottom,0px));margin-top:16px;display:flex;gap:8px;justify-content:flex-end;align-items:center;flex-wrap:wrap;background:rgba(255,255,255,.97);border:1px solid var(--line);border-radius:14px;padding:10px 12px;box-shadow:var(--shadow);z-index:20}
 .savebar .sbx{margin-right:auto;font-size:13.5px;color:var(--ink-2)}
 .unsaved{color:var(--warn-ink)}
-
+/* Optional natural-language product draft. The normal editor remains the only place that can save it. */
+.product-draft-sheet{max-width:620px}
+.product-draft-sheet form{display:grid;gap:10px;margin:8px 0 14px}
+.product-draft-sheet form .btn{justify-self:end}
+.draft-preview{border:1px solid var(--line);border-radius:14px;padding:14px;background:var(--wash)}
+.draft-preview h4{margin:9px 0}
+.draft-preview dl{margin:0 0 12px}
+.draft-preview dl div{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-top:1px solid var(--line)}
+.draft-preview dt{font-weight:600}.draft-preview dd{margin:0}

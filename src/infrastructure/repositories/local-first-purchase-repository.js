@@ -19,12 +19,13 @@ export function createLocalFirstPurchaseRepository({ store, persist, outbox, inv
       return s;
     },
     /* A purchase, its stock-in records and (cash paid) the cash book entry; changedProductIds: products whose cost price
-       changed with it, uploaded first */
-    savePurchase({ purchase, moves, cashMove, changedProductIds }){
+       changed with it, uploaded first — as just the variants changed (changedVariantIds: { product id: [variant ids] }), so
+       another till's edit of those products stays */
+    savePurchase({ purchase, moves, cashMove, changedProductIds, changedVariantIds }){
       slice("purchases")[purchase.id] = purchase; persist.savePurchases();
       moves.forEach(m => { store.moves[m.id] = m; }); persist.saveMoves();
       if(cashMove){ slice("cashMoves")[cashMove.id] = cashMove; persist.saveCashMoves(); }
-      if(changedProductIds && changedProductIds.length){ persist.saveCatalog(); changedProductIds.forEach(id => outbox.enqueue({ type: "prod", id })); }
+      if(changedProductIds && changedProductIds.length){ persist.saveCatalog(); changedProductIds.forEach(id => outbox.enqueue({ type: "prod", id, ...(changedVariantIds && Array.isArray(changedVariantIds[id]) ? { fields: [], vars: changedVariantIds[id] } : {}) })); }
       invalidate();
       outbox.enqueue({ type: "purchase", id: purchase.id, purchase, moves });
       return purchase;

@@ -14,11 +14,11 @@ function stateHTML(sid){
 export const printStateHTML=sid=>`<p class="printstate" data-printstate="${esc(sid)}" role="status">${stateHTML(sid)}</p>`;
 const render=sid=>$$(`[data-printstate="${sid}"]`).forEach(p=>{p.innerHTML=stateHTML(sid)});
 
-export async function onPrint(sid,{browser}={}){
+export async function onPrint(sid,{browser,paper}={}){
   if(store.printState&&store.printState.sid===sid&&store.printState.status==="printing") return;
-  const epson=!browser&&store.printer&&store.printer.kind==="epson";
+  const epson=!browser&&paper!=="a4"&&store.printer&&store.printer.kind==="epson";
   if(epson){ store.printState={sid,status:"printing"}; render(sid); }
-  const r=await printReceipt(sid,{browser});
+  const r=await printReceipt(sid,{browser,paper});
   if(!epson) return;
   store.printState=r.error?{sid,status:"error",message:r.error}:{sid,status:"done"};
   render(sid);

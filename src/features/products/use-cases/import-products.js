@@ -10,18 +10,38 @@ import { productRepository } from '../repositories/product-repository.js';
 import { COLORS } from '../../../shared/utils/colors.js';
 import { uid } from '../../../shared/utils/ids.js';
 import { canAny, denied } from '../../shop/services/access.js';
+import { shopAttrs } from '../services/shop-fields.js';
+import { saveAttr } from './shop-fields.js';
 
-/* rows: [[cell text…]…], the header first → the check (domain/catalog/product-import.js validateImport) */
-export const checkImportRows = rows => validateImport(rows, { products: productRepository().list(), variantsOf, stockAllowed: canAny(UPLOAD_PERMISSIONS.move) });
+/* The shop's fields and the option names its products use (not taken from a field): the template, the check and the export
+   read the shop's own columns */
+export const importContext = () => ({ attrs: shopAttrs(), optionNames: [...new Map(productRepository().list().flatMap(p => (p.opts || []).filter(o => o && !o.a && o.n).map(o => [o.n.toLowerCase(), o.n]))).values()] });
+/* rows: [[cell text…]…] as in the sheet → the check (domain/catalog/product-import.js validateImport). skipExisting: rows of
+   products the shop already has are left out instead of refused; firstDescription: a product whose rows have different
+   descriptions keeps its first row's (the merchant chose either in the preview). */
+export const checkImportRows = (rows, { skipExisting = false, firstDescription = false } = {}) => validateImport(rows, { products: productRepository().list(), variantsOf, stockAllowed: canAny(UPLOAD_PERMISSIONS.move), skipExisting, firstDescription, ...importContext() });
+/* Columns of the file the shop has no field for, made fields of the kind their values suggest (the preview's "Add as
+   fields"): cols [{ name, suggest: { type, options?, dp? } }] → { added: [names], errors: ["Name: why"] } */
+export function addImportFields(cols){
+  const no=denied("manage_products","add product fields"); if(no) return { added: [], errors: [no.error] };
+  const added=[], errors=[];
+  (cols || []).forEach(c => {
+    const sg=c.suggest || { type: "text" };
+    const r=saveAttr({ name: c.name, type: sg.type, options: sg.options || [], dp: sg.dp, maxLen: sg.type === "text" ? 300 : undefined });
+    if(r.error) errors.push(`${c.name}: ${r.error}`); else added.push(r.attr.name);
+  });
+  return { added, errors };
+}
 /* rows: as checked (the file's rows) → { error, check? } or { products, variants, pieces } */
-export function importProducts(rows){
+export function importProducts(rows, { skipExisting = false, firstDescription = false } = {}){
   const no=denied("manage_products","import products"); if(no) return no;
   // checked again against the catalog as it is now (it may have changed since the preview)
-  const v=checkImportRows(rows);
+  const v=checkImportRows(rows, { skipExisting, firstDescription });
   if(v.error) return {error:v.error};
-  if(!v.ok) return {error:`${v.errorCount} row${v.errorCount===1?" needs":"s need"} fixing first: nothing is imported until every row is right.`,check:v};
+  if(v.errorCount) return {error:`${v.errorCount} row${v.errorCount===1?" needs":"s need"} fixing first: nothing is imported until every row is right.`,check:v};
+  if(!v.ok) return {error:"There is nothing to import: every row is an example from the template or a product your shop already has.",check:v};
   const plan=importPlan(v,{ids:{product:()=>"p"+uid(),variant:()=>"v"+uid()},colors:COLORS,now:Date.now(),dev:store.dev});
   if(plan.error) return {error:plan.error};
   productRepository().addMany({products:plan.products,moves:plan.moves});
-  return {products:plan.products.length,variants:plan.products.reduce((a,p)=>a+p.variants.length,0),pieces:v.summary.pieces};
+  return {products:plan.products.length,variants:plan.products.reduce((a,p)=>a+p.variants.length,0),pieces:v.summary.pieces,noQty:v.summary.noQty};
 }

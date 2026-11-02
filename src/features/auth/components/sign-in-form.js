@@ -25,7 +25,7 @@ export async function signInWith(provider, loginHint){
     try{ settings = await loadAuthSettings(); }catch(e){ /* couldn't check; let Supabase answer */ }
     if(settings && settings.external && settings.external[provider] === false){
       setAuthBusy(false);
-      setAuthError(p.label + " sign-in isn't switched on for this app yet. Ask the owner to turn it on in Supabase.");
+      setAuthError(p.label + " sign-in isn't switched on for this app yet. Sign in with your email and password instead, or contact Hangtag support.");
       return;
     }
     storage.set(RESET_KEY, "");
@@ -130,7 +130,7 @@ export async function onEmailSubmit(ev){
     if(!aEl("authGate").hidden) setAuthBusy(false);
   }
 }
-/* Staff tab: a team member signs in with the shop code, username and password the owner gave them. On a phone that has no
+/* Staff sign-in: a team member uses the shop code, username and password the owner gave them. On a phone that has no
    device key for them yet, the phone is added to their devices with this fresh sign-in (session.js → member-session.js). */
 export function staffErrorText(e){
   const m = (e && (e.message || e.error_description)) || "", code = (e && e.code) || "";
@@ -194,8 +194,8 @@ export function installSignInEvents(){
   aEl("emailForm").addEventListener("submit", onEmailSubmit);
   aEl("staffForm").addEventListener("submit", onStaffSubmit);
   aEl("authForms").addEventListener("click", e => {
-    const t = e.target.closest("[data-authtab],[data-switchto]"); if(!t) return;
-    const email = aEl("authEmail").value, mode = t.dataset.authtab || t.dataset.switchto;
+    const t = e.target.closest("[data-switchto]"); if(!t) return;
+    const email = aEl("authEmail").value, mode = t.dataset.switchto;
     setEmailMode(mode);
     aEl("authEmail").value = email;   // keep what they typed
     if(mode === "staff") (aEl("staffShop").value ? aEl("staffUser").value ? aEl("staffPass") : aEl("staffUser") : aEl("staffShop")).focus();

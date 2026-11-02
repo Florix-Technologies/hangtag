@@ -13,6 +13,8 @@ import { computeCheckout } from '../../src/domain/sales/checkout-totals.js';
 import { paymentId, settlePayments } from '../../src/domain/sales/payments.js';
 import { billArgs } from '../../src/infrastructure/supabase/mappers.js';
 import { ROLE_DEFAULTS, PERMISSIONS, sha256Hex } from '../functions/team/core.js';
+import { readLeaks, writeLeaks } from '../../tests/helpers/tenancy.mjs';
+import { REPORT_ROWS } from './report-rows.mjs';
 
 const NEW = fs.readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
 const A = '11111111-1111-1111-1111-111111111111', B = '22222222-2222-2222-2222-222222222222';
@@ -57,7 +59,7 @@ const rls = (r) => /row-level security/.test(r.err || '');
 
 function bill(id, price, { t = 1790000000000, pay = 'cash', ref, disc = null } = {}) {
   const T = computeCheckout({ lines: [{ q: 1, price, rate: 0 }], billDisc: disc, gst: { mode: 'none', inclusive: true } });
-  const S = settlePayments(T.total, [{ method: pay, amount: T.total, ...(ref ? { ref } : {}) }]);
+  const S = settlePayments(T.total, [{ method: pay, amount: T.total, ...(ref ? { ref } : {}), ...(pay === 'upi' ? { confirmed: true } : {}) }]);
   if (S.error) throw new Error(S.error);
   const L = T.lines[0];
   return { id, no: 'INV-' + id, t, dev: 'd1', kind: 'sale', ex: null, credit: 0, cust: null,
@@ -91,13 +93,15 @@ await db.exec(NEW); await db.exec(NEW);
 console.log('=== the schema runs twice; the report has the team rows ===');
 {
   const rep = await report(db);
-  check('migration report: 40 rows, all ok on an empty database', rep.length === 40 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: all rows ok on an empty database', rep.length === REPORT_ROWS && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   const pols = (await db.query(`SELECT count(*)::int n FROM pg_policies WHERE schemaname = 'public' AND policyname = 'Own rows only'`)).rows[0].n;
   check('no table keeps the old "Own rows only" rule', pols === 0, pols);
   const noRls = (await db.query(`SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE 'hangtag_%' AND NOT c.relrowsecurity`)).rows;
   check('row security is on for every hangtag table', noRls.length === 0, noRls);
   const defs = (await db.query(`SELECT table_name FROM information_schema.columns WHERE table_schema = 'public' AND column_name = 'owner_id' AND table_name LIKE 'hangtag_%'
-      AND table_name NOT LIKE 'hangtag_backup%' AND coalesce(column_default, '') NOT LIKE '%hangtag_shop_id()%'`)).rows;
+      AND table_name NOT LIKE 'hangtag_backup%' AND coalesce(column_default, '') NOT LIKE '%hangtag_shop_id()%'
+      -- section 3t: plans and payments are written only by the database for a shop it names itself (never by the app)
+      AND table_name NOT IN ('hangtag_subscriptions', 'hangtag_trial_claims', 'hangtag_subscription_payments', 'hangtag_promo_redemptions')`)).rows;
   check('every shop table fills owner_id with the shop (hangtag_shop_id())', defs.length === 0, defs);
 }
 
@@ -149,9 +153,12 @@ console.log('=== the owner: nothing changes ===');
     // section 3m: a payment collected from a customer, a held bill, a quotation with its line
     await as(db, owner, `INSERT INTO public.hangtag_collections (id, customer_id, amount, method, t) VALUES ('col1', 'c1', 100, 'cash', 1)`);
     await as(db, owner, `INSERT INTO public.hangtag_held_carts (id, name, data, t) VALUES ('h1', 'Asha', '{"cart":[]}', 1)`);
-    r = await tryAs(db, owner, `SELECT public.hangtag_save_order($1::jsonb, $2::jsonb) AS r`, [JSON.stringify({ id: 'o1', kind: 'quote', no: 'QT-1', status: 'draft', customer_id: 'c1', version: 0, t: 1 }),
+    r = await tryAs(db, owner, `SELECT public.hangtag_save_order($1::jsonb, $2::jsonb) AS r`, [JSON.stringify({ id: 'o1', kind: 'quote', no: 'QT-1', status: 'draft', customer_id: 'c1', customer: { id: 'c1', name: 'Asha' }, version: 0, t: 1 }),
       JSON.stringify([{ line_no: 0, product_id: 'p1', variant_id: 'p1:M', name: 'Tee', qty: 1, price: 500 }])]);
     if (r.err) console.log(r.err);
+    // section 3o: a table and the guests seated at it
+    await as(db, owner, `INSERT INTO public.hangtag_tables (id, name, qr_token) VALUES ('tb1', 'T1', $1)`, [(owner === A ? 'a' : 'b').repeat(43)]);
+    await as(db, owner, `INSERT INTO public.hangtag_table_sessions (id, table_id, status, opened_t) VALUES ('ts1', 'tb1', 'open', 1)`);
   }
   const s = await one(db, A, `SELECT owner_id::text AS o FROM public.hangtag_sales WHERE id = 's1'`);
   check('the owner saves bills, returns and everything else as before (owner_id = the owner)', s && s.o === A && (await count(db, A, 'hangtag_returns')) === 1 && (await count(db, A, 'hangtag_bank_book')) === 1, s);
@@ -341,8 +348,52 @@ console.log('=== no device, another device, revoked device, disabled member: not
 
 console.log('=== shop A and shop B never meet ===');
 {
+  // a serial-tracked phone and a batch of rice in each shop (section 3n: the serial register and the batches)
+  for (const owner of [A, B]) {
+    await as(db, owner, `INSERT INTO public.hangtag_products (id, name, price, tracking, options) VALUES ('ph', 'Phone', 9000, 'serial', '{"opts":[]}'), ('rc', 'Rice', 60, 'batch', '{"opts":[]}')`);
+    await as(db, owner, `INSERT INTO public.hangtag_variants (id, product_id, option_values) VALUES ('ph:', 'ph', '[]'), ('rc:', 'rc', '[]')`);
+    await as(db, owner, `INSERT INTO public.hangtag_stock_moves (id, variant_id, product_id, type, qty, t, serials) VALUES ('in-ph', 'ph:', 'ph', 'RESTOCK', 1, 1, ARRAY['IMEI-1'])`);
+    await as(db, owner, `INSERT INTO public.hangtag_stock_moves (id, variant_id, product_id, type, qty, t, batch_no, expiry) VALUES ('in-rc', 'rc:', 'rc', 'RESTOCK', 5, 1, 'B1', '2030-01-01')`);
+  }
+  // a row in each table of section 3r for both shops (fixtures: the app's own rules for them are tested in commerce-batch)
+  await db.exec(`SET session_replication_role = replica`);
+  for (const [owner, n] of [[A, 1], [B, 2]]) {
+    const sale = (await db.query(`SELECT id FROM public.hangtag_sales WHERE owner_id = $1 LIMIT 1`, [owner])).rows[0];
+    const ep = `0b0e0000-0000-4000-8000-00000000000${n}`, ev = `0b0e0000-0000-4000-8000-00000000001${n}`;
+    await db.query(`INSERT INTO public.hangtag_suppliers (owner_id, id, name) VALUES ($1, 'sup-t', 'Supplier') ON CONFLICT DO NOTHING`, [owner]);
+    await db.query(`INSERT INTO public.hangtag_price_lists (owner_id, id, name) VALUES ($1, 'pl1', 'Wholesale')`, [owner]);
+    await db.query(`INSERT INTO public.hangtag_purchase_orders (owner_id, id, supplier_id, status, items, t) VALUES ($1, 'po1', 'sup-t', 'draft', '[{"v":"ph:","q":1}]', 1)`, [owner]);
+    if (sale) {
+      await db.query(`INSERT INTO public.hangtag_einvoices (owner_id, sale_id, status) VALUES ($1, $2, 'ready')`, [owner, sale.id]);
+      await db.query(`INSERT INTO public.hangtag_eway_bills (owner_id, sale_id, status) VALUES ($1, $2, 'ready')`, [owner, sale.id]);
+    }
+    await db.query(`INSERT INTO public.hangtag_repacks (owner_id, id, from_variant, from_product, to_variant, to_product, from_qty, to_qty, per, t) VALUES ($1, 'rp1', 'rc:', 'rc', 'ph:', 'ph', 1, 2, 2, 1)`, [owner]);
+    await db.query(`INSERT INTO public.hangtag_stock_moves (owner_id, id, variant_id, product_id, type, qty, t) VALUES ($1, 'rpk:rp1:out', 'rc:', 'rc', 'ADJUST', -1, 1), ($1, 'rpk:rp1:in', 'ph:', 'ph', 'RESTOCK', 2, 1)`, [owner]);
+    await db.query(`INSERT INTO public.hangtag_vouchers (owner_id, id, code, amount, balance, paid_method, t) VALUES ($1, 'gv1', $2, 100, 50, 'cash', 1)`, [owner, `GV-AAAA-BBBB-CCC${n + 1}`]);
+    await db.query(`INSERT INTO public.hangtag_voucher_redemptions (owner_id, id, voucher_id, payment_id, amount, kind, t) VALUES ($1, 'gvr1', 'gv1', 'x:voucher', 50, 'redeem', 1)`, [owner]);
+    await db.query(`INSERT INTO public.hangtag_webhook_endpoints (owner_id, id, url, events) VALUES ($1, $2, 'https://hooks.example.com/h', ARRAY['sale.completed'])`, [owner, ep]);
+    await db.query(`INSERT INTO public.hangtag_webhook_secrets (endpoint_id, owner_id, secret) VALUES ($1, $2, $3)`, [ep, owner, 'whsec_' + String(n).repeat(64)]);
+    await db.query(`INSERT INTO public.hangtag_webhook_events (owner_id, id, type, event_key, payload) VALUES ($1, $2, 'sale.completed', 's1', '{}')`, [owner, ev]);
+    await db.query(`INSERT INTO public.hangtag_webhook_deliveries (owner_id, endpoint_id, event_id) VALUES ($1, $2, $3)`, [owner, ep, ev]);
+    // bank accounts and their entries (section 3s)
+    await db.query(`INSERT INTO public.hangtag_bank_accounts (owner_id, id, name, opening, is_default, methods) VALUES ($1, 'ba1', 'Current account', 1000, true, '{upi}')`, [owner]);
+    await db.query(`INSERT INTO public.hangtag_bank_moves (owner_id, id, account_id, type, amount, reason, t) VALUES ($1, 'bm1', 'ba1', 'in', 250, 'Deposit', 1)`, [owner]);
+    // the shop's own product fields and units (section 3z)
+    await db.query(`INSERT INTO public.hangtag_attributes (owner_id, id, name, type, options) VALUES ($1, 'fabric', 'Fabric', 'choice', '["Cotton", "Linen"]')`, [owner]);
+    await db.query(`INSERT INTO public.hangtag_units (owner_id, id, label, decimals, uqc) VALUES ($1, 'roll', 'Roll', 0, 'ROL')`, [owner]);
+  }
+  await db.exec(`SET session_replication_role = DEFAULT`);
+  // the webhook secrets are read by nobody in the app (only the dispatch function, with the service role)
+  const sec = [];
+  for (const who of [A, CA, B, OUT]) sec.push(await tryAs(db, who, `SELECT count(*) FROM public.hangtag_webhook_secrets`));
+  check('webhook secrets: nobody in the app reads them, not even the shop\'s owner', sec.every(denied), sec);
   const tables = (await db.query(`SELECT table_name AS t FROM information_schema.columns WHERE table_schema = 'public' AND column_name = 'owner_id'
-      AND table_name LIKE 'hangtag_%' AND table_name NOT LIKE 'hangtag_backup%' ORDER BY 1`)).rows.map((x) => x.t);
+      AND table_name LIKE 'hangtag_%' AND table_name NOT LIKE 'hangtag_backup%' AND table_name <> 'hangtag_webhook_secrets'
+      -- section 3t: plans and plan payments are the database's own (checked in supabase/tests/subscriptions.test.mjs)
+      AND table_name NOT IN ('hangtag_subscriptions', 'hangtag_trial_claims', 'hangtag_subscription_payments', 'hangtag_promo_redemptions') ORDER BY 1`)).rows.map((x) => x.t);
+  const planRows = [];
+  for (const t of ['hangtag_subscriptions', 'hangtag_trial_claims', 'hangtag_promo_redemptions', 'hangtag_promo_codes', 'hangtag_agent_usage']) planRows.push(await tryAs(db, A, `SELECT * FROM public.${t}`));
+  check('plan records, trial claims, promo codes and Agent counters: no app user reads them (only through their functions)', planRows.every(denied), planRows);
   await asService(db, `INSERT INTO public.hangtag_enrollments (owner_id, user_id, token_hash) VALUES ($1, $2, $3), ($4, $5, $6)`, [A, CA.id, hash('enroll-a'), B, CB.id, hash('enroll-b')]);
   const empty = [], leaks = [];
   for (const t of tables) {
@@ -355,8 +406,16 @@ console.log('=== shop A and shop B never meet ===');
     const n = await count(db, CA, t, `WHERE owner_id = '${B}'`);
     if (n) leaks.push(`A cashier sees ${n} of B's ${t}`);
   }
-  check(`shop A has rows in every one of the ${tables.length} shop tables (so the check below means something)`, empty.length === 0 && tables.length === 32, empty);
+  check(`shop A has rows in every one of the ${tables.length} shop tables (so the check below means something)`, empty.length === 0 && tables.length === 50, empty);
   check('no one from shop B (owner or cashier), nor an outsider, sees any row of shop A in any table; nor A\'s cashier any of B\'s', leaks.length === 0, leaks);
+  // the same, through the shared helper (tests/helpers/tenancy.mjs), with a signed-out visitor too — and then writes: change,
+  // delete, or add a row naming shop A, in every shop table, each attempt rolled back
+  const ATTACKERS = [['B', B], ['B cashier', CB], ['outsider', OUT], ['signed out', null]], run = (who, q, p) => as(db, who, q, p);
+  const rl = await readLeaks({ run, tables, victim: A, attackers: ATTACKERS });
+  check('the shared read sweep agrees: nothing of shop A seen by anyone outside it (signed out included)', rl.length === 0, rl);
+  const W = await writeLeaks({ db, run, tables, victim: A, attackers: ATTACKERS });
+  check(`no one outside shop A can change, delete or add a row of shop A, in any of the ${tables.length} shop tables (${W.attempts} attempts)`, W.leaks.length === 0, W.leaks);
+  check('…the attempts were stopped by row security or privileges themselves (none got through as "0 rows" by luck alone is counted as stopped)', W.byRls + W.byOther > 0 && W.byRls > 0, { byRls: W.byRls, byOther: W.byOther, attempts: W.attempts });
   check('B sees none of A\'s team, and A none of B\'s', (await count(db, B, 'hangtag_members', `WHERE shop_id = '${A}'`)) === 0 && (await count(db, A, 'hangtag_members', `WHERE shop_id = '${B}'`)) === 0
     && (await count(db, CB, 'hangtag_members')) === 1);
   const prof = await rows(db, CB, `SELECT id::text AS id FROM public.hangtag_profiles`);
@@ -374,10 +433,11 @@ console.log('=== shop A and shop B never meet ===');
 
 console.log('=== the audit log ===');
 {
-  let r = await tryAs(db, CA, `UPDATE public.hangtag_sales SET is_void = TRUE, void_reason = $1 WHERE id = 's-ca' RETURNING id`, ['Wrong size given to the customer; ' + 'x'.repeat(150)]);
-  const v = await one(db, A, `SELECT user_id::text AS u, device_id, action, entity, entity_id, summary FROM public.hangtag_audit_log WHERE entity = 'sales' AND entity_id = 's-ca' ORDER BY id DESC LIMIT 1`);
+  // (s-ca has a return, so it can't be cancelled (section 3y): the cashier cancels its other bill)
+  let r = await tryAs(db, CA, `UPDATE public.hangtag_sales SET is_void = TRUE, void_reason = $1 WHERE id = 's-ca2' RETURNING id`, ['Wrong size given to the customer; ' + 'x'.repeat(150)]);
+  const v = await one(db, A, `SELECT user_id::text AS u, device_id, action, entity, entity_id, summary FROM public.hangtag_audit_log WHERE entity = 'sales' AND entity_id = 's-ca2' ORDER BY id DESC LIMIT 1`);
   check('a cashier cancels a bill: logged as "void" with the cashier and its device', !r.err && v && v.u === CA.id && v.device_id === CA.dev && v.action === 'void', { r, v });
-  check('…with the bill number and the reason (cut short: audit rows stay small)', v && v.summary.bill_no === 'INV-s-ca' && v.summary.void_reason.length === 80 && v.summary.changed.includes('is_void'), v && v.summary);
+  check('…with the bill number and the reason (cut short: audit rows stay small)', v && v.summary.bill_no === 'INV-s-ca2' && v.summary.void_reason.length === 80 && v.summary.changed.includes('is_void'), v && v.summary);
   const before = await count(db, A, 'hangtag_audit_log');
   await saveBill(db, A, bill('s1', 500));
   await as(db, A, `INSERT INTO public.hangtag_customers (id, name, phone) VALUES ('c1', 'Asha', '9876543210') ON CONFLICT (owner_id, id) DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone`);
@@ -529,7 +589,7 @@ console.log('=== what changed in the shop (a member\'s phone polls this instead 
   const c3 = await ch(CA);
   check('a new customer and a changed product change just those parts', c3.customers !== c1.customers && c3.catalog !== c1.catalog && c3.sales === c1.sales && c3.moves === c1.moves && c3.images === c1.images, { c1, c3 });
   await saveBill(db, A, bill('s-poll', 500));
-  await as(db, A, `UPDATE public.hangtag_sales SET is_void = TRUE, void_reason = 'Duplicate' WHERE id = 's1'`);
+  await as(db, A, `UPDATE public.hangtag_sales SET is_void = TRUE, void_reason = 'Duplicate' WHERE id = 's-poll'`);   // (s1 has a return: it can't be cancelled, section 3y)
   const c4 = await ch(CA);
   check('a new bill and a cancelled one change the bills part (count, newest, cancelled)', c4.sales !== c3.sales && c4.sales_count === c3.sales_count + 1 && Date.parse(c4.sales_since) >= Date.parse(c3.sales_since), { c3, c4 });
   const cb = await ch(CB);
@@ -566,7 +626,7 @@ console.log('=== accounts removed ===');
 console.log('=== report after use ===');
 {
   let rep = await report(db);
-  check('migration report: every row ok with a team, devices and audit rows present', rep.length === 40 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: every row ok with a team, devices and audit rows present', rep.length === REPORT_ROWS && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
   await db.query(`INSERT INTO public.hangtag_products (owner_id, id, name) VALUES ($1, 'stray', 'Stray')`, [CA.id]);
   rep = await report(db);
   check('the report spots a member that runs a shop of its own', rep.find((r) => /no shop of their own/.test(r.check_name)).ok === false);
@@ -597,7 +657,7 @@ console.log('=== upgrade from the schema on the live database today (fixtures/le
   r = !r.err && o.o === A ? await tryAs(up, A, `UPDATE public.hangtag_products SET archived = TRUE WHERE id = 'p1' RETURNING id`) : r;
   check('…and keeps saving bills and changing products (owner_id still the owner)', !r.err && r.r.rows.length === 1, r);
   const rep = await report(up);
-  check('the report is all ok after the upgrade', rep.length === 40 && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
+  check('the report is all ok after the upgrade', rep.length === REPORT_ROWS && rep.every((x) => x.ok), rep.filter((x) => !x.ok));
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');

@@ -151,6 +151,9 @@ check('product remove: catalog, its stock records, photo, queued work dropped, t
 log.length = 0;
 createLocalFirstStockRepository({ store, persist, outbox }).record({ moves: [{ id: 'm2', v: 'v1', q: 5 }], changedProductId: 'p1' });
 check('stock record: moves saved, then the changed product, then the moves are queued', log.join() === 'moves,catalog,enqueue:prod,enqueue:move' && store.moves.m2.q === 5, log);
+const sent = [];
+createLocalFirstStockRepository({ store, persist, outbox: { enqueue: (i) => sent.push(i) } }).record({ moves: [{ id: 'm3', v: 'v1', q: 2 }], changedProductId: 'p1', changedVariantIds: ['v1'] });
+check('…a cost changed by a stock-in goes up as just that variant (fields none, variants [v1])', JSON.stringify(sent[0]) === JSON.stringify({ type: 'prod', id: 'p1', fields: [], vars: ['v1'] }), sent[0]);
 
 // ---------- error mapping ----------
 const m = (e) => toAppError(e);
@@ -167,7 +170,7 @@ check('an AppError passes through unchanged', (() => { const a = new AppError(C.
 client = fakeClient(() => ({ error: { code: 'PGRST205', message: "Could not find the table 'public.hangtag_variants' in the schema cache" } }));
 check('checkSchema: missing tables report OUTDATED_DATABASE (the app shows "Database update needed")', (await gw.checkSchema()).error.code === C.OUTDATED_DATABASE);
 client = fakeClient(() => ({ error: null }));
-check('checkSchema: a current database reports no error (it looks for the events table, the newest)', (await gw.checkSchema()).error === null && client.calls[0].t === 'hangtag_events');
+check('checkSchema: a current database reports no error (it looks for the newest table-ordering table)', (await gw.checkSchema()).error === null && client.calls[0].t === 'hangtag_tables');
 check('a missing database function (the bill RPC before schema.sql) becomes OUTDATED_DATABASE', m({ code: 'PGRST202', message: 'Could not find the function public.hangtag_save_sales' }).code === C.OUTDATED_DATABASE);
 
 console.log(`\n${passed} passed, ${failed} failed`);

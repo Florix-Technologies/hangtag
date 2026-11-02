@@ -7,7 +7,7 @@
 // same figures as a structured JSON dataset. Hangtag prepares data for filing; it never files returns. Pure.
 import { DISCLAIMER } from './gst-report.js';
 import { toPaise, toRupees } from '../sales/paise.js';
-import { splitDeviceNo } from '../sales/sale.js';
+import { parseDocNo, splitDeviceNo } from '../documents/numbering.js';
 import { roundQty } from '../catalog/units.js';
 
 export const DEFAULT_B2CL_LIMIT=100000;
@@ -33,21 +33,29 @@ const outP=o=>{const r={...o};K.forEach(k=>{r[k]=R(o[k])});r.tax=R(o.cgst+o.sgst
 const interState=d=>d.mode==="inter"||toPaise(d.igst)!==0;
 const numOrder=(a,b)=>String(a).localeCompare(String(b),"en",{numeric:true});
 
-/* Numbers like "INV-250925-004": the series is everything before the last "-", the number after it. A device's numbers
-   ("INV-260929-K3F004") are a series of their own per device code */
-export function splitDocNo(no){
+/* A document number split into its series and running number. formats: the shop's numberings (domain/documents/
+   numbering.js): "INV-000127" → { series: "INV", n: 127, running: true }, a second till's "INV-B-000045" → "INV-B", with a
+   suffix "INV-000127/26-27" → "INV …/26-27". Numbers made before: "INV-250925-004" (the series is everything before the
+   last "-"), a device's "INV-260929-K3F004" (a series of its own per device code and day) */
+export function splitDocNo(no,formats){
+  for(const cfg of formats||[]){
+    const p=parseDocNo(no,cfg); if(!p) continue;
+    const fy=s=>String(s||"").replace(/\{FY\}/gi,p.fy), pre=fy(cfg.prefix), suf=fy(cfg.suffix), sep=/[-/]$/.test(pre)?pre.slice(-1):"-";
+    return {series:(pre+(p.till?p.till+sep:"")).replace(/[-/]$/,"")+(suf?" …"+suf:""),n:p.seq,running:true};
+  }
   const dv=splitDeviceNo(no); if(dv) return dv;
   const m=/^(.*?)(\d+)$/.exec(String(no||""));
   return m?{series:m[1].replace(/-$/,""),n:+m[2]}:{series:String(no||""),n:null};
 }
 /* Documents issued, per series: from, to, total, cancelled, net — and the numbers missing inside each series, and
-   numbers out of time order */
-export function docSeries(docs){
+   numbers out of time order. A running series (one that goes on from month to month) is checked from its lowest number in
+   the documents given; a day's series of numbers made before, from 1. */
+export function docSeries(docs,formats){
   const S={};
-  docs.forEach(d=>{const x=splitDocNo(d.no);const s=S[x.series]||(S[x.series]={series:x.series,docs:[]});s.docs.push({...d,n:x.n})});
+  docs.forEach(d=>{const x=splitDocNo(d.no,formats);const s=S[x.series]||(S[x.series]={series:x.series,docs:[],running:!!x.running});s.docs.push({...d,n:x.n})});
   return Object.values(S).sort((a,b)=>numOrder(a.series,b.series)).map(s=>{
     const nums=s.docs.map(d=>d.n).filter(n=>n!=null).sort((a,b)=>a-b), have=new Set(nums), missing=[];
-    if(nums.length) for(let n=Math.min(1,nums[0]);n<=nums[nums.length-1]&&missing.length<50;n++) if(n>0&&!have.has(n)) missing.push(n);
+    if(nums.length) for(let n=s.running?nums[0]:Math.min(1,nums[0]);n<=nums[nums.length-1]&&missing.length<50;n++) if(n>0&&!have.has(n)) missing.push(n);
     const byTime=s.docs.slice().sort((a,b)=>a.t-b.t||a.n-b.n), late=[];
     for(let i=1;i<byTime.length;i++) if(byTime[i].n!=null&&byTime[i-1].n!=null&&byTime[i].n<byTime[i-1].n) late.push(byTime[i].no);
     const sorted=s.docs.slice().sort((a,b)=>(a.n??0)-(b.n??0)), cancelled=s.docs.filter(d=>d.cancelled).length;
@@ -66,7 +74,7 @@ export function gstDigest(G){
 }
 
 /* G: gstReport(...) for the month · opts: { b2clLimit (rupees), lastExport? ({ digest, t }) } */
-export function filingSections(G,{b2clLimit=DEFAULT_B2CL_LIMIT,lastExport=null}={}){
+export function filingSections(G,{b2clLimit=DEFAULT_B2CL_LIMIT,lastExport=null,formats=[]}={}){
   const lim=toPaise(b2clLimit);
   const large=d=>!d.b2b&&interState(d)&&toPaise(d.total)>lim;
   const cnLarge=c=>!c.b2b&&interState(c)&&toPaise(c.invoiceValue)>lim;
@@ -91,7 +99,7 @@ export function filingSections(G,{b2clLimit=DEFAULT_B2CL_LIMIT,lastExport=null}=
     });
   });
   const cdnr=G.creditNotes.filter(c=>c.b2b).map(note), cdnur=G.creditNotes.filter(cnLarge).map(note);
-  const series={invoices:docSeries([...G.invoices,...G.cancelled]),creditNotes:docSeries(G.creditNotes)};
+  const series={invoices:docSeries([...G.invoices,...G.cancelled],formats),creditNotes:docSeries(G.creditNotes,formats)};
   const checks=G.issues.map(x=>({kind:x.kind,text:x.text}));
   [...series.invoices.map(s=>["Invoice",s]),...series.creditNotes.map(s=>["Credit note",s])].forEach(([what,s])=>{
     if(s.missing.length) checks.push({kind:"gap",text:`${what} series ${s.series||"(no prefix)"}: number${s.missing.length>1?"s":""} ${s.missing.slice(0,10).join(", ")}${s.missing.length>10?"…":""} missing in this month.`});

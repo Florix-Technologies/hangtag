@@ -2,6 +2,7 @@
 // entry that is never edited or deleted; a mistake is put right with a reversal entry that names the entry and why. The
 // day close keeps what the drawer should hold, what was counted and the difference. Pure; rupees, added up in paise.
 import { toPaise, toRupees, tooPrecise } from '../sales/paise.js';
+import { inr } from '../../shared/formatting/money.js';
 
 export const CASH_MOVE_TYPES=["opening","in","out","expense","reversal"];
 export const CASH_MOVE_LABELS={opening:"Opening float",in:"Cash in",out:"Cash out",expense:"Expense",reversal:"Reversal"};
@@ -28,7 +29,7 @@ export function checkCashMove(input,ctx={}){
     return {ok:true,move:{type,amount:o.amount,reason:reason.slice(0,200),reverses:o.id}};
   }
   const a=+String(input.amount==null?"":input.amount).trim();
-  if(!Number.isFinite(a)||a<=0) return {error:"Enter an amount more than ₹0.",field:"amount"};
+  if(!Number.isFinite(a)||a<=0) return {error:`Enter an amount more than ${inr(0)}.`,field:"amount"};
   if(tooPrecise(a)) return {error:"Use at most 2 decimal places.",field:"amount"};
   if(a>MAX_CASH_MOVE) return {error:"That amount is too large for one entry.",field:"amount"};
   const c=String(input.category||"").trim();

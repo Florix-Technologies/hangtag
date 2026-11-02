@@ -8,8 +8,8 @@ export function authErrorText(e){
   if(code === "invalid_credentials" || /invalid login credentials/i.test(m)) return "Wrong email or password.";
   if(code === "email_not_confirmed" || /email not confirmed/i.test(m)) return "Confirm your email first. Open the link we emailed you, then sign in.";
   if(code === "user_already_exists" || /already (been )?registered/i.test(m)) return "An account with this email already exists. Sign in instead.";
-  if(code === "email_provider_disabled" || code === "signup_disabled" || /signups? not allowed|email logins are disabled|provider is not enabled/i.test(m)) return "Email sign-in isn't switched on for this app yet. Use Continue with Google, or ask the owner to turn on Email in Supabase.";
-  if(code === "email_address_not_authorized" || /not allowed for this address|default SMTP/i.test(m)) return "This app can't send email to that address yet. Use Continue with Google, or ask the owner to set up email sending in Supabase.";
+  if(code === "email_provider_disabled" || code === "signup_disabled" || /signups? not allowed|email logins are disabled|provider is not enabled/i.test(m)) return "Email sign-in isn't switched on for this app yet. Use Continue with Google, or contact Hangtag support.";
+  if(code === "email_address_not_authorized" || /not allowed for this address|default SMTP/i.test(m)) return "This app can't send email to that address yet. Use Continue with Google, or contact Hangtag support.";
   if(code === "over_email_send_rate_limit" || /email rate limit/i.test(m)) return "Too many emails were sent in the last hour. Try again later, or use Continue with Google.";
   if(code === "weak_password" || /password should/i.test(m)) return m;
   if(/rate limit|too many/i.test(m) || /over_.*rate_limit/.test(code)) return "Too many attempts. Wait a few minutes and try again.";

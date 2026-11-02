@@ -99,7 +99,10 @@ let fails = 0; const check = (n, ok, i) => { if (!ok) fails++; console.log((ok ?
 
   // ---------- stickers ----------
   await run('setTab("products")'); await sleep(200);
-  await p.click(`[data-stickers="${await run('return products().find(x=>x.name==="Dress").id')}"]`); await sleep(300);
+  // Print stickers is in the product row's actions menu
+  const dressId = await run('return products().find(x=>x.name==="Dress").id');
+  await p.click(`[data-menu="pc-${dressId}"]`); await sleep(100);
+  await p.click(`[data-stickers="${dressId}"]`); await sleep(300);
   check('Stickers from the product card: preview of every variant on sale', /99 different stickers/.test(await p.$eval('#stkT', (e) => e.parentNode.textContent)) && (await p.$$('.stk-prev svg')).length >= 6);
   const svg = await run('return stickerSVG({p:products().find(x=>x.name==="Dress"),v:products().find(x=>x.name==="Dress").variants[1]},STICKER_SIZES[0],{name:true,variant:true,price:true,sku:true,code:true})');
   check('sticker SVG: 50 × 25 mm, product, variant, price, SKU and the barcode', /width="50mm" height="25mm"/.test(svg) && />Dress</.test(svg) && /C1 \/ S/.test(svg) && /₹999/.test(svg) && /SKU DR-C1-S/.test(svg) && /<path fill="#000" d="M/.test(svg), svg.slice(0, 300));

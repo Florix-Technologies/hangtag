@@ -5,7 +5,7 @@ import { store } from '../../../shared/state/store.js';
 import { lookupCode, quickProduct } from '../../../domain/inventory/barcode-intake.js';
 import { takenCodes } from '../../../domain/catalog/product-validation.js';
 import { variantsOf } from '../../../domain/catalog/variants.js';
-import { IMPORT_UNITS } from '../../../domain/catalog/product-import.js';
+import { importUnits } from '../../../domain/catalog/product-import.js';
 import { products } from '../../products/services/catalog.js';
 import { productRepository } from '../../products/repositories/product-repository.js';
 import { COLORS } from '../../../shared/utils/colors.js';
@@ -15,7 +15,7 @@ import { denied } from '../../shop/services/access.js';
 /* → { hit: { p, v } } | { off: { p, v } } | { unknown: code } | { error } */
 export const findCode = raw => lookupCode(raw, products(), variantsOf);
 /* The units a quick product may have ([code, label, decimals]) */
-export const intakeUnits = () => IMPORT_UNITS;
+export const intakeUnits = () => importUnits();
 /* input: { code, name, unit, price, cost, gst, hsn } → { error, field } or { product, variant } (saved and queued) */
 export function quickCreateProduct(input){
   const no=denied("manage_products","add products"); if(no) return no;

@@ -8,6 +8,7 @@ import fs from 'fs';
 import { computeCheckout } from '../../src/domain/sales/checkout-totals.js';
 import { paymentId, settlePayments } from '../../src/domain/sales/payments.js';
 import { billArgs, cashMoveRow, dayCloseRow } from '../../src/infrastructure/supabase/mappers.js';
+import { REPORT_ROWS } from './report-rows.mjs';
 
 const NEW = fs.readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
 const A = '11111111-1111-1111-1111-111111111111', B = '22222222-2222-2222-2222-222222222222';
@@ -56,7 +57,7 @@ await db.exec(NEW); await db.exec(NEW);
 console.log('=== schema runs twice; report ===');
 {
   const rep = await report(db);
-  check('migration report: 40 rows, all ok on an empty shop', rep.length === 40 && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
+  check('migration report: all rows ok on an empty shop', rep.length === REPORT_ROWS && rep.every((r) => r.ok), rep.filter((r) => !r.ok));
 }
 
 console.log('=== verified payments ===');
@@ -79,13 +80,13 @@ console.log('=== verified payments ===');
   r = await save(db, A, [bill('v3', 500, (d) => [{ method: 'upi', amount: d, via: 'qr', intent: { id: I2, status: 'verified', amount: d, paymentId: 'pay_b' } }])]);
   check('another shop\'s verified intent doesn\'t verify this shop\'s bill', /not confirmed/.test(r.err || ''), r);
   // UPI checked by hand, then matched by the function (service role), then the phone uploads the bill again
-  r = await save(db, A, [bill('m1', 700, (d) => [{ method: 'upi', amount: d, ref: '412345678901' }])]);
+  r = await save(db, A, [bill('m1', 700, (d) => [{ method: 'upi', amount: d, ref: '412345678901', confirmed: true }])]);
   check('hand-checked UPI saves as unverified with its reference', !r.err && (await rows(db, A, `SELECT verification FROM public.hangtag_payments WHERE id = 'm1:upi'`))[0].verification === 'unverified', r);
   const IM = '0b8e1f3e-3333-4333-8333-333333333333';
   await intent(db, A, IM, 'verified', 700, { kind: 'match', pid: 'pay_m', pay: 'pay_m', sale: 'm1' });
   r = await trySvc(db, `UPDATE public.hangtag_payments SET verification = 'verified', intent_id = $1, provider_payment_id = 'pay_m' WHERE owner_id = $2 AND id = 'm1:upi'`, [IM, A]);
   check('the function upgrades it to verified after matching the provider\'s payment', !r.err, r);
-  r = await save(db, A, [bill('m1', 700, (d) => [{ method: 'upi', amount: d, ref: '412345678901' }])]);
+  r = await save(db, A, [bill('m1', 700, (d) => [{ method: 'upi', amount: d, ref: '412345678901', confirmed: true }])]);
   const m = (await rows(db, A, `SELECT verification, intent_id::text, provider_payment_id FROM public.hangtag_payments WHERE id = 'm1:upi'`))[0];
   check('the phone uploading the bill again never downgrades a verified payment', !r.err && m.verification === 'verified' && m.intent_id === IM && m.provider_payment_id === 'pay_m', { r, m });
   r = await save(db, A, [bill('c1', 800, (d) => [{ method: 'card', amount: d, ref: 'APPR1', last4: '4242' }])]);
@@ -184,7 +185,10 @@ console.log('=== cancelling with a reason ===');
   r = await save(db, A, [{ ...bill('c1', 800, (d) => [{ method: 'card', amount: d, ref: 'APPR1', last4: '4242' }]), void: true }]);
   check('the phone uploading the cancelled bill again keeps the reason', !r.err && (await rows(db, A, `SELECT void_reason FROM public.hangtag_sales WHERE id = 'c1'`))[0].void_reason === 'Duplicate bill', r);
   r = await save(db, A, [bill('c1', 800, (d) => [{ method: 'card', amount: d, ref: 'APPR1', last4: '4242' }])]);
-  check('restored: the reason is cleared', !r.err && (await rows(db, A, `SELECT is_void, void_reason FROM public.hangtag_sales WHERE id = 'c1'`))[0].void_reason === null, r);
+  const c1 = async () => (await rows(db, A, `SELECT is_void, void_reason FROM public.hangtag_sales WHERE id = 'c1'`))[0];
+  check('a phone that missed the cancel uploads the bill again: it stays cancelled, with its reason (section 3y)', !r.err && (await c1()).is_void === true && (await c1()).void_reason === 'Duplicate bill', { r, c1: await c1() });
+  r = await tryAs(db, A, `UPDATE public.hangtag_sales SET is_void = false, void_reason = NULL WHERE id = 'c1'`);
+  check('restored (the app\'s Restore): the reason is cleared', !r.err && (await c1()).is_void === false && (await c1()).void_reason === null, r);
 }
 
 console.log('=== report after use ===');

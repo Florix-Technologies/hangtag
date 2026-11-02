@@ -1,0 +1,128 @@
+// Home's figures, read from the shop's own records through the calculations Reports, Smart reorder and Ask Hangtag
+// already use (nothing is worked out a second way, nothing here changes data):
+//   today:     sales, bills, average bill, against a usual <weekday> by this time (reports/services/business-today.js
+//              chooses the comparison); gross profit only when cost prices cover enough of the sales to be honest about it;
+//              cash / UPI / card taken. Home shows them, explained, through businessTodayView (the Business today card).
+//   attention: what someone should act on (stock running out, orders to deliver, held bills, UPI to verify, money
+//              received that isn't on a bill, customer and supplier dues, purchase orders to receive, receipts this
+//              device couldn't send), each with where to act on it, worst first; only what this person may act on
+//   insights:  the Hangtag Agent's few observations from the data (what to reorder, rising demand, the week's best
+//              seller, money tied up in stock that isn't selling), each with where to look; the sales pace is Business
+//              today's (its Sales figure says how today compares, and why)
+//   trend:     the last 7 days of sales; recent: the latest bills with their state
+import { store } from '../../../shared/state/store.js';
+import { D } from '../../inventory/services/ledger.js';
+import { stockAlerts } from '../../inventory/services/alerts.js';
+import { liveProducts } from '../../products/services/catalog.js';
+import { periodData, kstats, netLines } from '../../reports/services/report-data.js';
+import { createReadOnlyBusinessQuery } from '../../assistant/services/business-query.js';
+import { inventoryIntelligence } from '../../inventory/services/inventory-intelligence.js';
+import { pendingApprovals } from '../../automation/services/automation.js';
+import { watchFindings } from '../../automation/services/watchers.js';
+import { salesByChannel } from '../../commerce/services/channels.js';
+import { billContext, billState } from '../../bills/services/bill-status.js';
+import { paymentSummary, profitSummary } from '../../../domain/reports/sales-report.js';
+import { THRESHOLDS, pickComparison } from '../../../domain/reports/business-today.js';
+import { sameTimeDays } from '../../reports/services/business-today.js';
+import { can, canAny } from '../../shop/services/access.js';
+import { moduleShown } from '../../shop/services/modules.js';
+import { addDays, dayKey } from '../../../shared/formatting/dates.js';
+import { inr } from '../../../shared/formatting/money.js';
+import { esc } from '../../../shared/dom.js';
+
+/* Gross profit shows only when cost prices are known for at least this share of the day's sales */
+export const PROFIT_MIN_COVERAGE = THRESHOLDS.profitCoverage;
+
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + "s"}`;
+const pct = (a, b) => b ? Math.round((a - b) / b * 100) : null;
+
+/* Variants running low or sold out (products on sale), fewest first */
+export { stockAlerts };
+
+/* Today so far: sales, bills, average bill, pieces; the change against the comparison (a usual <weekday> by this time, else
+   last <weekday>, else yesterday: comparison.label) ; gross profit and the money split for those who see reports */
+export function todayFigures(now = Date.now()){
+  const k = dayKey(now), x = periodData(k, k, ""), K = kstats(x.live, x.rets), C = pickComparison(sameTimeDays(now));
+  const out = { sales: K.rev, bills: K.bills, avg: K.avg, pieces: K.pcs, change: C ? pct(K.rev, C.total) : null, comparison: C, profit: null, money: null, channels: [] };
+  try{ out.channels = salesByChannel(k, k, ""); }catch{ out.channels = []; }
+  if(can("view_reports")){
+    const P = profitSummary(netLines(x.live, x.rets));
+    out.profit = { value: P.grossProfit, margin: P.margin, coverage: P.coverage, complete: P.complete, shown: !P.netSales || P.coverage >= PROFIT_MIN_COVERAGE };
+    const m = paymentSummary(x.live, x.rets).methods, inOf = key => (m[key] || {}).in || 0;
+    out.money = { cash: inOf("cash"), upi: inOf("upi"), card: inOf("card") };
+  }
+  return out;
+}
+
+const TONE_RANK = { bad: 0, warn: 1, info: 2 };
+/* [{ id, tone: bad|warn|info, title, sub, attr, cta }] — worst first */
+export function attentionItems(now = Date.now()){
+  const q = createReadOnlyBusinessQuery({ now: () => now }), items = [];
+  const add = (id, tone, title, sub, attr, cta) => items.push({ id, tone, title, sub, attr, cta });
+  // what Automation's watch rules notice (Settings → Automation → Watch: low stock, money owed, payment mismatches, late
+  // orders, unusual sales, expiring stock, receipts not sent, daily closing, GST): one source, a rule set to Off shows nothing
+  const W = watchFindings(now);
+  W.forEach(f => add(f.id, f.tone, f.title, f.sub, f.attr, f.cta));
+  if(moduleShown("orders") && canAny(["create_sale", "create_order"])){
+    // orders still to deliver, without the late ones (the late item has them): each order is counted once
+    const o = q.orders(), L = W.find(f => f.id === "late") || {}, n = o.sales - (L.count || 0);
+    const value = Math.max(0, Math.round((o.salesValue - (L.value || 0)) * 100) / 100), mobile = Math.max(0, o.mobile - (L.online || 0));
+    if(n > 0) add("orders", mobile ? "warn" : "info", `${plural(n, "order")} to deliver`, `${inr(value)}${mobile ? ` · ${mobile} from your online store` : ""}`, 'data-tab="orders"', "Open");
+    if(o.quotes) add("quotes", "info", `${plural(o.quotes, "quotation")} waiting`, inr(o.quoteValue), 'data-tab="orders"', "Follow up");
+  }
+  const held = Object.values(store.heldCarts || {}).filter(Boolean).length;
+  if(held && can("create_sale")) add("held", "warn", `${plural(held, "bill")} on hold`, "Finish or clear them", 'data-tab="orders" data-subview="orders:held"', "Open");
+  if(moduleShown("stock") && canAny(["create_purchase", "view_reports"])){
+    const s = q.supplierDues();
+    if(s.total > 0) add("suppliers", "info", `${inr(s.total)} to pay suppliers`, plural(s.suppliers, "supplier"), 'data-navsub="stock:suppliers"', "Pay");
+    const po = q.purchaseOrders();
+    if(po.sent && can("manage_inventory")) add("pos", "info", `${plural(po.sent, "purchase order")} to receive`, inr(po.value), 'data-navsub="stock:pos"', "Receive");
+  }
+  // what Automation found and waits for a person's OK (Settings → Automation: "Ask me first")
+  let appr = [];
+  try{ appr = pendingApprovals(now); }catch{ appr = []; }
+  if(appr.length) add("approvals", "warn", `${plural(appr.length, "automation")} waiting for your OK`, appr[0].title + (appr.length > 1 ? ` and ${appr.length - 1} more` : ""), "data-approvals", "Review");
+  return items.sort((a, b) => TONE_RANK[a.tone] - TONE_RANK[b.tone]);
+}
+
+/* The Hangtag Agent's observations: [{ id, text, attr, cta }], at most `limit`; only for people who see reports */
+export function agentInsights(now = Date.now(), limit = 3){
+  if(!can("view_reports")) return [];
+  const out = [], add = (id, text, attr, cta) => out.push({ id, text, attr, cta });
+  let inv = null;
+  try{ inv = inventoryIntelligence({ now }); }catch{ inv = null; }
+  if(inv && moduleShown("stock")){
+    const re = inv.products.filter(r => r.shouldReorder);
+    if(re.length){ const r = re[0], days = r.lowestDaysRemaining, unit = r.unit && r.unit !== "pcs" ? " " + r.unit : "";
+      add("reorder", `${r.name}: ${r.currentStock <= 0 ? "sold out" : days == null ? "running low" : `about ${days} day${days === 1 ? "" : "s"} of stock left`}${r.suggestedReorderQty ? ` — reorder ${r.suggestedReorderQty}${unit}` : ""}${re.length > 1 ? `. ${re.length - 1} more to reorder.` : "."}`,
+        'data-tab="stock" data-subview="stock:smart"', "Smart reorder"); }
+  }
+  // rising demand: not at the reorder point yet, but at the recent rate it runs out before a new order would arrive
+  if(inv && moduleShown("stock")){
+    const soon = inv.products.filter(r => r.risingRisk).sort((a, b) => (a.lowestForecastDays ?? Infinity) - (b.lowestForecastDays ?? Infinity));
+    if(soon.length){ const r = soon[0];
+      add("rising", `Demand for ${r.name} is up ${Math.max(0, r.trendPercent || 0)}%: at the recent rate it lasts about ${r.lowestForecastDays} days — order soon.${soon.length > 1 ? ` ${soon.length - 1} more like it.` : ""}`, 'data-tab="stock" data-subview="stock:smart"', "Smart reorder"); }
+  }
+  const best = createReadOnlyBusinessQuery({ now: () => now }).products("7d", "quantity", 1)[0];
+  if(best && best.quantity >= 3){ const p = liveProducts().find(x => x.id === best.id);
+    add("best", `${best.name} is this week's best seller: ${best.quantity} sold for ${inr(best.sales)}.`, p ? `data-prodopen="${esc(p.id)}"` : "", p ? "View" : ""); }
+  if(inv && inv.summary.deadStock && inv.summary.deadStockValue > 0)
+    add("dead", `${inr(inv.summary.deadStockValue)} is tied up in ${plural(inv.summary.deadStock, "product")} with no sale for ${inv.config.deadDays} days or more.`, 'data-tab="stock" data-subview="stock:smart"', "Review");
+  return out.slice(0, limit);
+}
+
+/* The last `days` days of sales, oldest first: { days: [{ k, sales, bills }], total, prevTotal } */
+export function salesTrend(now = Date.now(), days = 7){
+  const to = dayKey(now), from = addDays(to, -(days - 1)), x = periodData(from, to, ""), by = {};
+  x.live.forEach(s => (by[dayKey(s.t)] = by[dayKey(s.t)] || { live: [], rets: [] }).live.push(s));
+  x.rets.forEach(r => (by[dayKey(r.t)] = by[dayKey(r.t)] || { live: [], rets: [] }).rets.push(r));
+  const list = Array.from({ length: days }, (_, i) => { const k = addDays(from, i), g = by[k], K = g ? kstats(g.live, g.rets) : { rev: 0, bills: 0 }; return { k, sales: K.rev, bills: K.bills }; });
+  const P = periodData(addDays(from, -days), addDays(from, -1), "");
+  return { days: list, total: list.reduce((a, d) => a + d.sales, 0), prevTotal: kstats(P.live, P.rets).rev };
+}
+
+/* The latest bills with their state (paid / unpaid / cancelled, returned …) */
+export function recentBills(limit = 5){
+  const ctx = billContext();
+  return D().sales.slice().sort((a, b) => b.t - a.t).slice(0, limit).map(s => ({ s, st: billState(s, ctx) }));
+}

@@ -1,5 +1,13 @@
 # Secrets and credentials
 client_secret*.json
+# database dumps and their restore work (they hold customers' and staff's personal data) and local DB credentials
+*.dump
+*.dump.verify.txt
+*.backup
+*.sql.gz
+hangtag-backups/
+pgpass*
+.pgpass
 *.env
 *.env.local
 .env
@@ -15,6 +23,9 @@ Thumbs.db
 *.swo
 .vscode/
 .idea/
+# Claude Code: worktrees and local settings stay out; the project's skills (.claude/skills) are shared
+.claude/*
+!.claude/skills/
 
 # Test output
 tests/.artifacts/
@@ -24,3 +35,6 @@ dist/
 
 # Supabase CLI local state (linked project, CLI version)
 supabase/.temp/
+
+.vercel
+.env*

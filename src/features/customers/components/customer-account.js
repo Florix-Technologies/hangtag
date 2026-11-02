@@ -8,7 +8,7 @@ import { accountOf } from '../services/customer-account.js';
 import { customerRepository } from '../repositories/customer-repository.js';
 import { creditRepository } from '../repositories/credit-repository.js';
 import { cancelCollection, collectPayment } from '../use-cases/collect-payment.js';
-import { can, isMember } from '../../shop/services/access.js';
+import { isMember } from '../../shop/services/access.js';
 import { toast } from '../../../shared/components/toast.js';
 import { ICON } from '../../../shared/constants/icons.js';
 import { $, esc } from '../../../shared/dom.js';
@@ -23,13 +23,11 @@ function entryHTML(e){
   return `<div class="acent${off ? " off" : ""}" data-acent="${esc(e.id)}"><span class="ae-w"><b>${what}</b><small>${esc(dayLab(dayKey(e.t)))} · ${esc(hhmm(e.t))}${off ? " · cancelled" : ""}${e.kind === "bill" && e.charge && e.paid ? " · " + inrx(e.paid) + " paid" : ""}</small></span>
     <span class="ae-a tnum">${amt}<small>owes ${inrx(e.balance)}</small></span>${e.kind === "collection" && !off && !isMember() ? `<button class="link xs" data-colcancel="${esc(e.id)}">Cancel</button>` : ""}${e.saleId && e.kind === "bill" ? `<button class="link xs" data-billview="${esc(e.saleId)}">Bill</button>` : ""}</div>`;
 }
-/* The account block of a customer's profile */
+/* The account block of a customer's profile: what was taken on account, refunded to it and collected (the totals and
+   Collect payment are in the profile's summary: components/customer-insight-view.js) */
 export function accountHTML(cid){
-  const A = accountOf(cid), owes = A.outstanding > 0;
-  const hist = A.entries.filter(e => e.kind !== "bill" || e.charge > 0);   // bills paid in full are in the purchase history
-  return `<div class="tmini cust3 acct"><div><span>Total purchases</span><b data-acctbuy>${inrx(A.purchases)}</b></div><div><span>Total paid</span><b data-acctpaid>${inrx(A.paid)}</b></div><div class="${owes ? "owes" : ""}"><span>Outstanding</span><b data-acctdue>${inrx(A.outstanding)}</b></div></div>
-    ${owes && can("collect_credit") ? `<div class="setactions acctact"><button class="btn sm primary" data-collect="${esc(cid)}">Collect payment</button></div>` : ""}
-    ${hist.length ? `<h4 class="custh">Account</h4><div class="acents">${hist.map(entryHTML).join("")}</div>` : ""}`;
+  const hist = accountOf(cid).entries.filter(e => e.kind !== "bill" || e.charge > 0);   // bills paid in full are in the purchase history
+  return hist.length ? `<h4 class="custh">Account</h4><div class="acents">${hist.map(entryHTML).join("")}</div>` : "";
 }
 
 /* ---------- collect a payment ---------- */

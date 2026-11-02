@@ -1,4 +1,6 @@
 // Start-up values of the application state (restored from this device's storage, through the "storage" port, where saved).
+import { docImagesOf } from '../domain/documents/doc-settings.js';
+import { mergeLogs } from '../domain/automation/rules.js';
 import { store } from '../shared/state/store.js';
 import { DEFAULT_SETTINGS } from '../domain/shop/settings.js';
 import { discountInput } from '../domain/sales/discounts.js';
@@ -6,6 +8,7 @@ import { printerOf } from '../domain/shop/printer-settings.js';
 import { scaleSettingsOf } from '../domain/shop/scale-settings.js';
 import { storage } from '../shared/state/persistence.js';
 import { objOr } from '../shared/utils/objects.js';
+import { setShopUnits } from '../domain/catalog/units.js';
 
 export function initState(){
   /* ================= state ================= */
@@ -42,6 +45,16 @@ export function initState(){
   store.heldCarts = objOr(storage.get("rc_held",{}),{});           // bills put aside to finish later, on any till (by id)
   store.orders = objOr(storage.get("rc_orders",{}),{});            // quotations and sales orders (by id)
   store.cartOrder = objOr(storage.get("rc_cartorder",null),null);  // the order the bill being rung up comes from: { id, no, kind }
+  store.tables = objOr(storage.get("rc_tables",{}),{});            // a restaurant's tables (by id)
+  store.tableSessions = objOr(storage.get("rc_table_sessions",{}),{});   // guests seated at a table until their bill is paid (by id)
+  store.cartTable = objOr(storage.get("rc_carttable",null),null);  // the table the bill being rung up is for: { table, name, sessions }
+  store.pendingDocs = objOr(storage.get("rc_pending_docs",{}),{});
+  store.quoteSends = storage.get("rc_quote_sends",[]); if(!Array.isArray(store.quoteSends)) store.quoteSends = [];
+  store.biz = objOr(storage.get("rc_biz",{}),{});                  // price lists, purchase orders, GST readiness, repacks, vouchers (section 3r)
+  setShopUnits(Object.values(store.biz.un || {}));                // the shop's own units (section 3z) for every quantity rule
+  store.cartPriceList = storage.get("rc_cartpl",null) || null;     // the price list chosen on the bill being rung up (null: the default)
+  store.bizView = null;         // the open sheet of the commerce batch: { kind, … }   // quotations to send / sent from here   // supplier bills' originals still to upload (by import id)
+  store.tableView = null;       // Tables: { sel (a table), mode: "floor" | "setup", order (an order being taken), edit, qr }
   store.ordersView = "";        // Orders tab: "held" | "quote" | "sales" ("": the first one this person has)
   store.orderForm = null;       // the quotation / sales order being edited
   store.collectForm = null;     // "Collect payment" from a customer: { cid, amount, method, ref, note, err }
@@ -59,13 +72,15 @@ export function initState(){
   store.gstView = null;         // the GST filing view: { month } or { from, to }
   store.cartCust = storage.get("rc_cartcust",null);            // customer on the bill being rung up
   store.logo = storage.get("rc_logo","") || "";                // shop logo for receipts (small data URL; synced as hangtag_meta "logo")
+  store.autoLog = mergeLogs(storage.get("rc_autolog",[]) || []);   // the automation log (domain/automation/rules.js): this device's and, from the cloud, the other devices'
+  store.docImages = docImagesOf(storage.get("rc_docimg",null)); // authorised signature and company stamp on A4 documents (hangtag_meta "doc_signature" / "doc_stamp")
   store.printer = printerOf(storage.get("rc_printer",null));    // this device's receipt printer (not synced: each till has its own)
   store.printState = null;      // the last print from a bill: { sid, status: "printing"|"done"|"error", message }
   store.scale = scaleSettingsOf(storage.get("hangtag_scale",null));   // this device's weighing scale (not synced: each counter has its own)
   store.weigh = null;           // the weight dialog: { vid, line (a bill line weighed again), value, err, busy, note }
   store.deliveries = {};        // bills sent to customers, by bill id (this session's sends and what the server recorded)
   store.channels = null;        // which of email / WhatsApp / SMS the server can send ({ email, whatsapp, sms }), once asked
-  store.prefs = Object.assign({tab:"sell",density:"photos",period:"today",day:"",from:"",to:""},storage.get("rc_prefs",{}));
+  store.prefs = Object.assign({tab:"sell",density:"photos",period:"today",day:"",from:"",to:"",billPeriod:"30d",billStatus:"all",billFrom:"",billTo:""},storage.get("rc_prefs",{}));
   // a module id (the navigation shows the first page this person can open when that one isn't shown in this shop)
   if(typeof store.prefs.tab!=="string"||!/^[a-z][a-z0-9_-]{0,30}$/.test(store.prefs.tab))store.prefs.tab="sell";
   store.pick = null;            // variant picker: {pid, color, qty:{vid:n}, last, target:"cart"|"exchange"}
@@ -74,6 +89,8 @@ export function initState(){
   store.editor = null;          // product editor state
   store.lastSale = null;
   store.showAllBills = false;
+  store.billQuery = "";
+  store.billLimit = 50;         // Bills: how many of the bills found are drawn (Show more adds the next page)
   store.warnedFull = false;
   store.sellQuery = "";
   store.sellCat = "";
@@ -101,6 +118,7 @@ export function initState(){
   store.emailMode = "signin";      // "signin" | "signup" | "forgot"
   store.profile = storage.get("hangtag_profile", null);   // this account's profile (kept per account on this device); a team member: its shop's
   store.access = objOr(storage.get("hangtag_access", null), null);   // a team member's role and permissions in its shop (null: the owner)
+  store.subscription = objOr(storage.get("hangtag_subscription", null), null);   // the shop's Hangtag plan as the server last said (features/billing)
   store.team = null;            // Settings → Team & devices / Roles & permissions (the owner's screens)
   /* ================= Supabase Database Engine ================= */
 
@@ -118,6 +136,7 @@ export function initState(){
   store.custForm = null;
   store.lineDisc = null;        // line discount sheet: { i, type, value, err }
   store.payState = null;        // payment sheet: { mode:"single"|"split", method, received, ref, split:{cash,upi,card}, recv, refs, err }
+  store.checkoutFlow = null;    // guided checkout: customer → review → existing payment screen
   /* ================= returns and exchanges ================= */
 
   store.retState = null;

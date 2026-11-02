@@ -135,6 +135,10 @@ export async function sha256Hex(text) {
   return [...new Uint8Array(d)].map((x) => x.toString(16).padStart(2, "0")).join("");
 }
 
+/* Whether a call carries a session to check (the function is deployed without JWT verification, so a phone with no
+   session can redeem a QR): "Bearer <a JWT>". The app's publishable key ("sb_publishable_…") is not a session, so a
+   signed-out call to anything but enroll_redeem stops here; a JWT-shaped token is then checked by the auth server. */
+export const sessionBearer = (auth) => /^Bearer\s+[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/i.test(str(auth).trim());
 /* The claims of a JWT (the Authorization header or the token itself), without checking it: only for a token the auth
    server has already accepted (getUser) */
 export function jwtClaims(auth) {

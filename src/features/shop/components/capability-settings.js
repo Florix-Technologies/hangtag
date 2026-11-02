@@ -1,4 +1,4 @@
-// Settings → Capabilities: what this shop uses, grouped and recommended for its type of business (human names, a line of
+// Settings → Business → Features: what this shop uses, grouped and recommended for its type of business (human names, a line of
 // help each). Only decides which screens, fields and switches the app shows; what each person may do stays in Roles &
 // permissions. Saved with the shop's synced settings (use-cases/save-capabilities.js).
 import { CAPABILITIES, CAP_KEYS, CAP_LABELS, businessLabel, capSections, defaultCaps } from '../../../domain/shop/capabilities.js';
@@ -19,10 +19,10 @@ function capRow(c, caps, edit){
 export function capabilitiesHTML(){
   const type = shopType(), caps = shopCaps(), edit = can("manage_settings");
   return `<form id="capsForm" class="authform" novalidate>
-    <p class="note secsub">Switch on what your shop uses and Hangtag shows the screens and fields for it; the rest stays out of the way. The recommended set for ${esc(businessLabel(type))} was switched on when the shop was set up. Who may do what is set in Roles &amp; permissions.</p>
+    <p class="note secsub">Switch on what your shop uses and Hangtag shows the screens and fields for it; the rest stays out of the way. The recommended set for ${esc(businessLabel(type))} was switched on when the shop was set up. Who may do what is set in This device → Roles &amp; permissions.</p>
     ${capSections(type, caps).map(g => `<details class="capgrp" data-capgrp="${esc(g.key)}"${g.open ? " open" : ""}><summary>${esc(g.label)}</summary>${g.caps.map(c => capRow(c, caps, edit)).join("")}</details>`).join("")}
     <p id="capsErr" class="autherr" role="alert" hidden></p>
-    ${edit ? `<div class="setactions"><button class="btn sm primary" type="submit">Save capabilities</button><button class="btn sm" type="button" data-capsrec>Use the recommended set</button></div>` : ""}</form>`;
+    ${edit ? `<div class="formacts"><button class="btn text" type="button" data-capsrec>Use the recommended set</button><span class="fa-note"></span><button class="btn" type="reset">Cancel</button><button class="btn primary" type="submit">Save features</button></div>` : ""}</form>`;
 }
 /* The form's switches as { uses_x: true|false } */
 export function readCapsForm(form){
@@ -47,7 +47,7 @@ function saved(r){
   if(r.error){ if(err){ err.textContent = r.error; err.hidden = false; } return; }
   if(err) err.hidden = true;
   renderSync(); flushSbQueue(); renderAll(); redraw();
-  toast("Capabilities saved.");
+  toast("Features saved.");
 }
 export function onCapsSubmit(form){ saved(saveCapabilities(readCapsForm(form))); }
 export function useRecommendedCaps(){ saved(saveCapabilities(defaultCaps(shopType()))); }

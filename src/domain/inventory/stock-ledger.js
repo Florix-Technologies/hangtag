@@ -14,18 +14,20 @@ export const MOVE_TYPES=Object.keys(MOVE_LABELS);
 
 /* moves: { id: move } · sales: bills (cancelled ones have void set) · returns: returns and exchanges
    resolve(line): the variant id of a bill or return line (null when it can't be found)
-   → [{ id, t, vid, pid, type, q (change to stock), pieces (pieces on the record), ref, note, cost, saleId, returnId }] */
+   → [{ id, t, vid, pid, type, q (change to stock), pieces (pieces on the record), ref, note, cost, saleId, returnId, sn?, bt? }]
+   (sn: the serial numbers on the record; bt: its batches [{ b, q }]) */
 export function ledgerEntries({moves,sales,returns,resolve}){
   const out=[], rv=i=>resolve?resolve(i):(i.v||null), sale={};
+  const tk=x=>Object.assign({},Array.isArray(x.sn)&&x.sn.length?{sn:x.sn}:{},Array.isArray(x.bt)&&x.bt.length?{bt:x.bt}:x.b?{bt:[{b:x.b,q:x.q}]}:{});
   Object.values(moves||{}).forEach(m=>{ if(!m||!m.v) return; const q=roundQty(m.q);
-    out.push({id:"m:"+m.id,t:+m.t||0,vid:m.v,pid:m.p||null,type:m.type||"ADJUST",q,pieces:q,ref:"",note:m.note||"",cost:m.cost==null?null:m.cost,saleId:null,returnId:null}); });
+    out.push({id:"m:"+m.id,t:+m.t||0,vid:m.v,pid:m.p||null,type:m.type||"ADJUST",q,pieces:q,ref:"",note:m.note||"",cost:m.cost==null?null:m.cost,saleId:null,returnId:null,...tk(m)}); });
   (sales||[]).forEach(s=>{ sale[s.id]=s; if(s.void) return;
     s.items.forEach((i,k)=>{ const vid=rv(i); if(!vid) return;
-      out.push({id:"s:"+s.id+":"+(i.ln!=null?i.ln:k),t:s.t,vid,pid:i.p||null,type:s.kind==="exchange"?"EXCHANGE_OUT":"SALE",q:-i.q,pieces:i.q,ref:s.no||"",note:"",cost:i.cost==null?null:i.cost,saleId:s.id,returnId:null}); }); });
+      out.push({id:"s:"+s.id+":"+(i.ln!=null?i.ln:k),t:s.t,vid,pid:i.p||null,type:s.kind==="exchange"?"EXCHANGE_OUT":"SALE",q:-i.q,pieces:i.q,ref:s.no||"",note:"",cost:i.cost==null?null:i.cost,saleId:s.id,returnId:null,...tk(i)}); }); });
   (returns||[]).forEach(r=>{ const s=sale[r.sale]; if(s&&s.void) return;
     (r.items||[]).forEach((i,k)=>{ const vid=rv(i); if(!vid) return; const back=restocks(i);
       out.push({id:"r:"+r.id+":"+k,t:r.t,vid,pid:i.p||null,type:!back?"NOT_FOR_RESALE":r.kind==="exchange"?"EXCHANGE_IN":"RETURN",q:back?i.q:0,pieces:i.q,
-        ref:r.no||(s&&s.no)||"",note:r.note||"",cost:i.cost==null?null:i.cost,saleId:r.sale,returnId:r.id}); }); });
+        ref:r.no||(s&&s.no)||"",note:r.note||"",cost:i.cost==null?null:i.cost,saleId:r.sale,returnId:r.id,...tk(i)}); }); });
   return out.sort((a,b)=>a.t-b.t||(a.id<b.id?-1:a.id>b.id?1:0));
 }
 /* Stock on hand per variant: { vid: pieces } */

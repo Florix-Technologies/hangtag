@@ -14,7 +14,8 @@ export function eposUrl(cfg){
 /* The ePOS-Print request for a receipt (lines from domain/receipts/thermal.js; logo as a mono raster { width, height, base64 }) */
 export function eposXml(doc,{logo}={}){
   const out=[`<epos-print xmlns="${NS}">`,`<text lang="en" smooth="true"/>`];
-  if(logo&&logo.base64) out.push(`<text align="center"/>`,`<image width="${logo.width}" height="${logo.height}" color="color_1" mode="mono">${logo.base64}</image>`,`<feed line="1"/>`);
+  const at=doc.logoAlign==="left"||doc.logoAlign==="right"?doc.logoAlign:"center";
+  if(logo&&logo.base64) out.push(`<text align="${at}"/>`,`<image width="${logo.width}" height="${logo.height}" color="color_1" mode="mono">${logo.base64}</image>`,`<feed line="1"/>`);
   (doc.lines||[]).forEach(l=>out.push(`<text align="${l.align==="center"||l.align==="right"?l.align:"left"}" em="${l.bold?"true":"false"}" dw="${l.big?"true":"false"}" dh="${l.big?"true":"false"}">${xml(l.text)}&#10;</text>`));
   out.push(`<feed line="3"/>`,`<cut type="feed"/>`,`</epos-print>`);
   return `<?xml version="1.0" encoding="utf-8"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>${out.join("")}</s:Body></s:Envelope>`;

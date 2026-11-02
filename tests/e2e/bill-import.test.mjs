@@ -15,9 +15,17 @@ await pg.db.query(`INSERT INTO auth.users (id, email) VALUES ($1, 'other@example
 await pg.db.query(`INSERT INTO public.hangtag_profiles (id, email, full_name, shop_name, phone, city, state, onboarded_at) VALUES ($1,$2,'Owner','Owner Shop','9876543210','Pune','Maharashtra',now())
   ON CONFLICT (id) DO UPDATE SET full_name = EXCLUDED.full_name, shop_name = EXCLUDED.shop_name, phone = EXCLUDED.phone, city = EXCLUDED.city, state = EXCLUDED.state, onboarded_at = EXCLUDED.onboarded_at`, [UID, EMAIL]);
 const q1 = async (sql, who) => (await pg.as(sql, [], who)).rows;
+// section 7: a phone sold by serial number and rice by batch with expiry dates (kg); the shop keeps serials, batches and weights
+await pg.as(`INSERT INTO public.hangtag_products (id, name, price, tracking, unit, tracks_expiry, options) VALUES ('ph', 'Phone', 9000, 'serial', 'pcs', false, '{"opts":[]}'), ('rice', 'Rice', 60, 'batch', 'kg', true, '{"opts":[]}')`, []);
+await pg.as(`INSERT INTO public.hangtag_variants (id, product_id, option_values, sku) VALUES ('ph:', 'ph', '[]', 'PH-1'), ('rice:', 'rice', '[]', 'RICE-1')`, []);
+await pg.as(`INSERT INTO public.hangtag_meta (key, value) VALUES ('settings', '{"caps":{"uses_serials":true,"uses_batches":true,"uses_expiry":true,"uses_weight":true}}')`, []);
 
 // ---------- files and the stubbed extract-bill function ----------
-const PDF = H.ARTIFACTS + '/bill-inv-1042.pdf', IMG = H.ARTIFACTS + '/bill-photo.png', PDF2 = H.ARTIFACTS + '/notconfigured.pdf';
+const PDF = H.ARTIFACTS + '/bill-inv-1042.pdf', IMG = H.ARTIFACTS + '/bill-photo.png', PDF2 = H.ARTIFACTS + '/notconfigured.pdf', IMG2 = H.ARTIFACTS + '/tracked.png';
+fs.writeFileSync(IMG2, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==', 'base64'));
+const trackedHash = crypto.createHash('sha256').update(fs.readFileSync(IMG2)).digest('hex');
+let trackedCalls = 0, storageUp = false, holdStorage = false; const storageCalls = [], held = [];
+const releaseStorage = () => { holdStorage = false; held.splice(0).forEach((f) => f()); };
 fs.writeFileSync(PDF, '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[]/Count 0>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n');
 fs.writeFileSync(PDF2, '%PDF-1.4\n% other\n%%EOF\n');
 fs.writeFileSync(IMG, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64'));
@@ -41,6 +49,18 @@ const extractBill = async (r) => {
   const body = JSON.parse(r.postData());
   fnCalls.push({ type: body.mime_type, name: body.file_name, bytes: body.data.length, hash: body.file_hash });
   if (body.file_name === 'notconfigured.pdf') return r.respond({ status: 503, contentType: 'application/json', headers: CORS, body: JSON.stringify({ ok: false, error: 'not_configured', message: 'no key' }) });
+  // section 8: the function's streamed answer (spaces while it reads, then the JSON), and a refusal inside one
+  if (body.file_name === 'streamed.pdf') return r.respond({ status: 200, contentType: 'application/json', headers: CORS, body: '    ' + String.fromCharCode(10) + ' ' + JSON.stringify(PHOTO) });
+  // section 9: a line printed in boxes of a product counted in pieces
+  if (body.file_name === 'boxes.pdf') return r.respond({ status: 200, contentType: 'application/json', headers: CORS, body: JSON.stringify({ ...head, invoice: { number: 'BX-9', date: '2026-10-01' }, warnings: [],
+    lines: [L({ name: 'Tote Bag', brand: null, quantity: 5, unit: 'box', unit_price: 600, total_price: 3000, mrp: null, hsn: null, gst_rate: 12 })] }) });
+  if (body.file_name === 'refused.pdf') return r.respond({ status: 200, contentType: 'application/json', headers: CORS, body: '   ' + JSON.stringify({ ok: false, error: 'busy', message: 'The reading service is busy. Try again in a minute.' }) });
+  // section 7: the reading fails once (the provider is busy), then works
+  if (body.file_hash === trackedHash) {
+    if (++trackedCalls === 1) return r.respond({ status: 502, contentType: 'application/json', headers: CORS, body: JSON.stringify({ ok: false, error: 'provider_error', message: 'The reading service is busy.' }) });
+    return r.respond({ status: 200, contentType: 'application/json', headers: CORS, body: JSON.stringify({ ...head, supplier: { name: 'Mobile Hub', gstin: null }, invoice: { number: 'MH-77', date: '2026-09-28' }, warnings: [],
+      lines: [L({ name: 'Phone', brand: null, sku: 'PH-1', quantity: 2, unit: 'pcs', unit_price: 8000, mrp: null, hsn: '8517', gst_rate: 18 }), L({ name: 'Rice', brand: null, sku: 'RICE-1', quantity: 2.5, unit: 'kg', unit_price: 50, mrp: null, hsn: '1006', gst_rate: 5 })] }) });
+  }
   r.respond({ status: 200, contentType: 'application/json', headers: CORS, body: JSON.stringify(body.mime_type === 'application/pdf' ? FULL : PHOTO) });
 };
 
@@ -54,6 +74,10 @@ await A.setRequestInterception(true);
 A.on('request', async (r) => {
   const u = r.url();
   if (u.startsWith('http://localhost:3210/')) return (u === 'http://localhost:3210/' || u.includes('/?')) ? r.respond({ status: 200, contentType: 'text/html', body: H.hookedHtml() }) : r.continue();
+  // the shop's private bill folder (Storage): unreachable until section 7 turns it on
+  if (u.includes('.supabase.co/storage/v1/object/hangtag-bills/')) { storageCalls.push({ path: new URL(u).pathname.split('/hangtag-bills/')[1], method: r.method(), up: storageUp });
+    if (holdStorage) { held.push(() => r.respond({ status: 200, contentType: 'application/json', headers: CORS, body: '{}' })); return; }
+    return storageUp ? r.respond({ status: 200, contentType: 'application/json', headers: CORS, body: JSON.stringify({ Key: 'hangtag-bills/' + new URL(u).pathname.split('/hangtag-bills/')[1] }) }) : r.abort(); }
   if (u.includes('.supabase.co/')) { if (!(await pg.handle(r, { '/functions/v1/extract-bill': extractBill }))) r.abort(); return; }
   r.continue();
 });
@@ -74,7 +98,8 @@ const counts = async () => (await q1(`SELECT (SELECT count(*) FROM public.hangta
 
 // ---------- 1. PDF upload → review ----------
 await run('setTab("stock")'); await sleep(200);
-await A.click('.vh-acts [data-act="billimport"]'); await sleep(200);
+await run('setTab("stock");renderAll()'); await sleep(150);
+await A.$eval('#v-stock .vh-acts [data-act="billimport"]', (b) => b.click()); await sleep(200);
 check('Stock page has "Upload bill"; it offers camera, gallery and PDF', (await A.$$('.bi-pick input[data-bifile]')).length === 3
   && !!(await A.$('.bi-pick input[capture="environment"]')) && !!(await A.$('.bi-pick input[accept^="application/pdf"]')));
 await A.screenshot({ path: H.ARTIFACTS + '/bi1_pick.png' });
@@ -175,7 +200,108 @@ await run('billImport=null;closeModal()');
 // ---------- 6. the reading service isn't set up ----------
 await A.click('.vh-acts [data-act="billimport"]'); await sleep(200);
 await (await A.$('.bi-pick input[accept^="application/pdf"]')).uploadFile(PDF2);
-check('no API key on the server → a plain message and "enter by hand"', await until('billImport&&billImport.step==="pick"&&billImport.err') && /isn't set up yet/.test(await A.$eval('.billimp', (e) => e.textContent)) && !!(await A.$('[data-bi="manual"]')));
+check('no API key on the server → the original stays attached and "enter by hand" is offered', await until('billImport&&billImport.step==="failed"&&billImport.err', 30000) && /isn't set up yet/.test(await A.$eval('.billimp', (e) => e.textContent)) && !!(await A.$('[data-bi="manual"]')));
+const notSaved = await run('return billImport.importId');
+await A.click('.sh-head [data-bi="cancel"]'); await sleep(200);
+check('closing a bill without saving it doesn\'t keep its original waiting on this device', !(await run(`return !!pendingDocs['${notSaved}']`)) && !(await run('return !!billImport')));
+// the earlier sections' unsaved bills are closed the same way (they were left by setting the state directly)
+await run('Object.keys(pendingDocs).forEach(k=>{ if(!pendingDocs[k].saved) discardBillDocument(k); })');
+
+// ---------- 7. reading fails, then works: serial and batch lines, a decimal quantity, the original kept ----------
+await A.setViewport({ width: 1280, height: 900 }); await sleep(200);
+await A.click('.vh-acts [data-act="billimport"]'); await sleep(200);
+await (await A.$('.bi-pick input[accept="image/*"]:not([capture])')).uploadFile(IMG2);
+check('the reading fails: a clear error, Try again / enter by hand, and the original is kept on this device first', await until('billImport&&billImport.step==="failed"', 30000)
+  && /busy/.test(await A.$eval('.billimp', (e) => e.textContent)) && !!(await A.$('[data-bi="retry"]')) && !!(await A.$('[data-bi="manual"]'))
+  && (await run('return billImport.doc&&billImport.doc.local===true&&billImport.doc.cloud===false&&!!pendingDocs[billImport.importId]')) && /kept on this device/.test(await A.$eval('.billimp', (e) => e.textContent)));
+const keptPath = await run('return billImport.doc.path'), impId = await run('return billImport.importId');
+check('…its place in the shop\'s own private folder is ready (shop id / import id .png)', keptPath === `${UID}/${impId}.png` && storageCalls.some((c) => c.path === keptPath && !c.up), { keptPath, storageCalls });
+await A.click('[data-bi="retry"]');
+check('Try reading again → the review (the same original still attached)', await until('billImport&&billImport.step==="review"', 30000) && trackedCalls === 2 && (await run('return billImport.doc.path')) === keptPath);
+const tl = await run('return billImport.lines.map(l=>({id:l.id,name:l.name,tracking:l.tracking,expiry:l.expiry,dp:l.dp,qty:l.qty,action:l.action}))');
+const ph = tl.find((l) => l.name === 'Phone'), rice = tl.find((l) => l.name === 'Rice');
+check('the phone line asks for its serial numbers; the rice line for its batch and expiry date, in kg with decimals', ph && ph.tracking === 'serial' && ph.action === 'existing' && rice && rice.tracking === 'batch' && rice.expiry === true
+  && rice.dp === 3 && rice.qty === 2.5 && !!(await A.$(`#bi-${ph.id} [data-bif="snText"]`)) && !!(await A.$(`#bi-${rice.id} [data-bif="bno"]`)) && !!(await A.$(`#bi-${rice.id} [data-bif="bexp"]`)), tl);
+await A.click('[data-bi="tosummary"]'); await sleep(400);
+check('without serials, batch and expiry the summary says what to fix and offers no Confirm (nothing is trusted blindly)', !(await A.$('[data-bi="commit"]')) && /serial/i.test(await A.$eval('.bi-errs', (e) => e.textContent)), await A.$eval('.billimp', (e) => e.textContent.slice(0, 300)));
+await A.click('[data-bi="back"]'); await sleep(200);
+await A.type(`#bi-${ph.id} [data-bif="snText"]`, 'SNA01..SNA02'); await A.click('#biT'); await sleep(150);
+await A.type(`#bi-${rice.id} [data-bif="bno"]`, 'b5'); await A.click('#biT'); await sleep(150);
+await A.$eval(`#bi-${rice.id} [data-bif="bexp"]`, (e) => { e.value = '2027-02-28'; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); }); await sleep(150);
+await A.click('[data-bi="tosummary"]'); await sleep(400);
+check('summary: 2 existing products, 4.5 units (2 phones + 2.5 kg)', JSON.stringify(await A.$$eval('.bi-sum b', (x) => x.map((e) => +e.textContent))) === '[0,0,2,4.5]', await A.$$eval('.bi-sum b', (x) => x.map((e) => e.textContent)));
+await A.click('[data-bi="commit"]');
+check('confirm → stock added', await until('billImport&&billImport.step==="done"', 15000));
+const sns = await q1(`SELECT serial, status, import_id FROM public.hangtag_serials WHERE serial IN ('SNA01','SNA02') ORDER BY serial`);
+const bt = await q1(`SELECT batch_no, expiry::text AS e FROM public.hangtag_batches WHERE variant_id = 'rice:' AND batch_no = 'B5'`);
+const rm = await q1(`SELECT qty::float AS q, batch_no FROM public.hangtag_stock_moves WHERE import_id = '${impId}' AND variant_id = 'rice:'`);
+check('the serials are in the register (in stock, from this bill); the batch with its expiry; 2.5 kg into it', sns.length === 2 && sns.every((x) => x.status === 'IN_STOCK' && x.import_id === impId)
+  && bt.length === 1 && bt[0].e === '2027-02-28' && rm.length === 1 && rm[0].q === 2.5 && rm[0].batch_no === 'B5', { sns, bt, rm });
+const docRow = async () => (await q1(`SELECT document_path FROM public.hangtag_stock_imports WHERE id = '${impId}'`))[0];
+check('the cloud folder couldn\'t be reached: the bill is saved, its original waits on this device to go up', (await docRow()).document_path === null && (await run(`return !!pendingDocs['${impId}']&&pendingDocs['${impId}'].saved===true`)));
+await run('billImport=null;closeModal()');
+storageUp = true;
+const savedWaiting = await run('return Object.values(pendingDocs).filter(d=>d.saved).length');
+const upped = await run('return await sendPendingDocs()');
+const withDoc = (await q1(`SELECT count(*)::int AS n FROM public.hangtag_stock_imports WHERE document_path IS NOT NULL`))[0].n;
+check('…once it can, every original still waiting goes up to the shop\'s folder (this one and the earlier bills\') and each saved bill points at its own', upped >= 2 && upped === savedWaiting && (await docRow()).document_path === keptPath
+  && withDoc === upped && (await run('return Object.keys(pendingDocs).length')) === 0 && storageCalls.some((c) => c.path === keptPath && c.up), { upped, withDoc, doc: await docRow() });
+
+// ---------- 8. reading doesn't wait for the cloud copy; a streamed answer; a refusal inside one; a file without a type ----------
+const PDF3 = H.ARTIFACTS + '/streamed.pdf', PDF4 = H.ARTIFACTS + '/refused.pdf';
+fs.writeFileSync(PDF3, '%PDF-1.4\n% streamed\n%%EOF\n'); fs.writeFileSync(PDF4, '%PDF-1.4\n% refused\n%%EOF\n');
+holdStorage = true;
+await A.click('.vh-acts [data-act="billimport"]'); await sleep(200);
+await (await A.$('.bi-pick input[accept^="application/pdf"]')).uploadFile(PDF3);
+check('the bill is read while its original is still going up to the cloud (the upload no longer comes first)',
+  await until('billImport&&billImport.step==="review"', 30000) && held.length >= 1 && fnCalls.some((c) => c.name === 'streamed.pdf'), { held: held.length, step: await run('return billImport&&billImport.step') });
+check('an answer that streamed (spaces, then the JSON) is read as usual', (await run('return billImport.lines.length')) === 1);
+check('…meanwhile the original shows as kept on this device', /kept on this device/.test(await A.$eval('.bi-doc', (e) => e.textContent)));
+const ln = await run('return billImport.lines[0].id');
+await A.focus(`#bi-${ln} [data-bif="name"]`);
+releaseStorage();
+check('…then as saved in the cloud, and the line being edited keeps its focus', await until('/saved in the cloud/.test((document.querySelector(".bi-doc")||{}).textContent||"")', 10000)
+  && (await A.evaluate(() => document.activeElement && document.activeElement.dataset.bif)) === 'name');
+await run('discardBillDocument(billImport.importId);billImport=null;closeModal()');
+await A.click('.vh-acts [data-act="billimport"]'); await sleep(200);
+await (await A.$('.bi-pick input[accept^="application/pdf"]')).uploadFile(PDF4);
+check('a refusal inside a streamed answer → its message, said once, with Try again and enter by hand', await until('billImport&&billImport.step==="failed"', 30000)
+  && (await A.$eval('.billimp .autherr', (e) => e.textContent)) === 'The reading service is busy. Try again in a minute.' && !!(await A.$('[data-bi="retry"]')) && !!(await A.$('[data-bi="manual"]')),
+  await A.$eval('.billimp', (e) => e.textContent.slice(0, 300)));
+await run('discardBillDocument(billImport.importId);billImport=null;closeModal()');
+await A.click('.vh-acts [data-act="billimport"]'); await sleep(200);
+const sent = fnCalls.length;
+await run('const f=new File([new TextEncoder().encode("%PDF-1.4 untyped %%EOF")],"untyped.PDF",{type:""});await billImportChange({matches:(s)=>s==="[data-bifile]",files:[f],value:""});');
+check('a PDF the file picker gave no type is still read as a PDF, and kept as one', await until('billImport&&billImport.step==="review"', 30000)
+  && fnCalls.slice(sent).some((c) => c.name === 'untyped.PDF' && c.type === 'application/pdf') && /\.pdf$/.test(await run('return billImport.doc.path')), fnCalls.slice(sent));
+await run('discardBillDocument(billImport.importId);billImport=null;closeModal()');
+
+// ---------- 9. a line printed in another unit (PLAN.md I19): 5 box of a product counted in pieces ----------
+const PDF5 = H.ARTIFACTS + '/boxes.pdf';
+fs.writeFileSync(PDF5, '%PDF-1.4\n% boxes\n%%EOF\n');
+releaseStorage();
+await A.click('.vh-acts [data-act="billimport"]'); await sleep(200);
+await (await A.$('.bi-pick input[accept^="application/pdf"]')).uploadFile(PDF5);
+await until('billImport&&billImport.step==="review"', 30000);
+const bx = await run('const l=billImport.lines[0];return {id:l.id,billUnit:l.billUnit,prodUnit:l.prodUnit,action:l.action,reasons:l.reasons}');
+check('a "5 box" line of the tote (counted in pieces): the bill\'s unit is kept, and the line asks for the pieces that arrived',
+  bx.billUnit === 'box' && bx.prodUnit === 'pcs' && bx.action === 'existing' && !!(await A.$(`#bi-${bx.id} [data-bif="baseQty"]`))
+  && /Quantity on the bill \(box\)/.test(await A.$eval(`#bi-${bx.id}`, (e) => e.textContent)) && bx.reasons.includes('The bill counts this in box: enter how many pieces arrived'), bx);
+await A.click('[data-bi="tosummary"]'); await sleep(400);
+check('…without them the summary refuses it (no 5 pieces at ₹600 each)', !(await A.$('[data-bi="commit"]')) && /The bill gives 5 box: enter how many pieces that is/.test(await A.$eval('.bi-errs', (e) => e.textContent)));
+await A.click('[data-bi="back"]'); await sleep(200);
+await A.type(`#bi-${bx.id} [data-bif="baseQty"]`, '60'); await A.click('#biT'); await sleep(200);
+await A.click('[data-bi="tosummary"]'); await sleep(400);
+const bsum = await A.$$eval('.bi-sum div', (x) => x.map((e) => e.textContent));
+check('60 pieces entered: the summary adds 60 pieces to 1 existing product', JSON.stringify(await A.$$eval('.bi-sum b', (x) => x.map((e) => +e.textContent))) === '[0,0,1,60]' && bsum.some((t) => /Stock to add \(pieces\)/.test(t)), bsum);
+const toteStock = await run(`return stockOf(products().find(p=>p.name==="Tote Bag").variants[0].id)`);
+await A.click('[data-bi="commit"]');
+const boxImp = await run('return billImport.importId');
+check('confirm → stock added', await until('billImport&&billImport.step==="done"', 15000) && /Stock added: 60 pieces/.test(await A.$eval('.billimp', (e) => e.textContent)));
+const bm = await q1(`SELECT qty::float AS q, cost_price AS c FROM public.hangtag_stock_moves WHERE import_id = '${boxImp}'`);
+check('…60 pieces at ₹50 each in the cloud and on this device (not 5 at ₹600)', bm.length === 1 && bm[0].q === 60 && bm[0].c === 50
+  && await run(`return stockOf(products().find(p=>p.name==="Tote Bag").variants[0].id)===${toteStock + 60}`), { bm, toteStock });
+await run('billImport=null;closeModal()');
 
 await browser.close(); await pg.db.close();
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');

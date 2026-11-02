@@ -8,7 +8,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { BAN_FOREVER, LIMITS, PERMISSIONS, ROLES, ROLE_DEFAULTS, STAFF_DOMAIN, USERNAME, deviceRow, enrollmentRow, freshSession, jwtClaims, memberRow,
   newDeviceId, newDeviceKey, newPassword, newToken, publicMember, redeemable, revokePatch, sha256Hex, shopCode, passwordSignInAt, staffEmail, accessResetPatch, latest,
-  validateRequest } from '../../supabase/functions/team/core.js';
+  sessionBearer, validateRequest } from '../../supabase/functions/team/core.js';
 import { allowedToSend, SEND_PERMISSION } from '../../supabase/functions/send-receipt/core.js';
 import { allowedToPay, ACTION_PERMISSIONS, permissionFor } from '../../supabase/functions/payment-gateway/core.js';
 
@@ -151,17 +151,32 @@ check('sending: a team member may send when its shop\'s owner is listed (by emai
   && allowedToSend(owner, { SEND_ALLOWED_USERS: 'owner@shop.in' }) && !allowedToSend(staff, {}, owner) && SEND_PERMISSION === 'create_sale');
 check('payments: the same for PAYMENT_ALLOWED_USERS', allowedToPay(staff, { PAYMENT_ALLOWED_USERS: 'OWNER@shop.in' }, owner) && !allowedToPay(staff, { PAYMENT_ALLOWED_USERS: 'x@y.z' }, owner)
   && !allowedToPay(null, { PAYMENT_ALLOWED_USERS: '*' }, owner));
-check('each payment action needs its permission from a member (refunds and settling unmatched money perform_return; seeing it view_reports); an unknown action the most',
+check('each payment action needs its permission from a member (refunds and settling unmatched money perform_return; seeing it view_reports; connecting the shop\'s own account manage_settings); an unknown action the most',
   permissionFor('create') === 'create_sale' && permissionFor('refund_return') === 'perform_return' && permissionFor('resolve') === 'perform_return' && permissionFor('unmatched') === 'view_reports' && permissionFor('config') === null
-  && permissionFor('nope') === 'manage_settings' && Object.keys(ACTION_PERMISSIONS).length === 8);
+  && permissionFor('connect') === 'manage_settings' && permissionFor('disconnect') === 'manage_settings'
+  && permissionFor('nope') === 'manage_settings' && Object.keys(ACTION_PERMISSIONS).length === 10);
 for (const name of ['send-receipt', 'payment-gateway']) {
-  const src = read(`supabase/functions/${name}/index.ts`);
+  // (payment-gateway's logic is in handler.js; index.ts makes the clients with the caller's session and device key)
+  const src = read(`supabase/functions/${name}/index.ts`) + (name === 'payment-gateway' ? read('supabase/functions/payment-gateway/handler.js') : '');
   const after = src.slice(src.indexOf('db.rpc("hangtag_shop_id")'));
   check(`${name}: the shop comes from the database with the caller's session and device key; every owner_id is the shop, never user.id`,
     /"x-hangtag-device": device/.test(src) && src.includes('db.rpc("hangtag_shop_id")') && !/owner_id", user\.id|ownerId: user\.id|owner_id: user\.id|eq\("id", user\.id\)/.test(src)
     && /getUserById\(shopId\)/.test(src) && /db\.rpc\("hangtag_can"/.test(after) && /Allow-Headers[^\n]*x-hangtag-device/.test(src));
 }
 check('extract-bill lets the browser send the device key', /Allow-Headers[^\n]*x-hangtag-device/.test(read('supabase/functions/extract-bill/index.ts')));
+
+// who may call the team function (deployed without JWT verification: a phone redeeming a QR has no session yet)
+{
+  const jwt = 'Bearer ' + ['eyJhbGciOiJIUzI1NiJ9', 'eyJzdWIiOiJ4In0', 'c2lnbmF0dXJl'].join('.');
+  check('only a session (a JWT) reaches the signed-in actions: no header, the app\'s publishable key, a Basic header and junk stop at "Sign in first"',
+    sessionBearer(jwt) && sessionBearer(jwt.replace('Bearer', 'bearer')) && !sessionBearer(null) && !sessionBearer('') && !sessionBearer('Bearer sb_publishable_abc123')
+    && !sessionBearer('Basic dXNlcjpwYXNz') && !sessionBearer('Bearer a.b') && !sessionBearer('Bearer a.b.c.d') && !sessionBearer('Bearer a.b.c d'));
+  const src = read('supabase/functions/team/index.ts'), redeemAt = src.indexOf('r.action === "enroll_redeem"'), gateAt = src.indexOf('if (!sessionBearer(auth))');
+  check('…the only action before that gate is enroll_redeem (its single-use token is the key); every other action is after getUser and, for the team, hangtag_role() = owner',
+    redeemAt > 0 && gateAt > redeemAt && src.indexOf('db.auth.getUser()') > gateAt && src.indexOf('if (role !== "owner")') > src.indexOf('db.auth.getUser()')
+    && !/r\.action === "(create_member|update_member|reset_access|remove_member|enroll_start|register_device|revoke_device|remove_device)"/.test(src.slice(0, gateAt)));
+  check('a QR is redeemed once: marked used only while unused and unexpired, in one update', /\.update\(\{ used_at: new Date\(now\)\.toISOString\(\) \}\)\.eq\("id", row\.id\)\.is\("used_at", null\)\s*\.gt\("expires_at"/.test(src));
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

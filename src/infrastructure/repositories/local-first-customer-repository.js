@@ -7,12 +7,14 @@ export function createLocalFirstCustomerRepository({ store, persist, outbox }){
   return {
     list: all,
     get: id => (store.customers || {})[id] || null,
-    /* A new or changed customer: saved here, then uploaded */
-    save(c){
+    /* A new or changed customer: saved here, then uploaded — a new one whole; an edit as the fields it changed (fields:
+       none changed, nothing to upload) */
+    save(c, { fields } = {}){
       if(!store.customers) store.customers = {};
       store.customers[c.id] = c;
       persist.saveCustomers();
-      outbox.enqueue({ type: "cust", id: c.id, cust: c });
+      if(Array.isArray(fields) && !fields.length) return c;
+      outbox.enqueue({ type: "cust", id: c.id, cust: c, ...(Array.isArray(fields) ? { fields } : {}) });
       return c;
     },
   };

@@ -54,8 +54,14 @@ ALTER TABLE public.hangtag_images ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.hangtag_sales ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.hangtag_sale_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.hangtag_meta ENABLE ROW LEVEL SECURITY;
+-- The "Public access" policies below belong to the one-shop app of September 2026 only. On a database that keeps shops
+-- apart (an owner_id column: schema.sql, every version since) they would open every shop's rows to every signed-in
+-- account, so they are never made there. (Run again on the live project on 2026-10-13, this file did exactly that.)
 DO $$
 BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'hangtag_meta' AND column_name = 'owner_id') THEN
+        RETURN;
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public access to hangtag_products') THEN
         CREATE POLICY "Public access to hangtag_products" ON public.hangtag_products FOR ALL USING (true) WITH CHECK (true);
     END IF;

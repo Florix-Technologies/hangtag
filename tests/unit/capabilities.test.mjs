@@ -34,20 +34,21 @@ const SHOP = 'ab12cd34-ef56-4789-9abc-def012345678', MEMBER = '0f0e0d0c-0b0a-490
 // ---------- the model ----------
 check('five business types with labels (Hotel / Restaurant)', eq(BUSINESS_TYPE_KEYS, ['retail', 'grocery', 'restaurant', 'electronics', 'other'])
   && BUSINESS_TYPES.find((t) => t.key === 'restaurant').label === 'Hotel / Restaurant' && BUSINESS_TYPES.every((t) => t.label && t.hint));
-check('twelve capabilities, each with a human name and a line of help', CAP_KEYS.length === 12 && eq(CAP_KEYS, ['uses_variants', 'uses_serials', 'uses_batches', 'uses_expiry',
-  'uses_weight', 'uses_quotations', 'uses_sales_orders', 'uses_tables', 'uses_table_qr', 'uses_customer_ordering', 'uses_server_ordering', 'uses_kitchen'])
+check('twenty capabilities, each with a human name and a line of help', CAP_KEYS.length === 20 && eq(CAP_KEYS, ['uses_variants', 'uses_serials', 'uses_batches', 'uses_expiry',
+  'uses_weight', 'uses_quotations', 'uses_sales_orders', 'uses_mobile_store', 'uses_tables', 'uses_table_qr', 'uses_customer_ordering', 'uses_server_ordering', 'uses_kitchen',
+  'uses_price_lists', 'uses_bundles', 'uses_vouchers', 'uses_purchase_orders', 'uses_repack', 'uses_einvoice', 'uses_eway'])
   && CAPABILITIES.every((c) => c.label && !/uses_/.test(c.label) && c.help));
 check('human names as the owner reads them', CAPABILITIES.find((c) => c.key === 'uses_variants').label === 'Product variants'
   && CAPABILITIES.find((c) => c.key === 'uses_serials').label === 'Serial number tracking' && CAPABILITIES.find((c) => c.key === 'uses_weight').label === 'Weight-based products'
   && CAPABILITIES.find((c) => c.key === 'uses_customer_ordering').label === 'Customer table ordering');
 
 // ---------- 1–5: the defaults of each business type ----------
-check('1 retail: variants, quotations, sales orders; no restaurant capability', eq(on(defaultCaps('retail')), ['uses_quotations', 'uses_sales_orders', 'uses_variants'])
+check('1 retail: variants, quotations, sales orders, purchase orders; no restaurant capability', eq(on(defaultCaps('retail')), ['uses_purchase_orders', 'uses_quotations', 'uses_sales_orders', 'uses_variants'])
   && RESTAURANT.every((k) => !defaultCaps('retail')[k]));
-check('2 grocery: variants, batches, expiry, weight, quotations, sales orders; no restaurant capability',
-  eq(on(defaultCaps('grocery')), ['uses_batches', 'uses_expiry', 'uses_quotations', 'uses_sales_orders', 'uses_variants', 'uses_weight']) && RESTAURANT.every((k) => !defaultCaps('grocery')[k]));
-check('3 electronics: variants, serials, quotations, sales orders; no restaurant capability',
-  eq(on(defaultCaps('electronics')), ['uses_quotations', 'uses_sales_orders', 'uses_serials', 'uses_variants']) && RESTAURANT.every((k) => !defaultCaps('electronics')[k]));
+check('2 grocery: variants, batches, expiry, weight, quotations, sales orders, purchase orders, repacking; no restaurant capability',
+  eq(on(defaultCaps('grocery')), ['uses_batches', 'uses_expiry', 'uses_purchase_orders', 'uses_quotations', 'uses_repack', 'uses_sales_orders', 'uses_variants', 'uses_weight']) && RESTAURANT.every((k) => !defaultCaps('grocery')[k]));
+check('3 electronics: variants, serials, quotations, sales orders, purchase orders, kits; no restaurant capability',
+  eq(on(defaultCaps('electronics')), ['uses_bundles', 'uses_purchase_orders', 'uses_quotations', 'uses_sales_orders', 'uses_serials', 'uses_variants']) && RESTAURANT.every((k) => !defaultCaps('electronics')[k]));
 check('4 hotel / restaurant: tables, table QR, customer and server ordering, kitchen', eq(on(defaultCaps('restaurant')), RESTAURANT.slice().sort())
   && !defaultCaps('restaurant').uses_serials && !defaultCaps('restaurant').uses_batches);
 check('5 other: the simplest general set (no serials, batches, weight, orders or restaurant)', eq(on(defaultCaps('other')), ['uses_variants']));
@@ -67,7 +68,10 @@ check('the settings defaults hold no capability choices (no data migration neede
 check('7 grocery + serial numbers', capsFor('grocery', { uses_serials: true }).uses_serials && capsFor('grocery', { uses_serials: true }).uses_batches);
 check('7 restaurant + batch and expiry', (() => { const c = capsFor('restaurant', { uses_batches: true, uses_expiry: true }); return c.uses_batches && c.uses_expiry && c.uses_tables; })());
 check('7 a default switched off stays off', !capsFor('retail', { uses_variants: false }).uses_variants && !capsFor('electronics', { uses_serials: false }).uses_serials);
-check('7 one that builds on another is off while that one is (Table QR, customer ordering need tables)', (() => { const c = capsFor('restaurant', { uses_tables: false }); return !c.uses_table_qr && !c.uses_customer_ordering && !c.uses_server_ordering && c.uses_kitchen; })());
+check('7 restaurant features that build on tables are all off while tables are off', (() => { const c = capsFor('restaurant', { uses_tables: false }); return !c.uses_table_qr && !c.uses_customer_ordering && !c.uses_server_ordering && !c.uses_kitchen; })());
+check('7 mobile store is opt-in and stays off without sales orders', !defaultCaps('retail').uses_mobile_store
+  && capsFor('retail', { uses_mobile_store: true }).uses_mobile_store
+  && !capsFor('retail', { uses_mobile_store: true, uses_sales_orders: false }).uses_mobile_store);
 check('7 only differences from the type\'s defaults are stored', eq(capOverridesAfter('retail', {}, { uses_variants: true, uses_serials: true }).overrides, { uses_serials: true })
   && eq(capOverridesAfter('retail', { uses_serials: true }, { uses_serials: false }).overrides, {}));
 check('7 an unknown capability or a value that isn\'t on/off is refused', /Unknown capability/.test(capOverridesAfter('retail', {}, { uses_magic: true }).error)
@@ -81,7 +85,7 @@ check('7 stored choices are cleaned (unknown keys and non-booleans dropped)', eq
     && g[0].label === 'Recommended for Grocery' && eq(h[0].caps.map((c) => c.key).sort(), RESTAURANT.slice().sort()));
   check('every capability listed once', BUSINESS_TYPE_KEYS.every((t) => eq(capSections(t).flatMap((s) => s.caps.map((c) => c.key)).sort(), CAP_KEYS.slice().sort())));
   check('restaurant capabilities folded away for a retail shop (open once one is switched on)', r.find((s) => s.key === 'restaurant').open === false
-    && capSections('retail', capsFor('retail', { uses_kitchen: true })).find((s) => s.key === 'restaurant').open === true);
+    && capSections('retail', capsFor('retail', { uses_tables: true })).find((s) => s.key === 'restaurant').open === true);
 }
 
 // ---------- 6: persistence and sync ----------
@@ -116,9 +120,9 @@ check('12 a profile without a type is retail', shopType() === 'retail' && hasCap
 const ids = () => shownModules().map((d) => d.id);
 {
   store.profile = { shop_name: 'Aura', business_type: 'retail' };
-  check('8 the core modules are registered with the existing tab ids', ['home', 'sell', 'orders', 'stock', 'products', 'customers', 'report', 'settings'].every((id) => registeredModules().includes(id)));
-  check('8 retail owner: Home, Sell, Inventory, Products, Customers, Reports, Settings (no Orders while none of its parts exists)',
-    eq(ids(), ['home', 'sell', 'stock', 'products', 'customers', 'report', 'settings']) && !moduleShown('orders'));
+  check('8 the core modules are registered with the existing tab ids and the first-class Bills workspace', ['home', 'sell', 'bills', 'orders', 'stock', 'products', 'customers', 'report', 'settings'].every((id) => registeredModules().includes(id)));
+  check('8 retail owner: Home, Sell, Bills, Stock, Products, Customers, Reports, Settings (no Orders while none of its parts exists)',
+    eq(ids(), ['home', 'sell', 'bills', 'stock', 'products', 'customers', 'report', 'settings']) && !moduleShown('orders'));
   check('8 the first version\'s tabs still open', ['sell', 'stock', 'report', 'products', 'customers'].every(tabOpen) && !tabOpen('settings') && !tabOpen('nope'));
   registerSubview('orders', { id: 'quotes', label: 'Quotations', order: 20, caps: ['uses_quotations'], perms: ['create_order'], render() {} });
   registerSubview('orders', { id: 'tableorders', label: 'Table orders', order: 40, caps: ['uses_tables'], perms: ['create_order'], render() {} });
@@ -185,23 +189,27 @@ const ids = () => shownModules().map((d) => d.id);
   check('9 tracking survives a backup restore (catalog upgrade)', cat.products[0].tracking === 'batch');
 }
 
-// ---------- 10: Team & devices and Roles & permissions for every business ----------
+// ---------- 10: the settings sections: This device for every business, the rest by role, features and type ----------
 {
-  check('10 the settings sections: Business, Capabilities, Receipt, Taxes, Team & devices, Roles & permissions, Hardware, Account',
-    eq(SETTINGS_SECTIONS.map((s) => s.label), ['Business', 'Capabilities', 'Receipt', 'Taxes', 'Team & devices', 'Roles & permissions', 'Hardware', 'Account']));
-  check('10 the owner of every type of business has Team & devices and Roles & permissions', BUSINESS_TYPE_KEYS.concat(['Clothing boutique', null]).every((t) => {
-    store.profile = { shop_name: 'S', business_type: t }; const k = settingsSections().map((s) => s.key); return k.includes('team') && k.includes('roles') && k.length === 8; }));
+  check('10 the settings sections (configuration only): Business, Plans & Billing, Payments & Banks, Bills & Documents, Products & Inventory, Sales & Customers, Purchasing, Restaurant, Automation, This device, Integrations, Advanced',
+    eq(SETTINGS_SECTIONS.map((s) => s.label), ['Business', 'Plans & Billing', 'Payments & Banks', 'Bills & Documents', 'Products & Inventory', 'Sales & Customers', 'Purchasing', 'Restaurant', 'Automation', 'This device', 'Integrations', 'Advanced']));
+  check('10 the owner of every type of business has This device, Integrations and Advanced', BUSINESS_TYPE_KEYS.concat(['Clothing boutique', null]).every((t) => {
+    store.profile = { shop_name: 'S', business_type: t }; const k = settingsSections().map((s) => s.key); return ['business', 'payments', 'billing', 'devices', 'integrations', 'advanced'].every((x) => k.includes(x)); }));
+  store.profile = { shop_name: 'S', business_type: 'restaurant' };
+  check('10 a restaurant has the Restaurant section; no Storefront section for anyone (the Store is in Sell)', settingsSections().some((s) => s.key === 'restaurant') && !settingsSections().some((s) => s.key === 'storefront'));
+  store.profile = { shop_name: 'S', business_type: 'retail' };
+  check('10 ...a retail shop: no Restaurant, no Storefront section', !settingsSections().some((s) => s.key === 'storefront') && !settingsSections().some((s) => s.key === 'restaurant'));
   check('10 roles offered by type (one source): restaurant adds server and kitchen', eq(roleSuggestionsFor('restaurant'), ['manager', 'cashier', 'server', 'kitchen']) && eq(roleSuggestionsFor('Clothing boutique'), ['manager', 'cashier'])
     && eq(ROLE_SUGGESTIONS.grocery, ['manager', 'cashier']) && !('ROLE_SUGGESTIONS' in permissionsModule));
   store.authUser = { id: MEMBER, user_metadata: { staff: true } };
   setAccess({ userId: MEMBER, shopId: SHOP, role: 'cashier', perms: ROLE_DEFAULTS.cashier, overrides: {} });
-  check('10 a cashier: only Hardware and its own account (no team, no shop settings)', eq(settingsSections().map((s) => s.key), ['hardware', 'account']));
+  check('10 a cashier: only This device (itself and this device): no shop settings, integrations or Advanced', eq(settingsSections().map((s) => s.key), ['devices']));
   setAccess({ userId: MEMBER, shopId: SHOP, role: 'custom', perms: ['view_products', 'manage_settings'], overrides: {} });
-  check('10 a member allowed to manage settings: the shop\'s settings, still no team screens', eq(settingsSections().map((s) => s.key), ['business', 'capabilities', 'receipt', 'taxes', 'hardware', 'account']));
-  registerSettingsPart('hardware', { id: 'scale', order: 20, perms: ['manage_settings'], html: () => '<div id="scaleSet"></div>' });
-  check('10 later batches add parts to a section (with their own permission)', settingsPartsHTML('hardware') === '<div id="scaleSet"></div>');
+  check('10 a member allowed to manage settings: the shop settings, still no Integrations or Advanced', eq(settingsSections().map((s) => s.key), ['business', 'payments', 'billing', 'inventory', 'sales', 'purchasing', 'automation', 'devices']));
+  registerSettingsPart('devices', { id: 'scale', order: 20, perms: ['manage_settings'], html: () => '<div id="scaleSet"></div>' });
+  check('10 later batches add parts to a section (with their own permission)', settingsPartsHTML('devices') === '<div id="scaleSet"></div>');
   setAccess({ userId: MEMBER, shopId: SHOP, role: 'cashier', perms: ROLE_DEFAULTS.cashier, overrides: {} });
-  check('10 ...hidden from a role without it', settingsPartsHTML('hardware') === '');
+  check('10 ...hidden from a role without it', settingsPartsHTML('devices') === '');
 }
 
 // ---------- 11: capabilities never grant permissions ----------

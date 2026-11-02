@@ -9,8 +9,9 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const migrationsDir = path.join(here, '..', 'migrations');
+// (a migration for the live hangtag_* tables that needs schema.sql first is tested on top of it, in its own test)
 const MIGRATIONS = readdirSync(migrationsDir).filter((f) => f.endsWith('.sql')).sort()
-  .map((f) => readFileSync(path.join(migrationsDir, f), 'utf8'));
+  .map((f) => readFileSync(path.join(migrationsDir, f), 'utf8')).filter((sql) => !/^-- Requires: supabase\/schema\.sql/m.test(sql));
 
 // What a Supabase project provides before any migration runs
 const SUPABASE = `

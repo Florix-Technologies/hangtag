@@ -8,6 +8,46 @@ The current app still uses the old `hangtag_*` tables from `../schema.sql`. The 
 Supabase → SQL Editor → New query → paste `migrations/20260925180000_phase1_foundation.sql` → Run.
 You can also use `supabase db push` with the Supabase CLI. It is safe to run again.
 
+**Commerce batch (the live `hangtag_*` tables).** `migrations/20261003120000_hangtag_commerce_batch.sql` is section 3r
+of `schema.sql` (price lists, purchase orders, kits, e-invoice / e-way bill readiness, repack, gift vouchers, outbound
+webhooks) with its row security. Run it on a database that already has `schema.sql` up to section 3q (or run the whole
+`schema.sql` again, which includes it). Safe to run again. Webhooks also need the `webhook-dispatch` Edge Function
+(`functions/webhook-dispatch/README.md`).
+
+**Plans, subscriptions, promo codes and the access lock (Wave 12).** `migrations/20261006120000_hangtag_plans_subscriptions.sql`
+is section 3t of `schema.sql`. Run it on a database that already has `schema.sql` up to section 3s (or run the whole
+`schema.sql` again). Safe to run again; the migration report then shows rows 74–77 with `ok = true`.
+
+- **Every shop already set up gets a 7-day free trial starting when this runs.** After it ends, the shop's app is locked
+  (only Plans & Billing) and every business write of the app is refused with SQLSTATE `HT402`. Nothing is deleted.
+- **Prices** live in `public.hangtag_plans` (placeholders: ₹499 / ₹1,349 / ₹2,499). Change one with
+  `UPDATE public.hangtag_plans SET price = 599 WHERE code = 'm1';` — re-running the script never overwrites it. The trial
+  length is the `days` of the plan `trial`.
+- **Promo codes** (checked only by the database; the app can't read them):
+  ```sql
+  INSERT INTO public.hangtag_promo_codes (code, kind, value, plans, starts_at, ends_at, max_uses, per_account_limit)
+  VALUES ('LAUNCH20', 'percent', 20, NULL, now(), now() + interval '30 days', 500, 1),   -- 20% off any plan
+         ('SIX300', 'fixed', 300, '{m6}', NULL, NULL, NULL, 1);                          -- ₹300 off the 6-month plan
+  UPDATE public.hangtag_promo_codes SET active = false WHERE code = 'LAUNCH20';          -- switch one off
+  ```
+  Uses are recorded in `hangtag_promo_redemptions` against the paid payment.
+  The limits are checked again when a payment is activated (one at a time per code): a free (100%) checkout beyond a
+  limit is refused; money already taken is honoured and that payment gets the note "Review: promo code used beyond its limit".
+- **One trial per inbox:** the trial claim also covers name+tag@ addresses and Gmail dots / googlemail.com.
+- **Edge Functions:** agent, extract-bill, send-receipt and payment-gateway refuse a shop whose plan has ended (HTTP 402
+  `subscription_inactive`, `functions/_shared/plan-gate.js`), before any provider call or write.
+- **Give a shop paid time without a payment, or suspend it** (SQL Editor):
+  ```sql
+  SELECT public.hangtag_admin_grant((SELECT id FROM auth.users WHERE email = 'owner@shop.in'), 'm3', 'Launch offer');
+  SELECT public.hangtag_admin_suspend((SELECT id FROM auth.users WHERE email = 'owner@shop.in'), true, 'Chargeback');
+  SELECT public.hangtag_admin_suspend((SELECT id FROM auth.users WHERE email = 'owner@shop.in'), false, NULL);
+  ```
+- **Payments** need the Edge Functions `subscription` (JWT on) and `subscription-webhook` (`--no-verify-jwt`) with
+  Hangtag's own Razorpay keys — see `functions/subscription/README.md`. Without them the app says online payment isn't
+  set up (never a fake Pay button).
+- **The Agent's rate limit** (`hangtag_agent_take`, per person and per shop, per minute and per day) is used by the `agent`
+  Edge Function; limits are its secrets (`functions/agent/README.md`).
+
 ## Test
 
 ```

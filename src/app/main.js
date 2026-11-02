@@ -20,6 +20,7 @@ import { installScaleSettingsEvents } from '../features/hardware/components/scal
 import { reconnectScale } from '../features/hardware/services/scale.js';
 import { installWeighDialog } from '../features/sales/components/weigh-dialog.js';
 import { installPwa } from './pwa.js';
+import { refuseFraming } from './frame-guard.js';
 import { store } from '../shared/state/store.js';
 import { renderAll } from '../shared/ui/render.js';
 import { bootAuth } from '../features/auth/services/session.js';
@@ -27,13 +28,25 @@ import { onConnected } from '../features/sync/services/connection.js';
 import { loadPayConfig } from '../features/sales/use-cases/provider-payment.js';
 import { resumePayment } from '../features/sales/components/payment-sheet.js';
 import { checkUnverified } from '../features/finance/components/reconcile-view.js';
+import { runAutomation } from '../features/automation/services/automation.js';
 import { installAutoDelivery, processDeliveryQueue } from '../features/delivery/use-cases/auto-delivery.js';
 import { applyCatalogMigration } from '../features/products/services/catalog.js';
-import { initSupabase, memberPoll } from '../features/sync/services/connection.js';
+import { initSupabase, memberPoll, memberPollState } from '../features/sync/services/connection.js';
+import { installCatchUp } from '../features/sync/services/catch-up.js';
+import { RESUME_MS } from '../features/sync/services/catch-up-core.js';
 import { isMember } from '../features/shop/services/access.js';
 import { flushSbQueue } from '../features/sync/services/outbox.js';
+import { sendPendingDocs } from '../features/inventory/use-cases/import-supplier-bill.js';
+import { processQuoteSends } from '../features/orders/use-cases/send-quotation.js';
+import { rememberReceiptPage } from '../features/shop/use-cases/receipt-page.js';
+import { installMenus } from '../shared/ui/kit.js';
+import { installGlobalDiagnostics } from '../shared/logging/diagnostics.js';
+import { installSubscription, onSubscriptionChange, subscriptionLocked } from '../features/billing/services/subscription.js';
 
+// never inside another site's frame (clickjacking): nothing below runs there
+if(refuseFraming()) throw new Error("Hangtag doesn't run inside another site's frame.");
 installContainer();    // ports first: everything below may use them
+installGlobalDiagnostics(); // capture startup and background failures into the privacy-safe, on-device history
 installNavigation();   // the render bus (shared/ui/render.js) now reaches this app shell
 installModules();       // the pages of the navigation modules (and the parts later batches register)
 initState();
@@ -45,7 +58,13 @@ installSetupEvents();
 installAccountMenuEvents();
 installSyncStatusTimer();
 installSyncRetryTimer();
+installCatchUp(({ hiddenFor = 0 } = {}) => {
+  // Members have no realtime channel. Back on screen after 30 s away (as on an owner's device), or while a failed check is
+  // waiting out its retry delay, a member's phone looks at once; memberPoll keeps it one at a time with the 30-second look.
+  if(store.authUser && isMember() && store.sbStatus === "connected" && (hiddenFor >= RESUME_MS || memberPollState().failures > 0)) memberPoll("foreground");
+});                  // an owner's device catches up on what realtime missed (back online, on screen again, every 5 min)
 installTooltips();
+installMenus();       // every record's and document's "More actions" menu
 installDomEvents();
 installKeyboard();
 installWindowEvents();
@@ -56,8 +75,22 @@ installPwa();
 installAutoDelivery();
 // Each time the cloud connects: a provider payment left open is shown again, hand-checked UPI is matched with the
 // provider, and receipts waiting to go out are sent
-onConnected(async()=>{ await loadPayConfig(true); resumePayment(); await checkUnverified(true); });
-onConnected(()=>processDeliveryQueue());
+// (UPI is matched, and reorder drafts are made, by Automation when the shop's rules say so: Settings → Automation)
+// The shop's Hangtag plan (features/billing): asked from the server when the cloud connects, on return to the app, every
+// 10 minutes and when it runs out. Locked: the lock screen replaces the app and background work waits; renewed: the upload
+// queue goes up again at once.
+installSubscription({ onConnected });
+onSubscriptionChange(locked => { renderAll(); if(!locked) flushSbQueue(); });
+const unlocked = fn => (...a) => subscriptionLocked() ? undefined : fn(...a);
+const automate = () => subscriptionLocked() ? Promise.resolve(0) : runAutomation({ online: store.sbStatus === "connected", checkUpi: () => checkUnverified(true) }).then(n => { if(n) renderAll(); }).catch(() => {});
+onConnected(async()=>{ await loadPayConfig(true); resumePayment(); await automate(); });
+setInterval(()=>{ if(store.authUser && store.bootDone) automate(); }, 5 * 60e3);
+onConnected(unlocked(()=>processDeliveryQueue()));
+// …and supplier bills' originals that couldn't reach the cloud yet go up (kept on this device until then)
+onConnected(unlocked(()=>{ if(Object.keys(store.pendingDocs||{}).length) sendPendingDocs(); }));
+// …quotations queued to send go out, and the owner's app keeps the shop's invoice-link page (unless the server sets one)
+onConnected(unlocked(()=>processQuoteSends()));
+onConnected(unlocked(()=>rememberReceiptPage(false)));
 renderAll();
 // Sign in, then connect to the cloud database
 
@@ -72,6 +105,6 @@ reconnectScale(store.scale && store.scale.auto);
     // Signed in but the cloud dropped out: try again every 30 s while online
     else if(store.authUser && store.sbStatus !== "connected" && navigator.onLine && tick % 3 === 0) initSupabase();
     // A team member's phone gets no live updates: every 30 s it checks it is still in the shop and downloads the latest
-    if(store.authUser && isMember() && store.sbStatus === "connected" && tick % 3 === 0) memberPoll();
+    if(store.authUser && isMember() && store.sbStatus === "connected" && tick % 3 === 0) memberPoll("poll");
   }, 10000);
 })();

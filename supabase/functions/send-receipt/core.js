@@ -6,44 +6,78 @@
 // shop profile, read with the caller's own session. The request only says which bill and which channel: it carries no
 // words, links or HTML of its own, and every saved text is escaped. Those saved texts (shop and product names) are still
 // the account's own, which is why only the accounts in SEND_ALLOWED_USERS may send at all (allowedToSend).
+import { callbackUrl } from "../delivery-status/core.js";
 
 export const CHANNELS = ["email", "whatsapp", "sms"];
 export const CHANNEL_LABELS = { email: "email", whatsapp: "WhatsApp", sms: "SMS" };
-export const LIMITS = { saleId: 64, sms: 300, whatsapp: 4000, lines: 200 };
+export const LIMITS = { saleId: 64, receiptUrl: 500, sms: 300, whatsapp: 4000, lines: 200, notes: 2000, pdfBytes: 2097152, pdfBase64: 2796204 };
+/* Quotations go by email or WhatsApp (an SMS can't carry a quotation's lines) */
+export const QUOTE_CHANNELS = ["email", "whatsapp"];
+/* One press of Send on the phone: the id that makes a retry or a queued send go out only once */
+export const REQUEST_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 /* Messages one shop can send per hour (a runaway loop or a leaked session can't spam customers) */
 export const MAX_PER_HOUR = 60;
 /* What the function reads of a bill, its lines, its payments and the shop (with the caller's session) */
-export const SALE_COLUMNS = "id,bill_no,timestamp,subtotal,discount,total,credit,tax_amount,tax_inclusive,gst_mode,cgst_amount,sgst_amount,igst_amount,round_off,payment_method,is_void,customer_id,customer_name";
-export const ITEM_COLUMNS = "line_no,product_name,variant_label,color,size,quantity,unit_price,discount_amount";
-export const PAYMENT_COLUMNS = "method,amount,reference,change_given,status";
+export const SALE_COLUMNS = "id,bill_no,timestamp,subtotal,discount,item_discount,bill_discount,bill_discount_type,bill_discount_value,taxable_amount,total,credit,tax_rate,tax_amount,tax_inclusive,gst_mode,cgst_amount,sgst_amount,igst_amount,round_off,payment_method,due_amount,is_void,customer_id,customer_name";
+export const ITEM_COLUMNS = "line_no,product_name,variant_label,color,size,quantity,unit_price,discount_amount,gst_rate,cgst_amount,sgst_amount,igst_amount,line_total";
+export const PAYMENT_COLUMNS = "method,amount,reference,change_given,tendered,verification,card_last4,status";
+/* A bill's returns (what came back and what was paid back), for the rows after the payments */
+export const RETURN_COLUMNS = "value,refund_amount,kind";
 export const PROFILE_COLUMNS = "shop_name,address,city,state,phone,gstin";
 
 const fail = (status, error, message) => ({ ok: false, status, error, message });
 const str = (v) => (typeof v === "string" ? v : "");
 
-/* body: { action: "channels" } · { action: "send", channel, sale_id, auto? } · { action: "refresh" | "link", sale_id }.
-   Anything else in the body is ignored. auto: sent by itself when the bill completed — at most once per bill and channel. */
+/* body: { action: "channels" } · { action: "send", channel, sale_id, auto?, request_id?, customer_id? } · { action: "send",
+   channel, order_id, request_id } (a quotation) · { action: "refresh" | "link", sale_id } · { action: "invoice", sale_id,
+   pdf? } (the bill's one invoice PDF: registered from this copy when it has none yet, base64). Anything else in the body is
+   ignored. auto: sent by itself when the bill completed — at most once per bill and channel. request_id: one press of
+   Send, used once. customer_id: a saved customer to send a walk-in bill to (the bill itself doesn't change). */
 export function validateRequest(body) {
   if (!body || typeof body !== "object") return fail(400, "bad_request", "Send the request as JSON.");
   if (body.action === "channels") return { ok: true, action: "channels" };
-  if (body.action === "refresh" || body.action === "link") {
+  if (body.action === "refresh" || body.action === "link" || body.action === "invoice") {
     const saleId = str(body.sale_id).trim();
     if (!saleId || saleId.length > LIMITS.saleId) return fail(400, "bad_request", "Which bill? The bill id is missing.");
-    return { ok: true, action: body.action, saleId };
+    if (body.action !== "invoice") return { ok: true, action: body.action, saleId };
+    const pdf = str(body.pdf).trim();
+    if (pdf.length > LIMITS.pdfBase64) return fail(413, "too_large", "That invoice PDF is too big (2 MB at most).");
+    return { ok: true, action: "invoice", saleId, pdf };
   }
   if (body.action !== "send") return fail(400, "bad_request", "Unknown action.");
   const channel = body.channel;
   if (!CHANNELS.includes(channel)) return fail(400, "bad_channel", "Choose email, WhatsApp or SMS.");
+  const orderId = str(body.order_id).trim();
+  if (orderId) {
+    if (orderId.length > LIMITS.saleId) return fail(400, "bad_request", "Which quotation? The quotation id is too long.");
+    if (!QUOTE_CHANNELS.includes(channel)) return fail(400, "bad_channel", "Quotations go by email or WhatsApp.");
+    const requestId = str(body.request_id).trim();
+    if (!REQUEST_ID_RE.test(requestId)) return fail(400, "bad_request", "The send request has no id.");
+    return { ok: true, action: "send", channel, orderId, requestId, auto: false };
+  }
   const saleId = str(body.sale_id).trim();
   if (!saleId || saleId.length > LIMITS.saleId) return fail(400, "bad_request", "Which bill? The bill id is missing.");
-  return { ok: true, action: "send", channel, saleId, auto: body.auto === true };
+  const requestId = str(body.request_id).trim(), customerId = str(body.customer_id).trim();
+  if (requestId && !REQUEST_ID_RE.test(requestId)) return fail(400, "bad_request", "The send request's id isn't valid.");
+  if (customerId && !/^[A-Za-z0-9_-]{1,64}$/.test(customerId)) return fail(400, "bad_request", "Which customer? The customer id isn't valid.");
+  return { ok: true, action: "send", channel, saleId, auto: body.auto === true, ...(requestId ? { requestId } : {}), ...(customerId ? { customerId } : {}) };
 }
 
 /* Which provider serves each channel, from the function's secrets (env: an object of strings). null = not set up.
-   WhatsApp counts as set up only with an approved template: WhatsApp doesn't deliver free text a business starts. */
-export function providerConfig(channel, env) {
+   WhatsApp counts as set up only with an approved template: WhatsApp doesn't deliver free text a business starts.
+   kind "quote": a quotation goes through its own approved WhatsApp template (WHATSAPP_QUOTE_TEMPLATE, or for Twilio
+   TWILIO_WHATSAPP_QUOTE_CONTENT_SID): the bill's template would call it a bill. Email is the same for both. */
+export function providerConfig(channel, env, kind = "bill") {
+  if (kind === "quote") {
+    if (!QUOTE_CHANNELS.includes(channel)) return null;
+    if (channel === "whatsapp") {
+      const q = { ...env, WHATSAPP_TEMPLATE: str(env.WHATSAPP_QUOTE_TEMPLATE), TWILIO_WHATSAPP_CONTENT_SID: str(env.TWILIO_WHATSAPP_QUOTE_CONTENT_SID), WHATSAPP_TEMPLATE_DOCUMENT: "" };
+      return providerConfig(channel, q, "bill");
+    }
+  }
   const e = (k) => str(env[k]).trim();
-  const twilio = e("TWILIO_ACCOUNT_SID") && e("TWILIO_AUTH_TOKEN") ? { accountSid: e("TWILIO_ACCOUNT_SID"), authToken: e("TWILIO_AUTH_TOKEN") } : null;
+  const callback = callbackUrl(e("DELIVERY_STATUS_URL"), "twilio");
+  const twilio = e("TWILIO_ACCOUNT_SID") && e("TWILIO_AUTH_TOKEN") ? { accountSid: e("TWILIO_ACCOUNT_SID"), authToken: e("TWILIO_AUTH_TOKEN"), ...(callback ? { statusCallback: callback } : {}) } : null;
   if (channel === "email") {
     const name = (e("EMAIL_PROVIDER") || "resend").toLowerCase();
     if (name === "resend" && e("RESEND_API_KEY") && e("EMAIL_FROM")) return { name, apiKey: e("RESEND_API_KEY"), from: e("EMAIL_FROM"), replyTo: e("EMAIL_REPLY_TO") };
@@ -55,13 +89,20 @@ export function providerConfig(channel, env) {
     return null;
   }
   const name = (e("WHATSAPP_PROVIDER") || "meta").toLowerCase();
+  // documentHeader: the approved bill template has a DOCUMENT header, so the invoice PDF itself goes with the message
+  // (WHATSAPP_TEMPLATE_DOCUMENT=on); otherwise the message carries the invoice link. Quotations have no PDF here.
   if (name === "meta" && e("WHATSAPP_TOKEN") && e("WHATSAPP_PHONE_NUMBER_ID") && e("WHATSAPP_TEMPLATE"))
-    return { name, token: e("WHATSAPP_TOKEN"), phoneNumberId: e("WHATSAPP_PHONE_NUMBER_ID"), template: e("WHATSAPP_TEMPLATE"), language: e("WHATSAPP_TEMPLATE_LANG") || "en", apiVersion: e("WHATSAPP_API_VERSION") || "v21.0" };
+    return { name, token: e("WHATSAPP_TOKEN"), phoneNumberId: e("WHATSAPP_PHONE_NUMBER_ID"), template: e("WHATSAPP_TEMPLATE"), language: e("WHATSAPP_TEMPLATE_LANG") || "en", apiVersion: e("WHATSAPP_API_VERSION") || "v21.0",
+      documentHeader: e("WHATSAPP_TEMPLATE_DOCUMENT").toLowerCase() === "on" };
   if (name === "twilio" && twilio && e("TWILIO_WHATSAPP_FROM") && e("TWILIO_WHATSAPP_CONTENT_SID"))
     return { name, ...twilio, from: e("TWILIO_WHATSAPP_FROM"), contentSid: e("TWILIO_WHATSAPP_CONTENT_SID"), whatsapp: true };
   return null;
 }
-export const configuredChannels = (env) => Object.fromEntries(CHANNELS.map((c) => [c, !!providerConfig(c, env)]));
+/* { email, whatsapp, sms } for bills, quote_email / quote_whatsapp for quotations, and whatsapp_pdf: WhatsApp carries the
+   invoice PDF itself (a template with a document header) rather than its link */
+export const configuredChannels = (env) => ({ ...Object.fromEntries(CHANNELS.map((c) => [c, !!providerConfig(c, env)])),
+  ...Object.fromEntries(QUOTE_CHANNELS.map((c) => ["quote_" + c, !!providerConfig(c, env, "quote")])),
+  whatsapp_pdf: !!(providerConfig("whatsapp", env) || {}).documentHeader });
 
 /* May this signed-in account send? Sign-up is open and the provider accounts are the operator's, so sending is off until
    SEND_ALLOWED_USERS names who may send: user ids or sign-in emails, comma-separated, or "*" for every signed-in account.
@@ -75,6 +116,8 @@ export function allowedToSend(user, env, owner = null) {
 }
 /* What a team member needs (hangtag_can) to send a bill or copy its link; the owner may always */
 export const SEND_PERMISSION = "create_sale";
+/* …and to send a quotation (whoever makes them) */
+export const QUOTE_PERMISSION = "create_order";
 
 /* An Indian mobile number as +91XXXXXXXXXX, or "" (the same rule as the app: domain/invoices/delivery.js) */
 export function mobileE164(phone) {
@@ -86,8 +129,8 @@ export const isEmail = (v) => /^[^\s@<>"',;]+@[^\s@<>"',;]+\.[^\s@<>"',;]+$/.tes
 
 /* Who the bill goes to: always the bill's customer as saved in Customers (hangtag_customers), never an address from the
    request or a copy kept on the bill. → { to } or a failure (422 missing_contact) */
-export function recipientFor(channel, { customer, sale }) {
-  if (!sale || !customer) return fail(422, "missing_contact", "This bill has no saved customer. Add the customer in Customers to send it.");
+export function recipientFor(channel, { customer, sale, what = "bill" }) {
+  if (!sale || !customer) return fail(422, "missing_contact", `This ${what} has no saved customer. Add the customer in Customers to send it.`);
   const name = str(customer.name).trim() || "This customer";
   if (channel === "email") {
     const e = str(customer.email).trim();
@@ -102,89 +145,227 @@ export const fromName = (shopName) => String(shopName || "Hangtag").replace(/["<
 /* ---------- the message, from the bill's saved figures (nothing is recalculated) ---------- */
 const num = (v) => (v == null || v === "" || isNaN(+v) ? 0 : +v);
 const r2 = (n) => Math.round(n * 100) / 100;
-export const rupees = (n) => { const v = r2(num(n)); return "₹" + v.toLocaleString("en-IN", { minimumFractionDigits: Number.isInteger(v) ? 0 : 2, maximumFractionDigits: 2 }); };
+/* The shop's region (settings.region, as src/shared/formatting/regions.js): currency mark, number style and time zone */
+export const MONEY_REGIONS = Object.freeze({ IN: ["₹", "en-IN", "Asia/Kolkata"], AE: ["AED ", "en-AE", "Asia/Dubai"], GB: ["£", "en-GB", "Europe/London"],
+  IE: ["€", "en-IE", "Europe/Dublin"], US: ["$", "en-US", "America/New_York"], SG: ["S$", "en-SG", "Asia/Singapore"] });
+const regionOf = (code) => MONEY_REGIONS[String(code || "").toUpperCase()] || MONEY_REGIONS.IN;
+export const moneyFor = (code) => { const [mark, loc] = regionOf(code); return (n) => { const v = r2(num(n)); return mark + v.toLocaleString(loc, { minimumFractionDigits: Number.isInteger(v) ? 0 : 2, maximumFractionDigits: 2 }); }; };
+export const rupees = moneyFor("IN");
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const oneLine = (s) => String(s ?? "").replace(/[\r\n\t]+/g, " ").trim();
-const PAY = { cash: "Cash", upi: "UPI", card: "Card" };
-const billDate = (t) => { const d = new Date(num(t)); return isNaN(d) ? "" : d.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }); };
+const PAY = { cash: "Cash", upi: "UPI", card: "Card", voucher: "Gift voucher" };
+const dateFor = (code) => { const [, loc, timeZone] = regionOf(code); return (t) => { const d = new Date(num(t)); return isNaN(d) ? "" : d.toLocaleString(loc, { timeZone, day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }); }; };;
+
+/* The bill's money rows: [label, amount as written, bold]. The same words, signs and order as the app's one bill document
+   (src/domain/documents/bill-content.js billContent + billRows: Subtotal, Item discounts, Bill discount, the taxable amount and
+   GST — after the total, as "Includes …", when prices include it — Round off, Total, Exchange credit and Amount due, each
+   payment with how it was paid, or what settled the bill, then the balance due, the change and returns), worked out from the
+   columns the app saved: tests/unit/bill-content.test.mjs runs the same bills through both and they must agree. Bills saved
+   before GST was split keep their one "GST" row. */
+const pctText = (v) => Math.round(num(v) * 100) / 100 + "%";
+function moneyRows({ s, items, pays, rets, rupees }) {
+  const R = [], add = (label, amount, sign = "", bold = false) => R.push([label, (sign || "") + rupees(amount), bold]);
+  const incl = s.tax_inclusive !== false, tax = num(s.tax_amount), total = num(s.total), credit = num(s.credit), due = Math.max(0, r2(total - credit));
+  // bills saved before discounts were split (both 0, or missing) show their one discount as the bill discount
+  const itemD = num(s.item_discount), billD = itemD || num(s.bill_discount) ? num(s.bill_discount) : r2(num(s.discount) - itemD);
+  // GST: CGST + SGST or IGST, with the rate when the whole bill has one (the bill's lines, else its own rate)
+  let gst = [];
+  if (tax > 0) {
+    if (!s.gst_mode || s.gst_mode === "none") gst = [["GST", tax]];
+    else {
+      const L = items || [], lineTax = L.length > 0 && L.every((i) => i.line_total != null);
+      const rates = [...new Set(L.filter((i) => num(i.cgst_amount) + num(i.sgst_amount) + num(i.igst_amount) > 0).map((i) => num(i.gst_rate)))];
+      const one = lineTax ? (rates.length === 1 && rates[0] ? rates[0] : num(s.tax_rate)) : num(s.tax_rate), rate = (f) => (one ? " " + pctText(one * f) : "");
+      gst = s.gst_mode === "inter" ? [["IGST" + rate(1), s.igst_amount]] : [["CGST" + rate(0.5), s.cgst_amount], ["SGST" + rate(0.5), s.sgst_amount]];
+    }
+  }
+  const taxable = s.taxable_amount != null ? num(s.taxable_amount) : r2(total - tax - num(s.round_off));
+  add("Subtotal", s.subtotal);
+  if (itemD > 0) add("Item discounts", itemD, "−");
+  if (billD > 0) add("Bill discount" + (s.bill_discount_type === "percent" && num(s.bill_discount_value) > 0 ? " " + pctText(s.bill_discount_value) : ""), billD, "−");
+  if (gst.length && !incl) { add("Taxable amount", taxable); gst.forEach(([l, a]) => add(l, a)); }
+  if (num(s.round_off)) add("Round off", Math.abs(num(s.round_off)), num(s.round_off) > 0 ? "+" : "−");
+  add("Total", total, "", true);
+  if (gst.length && incl) { add("Taxable amount", taxable); gst.forEach(([l, a]) => add("Includes " + l, a)); }
+  if (credit) { add("Exchange credit", credit, "−"); add("Amount due", due, "", true); }
+  pays.forEach((x) => R.push(["Paid by " + x.label + (x.note ? " (" + x.note + ")" : ""), rupees(x.amount), false]));
+  const paid = r2(pays.reduce((a, x) => a + x.amount, 0)), owed = Math.max(0, r2(due - paid)), change = r2(pays.reduce((a, x) => a + x.change, 0));
+  if (!pays.length && !owed) R.push([credit ? "Covered by the exchange credit" : "Nothing to pay", "", false]);
+  // part (or all) of the bill left on the customer's account: said plainly, never "paid" for the whole bill
+  if (owed) add("Balance due (on account)", owed, "", true);
+  if (change > 0) add("Change given", change);
+  const back = r2((rets || []).reduce((a, x) => a + num(x.value), 0)), refunded = r2((rets || []).reduce((a, x) => a + num(x.refund_amount), 0));
+  if (back) add("Returned items", back);
+  if (refunded) add("Refunded", refunded);
+  return { rows: R, owed };
+}
 
 /* The bill as shown in a message: { shop, contact, number, date, title, customer, lines, more, rows, paid, total } */
-export function billView({ sale, items, payments, shop, customer }) {
-  const s = sale || {}, p = shop || {}, incl = s.tax_inclusive !== false;
+export function billView({ sale, items, payments, returns, shop, customer, region }) {
+  const rupees = moneyFor(region), billDate = dateFor(region);
+  const s = sale || {}, p = shop || {};
   const lines = (items || []).slice().sort((a, b) => num(a.line_no) - num(b.line_no)).map((i) => ({
     name: oneLine(i.product_name), detail: oneLine(i.variant_label || [i.color, i.size].filter((x) => x != null && x !== "").join(" / ")),
     qty: num(i.quantity), rate: num(i.unit_price), gross: r2(num(i.quantity) * num(i.unit_price)), discount: num(i.discount_amount),
   }));
-  const gst = s.gst_mode
-    ? [["IGST", s.igst_amount], ["CGST", s.cgst_amount], ["SGST", s.sgst_amount]].filter(([, a]) => num(a) > 0)
-    : num(s.tax_amount) > 0 ? [["GST", s.tax_amount]] : [];
   const total = num(s.total), credit = num(s.credit), due = Math.max(0, r2(total - credit));
-  const pays = (payments || []).filter((x) => x.status !== "cancelled" && num(x.amount) > 0)
-    .map((x) => ({ label: PAY[x.method] || oneLine(x.method), amount: num(x.amount), ref: oneLine(x.reference), change: num(x.change_given) }));
-  // bills from before split payments have no payment rows: the bill's one method paid what was due
-  if (!pays.length && due > 0 && s.payment_method) pays.push({ label: PAY[s.payment_method] || oneLine(s.payment_method), amount: due, ref: "", change: 0 });
-  const rows = [["Subtotal", rupees(s.subtotal)]];
-  if (num(s.discount) > 0) rows.push(["Discount", "−" + rupees(s.discount)]);
-  gst.forEach(([l, a]) => rows.push([l + (incl ? " (included)" : ""), rupees(a)]));
-  if (num(s.round_off)) rows.push(["Round off", (num(s.round_off) > 0 ? "+" : "−") + rupees(Math.abs(num(s.round_off)))]);
-  rows.push(["Total", rupees(total), true]);
-  if (credit) { rows.push(["Exchange credit", "−" + rupees(credit)]); rows.push(["Amount paid", rupees(due), true]); }
-  pays.forEach((x) => rows.push(["Paid by " + x.label + (x.ref ? " (ref " + x.ref + ")" : ""), rupees(x.amount)]));
-  const change = r2(pays.reduce((a, x) => a + x.change, 0));
-  if (change > 0) rows.push(["Change given", rupees(change)]);
-  const paid = pays.length ? "paid by " + pays.map((x) => `${x.label} ${rupees(x.amount)}`).join(" + ")
-    : credit ? "covered by your exchange credit" : "nothing to pay";
+  // each payment, with how it was paid: cash received and change, the reference, the card's last digits, verified or not
+  const pays = (payments || []).filter((x) => x.status !== "cancelled" && num(x.amount) > 0).map((x) => {
+    const amount = num(x.amount), change = num(x.change_given), received = x.tendered == null ? r2(amount + change) : num(x.tendered);
+    const note = [x.method === "cash" && change ? `received ${rupees(received)} · change ${rupees(change)}` : x.reference ? "ref " + oneLine(x.reference) : "",
+      x.card_last4 ? "card ••" + oneLine(x.card_last4) : "", x.verification === "verified" ? "verified" : x.verification === "unverified" ? "unverified" : ""].filter(Boolean).join(" · ");
+    return { label: PAY[x.method] || oneLine(x.method), amount, change, note };
+  });
+  // bills from before split payments have no payment rows: the bill's one method paid what was due (less what is on account)
+  const onAcct = num(s.due_amount) > 0 ? r2(num(s.due_amount)) : 0;
+  if (!pays.length && r2(due - onAcct) > 0 && s.payment_method && s.payment_method !== "due") pays.push({ label: PAY[s.payment_method] || oneLine(s.payment_method), amount: r2(due - onAcct), change: 0, note: "" });
+  const { rows, owed } = moneyRows({ s, items, pays, rets: returns, rupees });
+  const paid = (pays.length ? "paid by " + pays.map((x) => `${x.label} ${rupees(x.amount)}`).join(" + ")
+    : credit ? "covered by your exchange credit" : owed ? "" : "nothing to pay") + (owed ? (pays.length ? ", " : "") + rupees(owed) + " on your account" : "");
   return {
     shop: oneLine(p.shop_name) || "Our shop", contact: [[p.address, p.city, p.state].map(oneLine).filter(Boolean).join(", "), p.phone ? "Phone " + oneLine(p.phone) : "", p.gstin ? "GSTIN " + oneLine(p.gstin).toUpperCase() : ""].filter(Boolean),
-    number: oneLine(s.bill_no || s.id), date: billDate(s.timestamp), title: gst.length ? "Tax invoice" : "Bill", customer: oneLine(customer && customer.name),
+    number: oneLine(s.bill_no || s.id), date: billDate(s.timestamp), title: num(s.tax_amount) > 0 ? "Tax Invoice" : "Bill", customer: oneLine(customer && customer.name),
     lines: lines.slice(0, LIMITS.lines), more: Math.max(0, lines.length - LIMITS.lines), rows, paid, total: rupees(total),
   };
 }
 const lineText = (l) => `${l.name}${l.detail ? " (" + l.detail + ")" : ""} × ${l.qty} = ${rupees(l.gross)}${l.discount ? ` (discount −${rupees(l.discount)})` : ""}`;
 
-/* The message for a channel: email { subject, html, text } · SMS { text } · WhatsApp { text, params } (template values
-   {{1}} customer, {{2}} shop, {{3}} bill number, {{4}} amount) */
+/* The message for a channel: email { subject, html, text, attachments? } · SMS { text } · WhatsApp { text, params,
+   document? } (template values {{1}} customer, {{2}} shop, {{3}} bill number, {{4}} amount).
+   With the bill's one invoice PDF (canonical invoice): data.pdf { base64, filename } goes with an email as its only
+   attachment; data.pdfLink says the link opens that PDF (SMS can't carry a file: it carries the link, and never says
+   "attached"); data.document { link, filename } is the PDF for a WhatsApp template with a document header. */
 export function billMessage(channel, data) {
+  const rupees = moneyFor(data && data.region);
   const B = billView(data), more = B.more ? [`… and ${B.more} more items`] : [];
-  const link = data && data.link ? String(data.link) : "";
+  const link = data && data.link ? String(data.link) : "", pdfLink = !!(data && data.pdfLink);
   if (channel === "sms") {
     // one message where possible: the link is kept whole; the words before it are shortened when space is short
-    const head = `${B.shop}: Bill ${B.number} for ${B.total}, ${B.paid}.`, tail = link ? ` Invoice: ${link}` : " Thank you for shopping with us!";
+    const head = `${B.shop}: Bill ${B.number} for ${B.total}, ${B.paid}.`, tail = link ? (pdfLink ? ` Download your bill (PDF): ${link}` : ` Invoice: ${link}`) : " Thank you for shopping with us!";
     const t = head + tail;
     return { text: t.length <= LIMITS.sms ? t : link ? head.slice(0, LIMITS.sms - tail.length - 1) + "…" + tail : t.slice(0, LIMITS.sms - 1) + "…" };
   }
   if (channel === "whatsapp") {
-    const text = [`*${B.shop}*`, `${B.title} ${B.number} · ${B.date}`, "", ...B.lines.map(lineText), ...more, "", ...B.rows.map(([l, v, b]) => (b ? `*${l}: ${v}*` : `${l}: ${v}`)), ...(link ? ["", `Invoice: ${link}`] : [])].join("\n");
+    const doc = data && data.document && data.document.link ? { link: String(data.document.link), filename: invoiceFileName(data.document.filename || B.number) } : null;
+    const text = [`*${B.shop}*`, `${B.title} ${B.number} · ${B.date}`, "", ...B.lines.map(lineText), ...more, "", ...B.rows.map(([l, v, b]) => (v ? (b ? `*${l}: ${v}*` : `${l}: ${v}`) : l)),
+      ...(doc ? ["", "Your bill is attached as a PDF."] : link ? ["", `${pdfLink ? "Download your bill (PDF)" : "Invoice"}: ${link}`] : [])].join("\n");
     // the approved template has {{1}}..{{4}}; a template with a 5th value for the link is used when WHATSAPP_LINK_PARAM=on
     const params = [B.customer || "Customer", B.shop, B.number, B.total, ...(link && data.linkParam ? [link] : [])];
-    return { text: text.slice(0, LIMITS.whatsapp), params: params.map((x) => x.slice(0, 200)) };
+    return { text: text.slice(0, LIMITS.whatsapp), params: params.map((x) => x.slice(0, 200)), ...(doc ? { document: doc } : {}) };
   }
   const subject = `Your bill ${B.number} from ${B.shop} — ${B.total}`.slice(0, 200);
   const td = 'style="padding:6px 0;border-bottom:1px solid #eee;font-size:14px;color:#222"', tdr = 'style="padding:6px 0;border-bottom:1px solid #eee;font-size:14px;color:#222;text-align:right;white-space:nowrap"';
   const items = B.lines.map((l) => `<tr><td ${td}><b>${esc(l.name)}</b>${l.detail ? `<br><span style="color:#666;font-size:13px">${esc(l.detail)}</span>` : ""}${l.discount ? `<br><span style="color:#2e7d32;font-size:13px">Discount −${esc(rupees(l.discount))}</span>` : ""}</td><td ${tdr}>${l.qty} × ${esc(rupees(l.rate))}</td><td ${tdr}>${esc(rupees(l.gross))}</td></tr>`).join("")
     + (B.more ? `<tr><td ${td} colspan="3">… and ${B.more} more items</td></tr>` : "");
   const money = B.rows.map(([l, v, b]) => `<tr><td style="padding:3px 0;font-size:14px;color:#222${b ? ";font-weight:700" : ""}">${esc(l)}</td><td style="padding:3px 0;font-size:14px;color:#222;text-align:right${b ? ";font-weight:700" : ""}">${esc(v)}</td></tr>`).join("");
-  const html = `<!doctype html><html><body style="margin:0;background:#f5f4f1;font-family:Arial,Helvetica,sans-serif">
+  // the logo row (an inline picture the message carries, data.logo from emailLogo) — and the same email without it, in case
+  // the email service turns the picture down (the receipt still goes)
+  // with the invoice PDF, the PDF is the email's one attachment: no inline logo (the PDF carries it) and no second try
+  // without attachments (an email that drops the PDF would not be the invoice)
+  const P = data && data.pdf && data.pdf.base64 ? { base64: String(data.pdf.base64), filename: invoiceFileName(data.pdf.filename || B.number) } : null;
+  const L = P ? null : data && data.logo, logoRow = L ? `<tr><td style="padding-bottom:10px;text-align:${L.align}"><img src="cid:${LOGO_CID}" alt="${esc(B.shop)}" style="max-height:64px;max-width:180px;display:inline-block"></td></tr>` : "";
+  const page = (top) => `<!doctype html><html><body style="margin:0;background:#f5f4f1;font-family:Arial,Helvetica,sans-serif">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f4f1;padding:24px 12px"><tr><td align="center">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;padding:24px">
-<tr><td style="font-size:20px;font-weight:700;color:#111">${esc(B.shop)}</td></tr>
+${top}<tr><td style="font-size:20px;font-weight:700;color:#111">${esc(B.shop)}</td></tr>
 ${B.contact.length ? `<tr><td style="font-size:13px;color:#666;padding-top:2px">${B.contact.map(esc).join(" · ")}</td></tr>` : ""}
-<tr><td style="padding-top:18px;font-size:15px;color:#222">${B.customer ? `Hello ${esc(B.customer)},<br>` : ""}Thank you for shopping with us. Here is your ${esc(B.title.toLowerCase())}.</td></tr>
+<tr><td style="padding-top:18px;font-size:15px;color:#222">${B.customer ? `Hello ${esc(B.customer)},<br>` : ""}Thank you for shopping with us. Here is your ${esc(B.title.toLowerCase())}.${P ? ` It is attached as a PDF (${esc(P.filename)}).` : ""}</td></tr>
 <tr><td style="padding-top:14px;font-size:13px;color:#666">${esc(B.title)} <b style="color:#222">${esc(B.number)}</b> · ${esc(B.date)}</td></tr>
 <tr><td style="padding-top:10px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${items}</table></td></tr>
 <tr><td style="padding-top:10px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${money}</table></td></tr>
 <tr><td style="padding-top:22px;font-size:11px;color:#999">Sent by ${esc(B.shop)} with Hangtag. Reply to this email to contact the shop.</td></tr>
 </table></td></tr></table></body></html>`;
-  const text = [B.shop, ...B.contact, "", `${B.customer ? `Hello ${B.customer},\n` : ""}Thank you for shopping with us. Here is your ${B.title.toLowerCase()}.`, "",
-    `${B.title} ${B.number} · ${B.date}`, "", ...B.lines.map(lineText), ...more, "", ...B.rows.map(([l, v]) => `${l}: ${v}`)].join("\n");
+  const text = [B.shop, ...B.contact, "", `${B.customer ? `Hello ${B.customer},\n` : ""}Thank you for shopping with us. Here is your ${B.title.toLowerCase()}.${P ? ` It is attached as a PDF (${P.filename}).` : ""}`, "",
+    `${B.title} ${B.number} · ${B.date}`, "", ...B.lines.map(lineText), ...more, "", ...B.rows.map(([l, v]) => (v ? `${l}: ${v}` : l))].join("\n");
+  if (P) return { subject, html: page(""), text, attachments: [{ filename: P.filename, content: P.base64, content_type: "application/pdf" }] };
+  if (!L) return { subject, html: page(""), text };
+  return { subject, html: page(logoRow), text, plainHtml: page(""),
+    attachments: [{ filename: `logo.${L.ext}`, content: L.base64, content_type: L.contentType, content_id: LOGO_CID }] };
+}
+
+/* The shop's logo as it prints on a page the customer opens — the email, the online receipt (hangtag_meta "logo" value, the
+   shop's settings): none when the shop hid it (Settings → Bills & Documents → Logo), there is none, or it isn't a picture
+   of a sane size; on the side the shop chose ("auto" → left, as on an A4 document) → { url, type, base64, align } | null */
+export function shopLogo(meta, settings) {
+  const s = settings && typeof settings === "object" ? settings : {};
+  if (s.docLogo === false) return null;
+  const data = meta && typeof meta === "object" && typeof meta.data === "string" ? meta.data : "";
+  const m = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(data);
+  if (!m || m[2].length > 400000) return null;
+  return { url: data, type: m[1], base64: m[2], align: ["left", "center", "right"].includes(s.docLogoAlign) ? s.docLogoAlign : "left" };
+}
+/* ...in an email: attached inline (cid:shop-logo) — email apps block pictures written into the message
+   → { base64, contentType, ext, align } | null */
+export const LOGO_CID = "shop-logo";
+export function emailLogo(meta, settings) {
+  const L = shopLogo(meta, settings);
+  return L && { base64: L.base64, contentType: "image/" + L.type, ext: L.type === "jpeg" ? "jpg" : L.type, align: L.align };
+}
+
+/* ---------- a quotation (sent before anything is sold: never an invoice) ---------- */
+/* What the function reads of a quotation and its lines (with the caller's session) */
+export const ORDER_COLUMNS = "id,kind,no,status,customer_id,customer,notes,terms,valid_until,total,t";
+export const ORDER_ITEM_COLUMNS = "line_no,name,variant_label,unit,qty,price,disc";
+const UNIT_SYM = { pcs: "", box: " box", pack: " pack", dozen: " dozen", kg: " kg", g: " g", l: " L", ml: " ml", m: " m" };
+const day = (v) => { const s = str(v).slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return ""; const d = new Date(s + "T12:00:00Z"); return isNaN(d) ? "" : d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric" }); };
+const discText = (d) => { if (!d || typeof d !== "object" || !(num(d.value) > 0)) return ""; return d.type === "fixed" ? "−" + rupees(d.value) : "−" + num(d.value) + "%"; };
+/* The quotation as shown in a message: { shop, contact, number, date, validUntil, customer, lines, more, total, notes, terms } */
+export function quoteView({ order, items, shop, customer, region }) {
+  const rupees = moneyFor(region), billDate = dateFor(region);
+  const o = order || {}, p = shop || {};
+  const lines = (items || []).slice().sort((a, b) => num(a.line_no) - num(b.line_no)).map((i) => ({
+    name: oneLine(i.name), detail: oneLine(i.variant_label), qty: num(i.qty), unit: UNIT_SYM[i.unit] || "", rate: num(i.price), discount: discText(i.disc) }));
+  const cust = (customer && customer.name) || (o.customer && typeof o.customer === "object" && o.customer.name) || "";
+  return {
+    shop: oneLine(p.shop_name) || "Our shop", contact: [[p.address, p.city, p.state].map(oneLine).filter(Boolean).join(", "), p.phone ? "Phone " + oneLine(p.phone) : "", p.gstin ? "GSTIN " + oneLine(p.gstin).toUpperCase() : ""].filter(Boolean),
+    number: oneLine(o.no || o.id), date: billDate(o.t), validUntil: day(o.valid_until), customer: oneLine(cust),
+    lines: lines.slice(0, LIMITS.lines), more: Math.max(0, lines.length - LIMITS.lines), total: o.total == null ? "" : rupees(o.total),
+    notes: String(o.notes || "").slice(0, LIMITS.notes), terms: String(o.terms || "").slice(0, LIMITS.notes),
+  };
+}
+const quoteLine = (l) => `${l.name}${l.detail ? " (" + l.detail + ")" : ""} × ${l.qty}${l.unit} @ ${rupees(l.rate)}${l.discount ? ` (discount ${l.discount})` : ""}`;
+/* The message for a quotation: email { subject, html, text } · WhatsApp { text, params } (the quotation template's values
+   {{1}} customer, {{2}} shop, {{3}} quotation number, {{4}} amount, {{5}} valid until). Headed QUOTATION, never a bill. */
+export function quoteMessage(channel, data) {
+  const rupees = moneyFor(data && data.region);
+  const Q = quoteView(data), more = Q.more ? [`… and ${Q.more} more items`] : [];
+  const validity = Q.validUntil ? `Valid until ${Q.validUntil}` : "";
+  if (channel === "whatsapp") {
+    const text = [`*${Q.shop}*`, `QUOTATION ${Q.number} · ${Q.date}`, validity, "", ...Q.lines.map(quoteLine), ...more, "", ...(Q.total ? [`*Total: ${Q.total}*`] : []),
+      ...(Q.notes ? ["", Q.notes] : []), ...(Q.terms ? ["", "Terms: " + Q.terms] : [])].filter((x, i, a) => x !== "" || a[i - 1] !== "").join("\n");
+    const params = [Q.customer || "Customer", Q.shop, Q.number, Q.total || "-", Q.validUntil || "-"];
+    return { text: text.slice(0, LIMITS.whatsapp), params: params.map((x) => x.slice(0, 200)) };
+  }
+  const subject = `Quotation ${Q.number} from ${Q.shop}${Q.total ? " — " + Q.total : ""}`.slice(0, 200);
+  const td = 'style="padding:6px 0;border-bottom:1px solid #eee;font-size:14px;color:#222"', tdr = 'style="padding:6px 0;border-bottom:1px solid #eee;font-size:14px;color:#222;text-align:right;white-space:nowrap"';
+  const items = Q.lines.map((l) => `<tr><td ${td}><b>${esc(l.name)}</b>${l.detail ? `<br><span style="color:#666;font-size:13px">${esc(l.detail)}</span>` : ""}</td><td ${tdr}>${l.qty}${esc(l.unit)} × ${esc(rupees(l.rate))}</td><td ${tdr}>${esc(l.discount || "")}</td></tr>`).join("")
+    + (Q.more ? `<tr><td ${td} colspan="3">… and ${Q.more} more items</td></tr>` : "");
+  const block = (label, t) => t ? `<tr><td style="padding-top:14px;font-size:13px;color:#222"><b>${esc(label)}</b><br>${esc(t).replace(/\r?\n/g, "<br>")}</td></tr>` : "";
+  const html = `<!doctype html><html><body style="margin:0;background:#f5f4f1;font-family:Arial,Helvetica,sans-serif">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f4f1;padding:24px 12px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border-radius:12px;padding:24px">
+<tr><td style="font-size:20px;font-weight:700;color:#111">${esc(Q.shop)}</td></tr>
+${Q.contact.length ? `<tr><td style="font-size:13px;color:#666;padding-top:2px">${Q.contact.map(esc).join(" · ")}</td></tr>` : ""}
+<tr><td style="padding-top:18px;font-size:22px;font-weight:700;letter-spacing:2px;color:#111">QUOTATION</td></tr>
+<tr><td style="padding-top:4px;font-size:13px;color:#666">No. <b style="color:#222">${esc(Q.number)}</b> · ${esc(Q.date)}${validity ? " · " + esc(validity) : ""}</td></tr>
+<tr><td style="padding-top:14px;font-size:15px;color:#222">${Q.customer ? `Hello ${esc(Q.customer)},<br>` : ""}Here is our quotation. Prices are as quoted; nothing has been billed.</td></tr>
+<tr><td style="padding-top:10px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${items}</table></td></tr>
+${Q.total ? `<tr><td style="padding-top:10px;font-size:16px;font-weight:700;color:#111;text-align:right">Total ${esc(Q.total)}</td></tr>` : ""}
+${block("Notes", Q.notes)}${block("Terms & conditions", Q.terms)}
+<tr><td style="padding-top:22px;font-size:11px;color:#999">This is a quotation, not a bill. Sent by ${esc(Q.shop)} with Hangtag. Reply to this email to contact the shop.</td></tr>
+</table></td></tr></table></body></html>`;
+  const text = [Q.shop, ...Q.contact, "", `QUOTATION ${Q.number} · ${Q.date}`, validity, "", `${Q.customer ? `Hello ${Q.customer},\n` : ""}Here is our quotation. Prices are as quoted; nothing has been billed.`, "",
+    ...Q.lines.map(quoteLine), ...more, ...(Q.total ? ["", `Total: ${Q.total}`] : []), ...(Q.notes ? ["", "Notes: " + Q.notes] : []), ...(Q.terms ? ["", "Terms & conditions: " + Q.terms] : []),
+    "", "This is a quotation, not a bill."].join("\n");
   return { subject, html, text };
 }
 
 /* ---------- the delivery record ----------
    A row is written as "pending" before the provider is called (it holds the attempt's place under the hourly limit),
    then finished as "sent" (only with the provider's message id) or "failed". */
-export const reservationRow = ({ ownerId, saleId, channel, to, provider, auto }) =>
-  ({ owner_id: ownerId, sale_id: saleId, channel, recipient: String(to).slice(0, 200), status: "pending", provider: provider || null, mode: auto ? "auto" : "manual" });
+export const reservationRow = ({ ownerId, saleId, orderId, requestId, invoiceId, channel, to, provider, auto }) =>
+  ({ owner_id: ownerId, sale_id: saleId || null, channel, recipient: String(to).slice(0, 200), status: "pending", provider: provider || null, mode: auto ? "auto" : "manual",
+    ...(orderId ? { order_id: orderId } : {}), ...(requestId ? { request_id: requestId } : {}), ...(invoiceId ? { invoice_id: invoiceId } : {}) });
 /* result: a provider's { ok, id, message } → the columns that finish the row */
 export function deliveryOutcome(result) {
   const sent = !!(result && result.ok && result.id);
@@ -194,6 +375,56 @@ export function deliveryOutcome(result) {
 /* The finished row for one attempt */
 export const deliveryRow = ({ result, ...r }) => ({ ...reservationRow(r), ...deliveryOutcome(result) });
 
+/* ---------- the bill's one invoice PDF (canonical invoice) ----------
+   The phone makes the bill's PDF with the app's own invoice document (src/shared/utils/pdf.js docPdfBytes, the file the
+   shop downloads and prints) and registers it once; the first copy registered is the bill's invoice for good
+   (hangtag_invoices, one row per bill; the file in the private bucket). The function takes a copy only for a saved, not
+   cancelled bill of the caller's shop, and only when the copy shows that bill's number and total. Every channel then uses
+   that file: email attaches it, WhatsApp sends it as a document (or its link), SMS sends the link to download it. */
+export const INVOICE_BUCKET = "hangtag-invoices";
+export const INVOICE_COLUMNS = "id,sale_id,number,total,sha256,size_bytes,storage_path,created_at";
+/* "Invoice-<number>.pdf", safe in a header and a file system */
+export const invoiceFileName = (number) => `Invoice-${String(number || "bill").replace(/^Invoice-/, "").replace(/\.pdf$/i, "").replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "bill"}.pdf`;
+/* <shop>/<sha256>.pdf: the same file is stored once, whoever registers it */
+export const invoicePath = (ownerId, sha256) => `${ownerId}/${sha256}.pdf`;
+/* base64 → bytes, or null when it isn't base64 */
+export function pdfFromBase64(b64) {
+  const s = str(b64).replace(/\s+/g, "");
+  if (!s || s.length % 4 || !/^[A-Za-z0-9+/]+={0,2}$/.test(s)) return null;
+  try { const bin = atob(s), out = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; } catch { return null; }
+}
+/* bytes → base64 (in pieces: a whole file at once overflows the call stack) */
+export function base64Of(bytes) {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+/* The text a PDF made by the app's writer shows: every "(…) Tj" string, unescaped (the writer never compresses) */
+export function pdfTexts(bytes) {
+  let s = ""; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return [...s.matchAll(/\(((?:\\[\s\S]|[^\\)])*)\)\s*Tj/g)].map((m) => m[1].replace(/\\([\\()])/g, "$1"));
+}
+/* Is this copy the bill's invoice? A PDF, at most 2 MB, showing the saved bill's number and its total (in any money format:
+   the digits of the amount, with or without paise). → { ok } or a refusal. */
+export function checkInvoicePdf(bytes, sale) {
+  if (!bytes || bytes.length < 200) return fail(400, "bad_pdf", "That isn't an invoice PDF.");
+  if (bytes.length > LIMITS.pdfBytes) return fail(413, "too_large", "That invoice PDF is too big (2 MB at most).");
+  const head = String.fromCharCode(...bytes.subarray(0, 5)), tail = String.fromCharCode(...bytes.subarray(Math.max(0, bytes.length - 32)));
+  if (head !== "%PDF-" || !tail.includes("%%EOF")) return fail(400, "bad_pdf", "That isn't an invoice PDF.");
+  const texts = pdfTexts(bytes), number = str(sale && sale.bill_no).trim();
+  if (!number || !texts.some((t) => t.includes(number))) return fail(422, "invoice_mismatch", "That PDF isn't this bill's invoice: its number isn't on it.");
+  const total = r2(num(sale.total)), digits = (t) => t.replace(/\D/g, ""), want = [String(Math.round(total * 100)), ...(Number.isInteger(total) ? [String(total)] : [])];
+  if (!texts.some((t) => /\d/.test(t) && want.includes(digits(t)))) return fail(422, "invoice_mismatch", "That PDF isn't this bill's invoice: its total isn't on it.");
+  return { ok: true };
+}
+/* The SHA-256 of a file, as hex */
+export async function sha256Hex(bytes) {
+  const h = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return [...h].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+/* What the app is told about an invoice */
+export const invoiceView = (row) => row && { id: row.id, number: row.number, sha256: row.sha256, size: row.size_bytes, filename: invoiceFileName(row.number), createdAt: row.created_at };
+
 /* ---------- secure invoice links ---------- */
 export const LINK_DAYS = 366;
 /* An unguessable token: 32 random bytes, base64url (43 characters) */
@@ -202,17 +433,59 @@ export function newToken() {
   crypto.getRandomValues(b);
   return btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
-/* The public page that shows one bill, from RECEIPT_URL (e.g. https://shop.example/receipt.html); the token goes after
-   "#", so it never reaches a server log. "" when RECEIPT_URL isn't set (messages then go without a link). */
+/* The public receipt page configured on the server. Production must use HTTPS; loopback HTTP is allowed for local testing.
+   It must name receipt.html and carry no credentials, query or fragment. */
+export function requestedReceiptBase(value) {
+  const raw = str(value).trim();
+  if (!raw || raw.length > LIMITS.receiptUrl) return "";
+  try {
+    const u = new URL(raw);
+    const loopback = u.hostname === "localhost" || u.hostname === "127.0.0.1" || u.hostname === "[::1]";
+    if ((u.protocol !== "https:" && !(u.protocol === "http:" && loopback)) || u.username || u.password || u.search || u.hash || !/\/receipt\.html$/.test(u.pathname)) return "";
+    return u.href;
+  } catch { return ""; }
+}
+/* Only the deployment's fixed RECEIPT_URL is trusted. The token goes after "#", so it never reaches the static host or its logs. */
 export function receiptBase(env) {
-  const u = str(env.RECEIPT_URL).trim();
-  return /^https:\/\/[^\s#?]+$/.test(u) ? u : "";
+  return requestedReceiptBase(env && env.RECEIPT_URL);
 }
 export const linkUrl = (base, token) => (base && token ? base + "#" + token : "");
 export const linkRow = ({ ownerId, saleId, token, now = Date.now() }) =>
   ({ token, owner_id: ownerId, sale_id: saleId, expires_at: new Date(now + LINK_DAYS * 864e5).toISOString() });
 /* A link that still works: not revoked, not expired */
 export const liveLink = (row, now = Date.now()) => !!row && !row.revoked_at && Date.parse(row.expires_at) > now;
+
+/* ---------- a provider that refused: worth trying again, or not ----------
+   The providers' own codes (WhatsApp Cloud API, Twilio, Resend): "temporary" — the service is busy, limited or down: try
+   again later; "recipient" — this customer's number or address can't receive it (not on WhatsApp, not a mobile, opted
+   out, invalid): fix the customer's details, trying again won't help; "setup" — the shop's provider set-up is the problem
+   (template, token, sender, domain, permissions): the owner fixes it. Anything else a provider refuses (4xx) is final. */
+const META_TEMPORARY = ["130429", "131056", "131000", "131016", "2", "4", "80007", "133004", "133005"];
+const META_RECIPIENT = ["131026", "131021"];
+const TWILIO_TEMPORARY = ["20429", "20500", "20503", "30001", "63018"];
+const TWILIO_RECIPIENT = ["21211", "21614", "21610", "21612", "21217", "63003", "63024"];
+export function failureKind(provider, result) {
+  const st = +(result && result.status) || 0, code = String(result && result.code != null ? result.code : ""), msg = String(result && result.message || "");
+  if (code === "no_template" || code === "no_provider") return "setup";
+  if (!st || st === 429 || st >= 500) return "temporary";
+  if (provider === "meta") return META_TEMPORARY.includes(code) ? "temporary" : META_RECIPIENT.includes(code) ? "recipient" : "setup";
+  if (provider === "twilio") return TWILIO_TEMPORARY.includes(code) ? "temporary" : TWILIO_RECIPIENT.includes(code) ? "recipient" : "setup";
+  if (provider === "resend") {
+    if (/rate_limit|internal_server_error|application_error/.test(code)) return "temporary";
+    if (/validation_error|invalid_to|invalid_recipient/.test(code) && /\bto\b|recipient|email address|invalid email/i.test(msg) && !/\bfrom\b|domain|sender/i.test(msg)) return "recipient";
+    return "setup";
+  }
+  return "setup";
+}
+/* The function's answer to a refusal of that kind → { status, body } (temporary: the app tries again; the others are final) */
+export function failureAnswer(channel, kind, error) {
+  const label = CHANNEL_LABELS[channel] || channel, why = String(error || "not accepted").slice(0, 200);
+  if (kind === "recipient") return { status: 422, body: { ok: false, status: "failed", error: "bad_recipient",
+    message: `The ${label} service can't deliver to this customer's ${channel === "email" ? "email address" : "number"} (${why}). Check the customer's details.` } };
+  if (kind === "setup") return { status: 422, body: { ok: false, status: "failed", error: "provider_setup",
+    message: `The ${label} set-up needs the shop owner's attention (${why}). Sending again won't help until it is fixed.` } };
+  return { status: 502, body: { ok: false, status: "failed", error: "provider_error", message: `The ${label} service didn't accept the message: ${why}` } };
+}
 
 /* ---------- delivery status from the providers ---------- */
 /* A provider's report on one message → "delivered" | "failed" | null (nothing new) */

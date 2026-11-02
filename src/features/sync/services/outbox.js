@@ -1,7 +1,7 @@
 // Upload queue: ordered, retried, never loses work. The rules (one upload per record, order, dependencies, which failures
 // go to review) are in domain/sync/queue-rules.js.
 import { store } from '../../../shared/state/store.js';
-import { canDiscard, failureAction, isBlocked, mergeIntoQueue, numberTaken, ORDERED_TYPES, recordKey, uploadAllowed, waitingKeys } from '../../../domain/sync/queue-rules.js';
+import { canDiscard, failureAction, isBlocked, mergeIntoQueue, mergeProductUpload, numberTaken, ORDERED_TYPES, recordKey, uploadAllowed, waitingKeys } from '../../../domain/sync/queue-rules.js';
 import { sbSessionOk } from '../../auth/services/auth-settings.js';
 import { D, invalidate } from '../../inventory/services/ledger.js';
 import { products } from '../../products/services/catalog.js';
@@ -11,10 +11,15 @@ import { persistLocal, saveLastSync, saveReturns, saveSbQueue, saveSyncReview } 
 import { logger } from '../../../shared/logging/logger.js';
 import { toast } from '../../../shared/components/toast.js';
 import { ACCESS_LOST_TEXT, can, denied, isMember, notAllowedText, refreshAccess } from '../../shop/services/access.js';
-import { deviceDocNo, nextBillNo } from '../../sales/services/totals.js';
+import { deviceTill, moveTillAfterConflict, nextNumber, numberingFor } from '../../sales/services/doc-numbers.js';
+import { parseDocNo } from '../../../domain/documents/numbering.js';
 import { requestSignOut } from '../../../shared/ui/session-actions.js';
 import { orderRepository } from '../../orders/repositories/order-repository.js';
 import { purchaseItemOff, purchaseItemOn } from '../../inventory/services/purchase-state.js';
+import { bizRepository } from '../../commerce/repositories/biz-repository.js';
+import { noteSubscriptionRefused, subscriptionLocked } from '../../billing/services/subscription.js';
+import { attrIdsOf } from '../../../domain/catalog/attributes.js';
+import { noteSent } from './sync-ledger.js';
 
 /* Add work for the cloud; identical product uploads are merged so the queue stays short */
 
@@ -27,13 +32,19 @@ export function enqueue(item){
     const it={...item,tries:0,err:notAllowedText("upload this")};
     toReview(it,{code:"PERMISSION"}); toast(it.err+" It's in the sync review."); renderSync(); return;
   }
+  // a product's waiting upload takes this edit too (not one being sent: it may have read the product before this edit).
+  // It waits for the shop's fields it uses that are still on their way (the database refuses a value for a field it lacks).
   if(item.type==="prod"){
-    const ex=store.sbOfflineQueue.find(q=>q.type==="prod"&&q.id===item.id&&!q.tries);
-    if(ex){ex.delV=[...new Set([...(ex.delV||[]),...(item.delV||[])])];saveSbQueue();return}
+    const need=attrIdsOf(products().find(p=>p.id===item.id)).map(id=>"biz:at:"+id);
+    if(need.length) item={...item,need};
+    const ex=store.sbOfflineQueue.find(q=>q.type==="prod"&&q.id===item.id&&!q.tries&&!q.sending);
+    if(ex){const m=mergeProductUpload(ex,item);delete ex.fields;delete ex.vars;Object.assign(ex,m);saveSbQueue();return}
   }
   // one waiting upload of the settings / logo is enough (it sends the latest value) — but not one already uploading:
   // that one may have read the old value, so a change made meanwhile gets its own upload
   if((item.type==="settings"||item.type==="logo")&&store.sbOfflineQueue.some(q=>q.type===item.type&&!q.tries&&!q.sending)){return}
+  if(item.type==="docimg"&&store.sbOfflineQueue.some(q=>q.type==="docimg"&&q.kind===item.kind&&!q.tries&&!q.sending)){return}
+  if(item.type==="autolog"&&store.sbOfflineQueue.some(q=>q.type==="autolog"&&!q.tries&&!q.sending)){return}   // one upload carries the whole log
   // one waiting upload per record (a bill, return, customer, move, event…): a later change replaces it where it stands
   store.sbOfflineQueue=mergeIntoQueue(store.sbOfflineQueue,item);saveSbQueue();
 }
@@ -56,7 +67,8 @@ export async function sendItem(item){
     await cloud.setSaleVoid(item.id, item.isVoid, item.reason);
   } else if(item.type === "prod"){
     const i = products().findIndex(p=>p.id===item.id);
-    if(i > -1) await cloud.saveProduct(products()[i], i);
+    // an edit: only what it changed (another till's edit of other fields stays); a new product, or one sent whole: all of it
+    if(i > -1) await (Array.isArray(item.fields) ? cloud.patchProduct(products()[i], i, item.fields, item.vars || []) : cloud.saveProduct(products()[i], i));
     const del = (item.delV||[]).filter(id=>!(i>-1 && products()[i].variants.some(v=>v.id===id)));
     if(del.length) await cloud.deleteVariants(del);
   } else if(item.type === "proddel"){
@@ -68,7 +80,9 @@ export async function sendItem(item){
   } else if(item.type === "return"){
     await cloud.saveReturn(item.ret);
   } else if(item.type === "cust"){
-    await cloud.saveCustomer(item.cust);
+    // an edit: only the fields it changed (another till's change to other fields stays); a new customer: whole
+    if(Array.isArray(item.fields) && item.fields.length) await cloud.patchCustomer(item.cust, item.fields);
+    else await cloud.saveCustomer(item.cust);
   } else if(item.type === "event"){
     await cloud.saveEvent(item.ev);
   } else if(item.type === "eventdel"){
@@ -81,6 +95,10 @@ export async function sendItem(item){
     await cloud.saveSettings(store.settings);
   } else if(item.type === "logo"){
     await cloud.saveLogo(store.logo || "");
+  } else if(item.type === "autolog"){
+    await cloud.saveAutomationLog(store.dev, (store.autoLog || []).filter(e => e.dev === store.dev));
+  } else if(item.type === "docimg"){
+    await cloud.saveDocImage(item.kind, (store.docImages || {})[item.kind] || "");
   } else if(item.type === "allsales"){
     await cloud.saveAllSales(D().sales);
   } else if(item.type === "collection"){
@@ -101,6 +119,20 @@ export async function sendItem(item){
     await cloud.cancelPurchase(item.id, item.reason, item.dev, item.t);
   } else if(item.type === "spay"){
     await cloud.saveSupplierPayment(item.pay);
+  } else if(item.type === "table"){
+    await cloud.saveTable(item.table);
+  } else if(item.type === "tsession"){
+    await cloud.saveTableSession(item.session);
+  } else if(item.type === "ostatus"){
+    // a table order moved along by the kitchen: the cloud's new version is kept for this device's next save of it
+    const r = await cloud.setOrderStatus(item.id, item.status);
+    if(r.version) orderRepository().saved(item.id, r.version);
+  } else if(item.type === "biz"){
+    // the commerce batch (section 3r): the record as it is now; a purchase order keeps the version the cloud now holds
+    const rec = bizRepository().get(item.kind, item.id);
+    if(rec){ const r = await cloud.saveBiz(item.kind, rec); if(r && r.version) bizRepository().saved(item.kind, item.id, r.version); }
+  } else if(item.type === "bizdel"){
+    await cloud.deleteBiz(item.kind, item.id);
   } else if(item.type === "catdel"){
     // left over from the old size-only version: nothing to do with the new tables
   }
@@ -120,6 +152,7 @@ function toReview(item, err){
 export async function flushSbQueueOnce(){
   if(!store.sbClient || store.sbStatus !== "connected" || !store.sbOfflineQueue.length) return;
   if(!(await sbSessionOk())) return;   // keep everything queued until signed in again
+  if(subscriptionLocked()) return;      // the shop's plan has ended: everything stays queued and goes up after renewal
   store.syncing = true; renderSync();
   const done = new Set(), review = new Set();
   let again = true, stopped = false;
@@ -131,9 +164,11 @@ export async function flushSbQueueOnce(){
       if(done.has(item) || review.has(item)) continue;
       if(isBlocked(item, waiting)){ skipped++; continue; }   // its bill / product is still on its way (or under review)
       item.sending = true;
-      try{ await sendItem(item); done.add(item); sentNow++; const k = recordKey(item); if(k) waiting.delete(k); }
+      try{ await sendItem(item); done.add(item); noteSent(item); sentNow++; const k = recordKey(item); if(k) waiting.delete(k); }
       catch(err){
-        logger.warn("Queue sync item failed:", item.type, err);
+        logger.event("sync", "upload-failed", { op: item.type, code: err && err.code }, "warn");
+        // the shop's plan has ended (HT402): nothing more can go up until renewal — keep it all queued, ask the server
+        if(err && err.code === "SUBSCRIPTION"){ item.err = err.message; stopped = true; noteSubscriptionRefused(); break; }
         item.tries = (item.tries||0) + 1; item.err = err && (err.message || err.code) || String(err);
         const member = isMember(), refused = err && err.code === "PERMISSION";
         if(member && refused){
@@ -173,15 +208,21 @@ export function discardReview(index){
   renderSync();
   return true;
 }
-/* Review list: a bill or return refused because another one of the shop already has its number (two phones with the same
-   device code, a reinstall…) gets the next number of this device's series (dated like it) and is sent again. The old number
-   was never saved in the cloud. → { ok, no } or { error }. A team member needs the right to make that record. */
+/* Review list: a bill or return refused because another one of the shop already has its number (two devices that took the
+   same series before either saw the other's documents, a reinstall…) gets a new number and is sent again. When the clash
+   is in this device's own series and the number's holder is another device's document (or one this device hasn't seen),
+   the device first moves to a series no other device uses (a till letter), so it can't happen again; a clash with this
+   device's own document only takes the next number of its series. The old number was never saved in the cloud.
+   → { ok, no } or { error }. A team member needs the right to make that record. */
 export function renumberReview(index){
   const r = (store.syncReview||[])[index]; if(!numberTaken(r)) return { error: "This one isn't waiting for a new number." };
   const sale = r.item.type === "sale", no = denied(sale ? "create_sale" : "perform_return", sale ? "renumber bills" : "renumber returns"); if(no) return no;
   let fresh;
+  const type = sale ? "invoice" : "credit", rec = sale ? r.item.sale : r.item.ret, was = parseDocNo(rec.no, numberingFor(type));
+  const holder = (sale ? D().sales : D().rets).find(x => x.no === rec.no && x.id !== rec.id);
+  if(was && was.till === deviceTill() && !(holder && holder.dev === store.dev)) moveTillAfterConflict();
   if(sale){
-    const id = r.item.sale.id; fresh = nextBillNo(D().sales, r.item.sale.t);
+    const id = r.item.sale.id; fresh = nextNumber("invoice", D().sales, r.item.sale.t, { claim: true });
     // the bill as kept in its day on this device (D() hands out copies)
     Object.values(store.localDays).forEach(d => (d.sales||[]).forEach(s => { if(s.id === id) s.no = fresh; }));
     if(store.lastSale && store.lastSale.id === id) store.lastSale.no = fresh;
@@ -189,7 +230,7 @@ export function renumberReview(index){
     persistLocal(); invalidate();
   } else {
     // the refused return is off this device's returns until sent again: count its number too, so the next one is past it
-    fresh = deviceDocNo("CN-", [...D().rets, r.item.ret], r.item.ret.t); r.item.ret = { ...r.item.ret, no: fresh };
+    fresh = nextNumber("credit", [...D().rets, r.item.ret], r.item.ret.t, { claim: true }); r.item.ret = { ...r.item.ret, no: fresh };
   }
   saveSyncReview(); retryReview(index);
   return { ok: true, no: fresh };

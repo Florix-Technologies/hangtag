@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="Tap-to-sell billing and stock tracking for clothing pop-ups with Supabase PostgreSQL cloud sync.">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self' https://cdn.jsdelivr.net; script-src-attr 'none'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https:; connect-src 'self' https: wss: http:; media-src 'self' blob:; frame-src 'self' blob: data:; worker-src 'self' blob:; manifest-src 'self'; form-action 'self'">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="description" content="Hangtag: fast billing, stock, purchases and payments for shops, grocery stores, electronics stores and restaurants — works offline, syncs to the cloud.">
 <meta name="theme-color" content="#FFFFFF">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -11,7 +13,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" integrity="sha384-Rj26LVGvoeRVR6+mwQmFfcR3QOBEwT+ZmuCWpuiqeTzJpCs0ER4ITAWGb4Hiy3Ok" crossorigin="anonymous"></script>
 <script src="config.js"></script>
 <link rel="stylesheet" href="src/styles/00-base.css">
 <title>Hangtag</title>
@@ -19,8 +21,10 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wdth,wght@75..100,400..700&display=swap">
 <link rel="stylesheet" href="src/styles/10-shell.css">
+<link rel="stylesheet" href="src/styles/15-ui.css">
 <link rel="stylesheet" href="src/styles/20-sell.css">
 <link rel="stylesheet" href="src/styles/30-reports.css">
+<link rel="stylesheet" href="src/styles/35-bills.css">
 <link rel="stylesheet" href="src/styles/40-stock.css">
 <link rel="stylesheet" href="src/styles/50-products.css">
 <link rel="stylesheet" href="src/styles/60-auth-shop.css">
@@ -32,6 +36,10 @@
 <link rel="stylesheet" href="src/styles/97-business.css">
 <link rel="stylesheet" href="src/styles/97-credit-orders.css">
 <link rel="stylesheet" href="src/styles/98-purchases.css">
+<link rel="stylesheet" href="src/styles/98-commerce.css">
+<link rel="stylesheet" href="src/styles/99-tracking.css">
+<link rel="stylesheet" href="src/styles/99-restaurant.css">
+<link rel="stylesheet" href="src/styles/99-billing.css">
 </head>
 <body>
 <div id="authGate" class="authgate" role="dialog" aria-modal="true" aria-labelledby="authTitle">
@@ -42,19 +50,15 @@
     </div>
     <p id="authMsg" class="authsub" aria-live="polite">Checking sign-in…</p>
     <div id="authForms" hidden>
-      <div id="authTabs" class="authtabs" role="group" aria-label="Sign in or create an account">
-        <button type="button" data-authtab="signin" aria-pressed="true">Sign in</button>
-        <button type="button" data-authtab="signup" aria-pressed="false">Create account</button>
-        <button type="button" data-authtab="staff" aria-pressed="false">Staff</button>
-      </div>
       <div id="provBtns" class="provbtns">
         <button class="btn gbtn" type="button" data-provider="google"><svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg><span>Continue with Google</span></button>
       </div>
-      <div id="orEmail" class="author"><span>or use email</span></div>
+      <div id="orEmail" class="author"><span>or</span></div>
       <form id="emailForm" class="authform" novalidate>
         <label id="emailWrap" class="f"><span class="lab">Email</span><input id="authEmail" type="email" name="email" autocomplete="username email" inputmode="email" autocapitalize="off" spellcheck="false" required></label>
         <label id="pwWrap" class="f"><span class="lab" id="pwLabel">Password</span><input id="authPass" type="password" name="password" autocomplete="current-password" minlength="8"><span id="pwHint" class="pwhint" hidden>At least 8 characters.</span></label>
         <label id="pw2Wrap" class="f" hidden><span class="lab">Type the password again</span><input id="authPass2" type="password" autocomplete="new-password" minlength="8"></label>
+        <div class="authfp"><button id="forgotBtn" class="link" type="button">Forgot password?</button></div>
         <button id="emailSubmit" class="btn primary gbtn" type="submit">Sign in</button>
       </form>
       <form id="staffForm" class="authform" novalidate hidden>
@@ -65,11 +69,11 @@
         <p class="authfine" style="margin:0">No password? Ask the owner to show you the sign-in QR code, and scan it with this phone's camera.</p>
       </form>
       <div class="authlinks">
-        <button id="forgotBtn" class="link" type="button">Forgot password?</button>
         <button id="backBtn" class="link" type="button" hidden>Back to sign in</button>
         <button id="resendBtn" class="link" type="button" hidden>Resend confirmation email</button>
       </div>
       <p id="authSwitch" class="authfine"></p>
+      <p id="staffSwitch" class="authfine authstaff"><span>Staff or team member?</span> <button type="button" class="btn sm" data-switchto="staff">Staff sign-in</button></p>
     </div>
     <form id="resetForm" class="authform" novalidate hidden>
       <label class="f"><span class="lab">New password</span><input id="newPass" type="password" autocomplete="new-password" minlength="8"><span class="pwhint">At least 8 characters.</span></label>
@@ -91,7 +95,7 @@
       <svg class="logo" viewBox="0 0 28 28" aria-hidden="true"><path d="M3.5 13.6V5.5a2 2 0 0 1 2-2h8.1a2 2 0 0 1 1.42.59l9.2 9.2a2 2 0 0 1 0 2.83l-8.1 8.1a2 2 0 0 1-2.83 0l-9.2-9.2a2 2 0 0 1-.59-1.42z" fill="#10131F"/><circle cx="9.2" cy="9.2" r="2.1" fill="#fff"/></svg>
       <h2 id="setupTitle" class="setup-t">Set up your shop</h2>
     </div>
-    <p class="authsub">A few details to get started. You can change them any time in Profile &amp; shop settings.</p>
+    <p class="authsub">A few details to get started. You can change them any time in Settings → Business.</p>
     <form id="setupForm" class="authform" novalidate></form>
     <p id="setupErr" class="autherr" role="alert" hidden></p>
     <div class="authcenter"><button id="setupSignOut" class="link" type="button">Not you? Sign out</button></div>
@@ -101,15 +105,9 @@
   <div class="appbar-in">
     <div class="brand">
       <svg viewBox="0 0 28 28" aria-hidden="true"><path d="M3.5 13.6V5.5a2 2 0 0 1 2-2h8.1a2 2 0 0 1 1.42.59l9.2 9.2a2 2 0 0 1 0 2.83l-8.1 8.1a2 2 0 0 1-2.83 0l-9.2-9.2a2 2 0 0 1-.59-1.42z" fill="#10131F"/><circle cx="9.2" cy="9.2" r="2.1" fill="#fff"/></svg>
-      <span class="wordmark">Hangtag</span>
+      <span class="wordmark">Hangtag</span><span id="shopName" class="shopname"></span>
     </div>
-    <nav class="nav" role="tablist" aria-label="Sections">
-      <button role="tab" data-tab="sell" aria-selected="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 8h13l-1.1 12.1a1 1 0 0 1-1 .9H7.6a1 1 0 0 1-1-.9z"/><path d="M9 10V7a3 3 0 0 1 6 0v3"/></svg><span>Sell</span></button>
-      <button role="tab" data-tab="stock" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 5.5a2 2 0 1 1 3 1.7c-.6.4-1 .9-1 1.6V10"/><path d="M12 10 3.4 16.3c-.8.6-.4 1.7.6 1.7h16c1 0 1.4-1.1.6-1.7z"/></svg><span>Inventory</span></button>
-      <button role="tab" data-tab="report" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M5 20v-8M10 20V5M15 20v-5M20 20V9"/></svg><span>Reports</span></button>
-      <button role="tab" data-tab="products" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 4 3.5 6.6l1.8 4.1 2.2-.9V20h9V9.8l2.2.9 1.8-4.1-5-2.6c-.5 1.3-1.9 2.2-3.5 2.2S9 5.3 8.5 4z"/></svg><span>Products</span></button>
-      <button role="tab" data-tab="customers" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.6a3.5 3.5 0 0 1 0 6.8M21.5 20a6.5 6.5 0 0 0-4-6"/></svg><span>Customers</span></button>
-    </nav>
+    <div id="globalActions" class="global-actions" aria-label="Global actions"></div>
     <button id="sync" class="sync" type="button" data-act="syncpanel" aria-label="Cloud sync status"><i></i><span>Connecting…</span></button>
     <div class="acctwrap">
       <button id="acctBtn" class="acctbtn" type="button" aria-haspopup="menu" aria-expanded="false" hidden><span id="acctAvatar" class="avatar"></span><span id="acctName" class="an"></span></button>
@@ -117,22 +115,39 @@
     </div>
   </div>
 </header>
+<nav class="nav" aria-label="Sections"></nav>
 
 <main class="wrap">
   <section id="v-sell" class="sell">
     <div class="sell-main">
-      <div id="welcome" class="welcome" hidden></div>
-      <div class="viewhead">
-        <div>
-          <h2 class="vt">Tap to sell</h2>
-          <p>Product → colour and size → how they paid. <span class="deskonly">Keys: <kbd>/</kbd> search, <kbd>1</kbd>–<kbd>0</kbd> product, <kbd>1</kbd>–<kbd>9</kbd> size, <kbd>+</kbd>/<kbd>−</kbd> quantity, <kbd>Enter</kbd> add, then <kbd>C</kbd> cash · <kbd>U</kbd> UPI · <kbd>K</kbd> card. Barcode scanners work anywhere.</span></p>
+      <h2 class="sr">Sell</h2>
+      <div class="subnav" data-subnav="sell" role="group" aria-label="Sell workspace" hidden></div>
+
+      <header class="sell-header">
+        <div class="sell-search">
+          <label for="sellSearch" class="sr">Search products</label>
+          <div class="search-input-wrapper">
+            <svg class="search-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input id="sellSearch" type="search" placeholder="Search products, sizes, SKU — or scan" autocomplete="off" enterkeyhint="search" aria-label="Search products">
+            <button type="button" class="voicebtn" data-voice-search="sellSearch" aria-label="Search by voice" title="Search by voice" data-voice-state="idle"><svg class="mic-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg><svg class="mic-off-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden><path d="M15 10.5V6a3 3 0 0 0-5.7-1.3M9 9v2a3 3 0 0 0 4.6 2.5M5.5 11a6.5 6.5 0 0 0 10.6 5M18.5 11a6.5 6.5 0 0 1-.6 2.7M12 17.5V21M3 3l18 18"/></svg></button>
+            <button type="button" class="scanbtn" data-act="scan" aria-label="Scan a barcode with the camera"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 8v8M10 8v8M13.5 8v8M17 8v8"/></svg><span>Scan</span></button>
+          </div>
         </div>
-        <div class="seg" role="group" aria-label="Product view">
-          <button data-density="photos" aria-pressed="true">Photos</button>
-          <button data-density="list" aria-pressed="false">List</button>
+        <div class="sell-actions">
+          <div class="seg view-toggle" role="group" aria-label="Product view">
+            <button data-density="photos" aria-pressed="true" aria-label="Grid view"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span class="desktop-only">Grid</span></button>
+            <button data-density="list" aria-pressed="false" aria-label="List view"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h18M3 12h18M3 19h18"/></svg><span class="desktop-only">List</span></button>
+          </div>
         </div>
+      </header>
+
+      <div id="vs-sellSearch" class="voicestatus" role="status" aria-live="polite" hidden></div>
+
+      <div class="sell-categories">
+        <div id="sellCats" class="catchips" role="group" aria-label="Category"></div>
+        <button type="button" class="link xs kbdlink" data-act="kbdhelp">Keyboard shortcuts</button>
       </div>
-      <div class="sellbar"><button type="button" class="btn scanbtn" data-act="scan" aria-label="Scan a barcode with the camera"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 8v8M10 8v8M13 8v8M17 8v8"/></svg><span>Scan</span></button><div class="search"><input id="sellSearch" type="search" placeholder="Search name, colour, size, SKU — or scan" autocomplete="off" enterkeyhint="search" aria-label="Search products"></div><select id="sellCat" class="sel" aria-label="Category" hidden></select></div>
+
       <div id="sellHits"></div>
       <div id="sellBanner"></div>
       <div id="grid" class="grid"></div>
@@ -141,6 +156,7 @@
   </section>
 
   <section id="v-home" hidden>
+    <div id="welcome" class="welcome" hidden></div>
     <div id="homeBody"></div>
   </section>
 
@@ -151,9 +167,9 @@
   </section>
 
   <section id="v-stock" hidden>
-    <div class="subnav" data-subnav="stock" role="group" aria-label="Inventory" hidden></div>
+    <div class="subnav" data-subnav="stock" role="group" aria-label="Stock" hidden></div>
     <div data-submain="stock">
-    <div class="viewhead"><div><h2 class="vt">Stock on the shelf</h2><p>Every variant (colour, size, storage…) has its own count. Bills and returns change it by themselves; record deliveries with Stock in and recounts with Adjust stock.</p></div><div class="vh-acts"><button class="btn sm primary" data-act="stockin">+ Stock in</button><button class="btn sm" data-act="billimport">Upload bill</button><button class="btn sm" data-act="stockadj">Adjust stock</button></div></div>
+    <div class="viewhead"><div><h2 class="vt">Stock</h2><p>What is on the shelf, variant by variant. Sales and returns change it by themselves; record deliveries with Stock in and recounts with Adjust stock.</p></div><div class="vh-acts"><button class="btn sm primary" data-act="stockin">+ Stock in</button><button class="btn sm" data-act="billimport">Upload bill</button><button class="btn sm" data-act="stockadj">Adjust stock</button></div></div>
     <div id="stockBody"></div>
     </div>
     <div data-subalt="stock" hidden></div>
@@ -180,13 +196,14 @@
 
 
   <section id="v-products" hidden>
-    <div class="viewhead"><div><h2 class="vt">Products & Inventory</h2><p>Each product can come in several colours and sizes, with its own stock, SKU and barcode for every combination. Archive products you no longer sell — their bills stay.</p></div></div>
+    <div class="subnav" data-subnav="products" role="group" aria-label="Stock" hidden></div>
+    <div class="viewhead"><div><h2 class="vt">Products</h2><p>What you sell, with prices, codes and stock for every variant. Open one to see it all; archive what you no longer sell — its bills stay.</p></div></div>
     <div id="prodBody"></div>
     <div id="saveBar" class="savebar" hidden></div>
   </section>
 
   <section id="v-none" hidden>
-    <div class="empty"><h2 class="vt">Nothing to open here yet</h2><p class="muted">Your role has no screens in this app yet. Ask the shop's owner to change your role in Settings → Roles &amp; permissions.</p></div>
+    <div class="empty"><h2 class="vt">Nothing to open here yet</h2><p class="muted">Your role has no screens in this app yet. Ask the shop's owner to change your role in Settings → Team & Devices → Roles & permissions.</p></div>
   </section>
 </main>
 

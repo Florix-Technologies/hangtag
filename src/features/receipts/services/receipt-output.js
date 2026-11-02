@@ -1,21 +1,27 @@
 // Browser print, image, download, share and "open WhatsApp" for receipts — all from the bill's invoice.
 // (Thermal printers: features/printing. Sending through a provider: features/delivery.)
-import { gstLines } from '../../../domain/invoices/invoice.js';
+import { printDocument } from '../components/doc-actions.js';
+import { invoiceModel } from './doc-models.js';
+import { billContent, billRows } from '../../../domain/documents/bill-content.js';
 import { store } from '../../../shared/state/store.js';
 import { D } from '../../inventory/services/ledger.js';
 import { RECEIPT_CSS, receiptHTML } from '../components/receipt-view.js';
-import { invoiceFor, payLines, receiptText } from './receipt-model.js';
+import { invoiceFor, receiptText } from './receipt-model.js';
 import { toast } from '../../../shared/components/toast.js';
 import { use } from '../../../shared/di/services.js';
 import { esc } from '../../../shared/dom.js';
 import { dtLong } from '../../../shared/formatting/dates.js';
 import { inr, inrx } from '../../../shared/formatting/money.js';
 import { logger } from '../../../shared/logging/logger.js';
+import { phoneDigits } from '../../../shared/formatting/regions.js';
+import { shopRegion } from '../../shop/services/region.js';
 
 /* The browser's print dialog, with a print-only page (80 mm receipt or A4 invoice, as set in Billing settings) */
-export function printSale(sid){
+export function printSale(sid,want){
   const s=D().saleById[sid]; if(!s) return;
-  const paper=store.settings.paper==="a4"?"a4":"80mm";
+  const paper=(want||store.settings.paper)==="a4"?"a4":"80mm";
+  // an A4 bill prints in the shop's document template (the same as its PDF)
+  if(paper==="a4"){ printDocument(invoiceModel(s)); return; }
   const f=document.createElement("iframe");
   f.setAttribute("aria-hidden","true"); f.style.cssText="position:fixed;right:0;bottom:0;width:0;height:0;border:0";
   document.body.appendChild(f);
@@ -31,7 +37,7 @@ export async function receiptPNG(s){
   const F='"Instrument Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';
   const ops=[];let y=P;
   const logo=await loadImage(I.logo);
-  if(logo){ const k=Math.min(1,240/logo.naturalWidth,110/logo.naturalHeight), w=logo.naturalWidth*k, h=logo.naturalHeight*k; ops.push({k:"i",img:logo,x:(W-w)/2,y,w,h}); y+=h+10; }
+  if(logo){ const k=Math.min(1,240/logo.naturalWidth,110/logo.naturalHeight), w=logo.naturalWidth*k, h=logo.naturalHeight*k; ops.push({k:"i",img:logo,x:I.logoAlign==="left"?P:I.logoAlign==="right"?W-P-w:(W-w)/2,y,w,h}); y+=h+10; }
   const text=(t,o)=>{o=o||{};const size=o.size||22;ops.push({k:"t",t:String(t),x:o.align==="c"?W/2:o.align==="r"?W-P:P,y:y+size,size,bold:o.bold,align:o.align||"l",color:o.color});if(!o.keep)y+=size+(o.gap==null?8:o.gap)};
   const pair=(l,r,o)=>{o=o||{};text(l,Object.assign({},o,{keep:true}));text(r,Object.assign({},o,{align:"r"}))};
   const rule=()=>{ops.push({k:"r",y:y+4});y+=14};
@@ -48,13 +54,9 @@ export async function receiptPNG(s){
   I.lines.forEach(l=>{wrap(l.name,W-2*P-150).forEach((ln,i)=>i===0?pair(ln,inrx(l.gross),{bold:true,size:21}):text(ln,{bold:true,size:21}));
     text(`${l.variant?l.variant+" · ":""}${l.qtyText||l.qty} × ${inr(l.rate)}${l.unit?"/"+l.unit:""}`,{size:18,color:"#444"}); if(l.discount) pair("Discount"+(l.discountLabel?" "+l.discountLabel:""),"−"+inrx(l.discount),{size:18,color:"#444"})});
   rule();
-  const G=gstLines(I);
-  pair("Subtotal",inrx(T.subtotal)); if(T.discount) pair("Discount","−"+inrx(T.discount)); if(G.length&&!I.inclusive){ pair("Taxable amount",inrx(T.taxable)); G.forEach(g=>pair(g.label,inrx(g.amount))); }
-  if(T.roundOff) pair("Round off",(T.roundOff>0?"+":"")+inrx(T.roundOff));
-  pair("Total",inr(T.total),{bold:true,size:28}); if(G.length&&I.inclusive) G.forEach(g=>pair("Includes "+g.label,inrx(g.amount),{size:18}));
-  if(T.credit){ pair("Exchange credit","−"+inr(T.credit)); pair("Amount due",inr(T.due),{bold:true}); }
-  payLines(I).forEach(p=>pair("Paid by "+p.label,inrx(p.amount)));
-  if(I.change) pair("Change",inrx(I.change));
+  // the money rows: the bill's one document (domain/documents/bill-content.js), as on every other output
+  const B=billContent(I);
+  billRows(B).forEach(x=>pair(x.label,x.amount==null?"":(x.sign||"")+inrx(x.amount),x.key==="total"?{bold:true,size:28}:x.grand?{bold:true}:x.small?{size:18}:{}));
   if(I.footer){y+=6;wrap(I.footer,W-2*P).forEach(l=>text(l,{align:"c",size:19}))}
   c.width=W; c.height=y+P;
   x.fillStyle="#fff"; x.fillRect(0,0,W,c.height);
@@ -77,7 +79,8 @@ export async function shareReceipt(sid){
   }catch(e){ if(e&&e.name==="AbortError") return; logger.warn("Share failed:", e); }
   await downloadReceipt(sid);
 }
-export function waPhone(p){ let d=String(p||"").replace(/\D/g,""); if(d.length===10) d="91"+d; if(d.length===11&&d[0]==="0") d="91"+d.slice(1); return d.length>=11?d:""; }
+/* A phone number as WhatsApp wants it: the shop's country code and the number (shared/formatting/regions.js) */
+export const waPhone=p=>phoneDigits(p,shopRegion());
 /* WhatsApp on this device, with the bill typed in: the person presses Send in WhatsApp (nothing is sent from here) */
 export function whatsappReceipt(sid){
   const s=D().saleById[sid]; if(!s) return;

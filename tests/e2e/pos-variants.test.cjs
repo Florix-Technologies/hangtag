@@ -28,7 +28,8 @@ const vid=(c,s)=>`const p=products().find(x=>x.name==="Street Tee");return p.var
   try{
     const ctx=await browser.createBrowserContext();const A=await page(ctx);
     // ---------------- TEST 1: 4 colours x 5 sizes = 20 variants, created in the editor UI ----------------
-    await A.click('[data-tab="products"]');await sleep(200);
+    await A.click('[data-tab="stock"]');await sleep(150);
+    await A.click('#v-stock [data-tab="products"]');await sleep(200);
     await A.click('.ptools [data-act="addp"]');await sleep(200);
     await type(A,'#edName','Street Tee');
     await type(A,'[data-ed="price"]','599');await type(A,'[data-ed="cost"]','320');await type(A,'[data-ed="cat"]','T-shirts');
@@ -77,6 +78,8 @@ const vid=(c,s)=>`const p=products().find(x=>x.name==="Street Tee");return p.var
     // ---------------- TEST 5: return Black/L x1 ----------------
     const bl0=await run(A,`return stockOf(${JSON.stringify(ids.BL)})`);
     await run(A,`openBillView(${JSON.stringify(sid)})`);await sleep(150);
+    // Return / exchange is in the bill's Actions menu
+    await A.click(`[data-menu="bill-${sid}"]`);await sleep(100);
     await A.click(`[data-return="${sid}"]`);await sleep(150);
     await A.click('[data-rtp="0"]');await sleep(100);
     await A.screenshot({path:SHOT+'t12_return.png'});
@@ -177,7 +180,7 @@ const vid=(c,s)=>`const p=products().find(x=>x.name==="Street Tee");return p.var
     check('Reports: gross profit card shows sales, cost, profit and margin',/Gross profit/.test(profitTxt||'')&&/%/.test(profitTxt||''),profitTxt);
     // ---------------- receipts ----------------
     await run(A,`openBillView(${JSON.stringify(sid)})`);await sleep(150);
-    const prev=await txt(A,'.rcpt-prev');
+    const prev=await txt(A,'.billview .rcpt-prev');
     check('receipt shows shop, bill number, colour / size and payment',/Bill/.test(prev)&&/Black \/ L/.test(prev)&&/Paid/.test(prev),prev.slice(0,120));
     await A.click(`.billview [data-print="${sid}"]`);await sleep(400);
     check('Print makes a print-only page (no app UI in it)',await A.evaluate(()=>{const f=[...document.querySelectorAll('iframe')].pop();return !!(f&&f.contentDocument.querySelector('.rcpt')&&!f.contentDocument.querySelector('.appbar'))}));
@@ -190,7 +193,7 @@ const vid=(c,s)=>`const p=products().find(x=>x.name==="Street Tee");return p.var
     await A.type('#custForm [name=name]','Meera Shah');await A.type('#custForm [name=phone]','9812345678');
     await A.click('#custForm [type=submit]');await sleep(150);
     check('customer added to the bill',/Meera Shah/.test(await txt(A,'#billPanel .custline')||''));
-    await run(A,`addOne(${JSON.stringify(ids.WM)})`);await A.click('#billPanel [data-pay="upi"]');await sleep(200);await A.type('[data-payf="ref:upi"]','412345678901');await sleep(80);await A.click('#payDone');await sleep(300);
+    await run(A,`addOne(${JSON.stringify(ids.WM)})`);await A.click('#billPanel [data-pay="upi"]');await sleep(200);await A.type('[data-payf="ref:upi"]','412345678901');await sleep(80);await A.click('[data-upireceived]');await sleep(80);await A.click('#payDone');await sleep(300);
     const cs=await run(A,'const s=D().sales[D().sales.length-1];return s.cust&&s.cust.name');
     check('bill carries the customer',cs==='Meera Shah');
     await A.keyboard.press('Escape');

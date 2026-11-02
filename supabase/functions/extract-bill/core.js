@@ -4,38 +4,46 @@
 
 export const MAX_BYTES = 15 * 1024 * 1024;
 export const ACCEPTED_TYPES = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
-export const DEFAULT_MODEL = "claude-opus-5";
+export const DEFAULT_MODEL = "claude-opus-5-5";
+export const DEFAULT_EFFORT = "high";
 export const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 
+/* The Claude API compiles an output schema only within its limits: at most 16 fields that may hold two types (anyOf or a
+   type list) and 24 optional fields; past them every request is refused ("Schema is too complex for compilation"). So text
+   fields are plain strings, "" when the bill doesn't show them, and only the numbers may be null.
+   (tests/unit/extract-bill.test.mjs counts both against these limits.) */
+export const SCHEMA_LIMITS = { unionFields: 16, optionalFields: 24 };
+const text = { type: "string" };
 const nullable = (type) => ({ anyOf: [{ type }, { type: "null" }] });
 const obj = (properties) => ({ type: "object", properties, required: Object.keys(properties), additionalProperties: false });
 
-/* What the model must return. Every field is present; unknown values are null (never guessed). */
+/* What the model must return. Every field is present; unknown text is "" and unknown numbers are null (never guessed). */
 export const EXTRACTION_SCHEMA = obj({
-  supplier: obj({ name: nullable("string"), gstin: nullable("string") }),
-  invoice: obj({ number: nullable("string"), date: nullable("string") }),
-  currency: nullable("string"),
+  supplier: obj({ name: text, gstin: text }),
+  invoice: obj({ number: text, date: text }),
+  currency: text,
   lines: {
     type: "array",
     items: obj({
-      name: nullable("string"),
-      description: nullable("string"),
-      brand: nullable("string"),
-      options: { type: "array", items: obj({ name: { type: "string" }, value: { type: "string" } }) },
+      name: text,
+      description: text,
+      brand: text,
+      options: { type: "array", items: obj({ name: text, value: text }) },
       quantity: nullable("number"),
+      unit: text,
       unit_price: nullable("number"),
       total_price: nullable("number"),
       mrp: nullable("number"),
-      sku: nullable("string"),
-      barcode: nullable("string"),
-      hsn: nullable("string"),
+      sku: text,
+      barcode: text,
+      hsn: text,
       gst_rate: nullable("number"),
       tax_amount: nullable("number"),
       confidence: { type: "number" },
-      notes: nullable("string"),
+      notes: text,
     }),
   },
-  warnings: { type: "array", items: { type: "string" } },
+  warnings: { type: "array", items: text },
 });
 
 export const SYSTEM_PROMPT = `You read supplier purchase bills (tax invoices, delivery challans, estimates) for a small Indian retail shop. The shop uses what you extract to add stock it received, after a person reviews every line, so accuracy matters more than completeness.
@@ -43,17 +51,17 @@ export const SYSTEM_PROMPT = `You read supplier purchase bills (tax invoices, de
 Extract every product line on the bill: the goods the shop received. Skip lines that are not products (freight, packing, round-off, discounts, sub-totals, tax summaries, totals) and mention each skipped line in warnings.
 
 Rules:
-- Never invent or infer a value that is not on the bill. If a field is not shown, or you cannot read it, return null. An empty list of options is correct when the bill shows none.
+- Never invent or infer a value that is not on the bill. If a text field is not shown, or you cannot read it, return an empty string; if a number is not shown or unreadable, return null. An empty list of options is correct when the bill shows none.
 - Split the product name from option values only when the bill clearly shows them, for example separate Colour / Size / Storage columns, or an obvious pattern such as "Dress Black M". Use the bill's own words for option names (Colour, Size, Storage, RAM, Weight, Pack size, Model, Shade, Material, Length…) and values. When unsure, keep the text in the name.
-- quantity is the number of units received on that line. If the bill gives packs or dozens and the unit count is not stated, give the quantity as printed and explain in notes.
+- quantity is the number received on that line. unit is the printed unit, normalised to one of: pcs, box, pack, dozen, kg, g, l, ml, m. Common words such as Nos/pieces become pcs and litres become l. If no unit is printed, return an empty string. If the bill gives packs or dozens and the piece count is not stated, keep the printed quantity and unit and explain in notes.
 - unit_price is the supplier's price per unit before tax when the bill shows it; total_price is the line amount as printed. Do not compute a missing price.
 - mrp is the printed maximum retail price, if any.
 - hsn is the HSN/SAC code exactly as printed (digits only). gst_rate is the tax percentage for the line (for example 5 or 12); if CGST and SGST are shown separately, add them. tax_amount is the line's tax if printed.
 - sku and barcode only when printed for that line (article no., style no., item code, EAN/UPC).
 - Numbers: plain numbers without currency symbols or thousands separators.
-- invoice.date as YYYY-MM-DD when the date is readable, otherwise null. supplier.gstin exactly as printed.
+- invoice.date as YYYY-MM-DD when the date is readable, otherwise an empty string. supplier.gstin exactly as printed.
 - confidence (0 to 1) is how sure you are that the whole line is read correctly. Use a low value for blurry, handwritten, cut-off or ambiguous lines, and say why in notes.
-- currency: "INR" for rupee bills, otherwise the currency shown, or null.`;
+- currency: "INR" for rupee bills, otherwise the currency shown, or an empty string.`;
 
 /* Checks the request body; returns { ok:true, data, mimeType, fileName, fileHash } or { ok:false, status, error, message } */
 export function validateUpload(body) {
@@ -77,16 +85,19 @@ export function buildUserContent({ data, mimeType, fileName }) {
   return [file, { type: "text", text: `Extract the product lines from this supplier bill (file: ${String(fileName || "bill").slice(0, 120)}).` }];
 }
 
+/* EXTRACT_EFFORT: how hard the model works on a bill (lower is faster) */
+export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+
 /* Parameters for client.beta.messages.stream(): JSON output constrained to EXTRACTION_SCHEMA, adaptive thinking, and the
    server-side refusal fallback (a declined request is re-run on Anthropic's recommended fallback model) */
-export function buildRequest({ model, data, mimeType, fileName }) {
+export function buildRequest({ model, effort, data, mimeType, fileName }) {
   return {
     model: model || DEFAULT_MODEL,
     max_tokens: 64000,
     betas: [FALLBACK_BETA],
     fallbacks: "default",
     thinking: { type: "adaptive" },
-    output_config: { effort: "high", format: { type: "json_schema", schema: EXTRACTION_SCHEMA } },
+    output_config: { effort: EFFORTS.includes(effort) ? effort : DEFAULT_EFFORT, format: { type: "json_schema", schema: EXTRACTION_SCHEMA } },
     system: SYSTEM_PROMPT,
     messages: [{ role: "user", content: buildUserContent({ data, mimeType, fileName }) }],
   };
@@ -104,10 +115,11 @@ export function parseModelResponse(message, meta = {}) {
 }
 
 /* ---------- normalisation ---------- */
+/* Text as read: "" (the schema's "not on the bill") and placeholders such as "null" or "N/A" mean none */
 const str = (v, max = 300) => {
   if (v === null || v === undefined) return null;
   const s = String(v).replace(/\s+/g, " ").trim();
-  return s ? s.slice(0, max) : null;
+  return s && !/^(null|none|n\/?a|-+|—)$/i.test(s) ? s.slice(0, max) : null;
 };
 /* "₹1,099.00" → 1099, "5%" → 5, "Rs. 12.5" → 12.5; anything unreadable → null */
 export function toNumber(v) {
@@ -118,6 +130,28 @@ export function toNumber(v) {
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
 }
+const UNIT_ALIASES = {
+  pcs: "pcs", pc: "pcs", piece: "pcs", pieces: "pcs", no: "pcs", nos: "pcs", number: "pcs", numbers: "pcs", each: "pcs", ea: "pcs",
+  box: "box", boxes: "box", bx: "box",
+  pack: "pack", packs: "pack", packet: "pack", packets: "pack", pkt: "pack", pkts: "pack",
+  dozen: "dozen", dozens: "dozen", doz: "dozen", dz: "dozen",
+  kg: "kg", kgs: "kg", kilogram: "kg", kilograms: "kg", kilo: "kg", kilos: "kg",
+  g: "g", gm: "g", gms: "g", gram: "g", grams: "g",
+  l: "l", lt: "l", ltr: "l", ltrs: "l", litre: "l", litres: "l", liter: "l", liters: "l",
+  ml: "ml", mls: "ml", millilitre: "ml", millilitres: "ml", milliliter: "ml", milliliters: "ml",
+  m: "m", mt: "m", mtr: "m", mtrs: "m", metre: "m", metres: "m", meter: "m", meters: "m",
+};
+const UNIT_DP = { pcs: 0, box: 0, pack: 0, dozen: 0, kg: 3, g: 0, l: 3, ml: 0, m: 2 };
+/* Printed unit words/codes -> the same canonical IDs used by the catalog. Unknown or absent stays null. */
+export function normalizeUnit(v) {
+  const s = str(v, 30);
+  if (!s) return null;
+  return UNIT_ALIASES[s.toLowerCase().replace(/\./g, "").replace(/\s+/g, " ")] || null;
+}
+const quantityFitsUnit = (q, unit) => {
+  const dp = UNIT_DP[unit];
+  return dp === undefined || Math.abs(q * 10 ** dp - Math.round(q * 10 ** dp)) < 1e-6;
+};
 const date = (v) => {
   const s = str(v, 20);
   if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
@@ -136,14 +170,17 @@ export function normalizeExtraction(raw, meta = {}) {
       .map((o) => ({ name: str(o && o.name, 24), value: str(o && o.value, 40) })).filter((o) => o.name && o.value);
     const line = {
       name: str(l.name, 120), description: str(l.description, 300), brand: str(l.brand, 60), options,
-      quantity: toNumber(l.quantity), unit_price: toNumber(l.unit_price), total_price: toNumber(l.total_price), mrp: toNumber(l.mrp),
+      quantity: toNumber(l.quantity), unit: normalizeUnit(l.unit), unit_price: toNumber(l.unit_price), total_price: toNumber(l.total_price), mrp: toNumber(l.mrp),
       sku: str(l.sku, 40), barcode: str(l.barcode, 64), hsn: str(l.hsn, 8) && String(l.hsn).replace(/\D/g, "").slice(0, 8) || null,
       gst_rate: toNumber(l.gst_rate), tax_amount: toNumber(l.tax_amount),
       confidence: Math.min(1, Math.max(0, toNumber(l.confidence) ?? 0)), notes: str(l.notes, 300),
     };
     const empty = !line.name && !line.description && !line.sku && !line.barcode && line.quantity == null && line.unit_price == null && line.total_price == null;
     if (empty) return;
-    if (line.quantity != null && !Number.isInteger(line.quantity)) warnings.push(`Line ${i + 1}: quantity ${line.quantity} is not a whole number.`);
+    if (line.quantity != null && !Number.isInteger(line.quantity)) {
+      if (!line.unit) warnings.push(`Line ${i + 1}: quantity ${line.quantity} is fractional; check the unit printed on the bill.`);
+      else if (!quantityFitsUnit(line.quantity, line.unit)) warnings.push(`Line ${i + 1}: quantity ${line.quantity} has too many decimal places for ${line.unit}.`);
+    }
     lines.push(line);
   });
   return {
@@ -152,4 +189,46 @@ export function normalizeExtraction(raw, meta = {}) {
     invoice: { number: str(r.invoice && r.invoice.number, 40), date: date(r.invoice && r.invoice.date) },
     currency: str(r.currency, 8) || "INR", lines, warnings,
   };
+}
+
+/* ---------- the rate limit ----------
+   Reading a bill calls a paid AI service, and a free trial is easy to start: each user and each shop may read only so many
+   bills a minute and a day (EXTRACT_RATE_PER_MINUTE / _PER_DAY, EXTRACT_SHOP_RATE_PER_MINUTE / _PER_DAY; 0 = no limit).
+   The counters are the Agent's rate limiter (hangtag_agent_take), kept apart from the Agent's own: the user's and shop's
+   ids, hashed with this feature's name, name them. */
+const limitOf = (v, d) => { const n = Number(v); return v == null || String(v).trim() === "" || !Number.isFinite(n) ? d : Math.max(0, Math.floor(n)); };
+export function extractRateLimits(env = {}) {
+  return {
+    p_per_minute: limitOf(env.EXTRACT_RATE_PER_MINUTE, 6), p_per_day: limitOf(env.EXTRACT_RATE_PER_DAY, 60),
+    p_shop_per_minute: limitOf(env.EXTRACT_SHOP_RATE_PER_MINUTE, 12), p_shop_per_day: limitOf(env.EXTRACT_SHOP_RATE_PER_DAY, 150),
+  };
+}
+/* An id of this feature's own counter for a user or shop id: a UUID made from SHA-256("extract-bill:" + id) */
+export async function rateSubject(id) {
+  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode("extract-bill:" + String(id))));
+  const h = Array.from(bytes.slice(0, 16), (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-${(8 | (parseInt(h[16], 16) & 3)).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
+/* The limiter isn't in this database yet (schema.sql section 3t not applied): PostgREST can't find the function. Bills are
+   then read without a limit, as before it existed; any other failure to check it refuses the reading. */
+export const limiterMissing = (err) => !!err && (err.code === "PGRST202" || err.code === "42883");
+
+/* ---------- the answer, kept alive ----------
+   A long bill can take the model longer than the platform waits for a first byte (Supabase answers 504 after 150 s of
+   silence), so while the bill is read a space goes out every few seconds and the JSON follows (JSON allows leading
+   whitespace). The status is 200 by then: a failure travels in the body as { ok:false, error, message }. */
+export function keepAliveBody(work, { every = 10000 } = {}) {
+  const enc = new TextEncoder();
+  let timer;
+  return new ReadableStream({
+    start(controller) {
+      const send = (s) => { try { controller.enqueue(enc.encode(s)); return true; } catch { return false; } };
+      send(" ");
+      timer = setInterval(() => { if (!send(" ")) clearInterval(timer); }, every);
+      Promise.resolve(work)
+        .catch(() => ({ ok: false, error: "provider_error", message: "The bill couldn't be read right now. Try again, or enter the lines by hand." }))
+        .then((body) => { clearInterval(timer); send(JSON.stringify(body)); try { controller.close(); } catch { /* the caller left */ } });
+    },
+    cancel() { clearInterval(timer); },
+  });
 }

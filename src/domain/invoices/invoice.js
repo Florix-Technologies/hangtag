@@ -25,13 +25,15 @@ export function buildInvoice(sale,ctx={}){
   const seller=sellerOf(ctx.profile), G=saleGstSplit(sale), tax=sale.tax||0, c=sale.cust, cr=ctx.customer||{};
   const lineTax=sale.items.length>0&&sale.items.every(i=>i.lt!=null);
   const lines=sale.items.map((i,k)=>{const d=normalizeDiscount(i.disc);return {sl:k+1,ln:i.ln!=null?i.ln:k,name:i.n,variant:lineLabel(i),sku:i.sku||"",hsn:i.hsn||"",
+    // the serial numbers of the pieces sold, and the batches they came from (printed under the item)
+    serials:Array.isArray(i.sn)?i.sn.join(", "):"",batch:Array.isArray(i.bt)?i.bt.map(b=>b.b).join(", "):"",
     // qty: the number; unit: its symbol ("kg"; "" for pieces); qtyText: both, as printed ("2.5 kg", "3")
     qty:roundQty(i.q),unit:unitOf(i.u).id==="pcs"?"":unitOf(i.u).sym,uqc:unitOf(i.u).uqc,qtyText:qtyText(i.q,i.u),rate:i.price,gross:toRupees(linePaise(i.q,i.price)),discount:i.dAmt||0,discountLabel:d?discountLabel(d):"",billDiscount:i.bdAmt||0,
     taxable:i.tx==null?null:i.tx,gstRate:i.gst==null?null:i.gst,cgst:i.cgst||0,sgst:i.sgst||0,igst:i.igst||0,total:i.lt==null?null:i.lt}});
   const credit=sale.credit||0, due=Math.max(0,round2(sale.total-credit)), roundOff=sale.roundOff||0;
   const itemDiscount=sale.itemDisc||0, billDisc=normalizeDiscount(sale.billDisc);
   const pays=paymentsOf(sale).map(p=>({method:p.method,label:PAY_LABELS[p.method]||p.method,amount:p.amount,ref:p.ref||"",
-    received:p.method==="cash"?(p.received==null?p.amount:p.received):null,change:p.change||0,verification:p.verification||"recorded",last4:p.last4||""}));
+    received:p.method==="cash"?(p.received==null?round2(p.amount+(p.change||0)):p.received):null,change:p.change||0,verification:p.verification||"recorded",last4:p.last4||""}));
   const paid=toRupees(sumP(pays.map(p=>toPaise(p.amount))));
   const rets=(ctx.returns||[]).map(r=>({id:r.id,kind:r.kind||"return",t:r.t,value:r.value||0,refund:r.refund||0,method:r.pay||"",
     label:PAY_LABELS[r.pay]||r.pay||"",items:(r.items||[]).map(i=>({name:i.n,variant:lineLabel(i),qty:roundQty(i.q),qtyText:qtyText(i.q,i.u)}))}));
@@ -50,7 +52,7 @@ export function buildInvoice(sale,ctx={}){
     payments:pays,paid,received:toRupees(sumP(pays.map(p=>toPaise(p.received==null?p.amount:p.received)))),
     change:toRupees(sumP(pays.map(p=>toPaise(p.change)))),balance:Math.max(0,toRupees(toPaise(due)-toPaise(paid))),
     returns:rets,returned:toRupees(sumP(rets.map(r=>toPaise(r.value)))),refunded:toRupees(sumP(rets.map(r=>toPaise(r.refund)))),
-    amountInWords:amountInWords(sale.total),footer:ctx.footer||"",logo:ctx.logo||"",
+    amountInWords:amountInWords(sale.total),footer:ctx.footer||"",logo:ctx.logo||"",logoAlign:ctx.logoAlign||"",
   };
 }
 /* GST by rate: the saved lines added up by rate; bills saved before line GST was kept show their bill totals as one row */

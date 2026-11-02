@@ -1,14 +1,22 @@
 // Billing and stock settings rules.
 import { checkVpa } from '../sales/upi.js';
+import { checkNumberingSettings } from '../documents/numbering.js';
 
-/* input: { lowStock, taxOn, taxRate, taxIncl, prefix, paper, footer } as read from the form.
-   Returns { error } or { patch } (the settings values to save). */
-export function checkBillingSettings(input){
+/* input: { lowStock, taxOn, taxRate, taxIncl, paper, footer } as read from the form, and the bill numbering when its form
+   was sent ({ prefix, invoiceStart, invoicePadding, invoiceSuffix }; ctx.till: this device's series, for the length check).
+   Returns { error, field } or { patch } (the settings values to save). */
+export function checkBillingSettings(input,ctx={}){
   const low=Math.round(+input.lowStock),rate=+input.taxRate;
   if(isNaN(low)||low<0)return {error:"Low-stock alert must be 0 or more."};
   if(input.taxOn&&(isNaN(rate)||rate<0||rate>40))return {error:"Enter a GST rate between 0 and 40."};
-  const prefix=String(input.prefix||"").trim();if(prefix&&!/^[A-Za-z0-9/_-]{1,10}$/.test(prefix))return {error:"Bill number prefix can use letters, numbers, - / _ only."};
-  return {patch:{lowStock:low,prefix,taxOn:!!input.taxOn,taxRate:isNaN(rate)?0:Math.round(rate*100)/100,taxIncl:!!input.taxIncl,paper:input.paper==="a4"?"a4":"80mm",footer:String(input.footer||"").trim()}};
+  // the bill numbering is checked only when its form was sent (a numbering saved before stays as it is otherwise)
+  let num={};
+  if(input.prefix!==undefined){
+    const n=checkNumberingSettings({prefix:input.prefix,start:input.invoiceStart,padding:input.invoicePadding,suffix:input.invoiceSuffix},{till:ctx.till||""});
+    if(n.error)return {error:n.error,field:n.field,preview:n.preview};
+    num={prefix:n.config.prefix,invoiceStart:n.config.start,invoicePadding:n.config.padding,invoiceSuffix:n.config.suffix};
+  }
+  return {patch:{lowStock:low,...num,taxOn:!!input.taxOn,taxRate:isNaN(rate)?0:Math.round(rate*100)/100,taxIncl:!!input.taxIncl,paper:input.paper==="a4"?"a4":"80mm",footer:String(input.footer||"").trim()}};
 }
 
 /* input: { upiId, payExpiry, whatsapp, sms, email } as read from the form; ready: which channels the server can send
@@ -24,9 +32,48 @@ export function checkPaymentSettings(input,ready){
   }
   return {patch:{upiId:String(input.upiId||"").trim(),payExpiry:exp,autoSend}};
 }
+/* input: { expiryDays, sellExpired } — days of warning before a batch expires (0-365), and whether expired stock may be sold */
+export function checkExpirySettings(input){
+  const d=+String(input.expiryDays==null?"":input.expiryDays).trim();
+  if(String(input.expiryDays==null?"":input.expiryDays).trim()===""||!Number.isInteger(d)||d<0||d>365) return {error:"Warn from 0 to 365 days before expiry (a whole number)."};
+  return {patch:{expiryDays:d,sellExpired:!!input.sellExpired}};
+}
+/* input: { leadDays, safetyDays, targetCoverDays } — Smart reorder's planning: the days a supplier takes to deliver, the
+   days of extra stock kept in hand, and the days of sales one order should cover (at least lead + safety) */
+export function checkReorderSettings(input){
+  const day=(v,min,max)=>{const s=String(v==null?"":v).trim(),n=+s;return s!==""&&Number.isInteger(n)&&n>=min&&n<=max?n:null;};
+  const lead=day(input.leadDays,0,120),safety=day(input.safetyDays,0,120),cover=day(input.targetCoverDays,1,365);
+  if(lead==null) return {error:"Supplier lead time: a whole number of days from 0 to 120."};
+  if(safety==null) return {error:"Safety stock: a whole number of days from 0 to 120."};
+  if(cover==null) return {error:"An order covers 1 to 365 days of sales."};
+  if(cover<lead+safety) return {error:`An order should cover at least the lead time plus safety stock (${lead+safety} days).`};
+  return {patch:{reorder:{leadDays:lead,safetyDays:safety,targetCoverDays:cover}}};
+}
 /* input: { b2clLimit } — the invoice value above which an inter-state B2C invoice is "B2C large" */
 export function checkGstSettings(input){
   const n=+input.b2clLimit;
   if(!Number.isFinite(n)||n<0||n>100000000) return {error:"Enter the B2C large limit in rupees."};
   return {patch:{b2clLimit:Math.round(n)}};
+}
+/* input: { quoteTitle, quotePrefix, quoteFooter, quoteTerms, quoteSignature, quoteGst } — the quotation document's template */
+export function checkQuotationSettings(input){
+  const one=(v,max)=>String(v==null?"":v).replace(/[\u0000-\u001f\u007f]/g," ").trim().slice(0,max);
+  const many=(v,max)=>String(v==null?"":v).replace(/\r\n?/g,"\n").replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g," ").trim();
+  const title=one(input.quoteTitle,40)||"QUOTATION", prefix=one(input.quotePrefix,10);
+  if(prefix&&!/^[A-Za-z0-9/_-]{1,10}$/.test(prefix)) return {error:"The quotation number prefix can use letters, numbers, - / _ only (up to 10)."};
+  if(/\b(tax\s+)?invoice\b/i.test(title)) return {error:"A quotation's title can't say invoice: it isn't a bill."};
+  const footer=many(input.quoteFooter), terms=many(input.quoteTerms), sign=many(input.quoteSignature);
+  if(footer.length>300) return {error:"The quotation footer can be at most 300 characters."};
+  if(terms.length>2000) return {error:"Terms & conditions can be at most 2,000 characters."};
+  if(sign.length>200) return {error:"The signature line can be at most 200 characters."};
+  return {patch:{quoteTitle:title,quotePrefix:prefix,quoteFooter:footer,quoteTerms:terms,quoteSignature:sign,quoteGst:input.quoteGst!==false&&input.quoteGst!=="false"}};
+}
+/* The address of the app's own receipt page (https, or http on this computer for testing; …/receipt.html, nothing after
+   it) → that address, or "" (invoice links then need RECEIPT_URL on the server) */
+export function receiptPageUrl(href){
+  try{
+    const u=new URL("receipt.html",String(href||""));
+    const local=u.hostname==="localhost"||u.hostname==="127.0.0.1";
+    return (u.protocol==="https:"||(u.protocol==="http:"&&local))&&!u.username&&!u.password?u.origin+u.pathname:"";
+  }catch{ return ""; }
 }

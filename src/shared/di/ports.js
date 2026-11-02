@@ -58,7 +58,8 @@
  * @property {Object} records                                Row → app record converters for live updates (toSale, toSaleLine, toMove).
  * @property {Function} saveSale  A bill with its lines and payments in one step (RPC hangtag_save_sales; the database checks the
  *   payments add up and posts the financial transactions and cash / bank book entries). Also: setSaleVoid, saveProduct(p, index),
- *   deleteVariants, deleteProduct, saveImage, saveMove, saveReturn, saveCustomer, saveSettings, saveAllSales.
+ *   patchProduct(p, index, fields, variantIds) (an edit: only the columns of the fields and the variants it changed), deleteVariants, deleteProduct, saveImage, saveMove, saveReturn, saveCustomer, patchCustomer(c, fields) (an edit: only the columns
+ *   of the fields it changed, so two tills changing different fields of a customer both keep theirs), saveSettings, saveAllSales.
  *   Used by the outbox (features/sync/services/outbox.js) only. An update or delete that row security quietly skipped (a team
  *   member's role doesn't allow it; the rows are still there) throws PERMISSION instead of passing as done.
  * @property {Function} fetchProducts  Also: fetchVariants, fetchImages, fetchMoves, fetchReturns, fetchCustomers, fetchSettings,
@@ -96,8 +97,9 @@
  * "stockRepository": stock moves. Implementation: infrastructure/repositories/local-first-stock-repository.js, provided by
  * app/container.js. Reach it through features/inventory/repositories/stock-repository.js.
  * @typedef {Object} StockRepositoryPort
- * @property {(change: {moves: Object[], changedProductId?: string}) => void} record  Record moves; changedProductId: a product
- *   whose data changed too (e.g. its cost), uploaded before the moves.
+ * @property {(change: {moves: Object[], changedProductId?: string, changedVariantIds?: string[]}) => void} record  Record moves;
+ *   changedProductId: a product whose data changed too (its cost), uploaded before the moves — as just the variants changed
+ *   (changedVariantIds), so another till's edit of the product stays.
  */
 
 /**
@@ -108,8 +110,9 @@
  * @typedef {Object} PurchaseRepositoryPort
  * @property {() => Object[]} suppliers / purchases / payments           This device's records.
  * @property {(s: Object) => Object} saveSupplier                          Add or change a supplier (never deleted: active = false).
- * @property {(p: {purchase: Object, moves: Object[], cashMove?: Object, changedProductIds?: string[]}) => Object} savePurchase
- *   A purchase, its RESTOCK records (import_id = the purchase) and the cash book entry of cash paid (the database adds the same).
+ * @property {(p: {purchase: Object, moves: Object[], cashMove?: Object, changedProductIds?: string[], changedVariantIds?: Object}) => Object} savePurchase
+ *   A purchase, its RESTOCK records (import_id = the purchase) and the cash book entry of cash paid (the database adds the same);
+ *   the products whose cost it changed go up as just those variants (changedVariantIds: { product id: [variant ids] }).
  * @property {(c: {id: string, reason: string, moves: Object[], cashMove?: Object, t: number, dev: string}) => Object} cancelPurchase
  *   Mark it cancelled with the opposite adjustments (pcx:<record>) and the cash coming back (purx:<purchase>).
  * @property {(x: {payment: Object, cashMove?: Object}) => Object} recordPayment   A payment to a supplier or its reversal.
@@ -121,6 +124,17 @@
  * @typedef {Object} BarcodeServicePort
  * @property {(code: string, opts?: Object) => string} render   EAN-13 / UPC-A / EAN-8 when the code is a valid one, else Code 128.
  * @property {(code: string) => (string|null)} symbology         "ean13" | "upca" | "ean8" | "code128", or null when unprintable.
+ */
+
+/**
+ * "voiceInput": optional browser/device speech. Implementation: infrastructure/browser/browser-speech.js.
+ * Product search still uses the normal text input and search index; a transcript is only another way to fill it.
+ * @typedef {Object} VoiceInputPort
+ * @property {() => boolean} available
+ * @property {(opts?: {lang?: string}) => Promise<string>} listen
+ * @property {() => void} stop
+ * @property {() => boolean} canSpeak
+ * @property {(text: string, opts?: {lang?: string}) => boolean} speak
  */
 
 /**
@@ -213,27 +227,66 @@
  *   Resolves only when the provider accepted the message and returned its id. Otherwise throws an AppError:
  *   NOT_CONFIGURED (no provider), VALIDATION (no contact, cancelled, too many), DELIVERY (the provider refused), NETWORK.
  * @property {(saleId: string) => Promise<Object[]>} history  What was sent from a bill (hangtag_deliveries), newest first.
+ * @property {(since: number) => Promise<Object[]>} recent  What was sent from any bill since a time (ms), newest first, at most 500.
  * @property {(saleId: string) => Promise<Object>} refresh  Asks the providers whether the bill's messages were delivered.
  * @property {(saleId: string) => Promise<{url: string}>} link  The bill's secure invoice link (made once, 12 months).
+ * @property {(req: {saleId: string, pdf?: string}) => Promise<{invoice: Object, url: string, already: boolean}>} invoice
+ *   The bill's one invoice PDF; pdf (base64) registers this phone's copy when the bill has none (the first copy is kept).
  * @property {(saleId: string) => Promise<void>} revokeLinks  Stops the bill's invoice links working.
  */
 
 /**
- * "paymentGateway": verified UPI (single-use QR for an exact amount) and card (payment link) payments. Implementation:
- * infrastructure/payments/payment-gateway-client.js → Edge Function payment-gateway (Razorpay keys live there; only the
- * provider's own record of a captured payment makes an intent "verified"). Reach it through
+ * "paymentGateway": provider-neutral verified UPI (single-use QR for an exact amount) and card payment intents, on the
+ * shop's OWN gateway account (its keys, sealed server-side; no shared Hangtag account).
+ * Implementation: infrastructure/payments/payment-gateway-client.js → Edge Function payment-gateway (provider keys stay
+ * server-side; only the provider's verified record makes an intent "verified"). Reach it through
  * features/sales/use-cases/provider-payment.js.
  * @typedef {Object} PaymentGatewayPort
- * @property {() => Promise<{provider: (string|null), upi: boolean, cardLink: boolean}>} config
- * @property {(req: {method: "upi"|"card", amount: number, saleId: string, note?: string, expiryMin?: number}) => Promise<Object>} create
+ * @property {() => Promise<{provider: (string|null), upi: boolean, cardLink: boolean, gateway: Object}>} config  What can be
+ *   taken now, and the gateway's set-up: { available (may this shop connect one), connected, mode, keyId (masked), checkedAt,
+ *   lastEventAt, webhookUrl and events (for who manages settings) }.
+ * @property {(req: {keyId: string, keySecret: string, webhookSecret: string}) => Promise<Object>} connect  The shop's own
+ *   Razorpay keys (checked with Razorpay, kept sealed) → the config.
+ * @property {() => Promise<Object>} disconnect  Closes what is open on the account and drops its keys → the config.
+ * @property {(req: {method: "upi"|"card", amount: number, saleId: string, note?: string, expiryMin?: number}) => Promise<Object>} createPayment
  *   → the intent { id, status: "pending", qrUrl | linkUrl, reference, expiresAt }.
- * @property {(id: string) => Promise<Object>} status  The intent as the provider sees it now.
- * @property {(id: string) => Promise<Object>} cancel  Closes it ("verified" instead when the money arrived first).
- * @property {(req: {saleId: string, reference: string}) => Promise<{status: string}>} verify  Matches a UPI payment checked by hand.
- * @property {(returnId: string) => Promise<{refundId: string}>} refundReturn  A return's refund back onto its bill's verified payment.
+ * @property {(req: {amount: number, saleId: string, note?: string, expiryMin?: number}) => Promise<Object>} createDynamicQr
+ * @property {(id: string) => Promise<Object>} getStatus  The intent as the provider sees it now.
+ * @property {(id: string) => Promise<Object>} cancelPayment  Closes it ("verified" instead when the money arrived first).
+ * @property {(req: {saleId: string, reference: string}) => Promise<{status: string}>} verifyPayment  Matches a UPI payment checked by hand.
+ * @property {(req: {returnId: string}) => Promise<{refundId: string}>} refund  A return's refund back onto its bill's verified payment.
  * @property {() => Promise<Object[]>} unmatched  Money received that isn't on any bill.
  * @property {(req: {id: string, resolution: "refund"|"refunded"|"allocated", note?: string}) => Promise<Object>} resolve
  *   Every call throws an AppError when it can't be done: NOT_CONFIGURED, VALIDATION, CONFLICT, NOT_FOUND, AUTH, DELIVERY, NETWORK.
+ */
+
+/**
+ * "subscriptionService": the shop's Hangtag plan (Plans & Billing, the lock). Implementation:
+ * infrastructure/billing/subscription-client.js → database functions of schema.sql sections 3t, 3w + the subscription Edge Function.
+ * @typedef {Object} SubscriptionServicePort
+ * @property {() => Promise<Object|null>} status  The shop's plan (hangtag_subscription_status). Throws an AppError when it can't.
+ * @property {() => Promise<Object[]>} plans  The plans on sale with their prices and the offer the shop may take on each (from the database).
+ * @property {(plan: string, promo: string) => Promise<Object>} quote  The price, the promo discount and the amount (computed by the database).
+ * @property {() => Promise<Object[]>} payments  The owner's plan payments, newest first.
+ * @property {() => Promise<{available: boolean, provider: (string|null), autopay: boolean}>} config  Whether online payment and AutoPay are set up (never throws).
+ * @property {() => Promise<Object>} autopayQuote  AutoPay's terms: today, the plan's price after the trial, from when, the consent's version.
+ * @property {(consentVersion: string, phone?: string) => Promise<Object>} autopayStart  AutoPay with the owner's consent: { auth_url } (approved with the bank / UPI app); phone when the server asked for one.
+ * @property {() => Promise<Object>} autopayVerify  Asks the provider about the mandate: { status }.
+ * @property {() => Promise<Object>} autopayCancel  Turns AutoPay off (at the provider first): { status: "cancelled" }.
+ * @property {(plan: string, promo: string, phone?: string) => Promise<Object>} checkout  Starts a payment: { payment_id, amount, pay_url } or { free: true, status: "paid" }.
+ *   phone: the payer's mobile number for this payment, sent when the server asked for one (phone_required).
+ * @property {(paymentId: string) => Promise<Object>} verify  Asks the provider: { status: "paid"|"pending"|… }.
+ */
+
+/**
+ * "agentProvider": the Hangtag Agent's optional AI provider. Implementation: infrastructure/ai/agent-provider-client.js →
+ * Edge Function agent (the provider's key stays server-side; the function reads no shop data). The tools run on this device
+ * (features/assistant/services/agent-tools.js); reach it through features/assistant/services/agent-runner.js.
+ * @typedef {Object} AgentProviderPort
+ * @property {() => Promise<{available: boolean, provider: (string|null), model: (string|null)}>} config  Not available when it
+ *   isn't set up, this account isn't allowed, or the function can't be reached (never throws).
+ * @property {(req: {question: string, tools: Object[], transcript: Object[]}) => Promise<Object>} step  One round:
+ *   { type: "tool_calls", calls: [{ id, name, input }] } or { type: "answer", text }. Throws an AppError when it can't.
  */
 
 /**
@@ -263,7 +316,7 @@
 /**
  * "weightScale": a weighing scale on this device. Implementation: infrastructure/hardware/weight-scale.js — a scale on a
  * cable through Web Serial (any scale that prints "a number and a unit"; baud rate, bare-number unit and an optional
- * request command from Settings → Hardware, store.scale), else the manual provider (the weight is typed). Reach it through
+ * request command from Settings → This device, store.scale), else the manual provider (the weight is typed). Reach it through
  * features/hardware/services/scale.js. Nothing here throws: failures come back as { error } with a message a person can
  * act on, and typing the weight is always possible.
  * @typedef {Object} WeightScalePort
@@ -275,6 +328,22 @@
  * @property {(opts?: {timeoutMs?: number}) => Promise<{value: number, unit: "kg"|"g"|"lb"|"oz"|"l"|"ml", stable: true}|{error: string}>} read
  *   The next settled reading (a scale still settling, or nothing within the time, is an error).
  * @property {(line: string, unit?: string) => ({value, unit, stable}|null)} feed  Gives the manual provider a reading, as a scale would print it.
+ */
+
+/**
+ * "bizRepository": the commerce batch's records (schema.sql section 3r) by kind — pl price lists, po purchase orders, ei / ew
+ * e-invoice / e-way bill readiness, rpk repacks (with their two stock records), gv gift vouchers (the cloud's copy only).
+ * Implementation: infrastructure/repositories/local-first-biz-repository.js. Saved here first, then queued ("biz" { kind, id };
+ * "bizdel" removes a price list); the upload reads the record as it is then (cloud.saveBiz).
+ * @typedef {Object} BizRepositoryPort
+ * @property {(kind: string) => Object[]} list
+ * @property {(kind: string, id: string) => (Object|null)} get
+ * @property {(kind: string, rec: Object) => Object} save        Kept and queued for upload.
+ * @property {(kind: string, rec: Object) => Object} keep        The cloud's copy, not uploaded (vouchers).
+ * @property {(kind: string, id: string) => (Object|null)} remove
+ * @property {(kind: string, id: string, version: number) => void} saved   The version the cloud holds after a save (purchase orders).
+ * @property {(rec: Object) => Object} repack                    A repack and its stock records (rec.moves), here at once.
+ * @property {(kind: string, map: Object) => void} replace       A download of a kind.
  */
 
 /**

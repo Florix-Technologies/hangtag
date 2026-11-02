@@ -1,74 +1,186 @@
-// Home: the shop at a glance — today's sales and bills, what is running low or sold out, where this device stands with the
-// cloud, and quick actions. Every part is shown only to someone whose role may use it, and a quick action only when its
-// module is shown in this shop (services/modules.js); the actions themselves still check the role.
+// Home: the day at a glance, compact and operational (services/home-signals.js and reports/services/business-today.js
+// work out every figure from the shop's own records). Quick actions by role beside the shop's name; then Business today
+// (sales against a usual <weekday> by this time, bills, average bill and, for those who see reports, gross profit when cost
+// prices allow, what customers owe and the stock's value — each opening why it is what it is), Needs attention (only what
+// this person can act on, each with where to act), the Hangtag Agent's insights, recent bills and the last 7 days. By role:
+//   owner:   everything, with cash / UPI / card taken today and reconciliation
+//   manager: everything but the money split and reconciliation
+//   cashier: today, what needs them (held bills, orders, receipts not sent), recent bills, customers
+//   server / kitchen: today and their tables or the kitchen queue (quick actions)
+// An action shows only when its module is shown in this shop (services/modules.js); the actions still check the role.
+// The greeting (#welcome) sits above, once a day.
 import { store } from '../../../shared/state/store.js';
-import { D } from '../../inventory/services/ledger.js';
-import { stockOf } from '../../inventory/services/stock.js';
-import { levelOf, lowAt } from '../../inventory/services/stock-levels.js';
-import { liveProducts } from '../../products/services/catalog.js';
-import { todayStats } from '../../sales/services/sales-log.js';
 import { syncSummary } from '../../sync/components/sync-status.js';
-import { can, canAny } from '../../shop/services/access.js';
+import { can, canAny, currentPerms, currentRole } from '../../shop/services/access.js';
+import { businessScope, homeSections } from '../../../domain/shop/role-workspace.js';
+import { setTab } from '../../../shared/ui/render.js';
+import { heldHTML, opsRowHTML, ownerRowHTML, shiftHTML, tablesHTML } from '../components/role-sections.js';
+import { briefingHTML, briefingText } from '../components/briefing-card.js';
+import { watchSettings } from '../../automation/services/watchers.js';
+import { savePrefs } from '../../../shared/state/persistence.js';
 import { moduleShown } from '../../shop/services/modules.js';
+import { homeActions } from '../../shop/services/quick-actions.js';
 import { shopTypeLabel } from '../../shop/services/shop-caps.js';
-import { vLabel, variantsOf } from '../../../domain/catalog/variants.js';
-import { payLabel } from '../../../domain/sales/payments.js';
-import { kpi } from '../../../shared/components/kpi.js';
-import { ICON } from '../../../shared/constants/icons.js';
+import { agentInsights, attentionItems, recentBills, salesTrend, stockAlerts } from '../services/home-signals.js';
+import { businessTodayView } from '../../reports/services/business-today.js';
+import { REF_LABELS } from '../../../domain/reports/business-today.js';
+import { salesByChannel } from '../../commerce/services/channels.js';
+import { subscriptionBannerHTML } from '../../billing/components/plans-billing.js';
+import { billChips } from '../../bills/services/bill-status.js';
 import { NAV_ICONS } from '../../../shared/constants/nav-icons.js';
+import { UI_ICON, statusChip } from '../../../shared/ui/kit.js';
 import { $, esc } from '../../../shared/dom.js';
-import { agoText, dayKey, hhmm } from '../../../shared/formatting/dates.js';
-import { inr } from '../../../shared/formatting/money.js';
+import { agoText, dayKey, dayLab, dayLong, fmtDate, hhmm } from '../../../shared/formatting/dates.js';
+import { inr, inrShort } from '../../../shared/formatting/money.js';
+import { products } from '../../products/services/catalog.js';
 
-/* Quick actions: [label, the button's data attribute, the module it belongs to, any of these permissions] */
-const ACTIONS = [
-  ["New sale", 'data-tab="sell"', "sell", ["create_sale"], "sell"],
-  ["Orders", 'data-tab="orders"', "orders", ["create_sale", "create_order"], "orders"],
-  ["Stock in", 'data-act="stockin"', "stock", ["manage_inventory"], "stock"],
-  ["Add product", 'data-act="addp"', "products", ["manage_products"], "products"],
-  ["Add customer", 'data-act="custadd"', "customers", ["create_sale", "collect_credit", "create_order"], "customers"],
-  ["Reports", 'data-tab="report"', "report", ["view_reports"], "report"],
-  ["Settings", 'data-tab="settings"', "settings", [], "settings"],
-];
-/* The quick actions this person has in this shop: [{ label, attr }] */
-export const homeActions = () => ACTIONS.filter(([, , mod, perms]) => moduleShown(mod) && (!perms.length || canAny(perms))).map(([label, attr, , , icon]) => ({ label, attr, icon }));
+export { stockAlerts };
+const card = (title, link, body, cls = "", aria = "") => `<section class="card hcard${cls ? " " + cls : ""}"${aria ? ` aria-label="${esc(aria)}"` : ""}><div class="card-h"><h3>${title}</h3>${link || ""}</div>${body}</section>`;
+const linkTo = (attr, label) => `<button class="link xs" type="button" ${attr}>${esc(label)} ${UI_ICON.chevron}</button>`;
 
-/* Variants running low or sold out (products on sale), fewest first */
-export function stockAlerts(){
-  const out = [];
-  liveProducts().forEach(p => variantsOf(p).forEach(v => { const n = stockOf(v.id), lv = levelOf(n); if(lv !== "ok") out.push({ p, v, n, level: lv }); }));
-  return out.sort((a, b) => a.n - b.n);
+/* Business today (reports/services/business-today.js): the day's figures against a usual <weekday> by this time, each a
+   button that opens WHY it is what it is — an unusual figure is marked, and its reasons open on a tap. What it
+   shows is the role's (role-workspace.js businessScope): the owner sales, gross profit (when cost prices cover enough of
+   the sales), what customers owe, the stock's value, cash / UPI / card and reconciliation; a manager sales, what customers
+   owe and the stock; anyone else who sells plain sales, bills and the average bill. */
+const MONEY_KEYS = ["cash", "upi", "card", "reconciliation"], HERO_KEYS = ["sales", "bills", "avgBill", "profit"];
+const ASK = { sales: x => x.change < 0 ? "Why are sales down today?" : x.change > 0 ? "Why are sales up today?" : "Explain today's sales", bills: () => "Explain today's sales",
+  avgBill: () => "Why is the average bill different today?", profit: () => "Explain today's margin", cash: () => "Explain today's payments", upi: () => "Explain today's payments",
+  card: () => "Explain today's payments", receivables: () => "Explain what customers owe", stock: () => "Explain the stock value", reconciliation: () => "Why doesn't the money reconcile?" };
+const figureValue = x => x.display != null ? esc(x.display) : x.value == null ? "—" : x.key === "bills" ? esc(String(x.value)) : inr(x.value);
+/* The figure whose reasons show: the one tapped ("" when closed). Nothing opens by itself: an unusual figure is marked
+   ("Why?" / "Check") and Needs attention lists what to do, so Home stays calm and the reasons are one tap away */
+const openFigure = V => { const w = store.homeWhy; return w && V.figures.some(x => x.key === w) ? w : ""; };
+function whyHTML(V, key){
+  const byKey = Object.fromEntries(V.figures.map(x => [x.key, x])), base = byKey[key] && byKey[key].opens ? byKey[byKey[key].opens] : byKey[key];
+  if(!base) return "";
+  const x = byKey[key].opens ? { ...base, headline: byKey[key].headline + " " + base.headline } : base;
+  const rs = x.reasons.map(r => `<li><span>${esc(r.text)}</span>${r.ref ? `<button type="button" class="link xs" data-agentopen="${esc(r.ref.target)}|${esc(r.ref.id || "")}">${esc(REF_LABELS[r.ref.target] || "Open")} ${UI_ICON.chevron}</button>` : ""}</li>`).join("");
+  const ask = moduleShown("assistant") ? `<button type="button" class="btn sm" data-tab="assistant" data-ask-question="${esc((ASK[key] || ASK.sales)(byKey[key]))}">${NAV_ICONS.assistant || ""}<span>Ask the Agent</span></button>` : "";
+  return `<div class="bt-why${x.unusual ? " " + esc(x.tone || "warn") : ""}" id="btWhy" role="region" aria-label="${esc(byKey[key].label)}: why" aria-live="polite">
+    <p class="bt-h">${esc(x.headline)}</p>${rs ? `<ul class="bt-rs">${rs}</ul>` : ""}${x.check ? `<p class="bt-check"><b>Worth checking:</b> ${esc(x.check)}</p>` : ""}
+    <div class="bt-acts">${ask}<button type="button" class="link xs" data-bt="">Close</button></div></div>`;
+}
+function todayHTML(role){
+  const reports = can("view_reports"), V = businessTodayView(Date.now(), businessScope(role, currentPerms()));
+  const open = reports ? openFigure(V) : "";
+  const tile = x => {
+    const inner = `<span>${esc(x.label)}</span><b>${figureValue(x)}</b><small>${esc(x.sub) || "&nbsp;"}</small>${x.unusual ? `<em class="bt-flag">${x.tone === "bad" ? "Check" : "Why?"}</em>` : ""}`;
+    const cls = `hkpi bt-${esc(x.key)}${x.tone ? " " + esc(x.tone) : ""}${x.unusual ? " unusual" : ""}`;
+    return reports ? `<button type="button" class="${cls}${open === x.key ? " on" : ""}" data-bt="${esc(x.key)}" aria-expanded="${open === x.key}" aria-controls="btWhy">${inner}</button>` : `<div class="${cls}">${inner}</div>`;
+  };
+  const hero = V.figures.filter(x => HERO_KEYS.includes(x.key)), money = V.figures.filter(x => MONEY_KEYS.includes(x.key)),
+    more = V.figures.filter(x => !HERO_KEYS.includes(x.key) && !MONEY_KEYS.includes(x.key));
+  let channels = [];
+  try{ channels = salesByChannel(dayKey(Date.now()), dayKey(Date.now()), ""); }catch{ channels = []; }
+  const chan = channels.length > 1 ? `<p class="hchan">${channels.map(c => `<span data-channel="${esc(c.key)}">${esc(c.label)} <b>${inr(c.sales)}</b></span>`).join("")}</p>` : "";
+  const group = (cls, title, list) => list.length ? `<div class="bt-group ${cls}-g"><h4 class="bt-sub">${esc(title)}</h4><div class="hkpis compact ${cls}">${list.map(tile).join("")}</div></div>` : "";
+  const body = `${V.comparison ? `<p class="bt-basis">Compared with ${esc(V.comparison.label)}${V.comparison.kind === "usual" ? ` (the last ${V.comparison.days} ${esc(fmtDate(Date.now(), { weekday: "long" }))}s)` : ""}.</p>` : ""}
+    <div class="hkpis bt-hero">${hero.map(tile).join("")}</div>${chan}
+    ${money.length || more.length ? `<div class="bt-strip${money.length && more.length ? " two" : ""}">${group("bt-money", "Money today", money)}${group("bt-more", "Owed to you and in stock", more)}</div>` : ""}${open ? whyHTML(V, open) : ""}`;
+  return card(reports ? "Business today" : "Today", moduleShown("report") ? linkTo('data-tab="report"', "Reports") : "", body, "htoday", reports ? "Business today" : "Today");
+}
+/* A figure tapped: its reasons open (tapped again, or Close: they close) */
+let installed = false;
+export function installHomeEvents(){
+  if(installed) return; installed = true;
+  // the morning briefing unfolded or folded: kept that way while Home redraws
+  document.addEventListener("toggle", e => { if(e.target && e.target.matches && e.target.matches("#homeBody .brf-more")) store.homeBriefOpen = e.target.open; }, true);
+  document.addEventListener("click", e => {
+    // the morning briefing: shared as text (the share sheet, else WhatsApp), or hidden until tomorrow
+    const br = e.target && e.target.closest ? e.target.closest("[data-brief]") : null;
+    if(br){
+      if(br.dataset.brief === "hide"){ store.prefs.briefingHidden = dayKey(Date.now()); savePrefs(); renderHome(); return; }
+      const text = briefingText(Date.now());
+      if(navigator.share) navigator.share({ text }).catch(() => {}); else window.open("https://wa.me/?text=" + encodeURIComponent(text), "_blank", "noopener");
+      return;
+    }
+    // Getting started hidden on this device (its steps stay where they are: Products, Sell, Settings)
+    if(e.target && e.target.closest && e.target.closest("[data-starthide]")){ store.prefs.startHidden = true; savePrefs(); renderHome(); return; }
+    const tb = e.target && e.target.closest ? e.target.closest("[data-hometable]") : null;
+    if(tb){ store.tableView = Object.assign({ mode: "floor", edit: null }, store.tableView, { sel: tb.dataset.hometable }); setTab("tables"); return; }
+    const b = e.target && e.target.closest ? e.target.closest("[data-bt]") : null; if(!b) return;
+    const key = b.dataset.bt, on = document.querySelector("#homeBody [data-bt][aria-expanded=\"true\"]"), openNow = on ? on.dataset.bt : "";
+    store.homeWhy = !key || openNow === key ? "" : key;
+    renderHome();
+    if(store.homeWhy){ const w = $("#btWhy"); if(w && w.getBoundingClientRect().bottom > innerHeight) w.scrollIntoView({ block: "nearest" }); }
+  });
+}
+/* Getting started, for a new shop (whoever manages its settings): the few things that make the till ready — products,
+   the first bill, how payments are taken, the receipt — each ticked by itself from the shop's own records (or once its
+   settings were looked at), until all are done or the card is hidden. Nothing here changes anything by itself. */
+export function startSteps(){
+  const s = store.settings || {}, prefs = store.prefs || {};
+  return [
+    { k: "products", done: products().length > 0, t: "Add your products", sub: "One by one, or many at once from a spreadsheet.", acts: [['data-tab="products"', "Products"], ['data-act="prodimport"', "Import a spreadsheet"]] },
+    { k: "bill", done: recentBills(1).length > 0, t: "Make your first bill", sub: "On Sell: tap a product, then take the payment.", acts: [['data-tab="sell"', "Go to Sell"]] },
+    { k: "pay", done: !!(s.upiId || prefs.paySeen), t: "Choose how you take payments", sub: "Cash and your card machine work as they are; add your own UPI QR if you like.", acts: [['data-setgo="payments"', "Payment settings"]] },
+    { k: "receipt", done: !!(store.logo || prefs.receiptSeen), t: "Set up your receipt", sub: "Your logo and details on bills, the paper size, and receipts sent by WhatsApp or email.", acts: [['data-setgo="billing"', "Receipt settings"]] },
+  ];
+}
+function startHTML(){
+  if(!can("manage_settings") || (store.prefs && store.prefs.startHidden)) return "";
+  const steps = startSteps(), n = steps.filter(x => x.done).length;
+  if(n === steps.length) return "";
+  const rows = steps.map(x => `<li class="hstart-i${x.done ? " done" : ""}" data-start="${x.k}"><i aria-hidden="true">${x.done ? UI_ICON.check : ""}</i><span class="hstart-t"><b>${esc(x.t)}</b>${x.done ? "" : `<small>${esc(x.sub)}</small>`}</span>
+    ${x.done ? `<span class="hstart-ok">Done</span>` : `<span class="hstart-acts">${x.acts.map(([a, l]) => `<button type="button" class="btn sm" ${a}>${esc(l)}</button>`).join("")}</span>`}</li>`).join("");
+  return `<section class="card hstart" aria-label="Getting started"><div class="hstart-h"><h3>Getting started <span class="hcount">${n} of ${steps.length}</span></h3>
+    <button type="button" class="link xs" data-starthide>Hide</button></div><ol class="hstart-l">${rows}</ol></section>`;
+}
+/* What needs someone, worst first, each with where to act on it */
+function attentionHTML(){
+  const items = attentionItems();
+  const body = items.length ? `<ul class="hatt">${items.map(it => { const inner = `<i class="hatt-dot" aria-hidden="true"></i><span class="hatt-t"><b>${esc(it.title)}</b>${it.sub ? `<small>${esc(it.sub)}</small>` : ""}</span>${it.attr ? `<span class="hatt-cta">${esc(it.cta)} ${UI_ICON.chevron}</span>` : ""}`;
+      return `<li class="${esc(it.tone)}" data-attn="${esc(it.id)}">${it.attr ? `<button type="button" class="hatt-row" ${it.attr}>${inner}</button>` : `<div class="hatt-row">${inner}</div>`}</li>`; }).join("")}</ul>`
+    : `<p class="hclear">${UI_ICON.check}<span>All clear — nothing needs you right now.</span></p>`;
+  return card(`Needs attention${items.length ? ` <span class="hcount">${items.length}</span>` : ""}`, "", body, "hattn", "Needs attention");
+}
+/* The Hangtag Agent's few observations from the data, each with where to look */
+function insightsHTML(){
+  const list = agentInsights(), ask = moduleShown("assistant") ? linkTo('data-tab="assistant"', "Ask the Agent") : "";
+  const body = list.length ? `<ul class="hins">${list.map(i => `<li data-insight="${esc(i.id)}"><p>${esc(i.text)}</p>${i.attr && i.cta ? `<button type="button" class="link xs" ${i.attr}>${esc(i.cta)} ${UI_ICON.chevron}</button>` : ""}</li>`).join("")}</ul>`
+    : `<p class="muted">Nothing unusual in your sales and stock right now.</p>`;
+  return card(`${NAV_ICONS.assistant || ""}<span>Hangtag Agent</span>`, ask, body + `<p class="note">From your shop&rsquo;s own records. It suggests; it never changes anything by itself.</p>`, "hagent", "Hangtag Agent");
+}
+/* The last 7 days of sales as bars (today last) */
+function trendHTML(){
+  const T = salesTrend(), max = Math.max(1, ...T.days.map(d => d.sales)), today = dayKey(Date.now());
+  const label = k => fmtDate(k + "T12:00:00", { weekday: "short" });
+  const ch = T.prevTotal ? Math.round((T.total - T.prevTotal) / T.prevTotal * 100) : null;
+  const delta = ch == null ? "" : `<span class="delta ${ch >= 0 ? "up" : "down"}">${ch >= 0 ? "▲" : "▼"} ${Math.abs(ch)}% <span>vs the 7 days before</span></span>`;
+  const bars = T.days.map(d => `<div class="hbar${d.k === today ? " on" : ""}" title="${esc(dayLong(d.k))}: ${esc(inr(d.sales))} · ${d.bills} bill${d.bills === 1 ? "" : "s"}"><span class="hbar-v">${d.sales ? esc(inrShort(d.sales)) : ""}</span><span class="hbar-c"><i style="height:${d.sales > 0 ? Math.max(4, Math.round(d.sales / max * 100)) : 0}%"></i></span><span class="hbar-d">${esc(d.k === today ? "Today" : label(d.k))}</span></div>`).join("");
+  const aria = "Sales, last 7 days: " + T.days.map(d => `${label(d.k)} ${inr(d.sales)}`).join(", ");
+  return card("Last 7 days", moduleShown("report") ? linkTo('data-reportgo="7d"', "Reports") : "", `<p class="htrend-sum"><b>${inr(T.total)}</b>${delta}</p><div class="htrend" role="img" aria-label="${esc(aria)}">${bars}</div>`, "htrendc", "Sales, last 7 days");
+}
+/* The latest bills with their state */
+function billsHTML(){
+  const list = recentBills(5), today = dayKey(Date.now());
+  const body = list.length ? `<div class="olist hlist">${list.map(({ s, st }) => { const chips = billChips(s, st).slice(0, 2).map(([l, t]) => statusChip(l, t)).join("");
+      return `<button type="button" class="orow chev${s.void ? " void" : ""}" data-billview="${esc(s.id)}"><span class="o-main"><span class="o-t hbill-t"><span class="hno">${esc(s.no || "Bill")}</span>${chips}</span><span class="o-s">${esc(dayKey(s.t) === today ? hhmm(s.t) : dayLab(dayKey(s.t)) + " · " + hhmm(s.t))} · ${esc(s.cust && s.cust.name || "Walk-in")}</span></span><span class="o-end"><span class="o-amt">${inr(s.total)}</span></span></button>`; }).join("")}</div>`
+    : `<p class="muted">No bills yet. The first one you make on Sell shows up here.</p>`;
+  return card("Recent bills", moduleShown("bills") ? linkTo('data-tab="bills"', "All bills") : "", body, "hbills", "Recent bills");
+}
+function customersHTML(){
+  return card("Customers", linkTo('data-tab="customers"', "All customers"), `<div class="btnrow"><button type="button" class="btn" data-act="custadd">${UI_ICON.plus} New customer</button><button type="button" class="btn" data-tab="customers">${UI_ICON.search} Find a customer</button></div>`, "hcust");
 }
 
 export function homeHTML(){
-  const p = store.profile || {}, now = Date.now();
-  const sells = canAny(["create_sale", "view_reports"]), seesStock = canAny(["view_products", "manage_inventory", "create_purchase", "manage_products"]);
-  let h = `<div class="viewhead"><div><div class="eyebrow">${esc(new Date(now).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" }))}</div>
-    <h2 class="vt">${esc(p.shop_name || "Your shop")}</h2><p>${esc(shopTypeLabel())}</p></div></div>`;
+  const p = (store.access && store.access.shopName) ? { shop_name: store.access.shopName } : (store.profile || {}), now = Date.now(), role = currentRole();
   const acts = homeActions();
-  if(acts.length) h += `<div class="qa" role="group" aria-label="Quick actions">${acts.map(a => `<button type="button" class="qa-b" ${a.attr}>${NAV_ICONS[a.icon] || ""}<span>${esc(a.label)}</span></button>`).join("")}</div>`;
-  h += `<div class="homegrid">`;
-  if(sells){
-    const t = todayStats(), k = dayKey(now);
-    const bills = D().sales.filter(s => dayKey(s.t) === k).sort((a, b) => b.t - a.t);
-    h += `<div class="card"><div class="card-h"><h3>Today</h3>${moduleShown("report") ? `<button class="link xs" type="button" data-tab="report">Reports</button>` : ""}</div>
-      <div class="kpis hk3">${kpi("Sold today", inr(t.rev), "after refunds")}${kpi("Bills", String(t.bills), "")}${kpi("Pieces", String(t.pcs), "")}</div>
-      <h4 class="subh">Bills today</h4>${bills.length ? `<div class="hbills">${bills.slice(0, 6).map(s => `<button type="button" class="hbill${s.void ? " void" : ""}" data-billview="${esc(s.id)}"><span><b>${esc(s.no || "Bill")}</b><small>${esc(hhmm(s.t))} · ${esc(payLabel(s))}${s.void ? " · cancelled" : ""}</small></span><b>${inr(s.total)}</b></button>`).join("")}</div>`
-        + (bills.length > 6 ? `<p class="note">and ${bills.length - 6} more today</p>` : "") : `<p class="muted">No bills yet today.</p>`}</div>`;
-  }
-  if(seesStock){
-    const al = stockAlerts(), out = al.filter(a => a.level === "out"), low = al.length - out.length, stockIn = can("manage_inventory");
-    h += `<div class="card"><div class="card-h"><h3>Stock</h3>${moduleShown("stock") ? `<button class="link xs" type="button" data-tab="stock">Inventory</button>` : ""}</div>
-      <div class="kpis">${kpi("Running low", String(low), `variants with 1–${lowAt()} pieces`, low ? "warn" : "")}${kpi("Sold out", String(out.length), "variants at zero", out.length ? "crit" : "")}</div>
-      ${al.length ? `<div class="alerts">${al.slice(0, 8).map(a => { const inner = `${a.level === "out" ? ICON.out : ICON.warn}<b>${esc(a.p.name)}</b>${vLabel(a.v) ? `<span class="szl">${esc(vLabel(a.v))}</span>` : ""}<span class="st">${a.n < 0 ? a.n + " (below zero)" : a.level === "out" ? "sold out" : a.n + " left"}</span>`;
-          return stockIn ? `<button type="button" class="al ${a.level}" data-stockin="${esc(a.p.id)}">${inner}</button>` : `<span class="al ${a.level}">${inner}</span>`; }).join("")}${al.length > 8 ? `<span class="note">+${al.length - 8} more</span>` : ""}</div>`
-        : `<p class="muted">${liveProducts().length ? "Everything is in stock." : "No products yet."}</p>`}</div>`;
-  }
+  let h = `<div class="viewhead hhead"><div><div class="eyebrow">${esc(fmtDate(now, { weekday: "long", day: "numeric", month: "long" }))}</div>
+    <h2 class="vt">${esc(p.shop_name || "Your shop")}</h2><p>${esc(shopTypeLabel())}</p></div>${acts.length ? `<div class="qa" role="group" aria-label="Quick actions">${acts.map((a, i) => `<button type="button" class="btn ${i === 0 ? "primary qa-main" : "qa-alt"} qa-b" ${a.attr}>${NAV_ICONS[a.icon] || ""}<span>${esc(a.label)}</span></button>`).join("")}</div>` : ""}</div>`;
+  h += subscriptionBannerHTML();   // the free trial's days left, or a paid plan ending within a week (owner and managers)
+  h += startHTML();   // a new shop's first steps (until done or hidden)
+  // what this role's day is about (domain/shop/role-workspace.js): full-width sections first, then two columns
+  const SEC = homeSections(role, currentPerms()), has = k => SEC.includes(k), sells = canAny(["create_sale", "view_reports"]), reports = can("view_reports");
+  const top = [has("briefing") && can("view_reports") && watchSettings().briefing === "notify" ? briefingHTML(now) : "", has("business") && sells ? todayHTML(role) : "", has("shift") ? shiftHTML(now) : "", has("tables") ? tablesHTML() : ""].join("");
+  const left = [has("held") ? heldHTML(now) : "", has("attention") ? attentionHTML() : "", has("bills") && sells ? billsHTML() : ""].join("");
+  const right = [has("owner") ? ownerRowHTML(now, () => { if(store.prefs.tab === "home") renderHome(); }) : "", has("ops") ? opsRowHTML(now) : "",
+    has("agent") && reports ? insightsHTML() : "", has("trend") && reports ? trendHTML() : "", has("customers") && moduleShown("customers") ? customersHTML() : ""].join("");
+  h += `<div class="homegrid wide${left && right ? "" : " solo"}">${top}${left ? `<div class="hcol hmain">${left}</div>` : ""}${right ? `<div class="hcol hside">${right}</div>` : ""}</div>`;
+  // the line takes the state's tone only: the header's sync chip (class "sync") hides its words on a phone
   const S = syncSummary();
-  h += `<div class="card"><div class="card-h"><h3>Sync</h3><button class="link xs" type="button" data-act="syncpanel">Details</button></div>
-    <p class="hsync ${esc(S.cls)}"><i></i><b>${esc(S.txt)}</b></p><p class="note" style="margin:0">${esc(S.tip)}</p>
-    ${store.lastSyncAt ? `<p class="note" style="margin:6px 0 0">Last fully synced ${esc(agoText(store.lastSyncAt))}.</p>` : ""}</div>`;
-  h += `</div>`;
+  h += `<p class="hsync ${esc(S.cls.replace(/\bsync\b/, "").trim())}"><i></i><span><b>Sync:</b> ${esc(S.txt)}${store.lastSyncAt ? ` · last fully synced ${esc(agoText(store.lastSyncAt))}` : ""}</span><button class="link xs" type="button" data-act="syncpanel">Details</button></p>`;
   return h;
 }
 export function renderHome(){ const host = $("#homeBody"); if(host) host.innerHTML = homeHTML(); }

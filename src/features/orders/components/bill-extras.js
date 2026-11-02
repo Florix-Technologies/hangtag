@@ -14,6 +14,7 @@ import { renderAll, setTab } from '../../../shared/ui/render.js';
 /* In the bill's head: "Hold" while there is a bill, else "Held (n)" when bills are waiting */
 export function billHoldHTML(empty){
   if(!can("create_sale")) return "";
+  if(!empty && store.cartTable) return "";
   if(!empty) return `<button class="link" data-hold>Hold</button>`;
   const n = listHeldCarts().length;
   return n ? `<button class="link" data-heldopen>Held (${n})</button>` : "";
@@ -25,13 +26,13 @@ export function billOrderHTML(){
 }
 /* Under the pay buttons: turn the bill on the screen into a quotation (where the shop makes quotations) */
 export function billQuoteHTML(empty){
-  if(empty || store.cartOrder || !can("create_order") || !orderViews().some(v => v.id === "quote")) return "";
+  if(empty || store.cartOrder || store.cartTable || !can("create_order") || !orderViews().some(v => v.id === "quote")) return "";
   return `<button class="link xs bp-quote" data-ordfromcart="quote">Save as quotation</button>`;
 }
 export function holdAction(){
   const r = holdCart();
   if(r.error){ toast(r.error); return; }
-  renderAll(); toast(`Bill held as “${r.held.name}”. Recall it from Orders → Held bills.`);
+  renderAll(); toast(`Bill held as “${r.held.name}”. Recall it from Sell → Held bills.`);
 }
 export function openHeldList(){ chooseSubview("orders", "held"); setTab("orders"); }
 export function detachAction(){ detachCartOrder(); renderAll(); toast("The bill no longer comes from the order."); }

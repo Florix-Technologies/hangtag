@@ -76,7 +76,9 @@ check('split: overpaid — refused (only cash gives change)', /₹139 more than 
 await typeIn(A, '[data-payf="amt:card"]', '');
 await A.click('[data-payrest="upi"]'); await sleep(150);
 await A.type('[data-payf="ref:upi"]', '412345678901'); await sleep(100);
-check('split: "Rest" puts the balance on UPI; paid in full, change ₹200', /Paid ₹2,361 Balance ₹0 Change ₹200/.test(await text(A, '#payLive .paylive')) && (await A.$eval('[data-payf="amt:upi"]', (i) => i.value)) === '1361' && !(await A.$eval('#payDone', (b) => b.disabled)));
+check('split: "Rest" puts the balance on UPI; explicit receipt confirmation is still required', /Paid ₹2,361 Balance ₹0 Change ₹200/.test(await text(A, '#payLive .paylive')) && (await A.$eval('[data-payf="amt:upi"]', (i) => i.value)) === '1361' && await A.$eval('#payDone', (b) => b.disabled));
+await A.click('[data-upireceived]'); await sleep(100);
+check('after checking the customer screen, Complete is enabled', !(await A.$eval('#payDone', (b) => b.disabled)));
 await A.screenshot({ path: H.ARTIFACTS + '/pay1_split_desktop.png' });
 await A.click('#payDone'); await sleep(300);
 check('sale completed: Payment successful, the split and the change to give', await vis(A, '#sheetHost [data-paid]') && /Cash ₹1,000 \+ UPI ₹1,361/.test(await text(A, '.paid-sub')) && /Give change ₹200/.test(await text(A, '[data-change]')), await text(A, '.paid-sub'));
@@ -98,8 +100,9 @@ check('the database posted a transaction per payment, one cash book and one bank
   && JSON.stringify((await q(`SELECT id, num_nonnulls(amount_in) a, amount_in, cash_received, change_given FROM public.hangtag_cash_book WHERE sale_id='${s1.id}'`)).map((c) => [c.id, num(c.amount_in), num(c.cash_received), num(c.change_given)])) === JSON.stringify([['cb:ft:' + s1.id + ':cash', 1000, 1200, 200]])
   && (await q(`SELECT reference FROM public.hangtag_bank_book WHERE sale_id='${s1.id}'`))[0].reference === '412345678901');
 const rt = await run(A, `return receiptText(D().saleById[${JSON.stringify(s1.id)}])`);
-check('receipt: discount, CGST, SGST, round off, total, the split and the change', /Discount: −₹249\.80/.test(rt) && /CGST 2\.5%: ₹56\.21/.test(rt) && /SGST 2\.5%: ₹56\.21/.test(rt) && /Round off: \+₹0\.38/.test(rt)
-  && /\*Total: ₹2,361\*/.test(rt) && /Paid: Cash ₹1,000 \+ UPI ₹1,361/.test(rt) && /Change: ₹200/.test(rt), rt);
+// the text has the printed receipt's rows, in its words and order (src/domain/documents/bill-content.js)
+check('receipt: item and bill discounts, CGST, SGST, round off, total, each part of the split and the change', /Item discounts: −₹199\.80/.test(rt) && /Bill discount: −₹50/.test(rt) && /CGST 2\.5%: ₹56\.21/.test(rt) && /SGST 2\.5%: ₹56\.21/.test(rt) && /Round off: \+₹0\.38/.test(rt)
+  && /\*Total: ₹2,361\*/.test(rt) && /Paid by Cash: ₹1,000 \(received ₹1,200 · change ₹200\)/.test(rt) && /Paid by UPI: ₹1,361 \(ref \d+ · unverified\)/.test(rt) && /Change given: ₹200/.test(rt), rt);
 
 // ---------- 2. a business customer from Karnataka: IGST, card with its reference ----------
 await sleep(700);
@@ -117,12 +120,14 @@ check("the customer's history shows the bill and how it was paid", await run(A, 
 
 // ---------- 3. the existing checkout(method) API still pays the whole bill in one method ----------
 await sleep(700);
-const api = await run(A, `addOne(${JSON.stringify(CAP)});const s=await checkout({method:"upi",ref:"412345678901"});closeSheets();await flushSbQueue();return {pay:s.pay,payments:s.payments,total:s.total,cust:s.cust}`);
+const api = await run(A, `addOne(${JSON.stringify(CAP)});const s=await checkout({method:"upi",ref:"412345678901",confirmed:true});closeSheets();await flushSbQueue();return {pay:s.pay,payments:s.payments,total:s.total,cust:s.cust}`);
 check('checkout({ method: "upi", ref }) still pays the whole bill in one method: one UPI payment for the total, walk-in', api.pay === 'upi' && api.payments.length === 1 && api.payments[0].amount === api.total && api.total === 525 && api.cust === null, api);
 
 // ---------- 4. phone: bill sheet → UPI with reference; cash with a quick amount and change ----------
-await A.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true }); await sleep(1000);   // (reloads the page)
-check('phone: connected again after the reload', await until(A, 'sbStatus==="connected"'));
+// Width is the behavior under test. Changing Puppeteer's mobile-emulation flag reloads through the installed service
+// worker and would replace the test-instrumented page with the normal cached shell, so resize without a reload.
+await A.setViewport({ width: 390, height: 844 }); await sleep(500);
+check('phone: remains connected after the responsive resize', await until(A, 'sbStatus==="connected"'));
 await sleep(700);
 await run(A, `setTab("sell");addOne(${JSON.stringify(TEE)});renderAll()`); await sleep(150);
 await A.click('#billBar [data-act="openbill"]'); await sleep(250);
@@ -133,8 +138,10 @@ check('phone: 10% bill discount', /Bill discount 10% −₹99\.90/.test(await te
 await A.tap('#sheetHost [data-pay="upi"]'); await sleep(250);
 check('phone: the payment screen opens on UPI over the bill', await vis(A, '#paySheet') && (await A.$eval('[data-paymode="upi"]', (b) => b.getAttribute('aria-pressed'))) === 'true');
 await A.screenshot({ path: H.ARTIFACTS + '/pay2_upi_phone.png' });
-await A.type('[data-payf="ref:upi"]', 'UTR 998877'); await A.tap('#payDone'); await sleep(300);
-check('phone: UPI sale done', await vis(A, '#sheetHost [data-paid]') && /UPI · ref UTR 998877/.test(await text(A, '.paid-sub')), await text(A, '.paid-sub'));
+check('phone: UTR is optional but Complete waits for “Mark payment received”', await A.$eval('#payDone', (b) => b.disabled) && /optional/.test(await text(A, '#paySheet .payfields')));
+await A.$eval('[data-upireceived]', (b) => b.click()); await sleep(200);
+await A.$eval('#payDone', (b) => b.click()); await sleep(600);
+check('phone: manual UPI sale completes without a UTR and is marked Unverified', await vis(A, '#sheetHost [data-paid]') && /UPI/.test(await text(A, '.paid-sub')) && /unverified/i.test(await text(A, '.paid-sub')), await text(A, '.paid-sub'));
 await run(A, 'closeSheets()'); await sleep(700);
 await run(A, `addOne(${JSON.stringify(CAP)});renderAll()`); await sleep(150);
 await A.tap('#billBar [data-pay="cash"]'); await sleep(250);
@@ -197,7 +204,7 @@ check('device 2 connects', await until(B, 'sbStatus==="connected"&&D().sales.len
 const txA = await run(A, 'return shopTransactions().map(x=>[x.id,x.amount,x.status].join(":")).sort().join()');
 const txB = await run(B, 'return shopTransactions().map(x=>[x.id,x.amount,x.status].join(":")).sort().join()');
 check('device 2 derives the same financial transactions (split payments, refunds, statuses)', txA === txB && txA.length > 0, { txA, txB });
-const rtB = await run(B, `return receiptText(D().saleById[${JSON.stringify(s1.id)}])`);
-check('device 2 prints the same receipt (discounts, GST split, round off, payments)', rtB === rt, rtB);
+const rtA = await run(A, `return receiptText(D().saleById[${JSON.stringify(s1.id)}])`), rtB = await run(B, `return receiptText(D().saleById[${JSON.stringify(s1.id)}])`);
+check('device 2 prints the same receipt (discounts, GST split, round off, payments, the return since)', rtB === rtA && /Returned items: ₹/.test(rtB), { rtA, rtB });
 await browser.close();
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED'); process.exit(fails ? 1 : 0);

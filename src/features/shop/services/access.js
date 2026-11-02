@@ -10,6 +10,7 @@ import { PERMISSIONS, missingFor, permissionsFor, roleCan, roleLabel } from '../
 import { saveAccess } from '../../../shared/state/persistence.js';
 import { toast } from '../../../shared/components/toast.js';
 import { teamService } from './team.js';
+import { teamRoster } from './team-roster.js';
 
 export const isMember = () => !!(store.access && store.access.role && store.access.role !== "owner");
 export const currentRole = () => isMember() ? store.access.role : "owner";
@@ -48,8 +49,8 @@ export function userLabel(id){
   if(!id) return "";
   if(id === userId()) return "you";
   if(isMember() && id === store.access.shopId) return "the owner";
-  const m = store.team && (store.team.members || []).find(x => x.userId === id);
-  return m ? m.name || m.username || "a team member" : "a team member";
+  const m = store.team && (store.team.members || []).find(x => x.userId === id), r = teamRoster()[id];
+  return m ? m.name || m.username || "a team member" : r && r.name ? r.name : "a team member";
 }
 
 export function setAccess(a){ store.access = a; saveAccess(); }

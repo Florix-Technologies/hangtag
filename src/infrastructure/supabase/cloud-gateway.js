@@ -7,12 +7,20 @@ import { sbFetchAll, sbOk } from './query.js';
 import { billArgs, cashMoveRow, custRow, dayCloseRow, eventRow, moveRow, productRow, returnArgs, roleRow, rowToCashMove, rowToCustomer, rowToDayClose, rowToDelivery, rowToDevice, rowToEvent, rowToImport, rowToItem, rowToMember, rowToMove, rowToPayment, rowToProduct, rowToReturn, rowToReturnItem, rowToRole, rowToSale, rowToVariant, variantRows } from './mappers.js';
 import { collectionRow, heldRow, orderArgs, rowToCollection, rowToHeld, rowToOrder, rowToOrderItem } from './mappers.js';
 import { purchaseArgs, rowToPurchase, rowToSupplier, rowToSupplierPayment, supplierPaymentRow, supplierRow } from './mappers.js';
+import { rowToSession, rowToTable, sessionRow, tableRow } from './mappers.js';
+import { einvRow, ewayRow, poArgs, priceListRow, repackArgs, rowToDelivery as rowToHookDelivery, rowToEinv, rowToEndpoint, rowToEway, rowToPO, rowToPriceList, rowToRepack,
+  rowToVoucher, bankAccountRow, bankMoveRow, rowToBankAccount, rowToBankMove, attrRow, rowToAttr, unitRow, rowToUnit } from './biz-mappers.js';
 
 /* deviceKey: () => this phone's team device key or "" (sent as x-hangtag-device by every client this makes; see client.js) */
 export function createCloudGateway({ getClient, url, key, storageKey, deviceKey }){
   const db = () => getClient();
   const table = t => db().from(t);
-
+  /* Was this product deleted in the cloud (a mark the post-repair section leaves)? Only a mark that is there says yes: a
+     database without the marks, or one that can't be asked, says no — the edit is then saved as before */
+  const deletedElsewhere = async id => {
+    try{ const r = await table('hangtag_deleted_products').select('product_id').eq('product_id', id).limit(1); return !r.error && Array.isArray(r.data) && r.data.length > 0; }
+    catch{ return false; }
+  };
   const auth = {
     getSession: () => db().auth.getSession(),
     onAuthStateChange: cb => db().auth.onAuthStateChange(cb),
@@ -43,8 +51,10 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
     try{ info = r.error && r.error.context && typeof r.error.context.json === "function" ? await r.error.context.json() : (r.data || null); }catch{ info = null; }
     const msg = info && info.message, code = info && info.error, status = r.error && r.error.context && r.error.context.status;
     const E = (c, m) => new AppError(c, m, { cause: r.error, details: info });
+    if(code === "subscription_inactive") throw E(ERROR_CODES.SUBSCRIPTION, msg || "This shop's Hangtag plan has ended. Renew it in Plans & Billing.");
     if(code === "not_configured") throw E(ERROR_CODES.NOT_CONFIGURED, msg || `${what} isn't set up yet.`);
     if(code === "unauthorized" || (!code && status === 401)) throw E(ERROR_CODES.AUTH, "Sign in again.");
+    if(code === "forbidden") throw E(ERROR_CODES.PERMISSION, msg || "Your role can't do that.");
     if(code === "provider_error") throw E(ERROR_CODES.DELIVERY, msg || "The provider didn't accept the request.");
     if(code === "conflict") throw E(ERROR_CODES.CONFLICT, msg || "That was already done.");
     if(code === "not_found") throw E(ERROR_CODES.NOT_FOUND, msg || "It wasn't found.");
@@ -71,12 +81,12 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
     auth,
     /* How an email signs in today: resolves the raw { data, error } of the RPC */
     signInMethods: email => db().rpc("hangtag_sign_in_methods", { p_email: email }),
-    /* Quick check that the database has the current tables (schema.sql has been run; the events table is the newest).
+    /* Quick check that the database has the current tables (schema.sql has been run; the table-ordering tables are newest).
        Resolves { error: null } or { error: AppError } — OUTDATED_DATABASE when the tables are missing. */
     async checkSchema(){
-      const { error } = await table('hangtag_events').select('id', { head: true, count: 'exact' });
+      const { error } = await table('hangtag_tables').select('id', { head: true, count: 'exact' });
       if(!error) return { error: null };
-      const missing = /hangtag_events|hangtag_payments|hangtag_stock_imports|hangtag_variants|PGRST205|42P01|does not exist|schema cache/i.test((error.code||"")+" "+(error.message||""));
+      const missing = /hangtag_tables|hangtag_table_sessions|hangtag_events|hangtag_payments|hangtag_stock_imports|hangtag_variants|PGRST205|42P01|does not exist|schema cache/i.test((error.code||"")+" "+(error.message||""));
       return { error: missing ? new AppError(ERROR_CODES.OUTDATED_DATABASE, "The database needs the latest update (schema.sql).", { cause: error }) : toAppError(error) };
     },
 
@@ -100,6 +110,11 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
       if(h.orders) ch = on(ch, '*', 'hangtag_orders', h.orders);
       if(h.held) ch = on(ch, '*', 'hangtag_held_carts', h.held);
       if(h.collections) ch = on(ch, '*', 'hangtag_collections', h.collections);
+      // section 3o: a restaurant's tables and sessions
+      if(h.tables){ ch = on(ch, '*', 'hangtag_tables', h.tables); ch = on(ch, '*', 'hangtag_table_sessions', h.tables); }
+      // section 3r: price lists, purchase orders, vouchers (and 3s bank accounts, 3z the shop's own fields and units)
+      if(h.biz) ['hangtag_price_lists','hangtag_purchase_orders','hangtag_vouchers','hangtag_einvoices','hangtag_eway_bills','hangtag_bank_accounts','hangtag_bank_moves',
+        'hangtag_attributes','hangtag_units'].forEach(t => { ch = on(ch, '*', t, h.biz); });
       return ch.subscribe(onStatus);
     },
     removeChannel: ch => db().removeChannel(ch),
@@ -120,6 +135,25 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
       const rows = variantRows(p);
       if(rows.length) sbOk(await table('hangtag_variants').upsert(rows));
     },
+    /* An edit: the columns of the fields it changed and the variants it added or changed, so another till's edit of other
+       fields or variants of the product stays; a product the cloud doesn't have yet is saved whole */
+    async patchProduct(p, index, fields, variantIds){
+      const row = productRow(p, index), COLS = { name:'name', price:'price', color:'color', cat:'category', brand:'brand', desc:'description', cost:'cost_price', archived:'archived',
+        hsn:'hsn', gst:'gst_rate', code:'code_type', opts:'options', tracking:'tracking', unit:'unit', low:'low_stock', expiry:'tracks_expiry', bundle:'bundle', repack:'repack', attrs:'attrs' };
+      const patch = { updated_at:row.updated_at };
+      // values for the shop's fields removed altogether: an empty set (the column never holds null)
+      (fields || []).forEach(f => { const col = COLS[f]; if(col) patch[col] = col in row ? row[col] : col === 'attrs' ? {} : null; });
+      const r = await table('hangtag_products').update(patch).eq('id', p.id).select('id'); sbOk(r);
+      const rows = variantRows(p), ids = new Set(variantIds || []);
+      if(!r.data || !r.data.length){
+        // not in the cloud: deleted on another device (its mark, post-repair section) — the edit waits in the review list
+        // instead of bringing the product back; never uploaded yet — saved whole
+        if(await deletedElsewhere(p.id)) throw new AppError(ERROR_CODES.CONFLICT, "This product was deleted on another device, so this change wasn't saved.");
+        sbOk(await table('hangtag_products').upsert(row)); if(rows.length) sbOk(await table('hangtag_variants').upsert(rows)); return;
+      }
+      const changed = rows.filter(v => ids.has(v.id));
+      if(changed.length) sbOk(await table('hangtag_variants').upsert(changed));
+    },
     async deleteVariants(ids){ await mustReach('hangtag_variants', 'id', q => q.delete(), q => q.in('id', ids)); },
     async deleteProduct(id){
       await mustReach('hangtag_products', 'id', q => q.delete(), q => q.eq('id', id));
@@ -135,6 +169,14 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
        more pieces than a bill line has left — also when another device returned them first). Saving it again is a safe retry. */
     async saveReturn(ret){ sbOk(await db().rpc('hangtag_save_return', returnArgs(ret))); },
     async saveCustomer(c){ sbOk(await table('hangtag_customers').upsert(custRow(c))); },
+    /* An edit: only the columns of the fields it changed; a customer the cloud doesn't have yet is saved whole */
+    async patchCustomer(c, fields){
+      const row = custRow(c), COLS = { name: ['name'], phone: ['phone'], email: ['email'], gstin: ['gstin'], type: ['customer_type'], addr: ['address'], priceList: ['price_list_id'] };
+      const patch = {}; fields.forEach(f => (COLS[f] || []).forEach(col => { if(col in row) patch[col] = row[col]; else if(f === 'addr' || f === 'priceList') patch[col] = null; }));
+      if(!Object.keys(patch).length) return;
+      const r = await table('hangtag_customers').update(patch).eq('id', c.id).select('id'); sbOk(r);
+      if(!r.data || !r.data.length) sbOk(await table('hangtag_customers').upsert(row));
+    },
     async saveEvent(e){ sbOk(await table('hangtag_events').upsert(eventRow(e))); },
     /* The database refuses deleting an event that has bills */
     async deleteEvent(id){ await mustReach('hangtag_events', 'id', q => q.delete(), q => q.eq('id', id)); },
@@ -143,6 +185,16 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
     async saveDayClose(c){ sbOk(await table('hangtag_day_closes').upsert(dayCloseRow(c))); },
     async saveSettings(settings){ sbOk(await table('hangtag_meta').upsert({ key:'settings', value:settings, updated_at:new Date().toISOString() })); },
     /* The shop logo for receipts (a small data URL), or empty to remove it */
+    /* The authorised signature or company stamp (hangtag_meta "doc_signature" / "doc_stamp"); "" removes it */
+    async saveDocImage(kind, dataUrl){
+      if(kind !== 'signature' && kind !== 'stamp') throw new Error('Unknown document picture.');
+      if(dataUrl) sbOk(await table('hangtag_meta').upsert({ key:'doc_' + kind, value:{ data:dataUrl }, updated_at:new Date().toISOString() }));
+      else sbOk(await table('hangtag_meta').delete().eq('key','doc_' + kind));
+    },
+    /* The automation log of one device (its own entries, newest first, bounded) */
+    async saveAutomationLog(dev, entries){
+      sbOk(await table('hangtag_meta').upsert({ key:'autolog:' + String(dev).slice(0, 20), value:{ entries:(entries || []).slice(0, 100) }, updated_at:new Date().toISOString() }));
+    },
     async saveLogo(dataUrl){
       if(dataUrl) sbOk(await table('hangtag_meta').upsert({ key:'logo', value:{ data:dataUrl }, updated_at:new Date().toISOString() }));
       else sbOk(await table('hangtag_meta').delete().eq('key','logo'));
@@ -176,15 +228,37 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
     fetchDayCloses: async () => (await sbFetchAll(db(), 'hangtag_day_closes', ['day','id'])).map(rowToDayClose),
     /* The saved settings object, or null */
     async fetchSettings(){
-      const { data } = sbOk(await table('hangtag_meta').select('value').eq('key','settings').maybeSingle());
+      const { data } = sbOk(await table('hangtag_meta').select('value').eq('key','settings').maybeSingle(), 'table:hangtag_meta');
       return data ? data.value : null;
     },
     /* The shop logo (data URL), "" when there is none */
+    /* { signature, stamp }: the pictures the shop keeps for its A4 documents ("" when none) */
+    async fetchDocImages(){
+      const { data } = sbOk(await table('hangtag_meta').select('key,value').in('key', ['doc_signature','doc_stamp']), 'table:hangtag_meta');
+      const out = { signature:'', stamp:'' };
+      (data || []).forEach(r => { const v = r.value && r.value.data; if(typeof v === 'string' && /^data:image\//.test(v)) out[r.key.slice(4)] = v; });
+      return out;
+    },
+    /* Every device's automation log, as one list */
+    async fetchAutomationLogs(){
+      const { data } = sbOk(await table('hangtag_meta').select('key,value').like('key', 'autolog:%'), 'table:hangtag_meta');
+      return (data || []).flatMap(r => r.value && Array.isArray(r.value.entries) ? r.value.entries : []);
+    },
     async fetchLogo(){
-      const { data } = sbOk(await table('hangtag_meta').select('value').eq('key','logo').maybeSingle());
+      const { data } = sbOk(await table('hangtag_meta').select('value').eq('key','logo').maybeSingle(), 'table:hangtag_meta');
       return data && data.value && typeof data.value.data === 'string' ? data.value.data : "";
     },
+    /* A quotation's messages to its customer (send-receipt with order_id), newest first */
+    async fetchOrderDeliveries(orderId){
+      const { data } = sbOk(await table('hangtag_deliveries').select('*').eq('order_id', orderId).order('created_at', { ascending:false }).limit(50));
+      return (data || []).map(rowToDelivery);
+    },
     /* A bill's messages to its customer, newest first */
+    /* Every send of the last days, newest first (bills' receipts and quotations), at most 500 */
+    async fetchRecentDeliveries(since){
+      const { data } = sbOk(await table('hangtag_deliveries').select('*').gte('created_at', new Date(since).toISOString()).order('created_at', { ascending:false }).limit(500));
+      return (data || []).map(rowToDelivery);
+    },
     async fetchDeliveries(saleId){
       const { data } = sbOk(await table('hangtag_deliveries').select('*').eq('sale_id', saleId).order('created_at', { ascending:false }));
       return (data || []).map(rowToDelivery);
@@ -271,12 +345,106 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
     },
     fetchHeldCarts: async () => (await sbFetchAll(db(), 'hangtag_held_carts', ['t','id'])).map(rowToHeld),
     fetchCollections: async () => (await sbFetchAll(db(), 'hangtag_collections', ['t','id'])).map(rowToCollection),
+    /* ---------- a restaurant's tables, their sessions, the kitchen (section 3o) ---------- */
+    async saveTable(t){ sbOk(await table('hangtag_tables').upsert(tableRow(t))); },
+    async saveTableSession(s){ sbOk(await table('hangtag_table_sessions').upsert(sessionRow(s))); },
+    fetchTables: async () => (await sbFetchAll(db(), 'hangtag_tables', ['sort_order','id'])).map(rowToTable),
+    /* sessions still going, and those closed in the last two days (a table's recent history) */
+    async fetchTableSessions(){
+      const since = Date.now() - 2 * 864e5, N = 1000, all = async where => { const out = [];
+        for(let from = 0; ; from += N){ const { data } = sbOk(await where(table('hangtag_table_sessions').select('*')).order('opened_t').order('id').range(from, from + N - 1));
+          out.push(...(data || [])); if(!data || data.length < N) break; }
+        return out; };
+      const [live, recent] = await Promise.all([all(q => q.neq('status', 'closed')), all(q => q.gte('closed_t', since))]);
+      const by = {}; [...live, ...recent].forEach(r => { by[r.id] = r; });
+      return Object.values(by).map(rowToSession);
+    },
+    /* A table order moved along by the kitchen (or served, or cancelled): RPC hangtag_order_status → { status, version } */
+    async setOrderStatus(id, status){
+      const { data } = sbOk(await db().rpc('hangtag_order_status', { p_id: id, p_status: status }));
+      return { status: data && data.status || status, version: data && +data.version || 0 };
+    },
     /* A member's poll: one fingerprint each for orders, held bills and collections (RPC hangtag_order_changes) */
     async orderChanges(){
       const r = await db().rpc('hangtag_order_changes');
       if(r.error) throw toAppError(r.error);
       return r.data && typeof r.data === 'object' ? r.data : {};
     },
+
+    /* ---------- the commerce batch (schema.sql section 3r) ---------- */
+    /* One record as the upload queue sends it. kind: pl (price list), po (purchase order, on the version this device last
+       saw: CONFLICT when changed elsewhere), ei / ew (e-invoice / e-way bill readiness), rpk (a repack and its two stock
+       records, one RPC) → { version? } */
+    async saveBiz(kind, rec){
+      if(kind === "pl"){ sbOk(await table('hangtag_price_lists').upsert(priceListRow(rec))); return {}; }
+      if(kind === "po"){ const { data } = sbOk(await db().rpc('hangtag_save_purchase_order', poArgs(rec))); return { version: data && +data.version || (+rec.version || 0) + 1 }; }
+      if(kind === "ei"){ sbOk(await table('hangtag_einvoices').upsert(einvRow(rec), { onConflict: 'owner_id,sale_id' })); return {}; }
+      if(kind === "ew"){ sbOk(await table('hangtag_eway_bills').upsert(ewayRow(rec), { onConflict: 'owner_id,sale_id' })); return {}; }
+      if(kind === "rpk"){ sbOk(await db().rpc('hangtag_save_repack', repackArgs(rec, rec.moves))); return {}; }
+      // bank accounts and their entries (section 3s): an account is saved again when it changes; an entry only once
+      if(kind === "ba"){ sbOk(await table('hangtag_bank_accounts').upsert(bankAccountRow(rec), { onConflict: 'owner_id,id' })); return {}; }
+      if(kind === "bm"){ sbOk(await table('hangtag_bank_moves').upsert(bankMoveRow(rec), { onConflict: 'owner_id,id', ignoreDuplicates: true })); return {}; }
+      // the shop's own product fields and units (section 3z): saved again whenever they change
+      if(kind === "at"){ sbOk(await table('hangtag_attributes').upsert(attrRow(rec), { onConflict: 'owner_id,id' })); return {}; }
+      if(kind === "un"){ sbOk(await table('hangtag_units').upsert(unitRow(rec), { onConflict: 'owner_id,id' })); return {}; }
+      throw new AppError(ERROR_CODES.VALIDATION, "Unknown record: " + kind);
+    },
+    /* A price list removed (customers on it go back to the default list); a field or unit no product uses */
+    async deleteBiz(kind, id){
+      if(kind === "pl") await mustReach('hangtag_price_lists', 'id', q => q.delete(), q => q.eq('id', id));
+      if(kind === "at") await mustReach('hangtag_attributes', 'id', q => q.delete(), q => q.eq('id', id));
+      if(kind === "un") await mustReach('hangtag_units', 'id', q => q.delete(), q => q.eq('id', id));
+    },
+    /* Every record of the batch; a kind the database doesn't have yet (schema.sql not re-run) comes back null */
+    async fetchBiz(){
+      const get = async (t, orders, map) => { try{ return (await sbFetchAll(db(), t, orders)).map(map); }catch(_e){ return null; } };
+      const [pl, po, ei, ew, gv, rpk] = await Promise.all([get('hangtag_price_lists', ['created_at','id'], rowToPriceList), get('hangtag_purchase_orders', ['t','id'], rowToPO),
+        get('hangtag_einvoices', ['created_at','sale_id'], rowToEinv), get('hangtag_eway_bills', ['created_at','sale_id'], rowToEway),
+        get('hangtag_vouchers', ['t','id'], rowToVoucher), get('hangtag_repacks', ['t','id'], rowToRepack)]);
+      const [ba, bm] = await Promise.all([get('hangtag_bank_accounts', ['created_at','id'], rowToBankAccount), get('hangtag_bank_moves', ['t','id'], rowToBankMove)]);
+      const [at, un] = await Promise.all([get('hangtag_attributes', ['sort_order','id'], rowToAttr), get('hangtag_units', ['id'], rowToUnit)]);
+      return { pl, po, ei, ew, gv, rpk, ba, bm, at, un };
+    },
+    /* A team member's poll: fingerprints of price lists, POs, vouchers and GST records (RPC hangtag_biz_changes) */
+    async bizChanges(){
+      const r = await db().rpc('hangtag_biz_changes');
+      if(r.error) throw toAppError(r.error);
+      return r.data && typeof r.data === 'object' ? r.data : {};
+    },
+    /* Gift vouchers: issued, looked up, spent and released only online (the database locks the voucher) */
+    async issueVoucher(p){ const { data } = sbOk(await db().rpc('hangtag_issue_voucher', { p })); return rowToVoucher(data.voucher); },
+    async voucherLookup(code){ const { data } = sbOk(await db().rpc('hangtag_voucher_lookup', { p_code: code })); return data || { ok: false }; },
+    async redeemVoucher(code, amount, saleId, paymentId, t){
+      const { data } = sbOk(await db().rpc('hangtag_redeem_voucher', { p_code: code, p_amount: amount, p_sale: saleId, p_payment: paymentId, p_t: t || null }));
+      return data || { ok: false };
+    },
+    async releaseVoucher(paymentId){ const { data } = sbOk(await db().rpc('hangtag_release_voucher', { p_payment: paymentId })); return data || { ok: false }; },
+    async cancelVoucher(id, reason){ const { data } = sbOk(await db().rpc('hangtag_cancel_voucher', { p_id: id, p_reason: reason })); return data || { ok: false }; },
+    async voucherHistory(id){
+      const { data } = sbOk(await table('hangtag_voucher_redemptions').select('*').eq('voucher_id', id).order('t'));
+      return (data || []).map(r => ({ id: r.id, saleId: r.sale_id, amount: +r.amount, kind: r.kind, t: Number(r.t) || 0 }));
+    },
+    /* Outbound webhooks (the owner's; the secret is returned only by create and rotate) */
+    async webhookEndpoints(){ const { data } = sbOk(await table('hangtag_webhook_endpoints').select('*').order('created_at')); return (data || []).map(rowToEndpoint); },
+    async webhookDeliveries(limit){
+      const { data } = sbOk(await table('hangtag_webhook_deliveries').select('*').order('created_at', { ascending: false }).limit(limit || 30));
+      const rows = data || [], ids = [...new Set(rows.map(r => r.event_id))];
+      const types = {};
+      if(ids.length){ const ev = sbOk(await table('hangtag_webhook_events').select('id,type').in('id', ids)); (ev.data || []).forEach(e => { types[e.id] = e.type; }); }
+      return rows.map(r => ({ ...rowToHookDelivery(r), type: types[r.event_id] || "" }));
+    },
+    async webhookCreate(url, events, description){
+      const { data } = sbOk(await db().rpc('hangtag_webhook_create', { p_url: url, p_events: events, p_description: description || null }));
+      return { endpoint: rowToEndpoint(data.endpoint), secret: data.secret };
+    },
+    async webhookRotate(id){ const { data } = sbOk(await db().rpc('hangtag_webhook_rotate', { p_id: id })); return data && data.secret || ""; },
+    async webhookUpdate(id, patch){
+      const x = patch || {};
+      const { data } = sbOk(await db().rpc('hangtag_webhook_update', { p_id: id, p_url: x.url == null ? null : x.url, p_events: x.events == null ? null : x.events, p_active: x.active == null ? null : !!x.active }));
+      return rowToEndpoint(data.endpoint);
+    },
+    async webhookDelete(id){ sbOk(await db().rpc('hangtag_webhook_delete', { p_id: id })); },
+    async webhookTest(id){ sbOk(await db().rpc('hangtag_webhook_test', { p_id: id })); },
 
     /* ---------- shop profile ---------- */
     getProfile: id => table("hangtag_profiles").select("*").eq("id", id).maybeSingle(),
@@ -291,6 +459,21 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
       if(r.error) throw toAppError(r.error);
       return r.data;
     },
+    /* A supplier bill's original (photo or PDF) in the shop's private folder of the "hangtag-bills" bucket (section 3p) */
+    async uploadBillDocument(path, blob, type){
+      const st = db().storage; if(!st) throw new AppError(ERROR_CODES.NOT_CONFIGURED, "File storage isn't available.");
+      const r = await st.from('hangtag-bills').upload(path, blob, { upsert: true, contentType: type || (blob && blob.type) || 'application/octet-stream' });
+      if(r.error) throw toAppError(r.error);
+      return path;
+    },
+    /* A private link to it, valid for an hour */
+    async billDocumentUrl(path){
+      const r = await db().storage.from('hangtag-bills').createSignedUrl(path, 3600);
+      if(r.error) throw toAppError(r.error);
+      return r.data && r.data.signedUrl || "";
+    },
+    /* A saved bill gets its original once the file reached the cloud after it */
+    async setImportDocument(id, path){ sbOk(await table('hangtag_stock_imports').update({ document_path: path }).eq('id', id)); },
 
     /* ---------- suppliers, purchases and payments to suppliers (schema.sql section 3l) ---------- */
     async saveSupplier(s){ sbOk(await table('hangtag_suppliers').upsert(supplierRow(s))); },
@@ -330,10 +513,36 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
        body { action, ... } → its answer. Throws an AppError: NOT_CONFIGURED, VALIDATION, CONFLICT, NOT_FOUND, AUTH,
        DELIVERY (the provider refused), NETWORK. */
     paymentIntent: body => callFunction("payment-gateway", body, "Verified payments"),
+    /* The shop confirms a UPI payment checked by hand reached its account (hangtag_confirm_upi_payment: the owner, or a
+       role that sees the books) → { status: "confirmed"|"verified"|"recorded"|"not_found"|"cancelled", already?, confirmedAt? }.
+       Throws an AppError (PERMISSION; OUTDATED_DATABASE before the shop payments migration). */
+    async confirmUpiPayment(paymentId){
+      const r = await db().rpc("hangtag_confirm_upi_payment", { p_payment_id: paymentId });
+      if(r.error) throw toAppError(r.error, "confirm_upi");
+      return r.data || null;
+    },
+    /* agent: the Hangtag Agent's optional AI provider ({ action: "config" } or one "step") */
+    agentStep: body => callFunction("agent", body, "The Hangtag Agent's AI"),
+    /* Hangtag plans (schema.sql section 3t): the shop's plan (works while it is locked), the plans on sale, a plan's price
+       with a promo code (computed by the database), the owner's plan payments, and the subscription function (checkout,
+       verify) — the browser never sends a price, discount or amount */
+    async subscriptionStatus(){ const { data } = sbOk(await db().rpc('hangtag_subscription_status')); return data || null; },
+    async subscriptionPlans(){ const { data } = sbOk(await db().rpc('hangtag_subscription_plans')); return Array.isArray(data) ? data : []; },
+    async subscriptionQuote(plan, promo){ const { data } = sbOk(await db().rpc('hangtag_subscription_quote', { p_plan: plan, p_promo: promo || null })); return data || null; },
+    async subscriptionAutopayQuote(){ const { data } = sbOk(await db().rpc('hangtag_autopay_quote')); return data || null; },
+    async subscriptionPayments(){
+      const { data } = sbOk(await table('hangtag_subscription_payments').select('id, plan_code, price, discount, amount, currency, promo_code, status, kind, created_at, paid_at, period_start, period_end')
+        .order('created_at', { ascending: false }).limit(20));
+      return Array.isArray(data) ? data : [];
+    },
+    subscriptionCall: body => callFunction("subscription", body, "Online payment"),
     /* send-receipt: ask the providers what happened to a bill's messages (delivered / failed) → { updated } */
     deliveryRefresh: saleId => callFunction("send-receipt", { action:"refresh", sale_id:saleId }, "Sending bills"),
     /* send-receipt: the bill's secure invoice link (made once, kept 12 months) → { url, token, expiresAt } */
     invoiceLink: saleId => callFunction("send-receipt", { action:"link", sale_id:saleId }, "Invoice links"),
+    /* send-receipt: the bill's one invoice PDF → { invoice: { id, number, sha256, size, filename }, url, already }. pdf (base64,
+       this phone's copy) registers it when the bill has none yet; the first copy registered is kept */
+    invoiceFile: (saleId, pdf) => callFunction("send-receipt", { action:"invoice", sale_id:saleId, ...(pdf ? { pdf } : {}) }, "Invoice PDFs"),
     /* Stops every invoice link of a bill from working */
     async revokeInvoiceLinks(saleId){
       await mustReach('hangtag_invoice_links', 'token', q => q.update({ revoked_at:new Date().toISOString() }), q => q.eq('sale_id', saleId).is('revoked_at', null));
@@ -387,8 +596,10 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
       let info = null;
       try{ info = r.error && r.error.context && typeof r.error.context.json === "function" ? await r.error.context.json() : (r.data || null); }catch{ info = null; }
       const msg = info && info.message, status = r.error && r.error.context && r.error.context.status;
+      if(info && info.error === "subscription_inactive") throw new AppError(ERROR_CODES.SUBSCRIPTION, msg || "This shop's Hangtag plan has ended. Renew it in Plans & Billing.", { cause: r.error, details: info });
       if(info && info.error === "not_configured") throw new AppError(ERROR_CODES.NOT_CONFIGURED, msg || "Sending isn't set up yet.", { cause: r.error, details: info });
-      if(info && ["missing_contact","cancelled","rate_limited","not_found","bad_request","bad_channel","too_long","busy"].includes(info.error)) throw new AppError(ERROR_CODES.VALIDATION, msg || "The bill couldn't be sent.", { cause: r.error, details: info });
+      // bad_recipient / provider_setup: the provider refused for good (the customer's contact, the shop's set-up) — final
+      if(info && ["missing_contact","cancelled","rate_limited","not_found","bad_request","bad_channel","too_long","busy","bad_recipient","provider_setup"].includes(info.error)) throw new AppError(ERROR_CODES.VALIDATION, msg || "The bill couldn't be sent.", { cause: r.error, details: info });
       if(info && info.error === "unauthorized") throw new AppError(ERROR_CODES.AUTH, "Sign in again to send bills.", { cause: r.error, details: info });
       if(info && info.error === "provider_error") throw new AppError(ERROR_CODES.DELIVERY, msg || "The message wasn't accepted.", { cause: r.error, details: info });
       // not the function's own answer: the platform's (function not deployed, sign-in rejected)
@@ -398,18 +609,25 @@ export function createCloudGateway({ getClient, url, key, storageKey, deviceKey 
       if(r.error) throw toAppError(r.error);
       throw new AppError(ERROR_CODES.DELIVERY, "The message wasn't confirmed as sent.", { details: info });
     },
-    /* Supabase Edge Function extract-bill: { file_name, mime_type, data (base64), file_hash } → the extraction */
+    /* Supabase Edge Function extract-bill: { file_name, mime_type, data (base64), file_hash } → the extraction. Its refusals
+       come as an error status (before reading starts) or, once the answer streams, as 200 with { ok:false, error, message }. */
     async extractBill(body){
       let r;
       try{ r = await db().functions.invoke("extract-bill", { body }); }
       catch(e){ throw toAppError(e); }
-      if(!r.error) return r.data;
-      let info = null;
-      try{ info = r.error.context && typeof r.error.context.json === "function" ? await r.error.context.json() : null; }catch{ info = null; }
-      if(info && info.error === "not_configured") throw new AppError(ERROR_CODES.NOT_CONFIGURED, "Reading bills isn't set up yet.", { cause: r.error, details: info });
-      if(info && info.message) throw new AppError(ERROR_CODES.VALIDATION, info.message, { cause: r.error, details: info });
-      if(/relay|404|not found/i.test(String(r.error.message || "")) && !info) throw new AppError(ERROR_CODES.NOT_CONFIGURED, "Reading bills isn't set up yet.", { cause: r.error });
-      throw toAppError(r.error);
+      if(!r.error && !(r.data && r.data.ok === false)) return r.data;
+      let info = r.error ? null : r.data;
+      if(r.error){ try{ info = r.error.context && typeof r.error.context.json === "function" ? await r.error.context.json() : null; }catch{ info = null; } }
+      const E = (c, m) => new AppError(c, m, { cause: r.error || undefined, details: info });
+      if(info && info.error === "subscription_inactive") throw E(ERROR_CODES.SUBSCRIPTION, info.message || "This shop's Hangtag plan has ended. Renew it in Plans & Billing.");
+      if(info && info.error === "not_configured") throw E(ERROR_CODES.NOT_CONFIGURED, "Reading bills isn't set up yet.");
+      if(info && info.error === "unauthorized") throw E(ERROR_CODES.AUTH, "Sign in again to read bills.");
+      // busy, rate-limited or the reading service failing: worth trying again (the message says when)
+      if(info && ["busy", "rate_limited", "provider_error", "no_response", "bad_output"].includes(info.error)) throw E(ERROR_CODES.NETWORK, info.message || "The bill couldn't be read right now. Try again.");
+      if(info && info.message) throw E(ERROR_CODES.VALIDATION, info.message);
+      if(r.error && /relay|404|not found/i.test(String(r.error.message || "")) && !info) throw E(ERROR_CODES.NOT_CONFIGURED, "Reading bills isn't set up yet.");
+      if(r.error) throw toAppError(r.error);
+      throw E(ERROR_CODES.UNKNOWN, "The bill couldn't be read. Try again, or enter the lines by hand.");
     },
   };
 }

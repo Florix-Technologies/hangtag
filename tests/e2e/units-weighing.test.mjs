@@ -1,10 +1,11 @@
-// Units, weighing and device-scoped numbers, end to end in Chrome (batch T1, schema.sql section 3k).
+// Units, weighing and document numbers, end to end in Chrome (batch T1, schema.sql section 3k).
 // A product sold by the kg is set up in the product form (Unit select, 10.5 kg opening stock); tapping its tile opens the
 // weight dialog (typed weight, then "Read scale" with a reading fed to the manual provider); the bill line keeps its weight
-// in kg next to a product sold by the piece; the bill gets this device's number and saves 1.25 kg in the cloud with who
-// made it; a return of 0.75 kg; a second device the same day numbers its own series; a bill forced onto a taken number is
-// refused by the database, shown in the sync review and sent again with a new number; Settings → Hardware saves this
-// device's scale settings. The database is PGlite running the real schema.sql behind a PostgREST stand-in.
+// in kg next to a product sold by the piece; the bill gets the shop's first short number (INV-000001, domain/documents/
+// numbering.js) and saves 1.25 kg in the cloud with who made it; a return of 0.75 kg (credit note CN-000001); a second
+// device that has synced the first one's bills makes its bills in a series of its own (INV-B-000001); a bill forced onto a
+// taken number is refused by the database, shown in the sync review and sent again with a new number; Settings → Team &
+// Devices saves this device's scale settings. The database is PGlite running the real schema.sql behind a PostgREST stand-in.
 import puppeteer from 'puppeteer-core';
 import H from '../helpers/env.mjs';
 import { createPgRest } from '../helpers/pg-rest.mjs';
@@ -44,6 +45,10 @@ check('signed in and connected', await A.until('sbStatus==="connected"'));
 
 console.log('--- the product form: Unit ---');
 await A.run(`openEditor(null)`); await sleep(200);
+const plain = await A.P.$$eval('#edUnit option', (o) => o.map((x) => x.value));
+check('without Weight-based products: pieces, box, pack, dozen and metre (no kg, gram or litre)', JSON.stringify(plain) === JSON.stringify(['pcs', 'box', 'pack', 'dozen', 'm']), plain);
+check('…and a product can\'t be saved by the kg (the capability is checked, not just hidden)', /Selling by weight is switched off/.test(await A.run(`editor.name="Dal";editor.price="90";editor.unit="kg";return (saveProduct({draft:editor})||{}).error||""`)));
+await A.run(`closeModal();saveCapabilities({uses_weight:true});openEditor(null)`); await sleep(200);
 const opts = await A.P.$$eval('#edUnit option', (o) => o.map((x) => x.value));
 check('the product form has a Unit select with the nine units', JSON.stringify(opts) === JSON.stringify(['pcs', 'box', 'pack', 'dozen', 'kg', 'g', 'l', 'ml', 'm']), opts);
 await A.type('#modalHost [data-ed="name"]', 'Basmati Rice'); await A.type('#modalHost [data-ed="price"]', '120');
@@ -57,6 +62,13 @@ const TOTE = await A.run(`const p=products().find(p=>p.name==="Tote");return {pi
 check('saved: rice is sold by the kg with 10.5 kg in stock; the tote by the piece', RICE.unit === 'kg' && TOTE.unit === 'pcs' && await A.run(`return stockOf(${JSON.stringify(RICE.vid)})===10.5`), RICE);
 const cp = (await q(`SELECT unit FROM public.hangtag_products WHERE id = $1`, [RICE.pid]))[0], cm = (await q(`SELECT sum(qty) AS q FROM public.hangtag_stock_moves WHERE variant_id = $1`, [RICE.vid]))[0];
 check('in the cloud: unit kg, opening stock 10.500', cp && cp.unit === 'kg' && +cm.q === 10.5, { cp, cm });
+// PLAN.md I1: with stock in kg, its unit is pinned (10.5 kg is never re-read as pieces); the form says why
+await A.run(`openEditor(${JSON.stringify(RICE.pid)})`); await sleep(200);
+const pinned = await A.P.$eval('#edUnit', (s) => ({ disabled: s.disabled, hint: s.parentElement.innerText })).catch((e) => String(e));
+const forced = await A.run(`editor.unit="pcs";return saveProduct({draft:editor})`);
+check('rice has stock: "Sold by" is locked with the reason, and a forced change to pieces is refused', pinned.disabled === true && /has stock records, so its unit stays/.test(pinned.hint)
+  && /stays sold by kg/.test(forced.error || '') && await A.run(`return products().find(p=>p.id===${JSON.stringify(RICE.pid)}).unit==="kg"`), { pinned, forced });
+await A.run(`closeModal()`);
 
 console.log('--- selling by weight ---');
 await A.P.click(`.tile[data-pid="${RICE.pid}"]`).catch(async () => { await A.run(`openPicker(${JSON.stringify(RICE.pid)})`); });
@@ -82,8 +94,8 @@ check('a product sold by the piece keeps whole numbers', !bad.ok && /whole numbe
 check('the items on the bill count the weighed line once (1.25 kg + 1 tote = 2 items)', await A.run('return cartPcs()===2'));
 await A.run(`const s=await checkout("cash");window.__s1=s`); await sleep(300);
 const S1 = await A.run('return window.__s1');
-const DEV_A = await A.run('return dev'), CODE_A = await A.run(`return deviceCode(dev)`);
-check('the bill gets this device\'s number: INV-yymmdd-' + CODE_A + '001', S1 && new RegExp('^INV-\\d{6}-' + CODE_A + '001$').test(S1.no), S1 && S1.no);
+const DEV_A = await A.run('return dev');
+check('the bill gets the shop\'s first short number on its main till, automatically: INV-000001', S1 && S1.no === 'INV-000001' && await A.run('return deviceTill()===""'), S1 && S1.no);
 check('the line is 1.25 kg at ₹120/kg = ₹150; the tote ₹300', S1.items[0].q === 1.25 && S1.items[0].u === 'kg' && S1.sub === 450, S1.items);
 check('the receipt says 1.25 kg', await A.run(`return /Basmati Rice × 1\\.25 kg = ₹150/.test(receiptText(lastSale))`), await A.run('return receiptText(lastSale)'));
 check('stock of rice after selling 1.25 kg: 9.25 kg', await A.run(`return stockOf(${JSON.stringify(RICE.vid)})===9.25`));
@@ -98,7 +110,7 @@ await A.run(`if(!retState.q||retState.q[0]!==0.75){setReturnQty(0,"0.75")}`);
 check('the return sheet takes 0.75 kg of the 1.25 kg line', await A.run('return retState.q[0]===0.75'));
 await A.P.click('#sheetHost [data-act="rtsave"]'); await sleep(400);
 const R1 = await A.run(`return D().rets.find(r=>r.sale===${JSON.stringify(S1.id)})`);
-check('credit note in this device\'s series; 0.75 kg back on the shelf', R1 && new RegExp('^CN-\\d{6}-' + CODE_A + '001$').test(R1.no) && R1.items[0].q === 0.75 && await A.run(`return stockOf(${JSON.stringify(RICE.vid)})===10`), R1);
+check('credit note in its own series (CN-000001); 0.75 kg back on the shelf', R1 && R1.no === 'CN-000001' && R1.items[0].q === 0.75 && await A.run(`return stockOf(${JSON.stringify(RICE.vid)})===10`), R1);
 await A.run('await flushSbQueue()');
 const cr = (await q(`SELECT quantity, unit FROM public.hangtag_return_items WHERE return_id = $1`, [R1 && R1.id]))[0];
 check('in the cloud: 0.750 kg returned', cr && +cr.quantity === 0.75 && cr.unit === 'kg', cr);
@@ -107,9 +119,11 @@ console.log('--- a second device the same day ---');
 const B = await openPage();
 check('device B signed in and connected', await B.until('sbStatus==="connected"') && await B.run('return dev') !== DEV_A);
 await B.until(`products().some(p=>p.name==="Tote")`);
+// B has synced the shop's bills (A's INV-000001 among them), so it knows the main series is taken
+check('device B has the shop\'s bills', await B.until(`D().sales.some(s=>s.no===${JSON.stringify(S1.no)})`));
 await B.run(`addOne(products().find(p=>p.name==="Tote").variants[0].id);window.__sb=await checkout("cash");await flushSbQueue()`);
-const SB = await B.run('return window.__sb'), CODE_B = await B.run('return deviceCode(dev)');
-check('device B numbers its own series from 001; both bills are in the cloud with different numbers', SB && new RegExp('^INV-\\d{6}-' + CODE_B + '001$').test(SB.no) && SB.no !== S1.no
+const SB = await B.run('return window.__sb');
+check('device B makes its bills in its own series (INV-B-000001); both bills are in the cloud with different numbers', SB && SB.no === 'INV-B-000001' && SB.no !== S1.no && await B.run('return deviceTill()==="B"')
   && (await q(`SELECT count(DISTINCT bill_no)::int AS n FROM public.hangtag_sales WHERE id IN ($1, $2)`, [S1.id, SB.id]))[0].n === 2, SB && SB.no);
 
 console.log('--- a taken number: refused, reviewed, renumbered ---');
@@ -119,12 +133,13 @@ await A.run('openSyncPanel()'); await sleep(250);
 check('the sync review offers "Give it a new number and send"', await A.vis('#modalHost [data-syncrenumber="0"]'));
 await A.P.click('#modalHost [data-syncrenumber="0"]');
 const DUP = await A.run('return window.__dup');
-check('renumbered to the next of this device\'s series and uploaded', await A.until(`syncReview.length===0&&!sbOfflineQueue.length`)
-  && new RegExp(CODE_A + '003$').test((await q(`SELECT bill_no FROM public.hangtag_sales WHERE id = $1`, [DUP]))[0]?.bill_no || ''), await q(`SELECT bill_no FROM public.hangtag_sales WHERE id = $1`, [DUP]));
+// the clash was with this device's own bill: it takes the next number of its own series and keeps the main series
+check('renumbered to the next number of this device\'s own series (INV-000002) and uploaded; the device keeps the main series', await A.until(`syncReview.length===0&&!sbOfflineQueue.length`)
+  && (await q(`SELECT bill_no FROM public.hangtag_sales WHERE id = $1`, [DUP]))[0]?.bill_no === 'INV-000002' && await A.run('return deviceTill()===""'), await q(`SELECT bill_no FROM public.hangtag_sales WHERE id = $1`, [DUP]));
 await A.run('closeModal()');
 
-console.log('--- Settings → Hardware ---');
-await A.run('openSettings()'); await sleep(300);
+console.log('--- Settings → This device: the weighing scale on this device ---');
+await A.run('openSettings("devices")'); await sleep(300);
 check('the settings show this device\'s weighing scale', await A.vis('#scaleSetup') && /Weighing scale/.test(await A.text('#scaleSetup')));
 await A.P.select('#scaleForm [name="baud"]', '4800');
 await A.type('#scaleForm [name="request"]', 'W');

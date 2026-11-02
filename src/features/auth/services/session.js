@@ -7,7 +7,7 @@ import { AUTH_STORE, OTP_TYPES, PICK_ACCOUNT, RECOVERY_KEY, RESET_KEY, clearStor
 import { loadUserState, switchLocalDataTo } from './account-data.js';
 import { isNetErr, linkErrorText } from './auth-errors.js';
 import { closeAcctMenu, firstName, renderAccount } from '../../shop/components/account-menu.js';
-import { closeSettings } from '../../shop/components/settings-modal.js';
+import { closeSettings } from '../../shop/components/settings-page.js';
 import { hideSetup, showSetup } from '../../shop/components/setup-gate.js';
 import { loadProfile } from '../../shop/services/profile-service.js';
 import { renderSync } from '../../sync/components/sync-status.js';

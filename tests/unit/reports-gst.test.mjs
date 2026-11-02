@@ -30,7 +30,7 @@ const ret = (id, sale, picks, extra = {}) => { const Q = quoteReturn(sale, picks
 // ---------- the report definitions ----------
 const biz = { id: 'c1', name: 'Acme', type: 'business', gstin: '27ABCDE1234F1Z5' }, far = { id: 'c2', name: 'Far', type: 'business', gstin: '29ABCDE1234F1Z5' };
 const s1 = bill('1', [{ q: 2, price: 999, rate: 12, cost: 400 }, { q: 1, price: 499, rate: 5, cost: null, hsn: '6505', p: 'p2', v: 'p2:', n: 'Cap' }], { billDisc: { type: 'percent', value: 10 }, cust: biz,
-  pays: (d) => [{ method: 'upi', amount: 1000, ref: 'U1' }, { method: 'cash', amount: d - 1000, received: d - 1000 }] });
+  pays: (d) => [{ method: 'upi', amount: 1000, ref: 'U1', confirmed: true }, { method: 'cash', amount: d - 1000, received: d - 1000 }] });
 const s2 = bill('2', [{ q: 1, price: 2000, rate: 12, cost: 900 }], { mode: 'inter', pos: '29', cust: far, pays: (d) => [{ method: 'card', amount: d, ref: 'APPR2' }] });
 const s3 = bill('3', [{ q: 1, price: 300, rate: 0, cost: 100, hsn: '' }], {});
 const sv = bill('4', [{ q: 5, price: 1000, rate: 12, cost: 500 }], { voided: true });

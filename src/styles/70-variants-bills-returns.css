@@ -1,13 +1,6 @@
 /* Variants, search, picker, payment, receipts, customers, returns, stock, reports, products and the product editor. */
 /* ---------- variants, search, bills, stock, products (v2) ---------- */
-.neg{color:var(--crit)}.pos{color:var(--good-ink)}
-.chk{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:var(--ink);margin:8px 0}
-.chk input{width:18px;height:18px;accent-color:var(--ink)}
 .sel{border:1px solid var(--line-2);border-radius:10px;padding:8px 10px;background:var(--bg);font-size:14px;font-weight:600;color:var(--ink-2);max-width:200px}
-.search{position:relative;flex:1;min-width:180px}
-.search input{width:100%;padding:10px 12px 10px 36px;border:1px solid var(--line-2);border-radius:10px;background:var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2380859A' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E") no-repeat 12px center;font-size:15px;color:var(--ink)}
-.search input:focus{border-color:var(--ink);outline:none;box-shadow:0 0 0 3px rgba(16,19,31,.08)}
-.sellbar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
 .hits{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:14px;margin-bottom:12px;overflow:hidden}
 .hit-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border-top:1px solid var(--wash-2)}
 .hit-row:first-child{border-top:0}
@@ -25,16 +18,20 @@
 .iconbtn.sm{width:28px;height:28px}
 .iconbtn.sm svg{width:16px;height:16px}
 .taxrow{font-size:13px!important}
-/* variant picker */
-.sheet.picker{max-width:720px}
+/* variant picker: a fixed header and footer, the variants scrolling between them (the only scroll), and sizes in
+   wrapping grids — as many columns as fit, never a sideways scroll. The sheet's width comes from its sizes (--pk-max) */
+.sheet.picker{max-width:var(--pk-max,720px);display:flex;flex-direction:column;overflow:hidden;padding-bottom:0}
+.sheet.picker .sh-head{flex:none}
+.pk-body{flex:1 1 auto;min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;margin:0 -6px;padding:2px 6px 8px}
+.sheet.picker .sh-foot{flex:none;margin-top:0;padding:12px 0 calc(16px + env(safe-area-inset-bottom,0px));border-top:1px solid var(--line);background:var(--bg)}
 .vchips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
 .vchip{display:inline-flex;align-items:center;gap:7px;border:1.5px solid var(--line-2);border-radius:999px;padding:7px 12px;font-weight:600;font-size:14px;background:var(--bg)}
 .vchip i,.vmx-c i,.chip i{width:12px;height:12px;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(16,19,31,.25);flex:none}
 .vchip.on{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink)}
 .vchip em,.vmx-c em{font-style:normal;background:var(--ink);color:#fff;border-radius:999px;font-size:11.5px;font-weight:700;padding:1px 7px;margin-left:2px}
 .vchip small{font-size:11px;color:var(--crit);font-weight:700}
-.vcells{display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr));gap:8px}
-@media (max-width:520px){.vcells.grid-5,.vcells.grid-4{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.vcells{--cell:104px;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(var(--cell),100%),1fr));gap:8px}
+@media (max-width:699px){.vcells{--cell:92px}}
 .vc{display:flex;flex-direction:column;border:1.5px solid var(--line-2);border-radius:13px;overflow:hidden;background:var(--bg);min-width:0}
 .vc.on{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink)}
 .vc.na{border-style:dashed;align-items:center;justify-content:center;color:var(--ink-3);min-height:88px}
@@ -42,6 +39,7 @@
 .vc-tap:hover:not(:disabled){background:var(--wash)}
 .vc-tap:disabled{opacity:.45}
 .vc-tap b{font-stretch:75%;font-weight:700;font-size:24px;line-height:1;letter-spacing:.02em;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vc-tap b.lg{font-size:17px;line-height:1.15;letter-spacing:0;white-space:normal;text-align:center;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .vc-tap small{font-size:12px;font-stretch:75%;font-weight:700;color:var(--ink-3);white-space:nowrap}
 .vc.low .vc-tap small{color:var(--warn-ink)}.vc.out .vc-tap small{color:var(--crit)}
 .vc-tap .kh{position:absolute;top:5px;right:7px;font-size:10.5px;font-weight:700;color:var(--ink-3)}
@@ -53,11 +51,14 @@
 .vc-q input::-webkit-outer-spin-button,.vc-q input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 .vc-q input:focus{outline:2px solid var(--ink);outline-offset:-2px}
 .vc.on .vc-q{background:var(--accent-soft)}
-.vmx{display:flex;flex-direction:column;gap:8px;overflow-x:auto;padding-bottom:2px}
-.vmx-row{display:grid;grid-template-columns:120px minmax(0,1fr);gap:8px;align-items:stretch;border-radius:14px;padding:4px;min-width:max-content}
+.vmx{display:flex;flex-direction:column;gap:6px}
+.vmx-row{display:grid;grid-template-columns:140px minmax(0,1fr);gap:8px;align-items:start;border-radius:14px;padding:6px;min-width:0}
 .vmx-row.act{background:var(--wash)}
-.vmx-row .vcells{grid-template-columns:repeat(var(--n),minmax(72px,1fr))}
-.vmx-c{display:flex;align-items:center;gap:7px;font-weight:700;font-size:14px;padding:0 6px;text-align:left}
+.vmx-c{display:flex;flex-wrap:wrap;align-items:center;gap:4px 7px;font-weight:700;font-size:14px;padding:8px 6px;text-align:left;min-width:0}
+.vmx-c span{min-width:0;overflow-wrap:anywhere}
+.vmx-c small{flex-basis:100%;font-size:12px;font-weight:600;color:var(--ink-3)}.vmx-c small.out{color:var(--crit)}
+/* a sheet too narrow for the colour's name beside its sizes: the name goes above them */
+@media (max-width:899px){.vmx-row{grid-template-columns:minmax(0,1fr);gap:4px}.vmx-c{padding:4px 6px}.vmx-c small{flex-basis:auto}}
 .pk-sum{font-size:14px;color:var(--ink-2)}
 /* paid */
 .sheet.paid{max-width:420px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:8px}
@@ -102,8 +103,6 @@
 .rt-sum{background:var(--wash);border-radius:12px;padding:10px 14px;margin-top:12px;display:flex;flex-direction:column;gap:6px;font-size:14px}
 .rt-sum .grand{font-size:24px}
 .rt-pay{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;font-size:14px;font-weight:600;color:var(--ink-2);flex-wrap:wrap}
-.btag{display:inline-block;font-size:11px;font-weight:700;border-radius:999px;padding:1px 8px;margin-left:6px;background:var(--wash-2);color:var(--ink-2);vertical-align:1px}
-.btag.c{background:var(--accent-soft);color:var(--accent)}
 .asbtn{text-align:left}
 .bill .bi.asbtn:hover{text-decoration:underline}
 /* stock */
@@ -148,11 +147,16 @@
 .vperf .vp-row:not(:has(.vp-i)){grid-template-columns:auto minmax(0,1fr) auto auto}
 /* products */
 .ptools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
-.plist2{display:grid;gap:10px;grid-template-columns:minmax(0,1fr)}
-@media (min-width:760px){.plist2{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media (min-width:1280px){.plist2{grid-template-columns:repeat(3,minmax(0,1fr))}}
-.pcard{display:flex;gap:12px;align-items:flex-start;border:1px solid var(--line);border-radius:16px;padding:12px;background:var(--bg)}
-.pcard.arch{opacity:.7}
+.plist2.olist{display:flex}
+.pcard{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:12px;align-items:center;padding:10px 14px;cursor:pointer;transition:background var(--t-fast)}
+.pcard + .pcard{border-top:1px solid var(--line)}
+.pcard:hover{background:var(--wash)}
+.pcard:focus-visible{outline:none;box-shadow:inset var(--ring)}
+.pcard.arch .pc-b b{color:var(--ink-3)}
+.pcard .pc-p{display:flex;flex-direction:column;align-items:flex-end;gap:4px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+.pcard .pc-a{flex-direction:row;align-items:center;gap:4px}
+.pcard .pc-a .menuwrap .btn{width:34px;padding:0;min-height:34px}
+@media (max-width:599px){.pcard{grid-template-columns:auto minmax(0,1fr) auto}.pcard .pc-a{grid-column:2/-1;justify-content:flex-end}.pcard .pc-a .btn[data-editp]{display:none}}
 .pc-b{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;line-height:1.3}
 .pc-b>b{font-size:15px}
 .pc-p{font-weight:700;font-size:14px}.pc-p small{font-weight:500;color:var(--ink-3)}
@@ -191,16 +195,56 @@
 .edfoot{position:sticky;bottom:0;background:var(--bg);border-top:1px solid var(--line);margin:0 -16px;padding:12px 16px calc(12px + env(safe-area-inset-bottom,0px))}
 @media (min-width:700px){.edfoot{margin:0 -22px;padding:12px 22px 16px}}
 
-@keyframes up{from{transform:translateY(14px);opacity:.5}to{transform:none;opacity:1}}
-.toast{animation-name:toastup}
-@keyframes toastup{from{transform:translate(-50%,14px);opacity:.5}to{transform:translate(-50%,0);opacity:1}}
-@keyframes fade{from{opacity:0}to{opacity:1}}
-@keyframes pop{0%{transform:scale(.5)}70%{transform:scale(1.15)}100%{transform:scale(1)}}
 @media (hover:none){.kc,.kh,.deskonly{display:none!important}}
-@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 /* returns: not for resale; Sell: selling at an event; Reports: summary */
 .rt-nfr{font-size:12.5px;margin-top:4px;color:var(--ink-2)}
+/* a returned line: why it came back (its own reason), whether it goes back on the shelf; an exchange's "Swap for" */
+.rt-why{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin-top:6px}
+.rt-reason{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-2)}
+.rt-reason select{font:inherit;font-size:13px;padding:5px 8px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--card);color:var(--ink);min-height:34px}
+.rt-why .rt-nfr{margin-top:0}
+.rt-swap{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px;font-size:12.5px;color:var(--ink-3)}
+/* Reports: returns by reason */
+.rr{display:grid;gap:6px}
+.rr-row{display:grid;grid-template-columns:minmax(90px,1.2fr) minmax(40px,2fr) auto auto;align-items:center;gap:8px;font-size:13px}
+.rr-n{min-width:0;overflow-wrap:anywhere}.rr-bar{height:8px;border-radius:4px;background:var(--wash);overflow:hidden}.rr-bar i{display:block;height:100%;background:var(--warn)}
+.rr-q{font-variant-numeric:tabular-nums}.rr-v{color:var(--ink-3);font-variant-numeric:tabular-nums;text-align:right}
+.rr-top{margin:0;padding-left:18px;font-size:13px;line-height:1.6}
 .sellat{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px}
 .sellat .f.inline{display:flex;align-items:center;gap:8px;margin:0;font-weight:600}
 .sellat select{min-height:40px}
 .repsum .row small{font-weight:400}
+
+/* the product editor's sections: Basics · Price & Tax · Inventory · Tracking · Advanced */
+.ednav{position:sticky;top:-18px;z-index:4;display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;margin:-4px -4px 6px;padding:8px 4px;background:var(--bg);border-bottom:1px solid var(--line)}
+.ednav::-webkit-scrollbar{display:none}
+.ednav button{flex:none;padding:6px 10px;border-radius:var(--r-sm);font-size:13px;font-weight:600;color:var(--ink-2)}
+.ednav button:hover{background:var(--wash);color:var(--ink)}
+@media (min-width:700px){.ednav{top:-22px}}
+.sheet.editor .edsec{scroll-margin-top:56px}
+.edadv > summary{display:flex;align-items:baseline;gap:10px;cursor:pointer;list-style:none}
+.edadv > summary::-webkit-details-marker{display:none}
+.edadv > summary h4::after{content:" ▸";color:var(--ink-3);font-weight:500}
+.edadv[open] > summary h4::after{content:" ▾"}
+.edvars{display:flex;flex-direction:column;gap:10px;margin-top:6px;padding-top:12px;border-top:1px dashed var(--line)}
+.addedsheet{max-width:440px}
+.addedsheet .sh-t h3{font-size:var(--fs-xl);color:var(--good-ink)}
+.addedacts{display:flex;flex-direction:column;gap:10px;margin:6px 0 12px}
+
+/* a product's detail view */
+.prodview{max-width:640px}
+.pv-top{display:flex;gap:16px;align-items:flex-start;margin-bottom:var(--sp-3)}
+.pv-facts{flex:1;min-width:0}
+.pv-facts .kv{grid-template-columns:90px 1fr}
+.pv-desc{margin:0 0 var(--sp-3);color:var(--ink-2);font-size:13.5px}
+.pv-tbl td.low{color:var(--warn-ink);font-weight:700}.pv-tbl td.out{color:var(--crit);font-weight:700}
+.pv-tbl small{color:var(--ink-3);font-weight:500}
+@media (max-width:520px){.pv-top{flex-direction:column}}
+
+/* Touch targets (WCAG 2.2, at least 24 px): Reports' bill rows a finger's height; a customer's account entry opens its bill
+   from a real button, not a sliver of text */
+.bill .bi.asbtn{padding-block:5px}
+.acent .link[data-billview]{display:inline-flex;align-items:center;justify-content:center;min-width:36px;min-height:28px}
+/* option values on a touch screen: big enough to tap (rename, remove) */
+@media (pointer:coarse){.chip{padding:2px 2px 2px 8px}.chip button{width:32px;height:32px}.chip .chipname{min-height:32px;padding:0 4px}}
+@media (pointer:coarse){.vdet td.ck input[type=checkbox],.vdet th.ck input[type=checkbox]{width:24px;height:24px}}

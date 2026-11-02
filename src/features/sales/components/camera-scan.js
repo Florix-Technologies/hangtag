@@ -4,7 +4,7 @@ import { store } from '../../../shared/state/store.js';
 import { createScanGate } from '../../../domain/sales/scan-rules.js';
 import { scanToCart } from '../use-cases/scan-to-cart.js';
 import { openWeigh } from './weigh-dialog.js';
-import { cartPcs } from '../services/cart.js';
+import { cartPcs, pickSerials } from '../services/cart.js';
 import { billTotals } from '../services/totals.js';
 import { closeSheets } from './bill-panel.js';
 import { ICON } from '../../../shared/constants/icons.js';
@@ -64,6 +64,7 @@ export function onCode(text){
   if(r.status === "added" && !s.use) renderAll();
   // sold by weight: the camera closes and the weight dialog asks for its weight
   if(r.status === "weigh"){ closeScanner(); openWeigh(r.variantId, null); return; }
+  if(r.status === "serial"){ closeScanner(); pickSerials(r.productId, r.variantId, "cart"); return; }
   paint();
 }
 export function closeScanner(){

@@ -7,7 +7,8 @@
 // Credit: some now (cash, UPI, card, or several), the rest — or all of it — left on a saved customer's account (collected
 // later from the customer's page); needs collect_credit.
 // The sale completes only when the payments add up to the grand total (domain/sales/payments.js).
-import { DUE, INTENT_LABELS, PAY_LABELS, PAY_METHODS, PROVIDER_VIA, paymentProgress, settlePayments } from '../../../domain/sales/payments.js';
+import { DUE, INTENT_LABELS, PAY_LABELS, PAY_METHODS, PROVIDER_VIA, VOUCHER, paymentProgress, settlePayments } from '../../../domain/sales/payments.js';
+import { trackSaleLines } from '../../inventory/services/tracking.js';
 import { toPaise, toRupees } from '../../../domain/sales/paise.js';
 import { upiPayUri } from '../../../domain/sales/upi.js';
 import { store } from '../../../shared/state/store.js';
@@ -24,21 +25,36 @@ import { discountRowsHTML, gstRowsHTML, roundRowHTML, sumRow } from './bill-summ
 import { closeModal } from '../../../shared/components/modal.js';
 import { toast } from '../../../shared/components/toast.js';
 import { ICON } from '../../../shared/constants/icons.js';
-import { $, esc } from '../../../shared/dom.js';
+import { $, $$, esc } from '../../../shared/dom.js';
 import { inr, inrx } from '../../../shared/formatting/money.js';
 import { can, refuse } from '../../shop/services/access.js';
+import { billIdForPayment } from '../use-cases/provider-payment.js';
+import { releaseVoucher, useVoucher, usesVouchers } from '../../commerce/use-cases/vouchers.js';
+import { progressHTML } from './checkout-steps.js';
 
 const due=()=>billTotals(store.cart,store.disc).total;
-const blankState=method=>({mode:"single",method:PAY_METHODS.includes(method)?method:"cash",recv:"",ref:{upi:"",card:""},last4:"",amt:{cash:"",upi:"",card:""},
-  via:{upi:"manual",card:"terminal"},viaSet:{},pi:{},err:""});
+/* A gift voucher taken for this bill (domain/sales/vouchers.js): it pays this much, the rest is paid as usual */
+const vAmt=()=>{const s=store.payState;return s&&s.voucher&&s.voucher.redemption?+s.voucher.amount:0};
+const rest=()=>toRupees(Math.max(0,toPaise(due())-toPaise(vAmt())));
+/* recvAuto: cash received is the exact amount due (shown filled in, kept equal to it) until the cashier types or picks another */
+const blankState=method=>({mode:"single",method:PAY_METHODS.includes(method)?method:"cash",recv:"",recvAuto:true,ref:{upi:"",card:""},last4:"",amt:{cash:"",upi:"",card:""},
+  via:{upi:"manual",card:"terminal"},viaSet:{},pi:{},upiReceived:false,cardReceived:false,err:""});
+/* Cash received as it counts: the exact amount due while untouched (single cash), else what was typed */
+const recvOf=s=>s.mode==="single"&&s.method==="cash"&&s.recvAuto?String(rest()):s.recv;
 /* store.payState = { mode: "single" | "split" | "credit" (the amounts in amt are paid now, the rest goes on account), method, recv (cash handed over), ref: { upi, card }, last4 (card), amt: { cash, upi, card },
-     via: { upi: "manual"|"qr", card: "terminal"|"link" }, pi: { upi?, card? } (provider intents), saleId, err } */
-export function openPayment(method){
+     via: { upi: "manual"|"qr", card: "terminal"|"link" }, pi: { upi?, card? } (provider intents), saleId, err,
+     flow: { customer, review } ("done" / "skipped": the checkout steps on the way here), guided (came through Review & pay) }
+   opts.flow: from the guided checkout (sales/components/checkout-flow.js); without it (the bill's Cash / UPI / Card
+   buttons, C / U / K) Customer and Review were skipped */
+export function openPayment(method,opts={}){
   if(!store.cart.length||refuse("create_sale","take payments")) return;
   const bad=billDiscountError(); if(bad){ toast(bad); return; }
+  // serial numbers chosen for every serial-tracked line, and enough unexpired batch stock (checked again when it completes)
+  const tk=trackSaleLines(store.cart); if(tk.error){ toast(tk.error); return; }
   // a provider payment was still open for this bill when the app closed: show it again rather than start over
   if(store.payPending&&!store.payState&&resumePayment()) return;
-  store.payState=blankState(method);
+  store.checkoutFlow=null;
+  store.payState=Object.assign(blankState(method),{flow:opts.flow||{customer:"skipped",review:"skipped"},guided:!!opts.flow});
   preferProvider();
   renderPayment(true);
   const s=store.payState, before=JSON.stringify([providerReady("upi"),providerReady("card"),s.via]);
@@ -66,21 +82,23 @@ function autoStart(){
   if(s&&s.mode==="single"&&s.method==="upi"&&s.via.upi==="qr"&&!s.pi.upi&&providerReady("upi")) startPart("upi");
 }
 /* The amount a part is for */
-const partAmount=m=>{const s=store.payState;return s.mode!=="single"?+s.amt[m]||0:due()};
+const partAmount=m=>{const s=store.payState;return s.mode!=="single"?+s.amt[m]||0:rest()};
 /* Credit: the bill has a saved customer (only they can owe the shop) */
 const savedCustomer=()=>{const c=store.cartCust;return !!(c&&c.id&&store.customers&&store.customers[c.id])};
 /* Credit: what is left on account = the total less what is paid now (never below 0) */
 function accountPart(D){
-  const s=store.payState, now=PAY_METHODS.reduce((a,m)=>{const v=toPaise(s.amt[m]);return a+(Number.isFinite(v)&&v>0?v:0)},0);
+  const s=store.payState, now=PAY_METHODS.reduce((a,m)=>{const v=toPaise(s.amt[m]);return a+(Number.isFinite(v)&&v>0?v:0)},0)+toPaise(vAmt());
   return toRupees(Math.max(0,toPaise(D)-now));
 }
 /* The parts of the payment as typed, for domain/sales/payments.js */
 export function allocations(){
   const s=store.payState, D=due();
-  const part=(m,amount)=>({method:m,amount,received:m==="cash"?s.recv:undefined,ref:s.ref[m],via:m==="cash"?undefined:s.via[m],last4:m==="card"?s.last4:undefined,intent:s.pi[m]});
-  if(s.mode==="single") return [part(s.method,D)];
-  if(s.mode==="credit") return [...PAY_METHODS.map(m=>part(m,s.amt[m])),{method:DUE,amount:accountPart(D)}];
-  return PAY_METHODS.map(m=>part(m,s.amt[m]));
+  const part=(m,amount)=>({method:m,amount,received:m==="cash"?recvOf(s):undefined,ref:s.ref[m],via:m==="cash"?undefined:s.via[m],last4:m==="card"?s.last4:undefined,intent:s.pi[m],
+    confirmed:m==="upi"&&s.via.upi==="manual"?!!s.upiReceived:m==="card"&&s.via.card==="terminal"?!!s.cardReceived:undefined});
+  const v=s.voucher&&s.voucher.redemption?[{method:VOUCHER,amount:s.voucher.amount,voucher:s.voucher}]:[];
+  if(s.mode==="single") return [...v,part(s.method,rest())];
+  if(s.mode==="credit") return [...v,...PAY_METHODS.map(m=>part(m,s.amt[m])),{method:DUE,amount:accountPart(D)}];
+  return [...v,...PAY_METHODS.map(m=>part(m,s.amt[m]))];
 }
 const quickCash=D=>[...new Set([100,500,2000].map(n=>Math.ceil((D+1)/n)*n))].filter(v=>v>D).slice(0,3);
 const qr=(text,size)=>{try{return use("qrCodeService").render(text,{unit:"px",size,margin:2})}catch{return ""}};
@@ -113,22 +131,25 @@ function intentHTML(m){
       <p class="note">${m==="upi"?"The customer scans this with any UPI app. The bill completes by itself once the payment is confirmed.":`The customer scans this with their phone camera and pays by card on the page it opens.${I.linkUrl?` Link: <b>${esc(I.linkUrl)}</b>`:""}`}</p>
       ${I.checkError?`<p class="note">${esc(I.checkError)}</p>`:""}${acts(`<button type="button" class="btn sm" data-payintent="check:${m}">Check now</button>`,`<button type="button" class="btn sm" data-payintent="cancel:${m}">Cancel ${what}</button>`)}</div>`;
   }
-  if(I.status==="verified") return `<div class="pi-box ok" data-pistate="verified"><p class="pi-st">✓ ${INTENT_LABELS.verified} · ${inrx(I.paidAmount==null?I.amount:I.paidAmount)}</p><p class="note">Verified by the payment provider · ref ${esc(I.paymentId||I.reference)}</p></div>`;
+  if(I.status==="verified") return `<div class="pi-box ok" data-pistate="verified"><p class="pi-st">✓ ${INTENT_LABELS.verified} · ${inrx(I.paidAmount==null?I.amount:I.paidAmount)}</p><p class="note">Verified by the payment provider · ref ${esc(I.paymentId||I.reference)}${I.providerFee==null?'':` · provider fee ${inrx(I.providerFee)}`}</p></div>`;
   if(I.status==="unmatched") return `<div class="pi-box bad" data-pistate="unmatched"><p class="pi-st">${inrx(I.paidAmount)} arrived, not ${inrx(I.amount)}</p><p class="note">It isn't used on this bill. It's kept under Books → Unmatched receipts to refund or allocate.</p>${acts(again,byHand)}</div>`;
   return `<div class="pi-box bad" data-pistate="${esc(I.status)}"><p class="pi-st">${esc(INTENT_LABELS[I.status]||I.status)}</p><p class="note">Nothing was received for this ${what}.</p>${acts(again,byHand)}</div>`;
 }
-/* UPI checked by hand: the shop's own UPI QR with the amount, and the reference from the customer's phone */
+/* UPI checked by hand: show the shop's QR, then require the cashier's explicit confirmation; UTR is useful but optional. */
 function manualUpiHTML(amount,split){
   const s=store.payState, vpa=store.settings.upiId, uri=upiPayUri({vpa,name:store.profile&&store.profile.shop_name||"Shop",amount,note:"Bill "+billNo()});
-  return (uri&&!split?`<div class="pi-qr small">${qr(uri,180)}</div><p class="note">Pay to <b>${esc(vpa)}</b> · ${inrx(amount)}</p>`:!vpa&&!split?`<p class="note">Add your shop's UPI ID in Settings → Billing to show a QR with the amount here.</p>`:"")+
-    inp("ref:upi",`UPI reference (UTR) <small>(from the customer's payment screen)</small>`,s.ref.upi,'maxlength="40" required')+
-    (split?"":`<p class="note">Saved as <b>Unverified</b> until it's matched with your UPI provider's records.</p>`);
+  return (uri&&amount>0?`<div class="pi-qr small">${qr(uri,180)}</div><p class="note">Pay to <b>${esc(vpa)}</b> · ${inrx(amount)}</p>`:!vpa?`<p class="note">Add your shop's UPI ID in Settings → Payments &amp; Banks to show the payment QR here.</p>`:split?`<p class="note">Enter the UPI amount to show its QR.</p>`:"")+
+    `<button type="button" class="btn block ${s.upiReceived?"ok":"primary"}" data-upireceived aria-pressed="${s.upiReceived}"${amount>0?"":" disabled"}>${s.upiReceived?"✓ UPI payment marked received":"Mark UPI payment received"}</button>`+
+    inp("ref:upi",`UPI reference (UTR) <small>(optional)</small>`,s.ref.upi,'maxlength="40" autocomplete="off"')+
+    `<p class="note">Check the customer's successful payment screen before marking it received. It is saved as <b>Unverified</b>${split?" for reconciliation.":" until you confirm it reached your account (Reports → Reconciliation)."}</p>`;
 }
-/* Card on a separate card machine: its approval/transaction reference; never the card number */
+/* Card on the shop's own card machine: marked received once the machine approves it; its approval number and the card's last
+   4 digits are optional. Never the card number, CVV or PIN. */
 function terminalHTML(split){
-  const s=store.payState;
-  return `<div class="pgrid2">${inp("ref:card","Card machine reference <small>(approval / transaction no.)</small>",s.ref.card,'maxlength="40" required')}${inp("last4","Last 4 digits <small>(optional)</small>",s.last4,'inputmode="numeric" maxlength="4" pattern="[0-9]{4}"')}</div>`+
-    (split?"":`<p class="note">Complete the sale once the card machine says approved. Never type the card number, CVV or PIN.</p>`);
+  const s=store.payState, amount=partAmount("card");
+  return `<button type="button" class="btn block ${s.cardReceived?"ok":"primary"}" data-cardreceived aria-pressed="${s.cardReceived}"${amount>0?"":" disabled"}>${s.cardReceived?"✓ Card payment marked received":"Mark card payment received"}</button>`+
+    `<div class="pgrid2">${inp("ref:card","Approval / transaction no. <small>(optional)</small>",s.ref.card,'maxlength="40" autocomplete="off"')}${inp("last4","Last 4 digits <small>(optional)</small>",s.last4,'inputmode="numeric" maxlength="4" pattern="[0-9]{4}" autocomplete="off"')}</div>`+
+    (split?"":`<p class="note">Mark it received once the card machine says approved. Never type the card number, CVV or PIN.</p>`);
 }
 function partHTML(m,split){
   const s=store.payState;
@@ -144,14 +165,25 @@ function creditHTML(D){
     return `<div class="splitrow"><span class="spl">${PAY_LABELS[m]} now</span><input data-payf="amt:${m}" value="${esc(s.amt[m])}" ${money} placeholder="0" aria-label="${PAY_LABELS[m]} paid now"${lock?" readonly":""}></div>`
       +(m==="cash"?inp("recv","Cash received <small>(optional, for change)</small>",s.recv,money+' placeholder="Same as cash"'):`<div class="splitpart">${partHTML(m,true)}</div>`)}).join("")}</div>`;
 }
+/* A gift voucher: its code (typed or scanned) takes up to what is due off the voucher; the rest is paid below */
+function voucherHTML(){
+  if(!usesVouchers()) return "";
+  const s=store.payState, v=s.voucher;
+  if(v&&v.redemption) return `<div class="disc-row paygv"><span><b>Gift voucher ···${esc(String(v.code).slice(-4))}</b><small>pays ${inrx(v.amount)} · ${inrx(v.balance)} left on it</small></span><button type="button" class="btn xs" data-payvoucherrm>Remove</button></div>`;
+  return `<div class="payvoucher"><input id="payVoucher" placeholder="Gift voucher code" autocomplete="off" aria-label="Gift voucher code" value="${esc(v&&v.code||"")}"><button type="button" class="btn sm" data-payvoucher${v&&v.busy?" disabled":""}>${v&&v.busy?"Checking…":"Use voucher"}</button></div>${v&&v.err?`<p class="note bad">${esc(v.err)}</p>`:""}`;
+}
 function fieldsHTML(D){
-  const s=store.payState;
+  return voucherHTML()+fieldsBodyHTML(D);
+}
+function fieldsBodyHTML(D){
+  const s=store.payState, R=rest();
   if(s.mode==="credit") return creditHTML(D);
   if(s.mode==="split") return `<div class="splitrows">${PAY_METHODS.map(m=>{const lock=PROVIDER_VIA.includes(s.via[m])&&s.pi[m]&&(isOpen(s.pi[m])||s.pi[m].status==="verified");
     return `<div class="splitrow"><span class="spl">${PAY_LABELS[m]}</span><input data-payf="amt:${m}" value="${esc(s.amt[m])}" ${money} placeholder="0" aria-label="${PAY_LABELS[m]} amount"${lock?" readonly":""}><button type="button" class="btn xs" data-payrest="${m}"${lock?" disabled":""}>Rest</button></div>`
       +(m==="cash"?inp("recv","Cash received <small>(optional, for change)</small>",s.recv,money+' placeholder="Same as cash"'):`<div class="splitpart">${partHTML(m,true)}</div>`)}).join("")}</div>`;
-  if(s.method==="cash") return inp("recv","Amount received",s.recv,`${money} placeholder="${esc(inr(D))} (exact)"`)+
-    `<div class="quick">${quickCash(D).map(v=>`<button type="button" class="chip" data-payquick="${v}">${inr(v)}</button>`).join("")}</div>`;
+  // the exact amount is filled in: nothing to type for exact cash (the keyboard opens only when the box is tapped)
+  if(s.method==="cash") return inp("recv","Amount received",recvOf(s),`${money} placeholder="${esc(inr(R))} (exact)"`)+
+    `<div class="quick"><button type="button" class="chip${s.recvAuto?" on":""}" data-payexact aria-pressed="${!!s.recvAuto}">Exact ${inr(R)}</button>${quickCash(R).map(v=>`<button type="button" class="chip${!s.recvAuto&&+s.recv===v?" on":""}" data-payquick="${v}">${inr(v)}</button>`).join("")}</div>`;
   return partHTML(s.method,false);
 }
 /* "Send receipt" for this sale (on by default when a channel is turned on and the customer can get it) */
@@ -173,41 +205,51 @@ export function renderPayment(focus){
   const s=store.payState; if(!s||!store.cart.length){closeModal();return}
   const T=billTotals(store.cart,store.disc), D=T.total, pcs=cartPcs(), c=store.cartCust;
   const modes=[...PAY_METHODS.map(m=>[m,PAY_LABELS[m]]),["split","Split"],...(can("collect_credit")?[["credit","Credit"]]:[])], cur=s.mode==="single"?s.method:s.mode;
-  const scroll=$("#paySheet")?$("#paySheet").scrollTop:0;
+  const scroll=$("#paySheet .paybody")?$("#paySheet .paybody").scrollTop:0;
   // a redraw keeps the box being typed in (and its cursor)
   const act=document.activeElement, keep=act&&act.closest&&act.closest("#paySheet")?(act.dataset&&act.dataset.payf?`[data-payf="${act.dataset.payf}"]`:act.id?"#"+act.id:null):null;
   const sel=keep&&act.selectionStart!=null?[act.selectionStart,act.selectionEnd]:null;
-  $("#modalHost").innerHTML=`<div class="scrim" data-modal-scrim><div class="sheet paysheet" id="paySheet" role="dialog" aria-modal="true" aria-labelledby="payT">
-    <div class="sh-head"><div class="sh-t"><h3 id="payT">Payment</h3><p>Bill #${billNo()} · ${pcs} piece${pcs===1?"":"s"} · ${c&&c.name?esc(c.name):"Walk-in"}</p></div><button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
+  const methodLabel=s.mode==="single"?PAY_LABELS[s.method]:s.mode==="split"?"Split":"Credit";
+  // the sheet's content scrolls in its own area; the method, the total and Complete sale sit below it, always in view and
+  // never over what is being read or tapped
+  $("#modalHost").innerHTML=`<div class="scrim" data-modal-scrim><div class="sheet paysheet" id="paySheet" role="dialog" aria-modal="true" aria-labelledby="payT" tabindex="-1"><div class="paybody">
+    ${progressHTML("payment",s.flow||{customer:"skipped",review:"skipped"})}
+    <div class="sh-head"><div class="sh-t"><h3 id="payT">Payment</h3><p>Bill ${esc(billNo())} · ${pcs} piece${pcs===1?"":"s"} · ${c&&c.name?esc(c.name):"Walk-in"}</p></div>${s.guided?`<button type="button" class="btn sm" data-checkoutback>Back</button>`:""}<button class="iconbtn" data-modal-close aria-label="Close">${ICON.x}</button></div>
     <div class="paysum">${sumRow("Subtotal",inr(T.sub))}${T.disc?discountRowsHTML(T,store.disc):sumRow("Discount",inr(0),"muted")}${gstRowsHTML(T)}${roundRowHTML(T)}
       <div class="row tot"><span>Grand total</span><span class="grand" data-paydue>${inr(D)}</span></div></div>
     <div class="seg paymodes" role="group" aria-label="Payment method">${modes.map(([k,l])=>`<button type="button" data-paymode="${k}" aria-pressed="${cur===k}">${l}</button>`).join("")}</div>
     <div class="payfields">${fieldsHTML(D)}</div>
     <div id="payLive">${liveHTML(D)}</div>
-    ${sendHTML()}
-    <button class="btn primary gbtn" data-act="paydone" id="payDone"${settlePayments(D,allocations(),{customer:savedCustomer()}).ok?"":" disabled"}>Complete sale · ${inr(D)}</button>
+    ${sendHTML()}</div>
+    <div class="payfoot" data-payfoot><span class="payfoot-m"><small>Paying by</small><b data-paymethod>${esc(methodLabel)}</b></span>
+      <button class="btn primary gbtn" data-act="paydone" id="payDone"${!s.busy&&settlePayments(D,allocations(),{customer:savedCustomer()}).ok?"":" disabled"}${s.busy?' aria-busy="true"':""}>${s.busy?"Completing…":`Complete sale · ${inr(D)}`}</button></div>
   </div></div>`;
-  const sh=$("#paySheet"); if(sh&&scroll) sh.scrollTop=scroll;
-  if(focus){const f=$("#paySheet [data-payf]")||$("#payDone");if(f)f.focus({preventScroll:true})}
+  const sh=$("#paySheet"), body=$("#paySheet .paybody"); if(body&&scroll) body.scrollTop=scroll;
+  // opening, or another method: the focus goes to Complete sale (or the sheet), never into an amount — on a phone a focused
+  // box opens the keyboard, and nothing needs typing for the usual sale. A box opens it when the cashier taps it.
+  if(focus){const b=$("#payDone"),f=b&&!b.disabled?b:sh;if(f)f.focus({preventScroll:true})}
   else if(keep){const f=$("#paySheet "+keep);if(f){f.focus({preventScroll:true});if(sel&&f.setSelectionRange)try{f.setSelectionRange(sel[0],sel[1])}catch{/* not a text box */}}}
 }
 /* A field changed: keep the value, redraw the figures and the button only (the box keeps its cursor) */
 export function payInput(t){
   const s=store.payState; if(!s) return;
   const f=t.dataset.payf, [k,m]=f.split(":");
-  if(k==="recv") s.recv=t.value; else if(k==="ref") s.ref[m]=t.value; else if(k==="last4") s.last4=t.value.replace(/\D/g,"").slice(0,4); else if(k==="amt") s.amt[m]=t.value;
+  if(k==="recv"){ s.recv=t.value; s.recvAuto=false; } else if(k==="ref") s.ref[m]=t.value; else if(k==="last4") s.last4=t.value.replace(/\D/g,"").slice(0,4); else if(k==="amt"){ s.amt[m]=t.value; if(m==="upi") s.upiReceived=false; if(m==="card") s.cardReceived=false; }
   if(k==="last4"&&t.value!==s.last4) t.value=s.last4;
   s.err=""; updatePayLive();
 }
 function updatePayLive(){
-  const D=due(), live=$("#payLive"), b=$("#payDone");
+  const D=due(), live=$("#payLive"), b=$("#payDone"), s=store.payState;
   if(live) live.innerHTML=liveHTML(D);
-  if(b) b.disabled=!settlePayments(D,allocations(),{customer:savedCustomer()}).ok;
+  if(b) b.disabled=!!(s&&s.busy)||!settlePayments(D,allocations(),{customer:savedCustomer()}).ok;
+  const ex=$("#paySheet [data-payexact]"); if(ex&&s){ ex.classList.toggle("on",!!s.recvAuto); ex.setAttribute("aria-pressed",String(!!s.recvAuto)); }
+  $$("#paySheet [data-payquick]").forEach(c=>c.classList.toggle("on",!!s&&!s.recvAuto&&+s.recv===+c.dataset.payquick));
   const acct=$("#paySheet .paycred [data-payacct]"); if(acct) acct.textContent=inrx(accountPart(D));
 }
 export function payMode(k){
   const s=store.payState; if(!s) return;
-  if(k==="split"){ if(s.mode!=="split"){ s.mode="split"; if(!PAY_METHODS.some(m=>String(s.amt[m]).trim()))s.amt[s.method]=String(due()); } }
+  if((s.mode==="single"?s.method:s.mode)!==k) s.upiReceived=false;
+  if(k==="split"){ if(s.mode!=="split"){ s.mode="split"; if(!PAY_METHODS.some(m=>String(s.amt[m]).trim()))s.amt[s.method]=String(rest()); } }
   // credit: nothing paid now unless amounts are typed (amounts carried over from split that pay it all are cleared)
   else if(k==="credit"){ if(s.mode!=="credit"){ if(accountPart(due())<=0) PAY_METHODS.forEach(m=>{ if(!isOpen(s.pi[m])&&!(s.pi[m]&&s.pi[m].status==="verified")) s.amt[m]=""; }); s.mode="credit"; } }
   else {
@@ -222,18 +264,24 @@ export function payVia(spec){
   const s=store.payState; if(!s) return;
   const [m,v]=spec.split(":"); if(!s.via[m]) return;
   if(s.via[m]!==v&&isOpen(s.pi[m])) cancelPart(m,true);
+  if(m==="upi"&&s.via[m]!==v) s.upiReceived=false;
   s.via[m]=v; s.viaSet[m]=true; s.err="";
   renderPayment(false); autoStart();
 }
 /* "Rest": this method takes whatever is still due */
 export function payRest(m){
   const s=store.payState; if(!s) return;
-  const others=PAY_METHODS.filter(x=>x!==m).reduce((a,x)=>a+Math.max(0,toPaise(s.amt[x])),0), rest=toPaise(due())-others;
-  s.amt[m]=rest>0?String(toRupees(rest)):""; renderPayment(false);
-  const i=$(`#paySheet [data-payf="amt:${m}"]`); if(i) i.focus({preventScroll:true});
+  const others=PAY_METHODS.filter(x=>x!==m).reduce((a,x)=>a+Math.max(0,toPaise(s.amt[x])),0)+toPaise(vAmt()), left=toPaise(due())-others;
+  // filled in for the cashier: nothing to type, so no keyboard (the box opens it when tapped)
+  s.amt[m]=left>0?String(toRupees(left)):""; if(m==="upi") s.upiReceived=false; if(m==="card") s.cardReceived=false; renderPayment(false);
 }
 export function paySend(on){ const s=store.payState; if(s) s.send=!!on; }
-export function payQuick(v){ const s=store.payState; if(!s) return; s.recv=String(v); renderPayment(false); }
+export function payQuick(v){ const s=store.payState; if(!s) return; s.recv=String(v); s.recvAuto=false; renderPayment(false); }
+/* "Exact": the cash handed over is the amount due (no change) */
+export function payExact(){ const s=store.payState; if(!s) return; s.recv=""; s.recvAuto=true; renderPayment(false); }
+export function payManualUpiReceived(){ const s=store.payState; if(!s||s.via.upi!=="manual"||!(partAmount("upi")>0)) return; s.upiReceived=true; s.err=""; renderPayment(false); }
+/* The card machine approved the card part: it counts as received (its reference stays optional) */
+export function payCardReceived(){ const s=store.payState; if(!s||s.via.card!=="terminal"||!(partAmount("card")>0)) return; s.cardReceived=true; s.err=""; renderPayment(false); }
 
 /* ---------- provider payments: start, watch, cancel ---------- */
 let pollT=null, tick=0;
@@ -290,25 +338,49 @@ export async function payIntent(spec){
   if(act==="cancel") return cancelPart(m,false);
   if(act==="check"){ const before=s.pi[m]&&s.pi[m].status; await checkIntent(m); if(store.payState!==s) return; if(s.pi[m]&&s.pi[m].status!==before) onIntentChange(m); else renderPayment(false); }
 }
+/* "Use voucher": the code is checked and the amount taken off the voucher for this bill (online) */
+export async function payVoucher(){
+  const s=store.payState; if(!s) return;
+  const i=$("#payVoucher"), code=i?i.value:"";
+  s.voucher={code,busy:true}; renderPayment(false);
+  const r=await useVoucher(code,due(),billIdForPayment());
+  if(store.payState!==s) return;
+  s.voucher=r.error?{code,err:r.error}:r.voucher; s.err="";
+  renderPayment(false);
+  if(!r.error) toast(`Gift voucher pays ${inrx(r.voucher.amount)}.${toPaise(rest())>0?" Pay the rest below.":""}`);
+}
+export async function payVoucherRemove(){
+  const s=store.payState; if(!s||!s.voucher) return;
+  const r=await releaseVoucher(s.saleId); if(store.payState!==s) return;
+  if(r&&r.error){ s.err=r.error; updatePayLive(); return; }
+  s.voucher=null; renderPayment(false);
+}
 /* The sheet was closed without completing: open QRs / links are closed at the provider */
 export function payClosed(){
   const s=store.payState; stopPolling();
   if(!s) return;
+  // a voucher taken for a bill that wasn't completed gets its amount back
+  if(s.voucher&&s.voucher.redemption&&s.saleId) releaseVoucher(s.saleId);
   const kept=Object.entries(s.pi||{}).filter(([,I])=>I&&I.id&&I.status==="verified");
   abandonIntents(s,{keepVerified:true});
   // money the provider already confirmed is never dropped: it stays with this bill until the sale is completed
   if(kept.length) toast(`${kept.map(([m,I])=>`${PAY_LABELS[m]} ${inrx(I.paidAmount==null?I.amount:I.paidAmount)}`).join(" + ")} already received for this bill is kept. Open Pay again to complete the sale.`);
 }
-/* Complete sale: records the bill with its payments, or shows why not */
+/* Complete sale: records the bill with its payments, or shows why not. One completion at a time: a second tap (or a
+   provider confirmation arriving meanwhile) while it is completing does nothing — checkout() saves the bill once. */
 export async function completePayment(){
-  const s=store.payState; if(!s) return;
+  const s=store.payState; if(!s||s.busy) return;
   if(Object.entries(s.pi).some(([m,I])=>isOpen(I)&&allocations().some(a=>a.method===m&&+a.amount>0&&PROVIDER_VIA.includes(a.via)))){ s.err="Wait for the payment to be confirmed, or cancel it first."; updatePayLive(); return; }
   const alloc=allocations().filter(a=>+a.amount>0), onBill=m=>alloc.some(a=>a.method===m&&PROVIDER_VIA.includes(a.via));
   const unused=Object.fromEntries(Object.entries(s.pi).filter(([m,I])=>isOpen(I)&&!onBill(m)));
   // money the provider confirmed that this bill doesn't use: said out loud, and listed later as an unmatched receipt
   const leftOver=Object.entries(s.pi).filter(([m,I])=>I&&I.status==="verified"&&!onBill(m));
   if(leftOver.length&&!confirm(`${leftOver.map(([m,I])=>`${PAY_LABELS[m]} ${inrx(I.paidAmount==null?I.amount:I.paidAmount)}`).join(" + ")} was received through the provider but isn't used on this bill. It will be listed under unmatched receipts to refund. Complete the sale anyway?`)) return;
-  const r=await checkout(allocations(),{id:s.saleId,send:s.send!==false});
-  if(r&&r.error){ s.err=r.error; updatePayLive(); return; }
+  s.busy=true; const b=$("#payDone"); if(b){ b.disabled=true; b.setAttribute("aria-busy","true"); }
+  let r=null;
+  try{ r=await checkout(allocations(),{id:s.saleId,send:s.send!==false}); }
+  finally{ s.busy=false; }
+  if(r&&r.error){ s.err=r.error; if(store.payState===s) renderPayment(false); return; }
   if(r){ stopPolling(); persistPending(); closeModal(); if(Object.keys(unused).length) abandonIntents({pi:unused}); }
+  else if(store.payState===s) renderPayment(false);
 }

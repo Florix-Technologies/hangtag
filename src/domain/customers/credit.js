@@ -45,6 +45,23 @@ export function outstandingByCustomer({sales,returns,collections}={}){
   (collections||[]).forEach(c=>{if(live(c)) add(c.cust,-toPaise(c.amount));});
   return Object.fromEntries(Object.entries(P).map(([k,v])=>[k,toRupees(v)]));
 }
+/* What is still owed on each bill left (partly) on account: { [bill id]: rupees }, only bills with something owed.
+   Payments collected later are not tied to a bill: they pay a customer's oldest bills first. A return refunded to the account
+   takes off its own bill. Cancelled bills owe nothing. */
+export function billBalances({sales,returns,collections}={}){
+  const open={}, byCust={};
+  (sales||[]).forEach(s=>{
+    if(s.void||!s.cust||!s.cust.id) return;
+    const p=toPaise(dueRefundRoom(s,returns)); if(!(p>0)) return;
+    (byCust[s.cust.id]||(byCust[s.cust.id]=[])).push({id:s.id,t:s.t,p});
+  });
+  const paid={}; (collections||[]).forEach(c=>{if(live(c)&&c.cust) paid[c.cust]=(paid[c.cust]||0)+toPaise(c.amount);});
+  Object.entries(byCust).forEach(([cid,bills])=>{
+    let left=paid[cid]||0;
+    bills.sort((a,b)=>a.t-b.t||(a.id<b.id?-1:1)).forEach(b=>{const use=Math.min(left,b.p); left-=use; if(b.p-use>0) open[b.id]=toRupees(b.p-use);});
+  });
+  return open;
+}
 /* A payment collected from a customer: input { amount, method, ref?, note? }, outstanding (what they owe now).
    → { collection: { amount, method, ref?, verification, note? } } or { error, field } (nothing is recorded).
    Never more than they owe; UPI needs its reference (UTR) and is kept "unverified" (checked by hand); card needs the card

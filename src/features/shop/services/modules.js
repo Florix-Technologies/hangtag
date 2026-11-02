@@ -22,7 +22,8 @@ const MODULE_CAPS = { tables: ["uses_tables"], kitchen: ["uses_kitchen"] };
 /* def: { id (the tab id; its page is <section id="v-<id>">), label, icon (svg), order (place in the tab bar),
    phone (which stay on a phone's short tab bar: lower first), view: true (a page) | false (an action: open()),
    caps: [any of these capabilities] (none: every business), perms: [any of these permissions] (default: TAB_PERMISSIONS),
-   available(): false while it can't be used here, render(): draws its page, open(): an action module's action }.
+   available(): false while it can't be used here, render(): draws its page, open(): an action module's action,
+   landing: false (a page you go to, never one the app opens by itself: Settings) }.
    Registering an id again adds to it (the app shell adds render functions to the core modules). */
 export function registerModule(def){
   const was = MODULES.get(def.id);
@@ -76,9 +77,10 @@ export function navSlots(list, current, limit){
 [
   { id: "home", label: "Home", order: 10, phone: 20 },
   { id: "sell", label: "Sell", order: 20, phone: 10 },
+  { id: "bills", label: "Bills", order: 30, phone: 25 },
   // quotations, sales orders, held carts, table orders: shown only when at least one of them is registered and in use
-  { id: "orders", label: "Orders", order: 30, phone: 30, available: () => subviewsOf("orders").length > 0 },
-  { id: "stock", label: "Inventory", order: 50, phone: 40 },
+  { id: "orders", label: "Orders", order: 35, phone: 30, available: () => subviewsOf("orders").length > 0 },
+  { id: "stock", label: "Stock", order: 50, phone: 40 },
   { id: "products", label: "Products", order: 60, phone: 70 },
   { id: "customers", label: "Customers", order: 70, phone: 60 },
   { id: "report", label: "Reports", order: 80, phone: 50 },

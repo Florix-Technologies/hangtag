@@ -10,8 +10,15 @@ import { ERROR_CODES, userMessage } from '../../../shared/errors/app-error.js';
 import { logger } from '../../../shared/logging/logger.js';
 import { uid } from '../../../shared/utils/ids.js';
 import { paymentsOf } from '../../../domain/sales/payments.js';
+import { normalizeProviderConfig, normalizeProviderIntent } from '../../../domain/sales/payment-provider.js';
 
 export const gateway = () => use("paymentGateway");
+export const paymentProvider = gateway;
+const providerCall = (modern, legacy, ...args) => {
+  const provider = paymentProvider(), fn = provider[modern] || provider[legacy];
+  if(typeof fn !== 'function') throw new Error(`The payment provider does not support ${modern}.`);
+  return fn.apply(provider, args);
+};
 const online = () => !!store.sbClient && store.sbStatus === "connected";
 const OPEN = ["starting", "pending"];
 export const isOpen = I => !!I && OPEN.includes(I.status);
@@ -19,9 +26,9 @@ export const isOpen = I => !!I && OPEN.includes(I.status);
 /* What the provider can take ({ provider, upi, cardLink }); asked once per session, null while unknown or offline */
 export async function loadPayConfig(force){
   if((store.payConfig && !force) || !online()) return store.payConfig;
-  try{ store.payConfig = await gateway().config(); }
+  try{ store.payConfig = normalizeProviderConfig(await paymentProvider().config()); }
   catch(e){
-    logger.warn("Payment provider:", e);
+    logger.event("payment", "start-failed", { op: "provider", code: e && e.code });
     // not set up (or the function isn't deployed): known for this session; anything else is asked again next time
     store.payConfig = e && e.code === ERROR_CODES.NOT_CONFIGURED ? { provider: null, upi: false, cardLink: false } : null;
   }
@@ -45,9 +52,17 @@ export function persistPending(){
 export function clearPending(){ store.payPending = null; savePayPending(); }
 
 /* Starts a QR ("upi") or card link ("card") for `amount` → the intent, or { error, unavailable } (unavailable: offer the
-   hand-checked way instead). An open intent for the same part is closed first. */
-export async function startIntent(method, amount){
-  const s = store.payState; if(!s) return { error: "Open the payment screen first." };
+   hand-checked way instead). An open intent for the same part is closed first. A second tap while this part's QR or link
+   is being made (or its old one closed) gets that same one: the provider never holds two for one part, one of which could
+   take the customer's money without it reaching the bill. */
+export function startIntent(method, amount){
+  const s = store.payState; if(!s) return Promise.resolve({ error: "Open the payment screen first." });
+  const busy = s.piBusy || (s.piBusy = {});
+  if(busy[method]) return busy[method];
+  const p = busy[method] = startIntentNow(s, method, amount).finally(() => { if(busy[method] === p) delete busy[method]; });
+  return p;
+}
+async function startIntentNow(s, method, amount){
   if(!(+amount > 0)) return { error: "Enter the amount for this part first." };
   if(!online()) return { error: "You're offline, so the payment can't be verified. Check it by hand instead.", unavailable: true };
   if(!providerReady(method)) return { error: "Verified payments aren't set up for this shop.", unavailable: true };
@@ -55,7 +70,9 @@ export async function startIntent(method, amount){
   if(isOpen(old) && old.id){ const c = await cancelIntent(method); if(c && c.status === "verified") return c; }
   s.pi[method] = { status: "starting", method, amount: +amount };
   try{
-    const I = await gateway().create({ method, amount: +amount, saleId: billIdForPayment(), note: s.note || "", expiryMin: store.settings.payExpiry || 5 });
+    const request = { method, amount: +amount, saleId: billIdForPayment(), note: s.note || "", expiryMin: store.settings.payExpiry || 5 };
+    const raw = method === 'upi' ? await providerCall('createDynamicQr', 'create', request) : await providerCall('createPayment', 'create', request);
+    const I = normalizeProviderIntent(raw);
     if(store.payState !== s) return I;
     s.pi[method] = I; persistPending();
     return I;
@@ -71,11 +88,11 @@ export async function checkIntent(method){
   const s = store.payState, I = s && s.pi[method];
   if(!I || !I.id || !isOpen(I)) return I;
   try{
-    const N = await gateway().status(I.id);
+    const N = normalizeProviderIntent(await providerCall('getStatus', 'status', I.id));
     if(store.payState === s && s.pi[method] && s.pi[method].id === N.id){ s.pi[method] = N; persistPending(); }
     return N;
   }catch(e){
-    logger.warn("Payment status:", e);
+    logger.event("payment", "status-failed", { op: "provider", code: e && e.code }, "warn");
     if(store.payState === s && s.pi[method]) s.pi[method].checkError = userMessage(e, "Couldn't check the payment. Retrying…");
     return I;
   }
@@ -86,11 +103,11 @@ export async function cancelIntent(method){
   if(!I) return null;
   if(!I.id || !isOpen(I)){ if(I.status !== "verified") delete s.pi[method]; persistPending(); return I; }
   try{
-    const N = await gateway().cancel(I.id);
+    const N = normalizeProviderIntent(await providerCall('cancelPayment', 'cancel', I.id));
     if(store.payState === s){ if(N.status === "verified") s.pi[method] = N; else delete s.pi[method]; persistPending(); }
     return N;
   }catch(e){
-    logger.warn("Payment cancel:", e);
+    logger.event("payment", "cancel-failed", { op: "provider", code: e && e.code }, "warn");
     // couldn't reach the server: the provider closes it at its expiry anyway; money that still arrives shows as unmatched
     if(store.payState === s){ delete s.pi[method]; persistPending(); }
     return { status: "cancelled", error: userMessage(e, "Couldn't close the payment at the provider.") };
@@ -107,7 +124,7 @@ export async function abandonIntents(state, { keepVerified = false } = {}){
     store.payPending = { saleId: s.saleId, mode: s.mode, method: s.method, via: s.via, amt: s.amt, pi: Object.fromEntries(verified), t: Date.now() };
     savePayPending();
   }else if(open.length || store.payPending) clearPending();
-  await Promise.all(open.map(I => gateway().cancel(I.id).catch(e => logger.warn("Payment cancel:", e))));
+  await Promise.all(open.map(I => providerCall('cancelPayment', 'cancel', I.id).catch(e => logger.event("payment", "cancel-failed", { op: "provider", code: e && e.code }, "warn"))));
   return verified.map(([, I]) => I);
 }
 
@@ -131,10 +148,10 @@ export async function verifyManualUpi(sales){
     const p = paymentsOf(s).find(x => x.method === "upi" && x.verification === "unverified" && x.ref && !(Date.now() - (x.checkedAt || 0) < 3600e3));
     if(!p) continue;
     try{
-      const r = await gateway().verify({ saleId: s.id, reference: p.ref });
+      const r = await providerCall('verifyPayment', 'verify', { saleId: s.id, reference: p.ref });
       p.checkedAt = Date.now();
       if(r && r.status === "verified"){ p.verification = "verified"; p.intent = r.intentId || p.intent; p.providerRef = r.paymentId || p.providerRef; n++; }
-    }catch(e){ logger.warn("UPI verification:", e); if(e && e.code === ERROR_CODES.NOT_CONFIGURED) break; }
+    }catch(e){ logger.event("payment", "upi-check-failed", { op: "provider", code: e && e.code }, "warn"); if(e && e.code === ERROR_CODES.NOT_CONFIGURED) break; }
   }
   return n;
 }

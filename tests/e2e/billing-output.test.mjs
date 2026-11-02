@@ -4,6 +4,7 @@
 // is faked at its network address (ePOS-Print answers, including out-of-paper and unreachable).
 import puppeteer from 'puppeteer-core';
 import fs from 'fs';
+import crypto from 'node:crypto';
 import H from '../helpers/env.mjs';
 import { createPgRest, CORS } from '../helpers/pg-rest.mjs';
 await H.ensureServer();
@@ -16,20 +17,31 @@ await pg.db.query(`INSERT INTO public.hangtag_profiles (id, email, full_name, sh
 const q = async (sql) => (await pg.as(sql, [])).rows;
 
 // ---------- the send-receipt function, stubbed: email works, SMS is refused by its provider, WhatsApp isn't set up ----------
-const fnCalls = [];
+const fnCalls = [], invoices = {};
 const sendReceipt = async (r) => {
   const body = JSON.parse(r.postData() || '{}'); fnCalls.push(body);
   const reply = (status, b) => r.respond({ status, contentType: 'application/json', headers: CORS, body: JSON.stringify(b) });
   if (body.action === 'channels') return reply(200, { ok: true, channels: { email: true, whatsapp: false, sms: true } });
-  const sale = (await q(`SELECT s.id, s.is_void, c.email, c.phone FROM public.hangtag_sales s LEFT JOIN public.hangtag_customers c ON c.owner_id = s.owner_id AND c.id = s.customer_id WHERE s.id = '${body.sale_id.replace(/'/g, "''")}'`))[0];
+  const sale = (await q(`SELECT s.id, s.bill_no, s.is_void, c.email, c.phone FROM public.hangtag_sales s LEFT JOIN public.hangtag_customers c ON c.owner_id = s.owner_id AND c.id = s.customer_id WHERE s.id = '${body.sale_id.replace(/'/g, "''")}'`))[0];
   if (!sale) return reply(404, { ok: false, error: 'not_found', message: "That bill isn't in the cloud yet." });
   if (sale.is_void) return reply(409, { ok: false, error: 'cancelled', message: "A cancelled bill can't be sent." });
+  // the bill's one invoice PDF (as the function keeps it): the first copy registered is kept, every send reuses it
+  if (body.action === 'invoice') {
+    const have = invoices[sale.id];
+    if (have) return reply(200, { ok: true, already: true, invoice: have, url: 'https://files.example/' + have.id });
+    if (!body.pdf) return reply(404, { ok: false, error: 'no_invoice', message: 'This bill has no invoice PDF yet.' });
+    const pdf = Buffer.from(body.pdf, 'base64').toString('latin1');
+    if (!pdf.startsWith('%PDF-') || !pdf.includes(`(${sale.bill_no})`)) return reply(422, { ok: false, error: 'invoice_mismatch', message: "That PDF isn't this bill's invoice." });
+    invoices[sale.id] = { id: 'inv-' + Object.keys(invoices).length, number: sale.bill_no, sha256: crypto.createHash('sha256').update(Buffer.from(body.pdf, 'base64')).digest('hex'), size: pdf.length, filename: `Invoice-${sale.bill_no}.pdf` };
+    return reply(200, { ok: true, invoice: invoices[sale.id], url: 'https://files.example/' + invoices[sale.id].id });
+  }
+  const inv = invoices[sale.id];
   const to = body.channel === 'email' ? sale.email : '+91' + String(sale.phone || '').replace(/\D/g, '').slice(-10);
   if (body.channel === 'whatsapp') return reply(503, { ok: false, error: 'not_configured', message: "Sending by WhatsApp isn't set up for this shop yet." });
   const ok = body.channel === 'email';
   await pg.db.query(`INSERT INTO public.hangtag_deliveries (owner_id, sale_id, channel, recipient, status, provider, provider_message_id, error) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
     [UID, body.sale_id, body.channel, to, ok ? 'sent' : 'failed', ok ? 'resend' : 'twilio', ok ? 're_' + fnCalls.length : null, ok ? null : 'The To number is not a valid mobile number']);
-  return ok ? reply(200, { ok: true, status: 'sent', channel: 'email', recipient: to, provider: 'resend', provider_message_id: 're_' + fnCalls.length })
+  return ok ? reply(200, { ok: true, status: 'sent', channel: 'email', recipient: to, provider: 'resend', provider_message_id: 're_' + fnCalls.length, ...(inv ? { invoice_id: inv.id, format: 'attachment' } : {}) })
     : reply(502, { ok: false, status: 'failed', error: 'provider_error', message: "The SMS service didn't accept the message: The To number is not a valid mobile number" });
 };
 // ---------- a fake Epson printer at https://192.168.1.50 ----------
@@ -65,6 +77,9 @@ await A.goto('http://localhost:3210/', { waitUntil: 'networkidle0' });
 const run = (b) => A.evaluate((b) => __ev('(async()=>{' + b + '})()'), b);
 async function until(cond, ms = 15000) { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await run('return !!(' + cond + ')').catch(() => false)) return true; await sleep(100); } return false; }
 const text = (sel) => A.$eval(sel, (e) => e.innerText.replace(/\s+/g, ' ').trim()).catch(() => null);
+// an A4 document is shown in its own frame (receipts/components/doc-render.js): its text, or the receipt's
+// (the bill view's own preview: Settings → Templates has a live preview of its own)
+const docText = () => A.evaluate(() => { const f = document.querySelector('.billview .rcpt-prev iframe'); const t = f && f.contentDocument ? f.contentDocument.body.innerText : (document.querySelector('.billview .rcpt-prev') || {}).innerText; return String(t || '').replace(/\s+/g, ' ').trim(); });
 const vis = (sel) => A.$eval(sel, (e) => !e.hidden && getComputedStyle(e).display !== 'none' && e.getClientRects().length > 0).catch(() => false);
 check('signed in and connected', await until('sbStatus==="connected"'));
 
@@ -77,8 +92,10 @@ const KURTA = await run('return prod(products().find(p=>p.name==="Kurta").id).va
 const custId = await run('return Object.values(customers).find(c=>c.name==="Blr Traders").id');
 
 // ---------- Phase 14: the logo, from settings ----------
-await run('openSettings()'); await sleep(200);
-check('settings: Receipts and printer section with the logo and this device\'s printer', await vis('#receiptSetup') && /No logo/.test(await text('#receiptSetup .logoprev')) && !!(await A.$('#printerForm [name=kind]')));
+await run('openSettings("devices")'); await sleep(200);
+const printerHere = !!(await A.$('#printerForm [name=kind]'));
+await run('openSettings("billing")'); await sleep(200);
+check('settings: Bills & Documents has the logo; This device has this device\'s printer', await vis('#receiptSetup') && /No logo/.test(await text('#receiptSetup .logoprev')) && printerHere);
 const logoInput = await A.$('#receiptSetup [data-logofile]'); await logoInput.uploadFile(LOGO); await sleep(700);
 check('logo uploaded: shown in settings and kept for this shop', !!(await A.$('#receiptSetup .logoprev img')) && await run('return /^data:image\\/jpeg;base64,/.test(logo)'));
 await run('await flushSbQueue()');
@@ -92,20 +109,26 @@ await A.click('[data-paymode="split"]'); await sleep(100);
 await A.$eval('[data-payf="amt:cash"]', (e) => { e.value = ''; e.dispatchEvent(new Event('input', { bubbles: true })); }); await A.type('[data-payf="amt:cash"]', '1000');
 await A.click('[data-payrest="upi"]'); await sleep(100);
 await A.type('[data-payf="ref:upi"]', '412345678901'); await sleep(100);
+await A.click('[data-upireceived]'); await sleep(100);
 await A.click('#payDone'); await sleep(400);
 const sid = await run('return lastSale.id');
-check('payment confirmed: the sheet offers Print, Download and Send to customer (Email, WhatsApp, SMS)', await vis('#sheetHost [data-paid]') && !!(await A.$(`#sheetHost [data-print="${sid}"]`)) && !!(await A.$(`#sheetHost [data-dlreceipt="${sid}"]`))
+check('payment confirmed: the sheet offers Print, Download PDF and Send to customer (Email, WhatsApp, SMS)', await vis('#sheetHost [data-paid]') && !!(await A.$(`#sheetHost [data-print="${sid}"]`)) && !!(await A.$(`#sheetHost [data-dlinvoice="${sid}"]`))
   && (await A.$$eval('#sheetHost [data-send]', (b) => b.map((x) => x.textContent))).join() === 'Email,WhatsApp,SMS');
 await run('await flushSbQueue()');
 await A.screenshot({ path: H.ARTIFACTS + '/bo1_paid_desktop.png' });
 
 // ---------- Phase 15: send ----------
 await A.click(`#sheetHost [data-send="email:${sid}"]`); await sleep(600);
-check('Email: sent — the server confirmed with the provider\'s id', /✓ Emailed to accounts@blr\.in/.test(await text(`#sheetHost [data-sendstate="${sid}"]`)), await text(`#sheetHost [data-sendstate="${sid}"]`));
+check('Email: sent — the server confirmed with the provider\'s id, the invoice PDF attached', /✓ Emailed to accounts@blr\.in with the invoice PDF attached/.test(await text(`#sheetHost [data-sendstate="${sid}"]`)), await text(`#sheetHost [data-sendstate="${sid}"]`));
 const emailCall = fnCalls.find((c) => c.channel === 'email');
-check('the request carries only the bill and the channel — no recipient and no message (the function writes it from the saved bill)', emailCall.sale_id === sid && emailCall.action === 'send'
-  && JSON.stringify(Object.keys(emailCall).sort()) === JSON.stringify(['action', 'channel', 'sale_id']), emailCall);
+check('the send carries only the bill, the channel and the id of this press of Send — no recipient and no message (the function writes it from the saved bill)', emailCall.sale_id === sid && emailCall.action === 'send'
+  && JSON.stringify(Object.keys(emailCall).sort()) === JSON.stringify(['action', 'channel', 'request_id', 'sale_id']) && /^[A-Za-z0-9_-]{8,64}$/.test(emailCall.request_id), emailCall);
+check('before sending, the bill\'s invoice PDF is registered once: the app\'s own A4 invoice, with the bill\'s number', fnCalls.filter((c) => c.action === 'invoice' && c.pdf).length === 1 && !!invoices[sid],
+  fnCalls.filter((c) => c.action === 'invoice').map((c) => ({ pdf: !!c.pdf })));
+check('the email\'s badge says sent', await A.$eval(`#sheetHost [data-send="email:${sid}"] .dlb`, (e) => e.className).then((c) => /\bok\b/.test(c), () => false));
 await A.click(`#sheetHost [data-send="sms:${sid}"]`); await sleep(600);
+check('the SMS reuses the same invoice: nothing registered again', fnCalls.filter((c) => c.action === 'invoice' && c.pdf).length === 1 && fnCalls.filter((c) => c.action === 'invoice').length === 2,
+  fnCalls.filter((c) => c.action === 'invoice').map((c) => ({ pdf: !!c.pdf })));
 const smsState = await text(`#sheetHost [data-sendstate="${sid}"]`);
 check('SMS: the provider refused — shown as not sent, with Try again (no false success)', /didn't accept the message/.test(smsState) && !/✓/.test(smsState) && !!(await A.$(`#sheetHost [data-sendstate="${sid}"] [data-send="sms:${sid}"]`)), smsState);
 const waUrl = await A.evaluate(async (sid) => { let u = null; const o = window.open; window.open = (x) => { u = x; return {}; }; document.querySelector(`#sheetHost [data-send="whatsapp:${sid}"]`).click(); await new Promise((r) => setTimeout(r, 400)); window.open = o; return u; }, sid);
@@ -116,24 +139,24 @@ check('the database has the email as sent (with its id) and the SMS as failed; W
 
 // ---------- Phase 13/14: receipt and invoice from the saved bill ----------
 const printedPage = await A.evaluate(async (sid) => { document.querySelector(`#sheetHost [data-print="${sid}"]`).click(); await new Promise((r) => setTimeout(r, 400)); const f = [...document.querySelectorAll('iframe')].pop(); return f && f.contentDocument ? { html: f.contentDocument.body.innerHTML, text: f.contentDocument.body.innerText } : null; }, sid);
-check('Print (no thermal printer set): the print-only 80 mm receipt with the logo, shop, GSTIN, IGST and the split payment', printedPage && /class="r-logo"/.test(printedPage.html) && /Aura Threads/.test(printedPage.text) && /GSTIN 27ABCDE1234F1Z5/.test(printedPage.text)
+check('Print (no thermal printer set): the print-only 80 mm receipt with the logo (centred), shop, GSTIN, IGST and the split payment', printedPage && /class="r-logo r-logo-center"/.test(printedPage.html) && /Aura Threads/.test(printedPage.text) && /GSTIN 27ABCDE1234F1Z5/.test(printedPage.text)
   && /IGST/.test(printedPage.text) && /Paid by Cash/.test(printedPage.text) && /Paid by UPI/.test(printedPage.text), printedPage && printedPage.text.slice(0, 300));
 await run('closeSheets()');
 await run(`openBillView(${JSON.stringify(sid)},"a4")`); await sleep(300);
-const a4 = await text('.rcpt-prev');
+const a4 = await docText();
 const sale = await run(`const s=D().saleById[${JSON.stringify(sid)}];return {no:s.no,total:s.total,igst:s.igst,taxable:s.taxable}`);
 check('A4 invoice: TAX INVOICE, invoice number, place of supply, Bill to with GSTIN, HSN, taxable value and IGST per line', /TAX INVOICE/.test(a4) && a4.includes(sale.no) && /Place of supply Karnataka \(29\)/.test(a4)
-  && /Bill to Blr Traders \(business\)/i.test(a4) && /GSTIN 29ABCDE1234F1Z5/.test(a4) && /6109/.test(a4) && /IGST/.test(a4), a4.slice(0, 400));
+  && /Bill to Blr Traders/i.test(a4) && /Business customer/.test(a4) && /GSTIN 29ABCDE1234F1Z5/.test(a4) && /6109/.test(a4) && /IGST/.test(a4), a4.slice(0, 400));
 check('A4 invoice: totals from the saved bill, GST by rate, amount in words, payments', a4.includes('₹' + sale.total.toLocaleString('en-IN')) && /Amount in words Rupees .+ Only/i.test(a4) && /GST rate/i.test(a4) && /Paid by Cash/.test(a4));
 await A.screenshot({ path: H.ARTIFACTS + '/bo2_invoice_a4.png' });
 await sleep(400);
 check('bill view lists what was sent (from the database)', /Sent to the customer/.test(await text(`[data-dlhist="${sid}"]`)) && /✓ Email · accounts@blr\.in/.test(await text(`[data-dlhist="${sid}"]`)) && /✕ SMS/.test(await text(`[data-dlhist="${sid}"]`)), await text(`[data-dlhist="${sid}"]`));
 await A.click(`[data-billpaper="80mm:${sid}"]`); await sleep(200);
-check('switch to the 80 mm receipt view', !(await A.$('.rcpt.a4')) && /Bill/.test(await text('.rcpt-prev')));
+check('switch to the 80 mm receipt view: the same number label as the A4 invoice', !(await A.$('.billview .a4prev')) && !!(await A.$('.billview .rcpt-prev .rcpt')) && /Invoice no\. INV-/.test(await text('.billview .rcpt-prev')), await text('.billview .rcpt-prev'));
 await run('closeModal()');
 
 // ---------- Phase 16: the Epson printer ----------
-await run('openSettings()'); await sleep(200);
+await run('openSettings("devices")'); await sleep(200);
 await A.select('#printerForm [name=kind]', 'epson'); await sleep(100);
 await A.type('#printerForm [name=host]', '192.168.1.50');
 await A.click('#printerForm [data-act="printertest"]'); await sleep(600);
@@ -160,6 +183,44 @@ await A.click(`.billview [data-printstate="${sid}"] [data-print]`); await sleep(
 check('try again once the printer is back: printed', /✓ Printed/.test(await text(`.billview [data-printstate="${sid}"]`)));
 await run('closeModal()');
 
+// ---------- the logo: printed or not, and where (Settings → Bills & Documents → Logo) ----------
+const prevHTML = () => A.evaluate(() => { const f = document.querySelector('.billview .rcpt-prev iframe'); return f && f.contentDocument ? f.contentDocument.body.innerHTML : ((document.querySelector('.billview .rcpt-prev') || {}).innerHTML || ''); });
+const outputs = async () => {
+  await run(`openBillView(${JSON.stringify(sid)})`); await sleep(300);
+  const r80 = await prevHTML();
+  prints.length = 0; await A.click(`.billview [data-print="${sid}"]`); await sleep(700);
+  await run('closeModal()'); await run(`openBillView(${JSON.stringify(sid)},"a4")`); await sleep(400);
+  const a4html = await prevHTML(); await run('closeModal()');
+  return { r80, a4html, epos: prints[0] || '' };
+};
+await run('openSettings("billing")'); await sleep(200);
+check('settings: the logo is printed, each output keeping its own place (Auto · Left · Centre · Right)', await A.$eval('#receiptSetup [data-logoshow]', (c) => c.checked)
+  && (await A.$$eval('#receiptSetup [data-logoalign]', (r) => r.map((x) => x.value + (x.checked ? '*' : '')))).join() === 'auto*,left,center,right');
+await A.$eval('#receiptSetup [data-logoalign][value="right"]', (r) => r.click()); await sleep(300);
+check('Right: saved for the shop, and still chosen when the settings are drawn again', await run('return settings.docLogo===true&&settings.docLogoAlign==="right"') && await A.$eval('#receiptSetup [data-logoalign][value="right"]', (r) => r.checked));
+await run('await flushSbQueue()');
+check('...and in the cloud for the shop\'s other devices (hangtag_meta "settings")', ((await q(`SELECT value FROM public.hangtag_meta WHERE key='settings'`))[0] || {}).value?.docLogoAlign === 'right');
+await run('closeSettings()');
+const onRight = await outputs();
+check('the 80 mm receipt, the A4 invoice and the Epson print all put the logo on the right', /class="r-logo r-logo-right"/.test(onRight.r80) && /<header class="d-head logo-right">/.test(onRight.a4html) && /class="d-logo"/.test(onRight.a4html)
+  && /<text align="right"\/><image width="\d+" height="\d+"/.test(onRight.epos), { r80: (onRight.r80.match(/<img class="r-logo[^"]*"/) || [])[0], a4: (onRight.a4html.match(/<header[^>]*>/) || [])[0], epos: (onRight.epos.match(/<text align="\w+"\/><image/) || [])[0] });
+await A.screenshot({ path: H.ARTIFACTS + '/bo4_logo_right.png' });
+await run('openSettings("billing")'); await sleep(200);
+await A.$eval('#receiptSetup [data-logoshow]', (c) => c.click()); await sleep(300);
+check('switched off: the sides are put away, and the picture is kept', await run('return settings.docLogo===false&&/^data:image/.test(logo)') && await A.$eval('#receiptSetup .logodisp .segrow', (e) => e.hidden) && !!(await A.$('#receiptSetup .logoprev img')));
+await run('closeSettings()');
+const hidden = await outputs();
+check('...no logo on the receipt, the A4 invoice or the Epson print (the shop name still heads them)', !/r-logo/.test(hidden.r80) && !/d-logo/.test(hidden.a4html) && !/<image /.test(hidden.epos)
+  && /Aura Threads/.test(hidden.r80) && /Aura Threads/.test(hidden.a4html) && /Aura Threads/.test(hidden.epos));
+await run('openSettings("billing")'); await sleep(200);
+await A.$eval('#receiptSetup [data-logoshow]', (c) => c.click()); await sleep(300);
+await A.$eval('#receiptSetup [data-logoalign][value="auto"]', (r) => r.click()); await sleep(300);
+check('back on, Auto: the logo is printed again in each output\'s own place', await run('return settings.docLogo===true&&settings.docLogoAlign==="auto"'));
+await run('closeSettings()');
+const auto = await outputs();
+check('...centred on the receipt and the Epson print, on the left of the A4 header', /class="r-logo r-logo-center"/.test(auto.r80) && /<header class="d-head logo-left">/.test(auto.a4html) && /<text align="center"\/><image /.test(auto.epos));
+await run('await flushSbQueue()');
+
 // ---------- walk-in and cancelled bills ----------
 await sleep(700);
 await run(`addOne(${JSON.stringify(KURTA)});renderAll()`); await sleep(100);
@@ -177,7 +238,7 @@ await run('channels=null');
 await A.click(`#sheetHost [data-undosale="${wid}"]`); await sleep(300);
 await A.click('#voidForm button[type="submit"]'); await sleep(300);   // cancelling asks why (the first reason is chosen)
 await run(`openBillView(${JSON.stringify(wid)},"a4")`); await sleep(200);
-check('cancelled bill: the invoice says CANCELLED — not a valid invoice, and it can\'t be sent', /CANCELLED — not a valid invoice/.test(await text('.rcpt-prev')) && /A cancelled bill can't be sent/.test(await text('.billview .sendbox'))
+check('cancelled bill: the invoice says CANCELLED — not a valid invoice, and it can\'t be sent', /CANCELLED — not a valid invoice/.test(await docText()) && /A cancelled bill can't be sent/.test(await text('.billview .sendbox'))
   && await A.$eval(`.billview [data-send="email:${wid}"]`, (b) => b.disabled));
 await run('closeModal()');
 
